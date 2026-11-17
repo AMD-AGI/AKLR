@@ -20,7 +20,7 @@ flowchart TD
     R --> V["3. 本地验证<br/>validate --base origin/main --stages audit,bench"]
     V -->|"no_qualifying_workload：失败"| D
     V -->|"demoted（性能或正确性不过）：删掉这些 workload"| R
-    V -->|"通过：report.md / report.json"| P["4. 开 PR + ci:gpu<br/>CI：code-lint（含 audit）→ aiter 线 → sglang 线"]
+    V -->|"通过：report.md / report.json"| P["4. 开 PR + ci:gpu<br/>CI：code-lint（含 audit）→ aiter 线 → sglang 线 → vllm 线"]
     P -->|"合入 main"| M["4. main 的 push CI 重新测量<br/>publish-measurement bot 更新 aklr-perf/main PR"]
     M -->|"bot PR 合入"| N["4. workload 带上 accuracy / speedup / microseconds"]
 ```
@@ -114,7 +114,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - 提交 PR 不写 `accuracy`/`speedup`/`microseconds`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`/`microseconds`。
 
 **CI 规则**：
-- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ aiter 线（GPU，`aiter_image`，暂时是 sglang 镜像，覆盖安装对照 aiter：`tests/core`、`tests/ops`、`tests/benchmarks`，再 `validate --base <合并基> --under aklr/ops --exclude aklr/ops/mega_moe`，mega_moe 的 baseline 要等 mori 修复）→ sglang 线（同一台机器，`sglang_image` 原样：`tests/plugins`，再 `validate --under aklr/plugins` 和 `--under aklr/ops --no-timing`）。只在有要 bench 的 schema 时验证。
+- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ aiter 线（GPU，`aiter_image`，暂时是 sglang 镜像，覆盖安装对照 aiter：`tests/core`、`tests/ops`、`tests/benchmarks`，再 `validate --base <合并基> --under aklr/ops --exclude aklr/ops/mega_moe`，mega_moe 的 baseline 要等 mori 修复）→ sglang 线（同一台机器，`sglang_image` 原样：`tests/plugins/aiter`、`tests/plugins/sglang`，再 `validate --under aklr/plugins --exclude aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）→ vllm 线（同一台机器，`vllm_image` 原样：`tests/plugins/vllm`，再 `validate --under aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）。只在有要 bench 的 schema 时验证。
 - 只有 `aklr/core/` 下的非 `.md` 改动和 `stack.json` 才测全部 schema，其他改动（schema、文档、新建 `aklr/ops/<op>` 等）只测改动集合里的 schema（`validation_scope.py`）。
 
 ## 5. 运行时分发

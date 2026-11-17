@@ -4,7 +4,7 @@
 # run's; the newest measurement of a file wins. The commit body lists "<sha> <path>" per
 # published file (the next run's carry) and one Measured-SHA trailer per sha (lint's check).
 # %q escapes newlines, so an artifact name cannot inject workflow commands.
-# Reads BOT_LOGIN, GH_TOKEN, AITER_IMAGE, SGLANG_IMAGE and AKLR_MEASUREMENT_CURRENT; writes
+# Reads BOT_LOGIN, GH_TOKEN, AITER_IMAGE, SGLANG_IMAGE, VLLM_IMAGE and AKLR_MEASUREMENT_CURRENT; writes
 # committed and prev to $GITHUB_OUTPUT.
 set -eo pipefail
 
@@ -83,10 +83,9 @@ hardware=$(jq -er '.platform.hardware | select(test("^[A-Za-z0-9_. -]+$"))' "${r
 bot_id=$(gh api "users/$BOT_LOGIN" --jq .id)
 git config user.name "$BOT_LOGIN"
 git config user.email "$bot_id+$BOT_LOGIN@users.noreply.github.com"
-image=$SGLANG_IMAGE
-[[ $AITER_IMAGE == "$SGLANG_IMAGE" ]] || image="$AITER_IMAGE (aklr/ops), $SGLANG_IMAGE (plugins)"
 {
-  echo "perf: measurements on $hardware (run $GITHUB_RUN_ID, image $image)"
+  echo "perf: measurements on $hardware (run $GITHUB_RUN_ID, images $AITER_IMAGE for aklr/ops," \
+    "$SGLANG_IMAGE for aklr/plugins, $VLLM_IMAGE for aklr/plugins/vllm)"
   echo
   echo "$published"
   echo

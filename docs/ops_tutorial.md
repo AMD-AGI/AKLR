@@ -20,7 +20,7 @@ flowchart TD
     R --> V["3. Local validation<br/>validate --base origin/main --stages audit,bench"]
     V -->|"no_qualifying_workload: fail"| D
     V -->|"demoted (performance or correctness fails): delete those workloads"| R
-    V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → aiter lane → sglang lane"]
+    V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → aiter lane → sglang lane → vllm lane"]
     P -->|"merged into main"| M["4. main's push CI remeasures<br/>publish-measurement bot updates the aklr-perf/main PR"]
     M -->|"bot PR merged"| N["4. workloads carry accuracy / speedup / microseconds"]
 ```
@@ -114,7 +114,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - Do not write `accuracy`/`speedup`/`microseconds` in a submitted PR (writing them by hand reports `perf_edited`). After merge, main's push CI remeasures and `publish-measurement` updates the `aklr-perf/main` bot PR; only after that bot PR is squash-merged under its own title do the workloads carry `accuracy`/`speedup`/`microseconds`.
 
 **CI rules**:
-- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → aiter lane (GPU, `aiter_image`, for now the sglang image, with the baseline aiter installed over its own: `tests/core`, `tests/ops`, `tests/benchmarks`, then `validate --base <merge base> --under aklr/ops --exclude aklr/ops/mega_moe`, mega_moe's baseline needing a mori fix) → sglang lane (the same node, `sglang_image` as it ships: `tests/plugins`, then `validate --under aklr/plugins` and `--under aklr/ops --no-timing`). Validation runs only when there are schemas to bench.
+- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → aiter lane (GPU, `aiter_image`, for now the sglang image, with the baseline aiter installed over its own: `tests/core`, `tests/ops`, `tests/benchmarks`, then `validate --base <merge base> --under aklr/ops --exclude aklr/ops/mega_moe`, mega_moe's baseline needing a mori fix) → sglang lane (the same node, `sglang_image` as it ships: `tests/plugins/aiter`, `tests/plugins/sglang`, then `validate --under aklr/plugins --exclude aklr/plugins/vllm` and `--under aklr/ops --no-timing`) → vllm lane (the same node, `vllm_image` as it ships: `tests/plugins/vllm`, then `validate --under aklr/plugins/vllm` and `--under aklr/ops --no-timing`). Validation runs only when there are schemas to bench.
 - Only non-`.md` changes under `aklr/core/` and `stack.json` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
 
 ## 5. Runtime dispatch

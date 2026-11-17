@@ -69,13 +69,14 @@ jobs:
       validation_base: ${{ steps.lint.outputs.validation_base }}
       measured_by_bot: ${{ steps.lint.outputs.measured_by_bot }}
       sglang_image: ${{ steps.stack.outputs.sglang_image }}
+      vllm_image: ${{ steps.stack.outputs.vllm_image }}
       aiter_image: ${{ steps.stack.outputs.aiter_image }}
       aiter: ${{ steps.stack.outputs.aiter }}
     steps:
       - name: Report whether GPU jobs run
         run: |
           if [[ $GPU_ENABLED == true ]]; then
-            echo '🟢 GPU jobs are eligible: the aiter lane, then the sglang lane.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '🟢 GPU jobs are eligible: the aiter lane, then the sglang lane, then the vllm lane.' | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo '⏭️ PR GPU jobs require the ci:gpu label.' | tee -a "$GITHUB_STEP_SUMMARY"
           fi
@@ -91,14 +92,16 @@ jobs:
         run: |
           image='select(test("^[A-Za-z0-9._/:@-]+$"))'
           sglang_image=$(jq -er ".sglang_image | $image" stack.json)
+          vllm_image=$(jq -er ".vllm_image | $image" stack.json)
           aiter_image=$(jq -er ".aiter_image | $image" stack.json)
           aiter=$(jq -er '.aiter | select(test("^[0-9a-f]{40}$"))' stack.json)
           {
             echo "sglang_image=$sglang_image"
+            echo "vllm_image=$vllm_image"
             echo "aiter_image=$aiter_image"
             echo "aiter=$aiter"
           } >> "$GITHUB_OUTPUT"
-          echo "🧱 Stack: $sglang_image; aiter lane $aiter_image, ROCm/aiter@$aiter" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "🧱 Stack: aiter lane $aiter_image, ROCm/aiter@$aiter; sglang lane $sglang_image; vllm lane $vllm_image" | tee -a "$GITHUB_STEP_SUMMARY"
       - &setup_python
         name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -173,7 +176,7 @@ jobs:
       operation: prepare
 
   # The aiter lane: aklr/ops timed against the baseline AITER, in aiter_image; then the sglang lane
-  # on the same node. No secrets and no actions/cache: they run the PR's code and kernels.
+  # and the vllm lane on the same node. No secrets and no actions/cache: they run the PR's code and kernels.
   aiter-lane:
     needs: [code-lint, prepare-gpu]
     # "Re-run failed jobs" reuses an earlier attempt's node, which release-gpu already freed.
@@ -185,9 +188,9 @@ jobs:
         --device=/dev/kfd --device=/dev/dri --ipc=host
         --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema.
-    # Both lanes run within the node's lease (manage_spur_runner.sh, 8 hours unless
+    # The three lanes run within the node's lease (manage_spur_runner.sh, 8 hours unless
     # AKLR_SPUR_TIME_LIMIT): their timeouts sum under it.
-    timeout-minutes: 240
+    timeout-minutes: 180
     env:
       LANE: aiter
       TESTS: tests/core tests/ops tests/benchmarks
@@ -334,6 +337,7 @@ jobs:
 
   # The sglang lane: the sglang image as it ships, AKLR alone installed. Its plugins are timed
   # against sglang's own code; aklr/ops is built and checked only, its timing being the aiter lane's.
+  # aklr/plugins/vllm is the vllm lane's.
   sglang-lane:
     needs: [code-lint, prepare-gpu, aiter-lane]
     # After the aiter lane on the same node, whatever its result.
@@ -342,21 +346,24 @@ jobs:
     container:
       image: ${{ needs.code-lint.outputs.sglang_image }}
       options: *gpu_container_options
-    timeout-minutes: 210
+    timeout-minutes: 150
     env:
       LANE: sglang
-      TESTS: tests/plugins
+      TESTS: tests/plugins/aiter tests/plugins/sglang
+      PLUGINS: --under aklr/plugins --exclude aklr/plugins/vllm
     steps:
       - *checkout_source
       - *prepare_environment
-      - name: Install AKLR
+      - &install_aklr
+        name: Install AKLR
         run: python3 -m pip install -e .
       - *enable_coverage
       - *unit_tests
       - *combine_coverage
       - *upload_coverage
       - *upload_test_logs
-      - name: Validate aklr/plugins, check aklr/ops
+      - &validate_plugins
+        name: Validate plugins (${{ env.PLUGINS }}), check aklr/ops
         if: needs.code-lint.outputs.has_bench_paths == 'true'
         env:
           BASE: ${{ needs.code-lint.outputs.validation_base }}
@@ -366,24 +373,56 @@ jobs:
           flags=(${BASE:+--base "$BASE"})
           [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
           plugins=0 ops=0
-          python3 -m aklr validate "${flags[@]}" --under aklr/plugins --out "$RUNNER_TEMP/validation-report" || plugins=$?
+          # shellcheck disable=SC2086 # PLUGINS is a list of flags
+          python3 -m aklr validate "${flags[@]}" $PLUGINS --out "$RUNNER_TEMP/validation-report" || plugins=$?
           python3 -m aklr validate "${flags[@]}" --under aklr/ops --no-timing --out "$RUNNER_TEMP/validation-check" || ops=$?
           exit $((plugins ? plugins : ops))
       - *summarize
       - *upload_report
-      - name: Upload the check of aklr/ops (validation-check-sglang-<attempt>)
+      - &upload_check
+        name: Upload the check of aklr/ops (validation-check-${{ env.LANE }}-<attempt>)
         if: always() && needs.code-lint.outputs.has_bench_paths == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: validation-check-sglang-${{ github.run_attempt }}
+          name: validation-check-${{ env.LANE }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/validation-check/
           retention-days: 90
+      - *normalize_work_permissions
+
+  # The vllm lane: the vllm image as it ships, AKLR alone installed. aklr/plugins/vllm is timed in
+  # it; aklr/ops is built and checked only, as in the sglang lane.
+  vllm-lane:
+    needs: [code-lint, prepare-gpu, sglang-lane]
+    # After the sglang lane on the same node, whatever its result.
+    if: ${{ !cancelled() && needs.prepare-gpu.result == 'success' && needs.prepare-gpu.outputs.attempt == github.run_attempt }}
+    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
+    container:
+      image: ${{ needs.code-lint.outputs.vllm_image }}
+      options: *gpu_container_options
+    timeout-minutes: 60
+    env:
+      LANE: vllm
+      TESTS: tests/plugins/vllm
+      PLUGINS: --under aklr/plugins/vllm
+    steps:
+      - *checkout_source
+      - *prepare_environment
+      - *install_aklr
+      - *enable_coverage
+      - *unit_tests
+      - *combine_coverage
+      - *upload_coverage
+      - *upload_test_logs
+      - *validate_plugins
+      - *summarize
+      - *upload_report
+      - *upload_check
       - *normalize_work_permissions
 
   # After the last GPU job, so the node is freed while coverage-report runs. Also after a
   # failed or cancelled prepare-gpu: it may have submitted before failing.
   release-gpu:
-    needs: [prepare-gpu, aiter-lane, sglang-lane]
+    needs: [prepare-gpu, aiter-lane, sglang-lane, vllm-lane]
     if: always() && needs.prepare-gpu.result != 'skipped'
     uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@main
     with:
@@ -393,7 +432,7 @@ jobs:
       allocation_id: ${{ needs.prepare-gpu.outputs.allocation_id }}
 
   coverage-report:
-    needs: [code-lint, prepare-gpu, aiter-lane, sglang-lane]
+    needs: [code-lint, prepare-gpu, aiter-lane, sglang-lane, vllm-lane]
     # The required check: always runs, since a skipped job would satisfy one on its own.
     if: always()
     runs-on: ubuntu-latest
@@ -402,11 +441,11 @@ jobs:
       - name: Note missing coverage
         env:
           GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
-          LANE_RESULTS: ${{ needs.aiter-lane.result }} ${{ needs.sglang-lane.result }}
+          LANE_RESULTS: ${{ needs.aiter-lane.result }} ${{ needs.sglang-lane.result }} ${{ needs.vllm-lane.result }}
         run: |
           if [[ "$GPU_ENABLED" != true ]]; then
             echo '⏭️ GPU tests require the ci:gpu label; no coverage data was collected.' | tee -a "$GITHUB_STEP_SUMMARY"
-          elif [[ "$LANE_RESULTS" != 'success success' ]]; then
+          elif [[ "$LANE_RESULTS" != 'success success success' ]]; then
             echo "ℹ️ The lanes ended $LANE_RESULTS. Merge the available data; coverage does not imply the tests passed." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
       - name: Checkout source for coverage reports
@@ -478,13 +517,13 @@ jobs:
         env:
           LINT: ${{ needs.code-lint.result }}
           GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
-          GPU_RESULTS: ${{ needs.prepare-gpu.result }} ${{ needs.aiter-lane.result }} ${{ needs.sglang-lane.result }}
+          GPU_RESULTS: ${{ needs.prepare-gpu.result }} ${{ needs.aiter-lane.result }} ${{ needs.sglang-lane.result }} ${{ needs.vllm-lane.result }}
         run: |
           [[ $LINT == success ]] || { echo '::error::code-lint did not succeed'; exit 1; }
           [[ $GPU_ENABLED == true ]] || exit 0
           # The lanes are skipped after "Re-run failed jobs", which reuses a released node.
-          [[ $GPU_RESULTS == 'success success success' ]] ||
-            { echo "::error::prepare-gpu, aiter-lane, sglang-lane: $GPU_RESULTS; after Re-run failed jobs, use Re-run all jobs."; exit 1; }
+          [[ $GPU_RESULTS == 'success success success success' ]] ||
+            { echo "::error::prepare-gpu, aiter-lane, sglang-lane, vllm-lane: $GPU_RESULTS; after Re-run failed jobs, use Re-run all jobs."; exit 1; }
 
   # Publishes a main push run's measurements through one rolling bot PR, aklr-perf/main
   # -> main; no GPU, never runs PR code. The artifact is untrusted: only measured-field
@@ -494,11 +533,12 @@ jobs:
   # the subject, otherwise main's push run fails with PERF_EDITED.
   # No job concurrency: main push runs already share the workflow group.
   publish-measurement:
-    needs: [code-lint, aiter-lane, sglang-lane]
+    needs: [code-lint, aiter-lane, sglang-lane, vllm-lane]
     if: >-
       !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AKLR_BOT_LOGIN != '' &&
       (contains(fromJSON('["success", "failure"]'), needs.aiter-lane.result) ||
-       contains(fromJSON('["success", "failure"]'), needs.sglang-lane.result))
+       contains(fromJSON('["success", "failure"]'), needs.sglang-lane.result) ||
+       contains(fromJSON('["success", "failure"]'), needs.vllm-lane.result))
     runs-on: ubuntu-latest
     environment: bot
     timeout-minutes: 20
@@ -529,7 +569,7 @@ jobs:
       - *install_cpu_deps
       # A missed measurement is not retried; the next aklr/core or stack.json change on main re-benches every schema.
       # A lane can fail before write_schemas: no artifact is nothing to write. aklr/ops is the aiter
-      # lane's, aklr/plugins the sglang lane's (validate --under).
+      # lane's, aklr/plugins/vllm the vllm lane's, the rest of aklr/plugins the sglang lane's (validate --under).
       - name: Download the aiter lane's validation report
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -542,6 +582,12 @@ jobs:
         with:
           name: validation-report-sglang-${{ github.run_attempt }}
           path: ${{ runner.temp }}/validation-report-sglang
+      - name: Download the vllm lane's validation report
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-report-vllm-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/validation-report-vllm
       - name: Rebuild the bot branch
         id: commit
         env:
@@ -549,7 +595,10 @@ jobs:
           BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
           AITER_IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
           SGLANG_IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
-        run: bash .github/scripts/publish_measurement.sh "$RUNNER_TEMP/validation-report-aiter" "$RUNNER_TEMP/validation-report-sglang"
+          VLLM_IMAGE: ${{ needs.code-lint.outputs.vllm_image }}
+        run: >-
+          bash .github/scripts/publish_measurement.sh "$RUNNER_TEMP/validation-report-aiter"
+          "$RUNNER_TEMP/validation-report-sglang" "$RUNNER_TEMP/validation-report-vllm"
       # An empty PREV leases on the branch not existing. A lost lease (a bot squash merged
       # and the branch was deleted mid-run) drops this run's values until the next publish-measurement.
       - name: Push and update the bot PR
