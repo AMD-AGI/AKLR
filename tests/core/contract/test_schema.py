@@ -80,6 +80,35 @@ class TestSchemaFile:
         for field in ("language", "entry_point"):
             assert any(line.startswith(f"bad.json: kernel.{field}: ") for line in lines)
 
+    def test_models(self) -> None:
+        """A schema names, after ``op_type``, the models whose serving calls it, sorted,
+        once each, lowercase; a workload names none. The uuid does not hash them; a
+        committed schema naming none is an error."""
+        case = OpCase.of("gemm@1.0")
+        schema = case.schema()
+        data = json.loads(schema.schema_text())
+        assert list(data)[list(data).index("op_type") + 1] == "models"
+        parse = ContractRegistry.default().parse_schema
+
+        def with_models(models: object) -> bytes:
+            return expr.json_file_text({**data, "models": models}).encode()
+
+        parsed = parse(with_models(["glm-5.2", "kimi-k3"]), "a.json")
+        assert parsed.models == ("glm-5.2", "kimi-k3")
+        assert parsed.relative_path() == schema.relative_path()
+        for bad in (["kimi-k3", "glm-5.2"], ["kimi-k3", "kimi-k3"], ["Kimi-K3"]):
+            with pytest.raises(ValueError, match=r"^a\.json: "):
+                parse(with_models(bad), "a.json")
+        in_workloads = [{**w, "models": ["kimi-k3"]} for w in data["workloads"]]
+        with pytest.raises(ValueError, match=r"^a\.json: workloads\.0\.models"):
+            parse(expr.json_file_text({**data, "workloads": in_workloads}).encode(), "a.json")
+        unnamed = {k: v for k, v in data.items() if k != "models"}
+        parsed = parse(expr.json_file_text(unnamed).encode(), "a.json")  # a base from before models
+        assert parsed.models == ()
+        path = Path("aklr/ops/gemm") / parsed.relative_path()
+        assert any("names no model" in e for e in case.contract.schema_errors(path, parsed))
+        assert not case.contract.schema_errors(path, schema)
+
     def test_kernel_requires(self) -> None:
         """``kernel.requires`` follows ``targets`` and is absent when empty; a key is a
         language, a value a version specifier. The uuid hashes it."""

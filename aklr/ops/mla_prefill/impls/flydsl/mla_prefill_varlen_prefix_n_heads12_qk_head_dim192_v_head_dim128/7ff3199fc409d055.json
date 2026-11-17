@@ -4,6 +4,9 @@
   "contract_id": "mla_prefill_varlen@1.0",
   "description": "MLA's prefill attention once kv_b has expanded the latent keys, every head on its own: sequence s's queries are q's rows cu_seqlens_q[s]:cu_seqlens_q[s + 1], its keys and values the rows cu_seqlens_k[s]:cu_seqlens_k[s + 1] of k and v (with no prefix, the queries' own rows). Causal, aligned at the end: query i of a sequence of Lq queries over Lk keys reads keys 0 .. Lk - Lq + i. Logits q . k * sm_scale over qk_head_dim; output the softmax-weighted sum of v. With qkv_fp8 a kernel may round q, k and v to float8_e4m3fn first, as aiter's fp8 prefill does.",
   "op_type": "mla_prefill",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "n_q": {
       "type": "var",

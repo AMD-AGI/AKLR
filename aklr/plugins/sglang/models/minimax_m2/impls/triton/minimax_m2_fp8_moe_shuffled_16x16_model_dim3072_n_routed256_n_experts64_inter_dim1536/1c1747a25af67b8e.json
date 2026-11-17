@@ -4,6 +4,9 @@
   "contract_id": "minimax_m2_fp8_moe@1.0",
   "description": "sglang's MiniMaxM2MoE.forward_normal on one rank with fp8 experts: each token's topk experts of the n_routed by the sigmoid of its fp32 router logits plus correction_bias, weighed by their unbiased scores renormalized to sum 1; each expert down(silu(gate(x)) * up(x)) of its fp8 weights at a scale per 128 x 128 block, each of its two linears taking its input as the checkpoint's FP8 scheme quantizes it: in bf16, then each 1 x 128 group in fp8 at a scale of its amax / 448; out is the weighed sum over the experts this rank holds, the n_experts from expert_offset on (all n_routed without expert parallelism), the routes to the others adding nothing: this rank's share, not yet summed over the ranks.",
   "op_type": "minimax_m2",
+  "models": [
+    "minimax-m2.5"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

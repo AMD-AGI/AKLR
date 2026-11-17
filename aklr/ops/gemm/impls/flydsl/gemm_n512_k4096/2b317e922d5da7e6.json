@@ -4,6 +4,10 @@
   "contract_id": "gemm@1.0",
   "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
   "op_type": "gemm",
+  "models": [
+    "deepseek-v4-flash",
+    "qwen3.5"
+  ],
   "axes": {
     "m": {
       "type": "var",

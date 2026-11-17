@@ -84,7 +84,7 @@ implementations, not of the languages, and not of preshuffled MXFP4.
   the variants that differ from their first declared value and the const axes (`aklr/ops/README.md` § Names).
 - **uuid.** The first 16 hex digits of the sha256 of `[name, authored parts]` as sorted-key JSON: the whole `kernel`
   section and each Point's axes and scalars, sorted (S6). Editing a source, `requires`, `author` or the Points renames
-  the file; `speedup`, `accuracy` and the workload order do not. A file elsewhere fails audit with
+  the file; `models`, `speedup`, `accuracy` and the workload order do not. A file elsewhere fails audit with
   `<path>: not at <ops>/<op_type>/impls/triton/<name>/<uuid>.json`, which names the right uuid (S6); after every edit,
   `python -m aklr export check` names that path: exit 0 and no output on a clean repository, exit 1 and one `not at`
   line per misnamed file (`aklr/ops/README.md` § Workflow, steps 4–5).

@@ -7,14 +7,16 @@ from __future__ import annotations
 
 import functools
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import PositiveInt, model_validator
+from pydantic import Field, PositiveInt, model_validator
 
 from aklr.core.contract.semantics import sorted_key_json
 from aklr.core.contract.semantics._frozen_model import FrozenModel
 
 ContractId = str  # "<contract_name>@<major>.<minor>"; the version is for humans
+# a model as schemas name it: "kimi-k3", "glm-5.2"
+ModelName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9.-]*$")]
 CONTRACT_ID_PATTERN = re.compile(r"^([a-z][a-z0-9_]*)@(\d+)\.(\d+)$")
 
 

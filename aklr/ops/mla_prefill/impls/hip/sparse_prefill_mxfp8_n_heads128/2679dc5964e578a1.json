@@ -4,6 +4,9 @@
   "contract_id": "sparse_prefill_mxfp8@1.0",
   "description": "Sparse attention over two CSR ranges. NoPE uses block-scaled E4M3FN and RoPE BF16; each head's sink contributes only to the softmax denominator.",
   "op_type": "mla_prefill",
+  "models": [
+    "deepseek-v4-pro"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

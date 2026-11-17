@@ -4,6 +4,9 @@
   "contract_id": "gdn_decode_group_fp8_quant@1.0",
   "description": "Qwen3.5 GDN decode, one token per row, from contiguous Q/K/V/Z and B/A projections. A row whose cache index is -1 is padding: it reads and changes no state, and its core output is zero. Every other row uses its distinct slot: the causal width-four convolution of the slot's three-token history and the row's Q/K/V channels rounds each tap's product to BF16 and sums the four in FP32, oldest first; its SiLU is rounded to BF16, and the history shifts the row in. Q and K are L2-normalized in FP32 and Q is multiplied by scale; the gated delta rule with BF16 beta updates the slot's FP32 delta_state in [value,key] order, and the core output is rounded to BF16. The core is gated RMS-normalized with norm_weight and SiLU of the row's Z, then rounded to BF16 and quantized per value head to E4M3FN, with scale=max(amax,1e-10)/448. Unindexed state slots and all other inputs are preserved.",
   "op_type": "qwen3_5",
+  "models": [
+    "qwen3.5"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

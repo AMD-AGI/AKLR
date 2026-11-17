@@ -4,6 +4,10 @@
   "contract_id": "dsa_topk_transform@1.0",
   "description": "sglang's DSA indexer top-k on HIP (sgl_kernel.fast_topk_transform_fused): each row selects the topk highest of its first lengths scores and writes their slots in the page_size=1 page table of its sequence, the cu_seqlens_q range holding the row; a row of at most topk scores writes all of its slots in order, then -1.",
   "op_type": "dsa_backend",
+  "models": [
+    "glm-5.2",
+    "glm-5.3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

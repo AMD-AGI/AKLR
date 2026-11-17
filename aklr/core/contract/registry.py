@@ -86,6 +86,7 @@ class ContractRegistry:
                 contract.point_from_json(parsed, parsed["workloads"][0]["axes"]),
                 workloads=parsed["workloads"],
                 kernel=parsed["kernel"],
+                models=parsed.get("models", ()),
             )
             expected_text = schema.schema_text()
         except ValidationError as e:

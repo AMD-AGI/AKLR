@@ -4,6 +4,9 @@
   "contract_id": "mla_decode_fwd@1.0",
   "description": "aiter's MLA decode, one query per request, over a pool of 576-value fp8 rows (aiter.mla.mla_decode_fwd): request b reads pool rows kv_indices[kv_indptr[b]:kv_indptr[b + 1]]; logits are q . row * q_scale * kv_scale * sm_scale over the 576 values, the rope part last, and values row[:512] * kv_scale. A request reading no row: o 0, lse -inf.",
   "op_type": "mla",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "batch": {
       "type": "var",

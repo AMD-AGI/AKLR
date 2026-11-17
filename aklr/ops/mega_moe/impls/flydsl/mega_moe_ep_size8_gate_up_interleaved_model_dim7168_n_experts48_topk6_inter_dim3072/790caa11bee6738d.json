@@ -4,6 +4,9 @@
   "contract_id": "mega_moe@1.0",
   "description": "Expert-parallel MoE in one call on every rank of the expert-parallel group: each token of this rank goes to its top-k experts, held across the group's ranks (rank r holds global experts r * n_experts to (r + 1) * n_experts - 1), and out is the routing-weighted sum of their outputs, back on this rank. An expert is down(silu(min(gate, limit)) * clamp(up, -limit, limit)) of its MXFP4 weights, each linear taking its input in MXFP8 (1 x 32 blocks, E8M0 scales). Every rank of the group calls the op once per step, in the same order.",
   "op_type": "mega_moe",
+  "models": [
+    "deepseek-v4-pro"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

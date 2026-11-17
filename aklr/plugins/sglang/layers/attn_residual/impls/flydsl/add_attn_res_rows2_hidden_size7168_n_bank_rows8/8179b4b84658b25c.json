@@ -4,6 +4,9 @@
   "contract_id": "add_attn_res@1.0",
   "description": "p = prefix + addend, rounded to their dtype before it is scored; prefix_out = p; rows = bank[:, :n_valid_rows] and the prefix p; each row r scores (r . score_weight) * rsqrt(mean(r**2) + score_eps); the softmax of the scores weights the rows into mix; normalized = mix * rsqrt(mean(mix**2) + norm_eps) * norm_weight, the means over the hidden axis. With write_bank, bank[:, n_valid_rows] = p. Bank rows from n_valid_rows on are unwritten memory in sglang: a kernel reads none of them.",
   "op_type": "attn_residual",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

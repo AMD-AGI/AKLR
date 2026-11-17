@@ -4,6 +4,10 @@
   "contract_id": "add_rms_norm@1.0",
   "description": "residual_out = x + residual; normalized = residual_out * rsqrt(mean(residual_out**2) + epsilon) * weight, the mean over the hidden axis.",
   "op_type": "rms_norm",
+  "models": [
+    "glm-5.2",
+    "glm-5.3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

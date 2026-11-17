@@ -4,6 +4,9 @@
   "contract_id": "qwen2_moe_fp8_router_experts@1.0",
   "description": "sglang's Qwen2MoeSparseMoeBlock._forward_router_experts on one rank of its TP group, the shared expert fused into the experts after the routed ones: the logits hidden_states router_weight^T, rounded to bf16, pick each token's topk experts by descending logit, a tie going to the lower expert id, weighed by the softmax of their logits (the softmax over every expert, renormalized over the chosen ones), and the shared expert by sigmoid(hidden_states shared_gate_weight^T); each expert is down(silu(gate(x)) * up(x)) of fp8 weights at a scale per 128 x 128 block, each of its two linears taking its input as the checkpoint's FP8 scheme quantizes it: in bf16, then each 1 x 128 group in fp8 at a scale of its amax / 448; out is this rank's share of the block's output, which the TP group sums after the call.",
   "op_type": "qwen2_moe",
+  "models": [
+    "qwen3-next"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

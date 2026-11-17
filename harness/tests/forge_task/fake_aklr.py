@@ -38,7 +38,7 @@ class _Contract:
     def point_from_json(self, raw, axes):
         return axes
 
-    def narrow(self, point, *, workloads, kernel):
+    def narrow(self, point, *, workloads, kernel, models=()):
         return _Narrowed(dict(self.raw, workloads=workloads, kernel=kernel))
 
 

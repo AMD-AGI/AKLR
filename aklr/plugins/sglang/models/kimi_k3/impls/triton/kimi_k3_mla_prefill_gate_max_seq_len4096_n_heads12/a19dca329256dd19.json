@@ -4,6 +4,9 @@
   "contract_id": "kimi_k3_mla_prefill_gate@1.0",
   "description": "sglang's forward_normal_core for a Kimi-K3 MLA layer's prefill without cached prefix, up to o_proj: each sequence of qo_indptr attends causally to itself, query i to keys 0..i, scores q . k * sm_scale over 192 values; the softmax-weighted values, rounded to bf16, times sigmoid(gate) rounded to bf16, the product rounded to bf16, heads flattened",
   "op_type": "kimi_k3",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

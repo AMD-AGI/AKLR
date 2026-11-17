@@ -192,6 +192,7 @@ class OpCase:
         return self.contract.narrow(
             self.point,
             workloads=[self.contract.workload_for(self.point, {})],
+            models=["test-model"],
             kernel={
                 "language": language,
                 "targets": [KERNEL_TARGET],

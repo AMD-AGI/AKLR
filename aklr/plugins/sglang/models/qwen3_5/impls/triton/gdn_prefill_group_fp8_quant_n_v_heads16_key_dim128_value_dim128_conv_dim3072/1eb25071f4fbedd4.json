@@ -4,6 +4,9 @@
   "contract_id": "gdn_prefill_group_fp8_quant@1.0",
   "description": "Qwen3.5 GDN prefill from contiguous Q/K/V/Z and B/A projections. Each sequence uses its distinct cache_indices slot; fresh sequences ignore the slot's old values. Causal width-four SiLU convolution updates conv_state, Q and K are L2-normalized and rounded to BF16, and the gated delta recurrence updates FP32 delta_state in [value,key] order. BF16 attention output is gated RMS-normalized, rounded to BF16 and quantized per value head to E4M3FN, with scale=max(amax,1e-10)/448. Only the indexed state slots change. cu_seqlens partitions all tokens into positive sequences with actual maximum max_seq_len. Unindexed state slots and all other inputs are preserved.",
   "op_type": "qwen3_5",
+  "models": [
+    "qwen3.5"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

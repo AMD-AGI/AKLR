@@ -69,8 +69,9 @@ p = PointSpec(
     layout_variant_name="<layout>")
 # 为每个 var 轴取值生成一个 workload（{}：标量取默认值）
 workloads = [c.workload_for(p.model_copy(update={"axes": {**p.axes, "<var 轴>": t}}), {}) for t in (<v1>, <v2>, ...)]
-# 收窄成 schema；sources=[] 表示 kernel-less；language/targets/entry_point 按 contract 和目标硬件填写
-s = c.narrow(p, workloads=workloads, kernel={"language": "<flydsl|triton|hip>", "targets": [{"arch": "<arch>", "hardware": "<hardware>"}],
+# 收窄成 schema；sources=[] 表示 kernel-less；language/targets/entry_point 按 contract 和目标硬件填写；
+# models 写明是哪些模型的服务会调用这个 schema（aklr/ops/README.md 的 Schema fields 一节）
+s = c.narrow(p, workloads=workloads, models=["<模型>"], kernel={"language": "<flydsl|triton|hip>", "targets": [{"arch": "<arch>", "hardware": "<hardware>"}],
                                             "entry_point": "<入口文件>::run", "requires": {}, "author": "", "sources": []})
 # 写入路径：这里的 uuid 只对应 kernel-less 版本，是临时的
 path = op_dir(c.op_package) / s.relative_path()
@@ -180,7 +181,7 @@ if len(sys.argv) > 1:                                                          #
     if not kernel["sources"]:
         sys.exit(f"{sys.argv[1]} 下没有 .py")
     kernel["author"] = "<你的名字>"                                            # 可选
-schema = contract.narrow(base, workloads=workloads, kernel=kernel)
+schema = contract.narrow(base, workloads=workloads, kernel=kernel, models=["glm-5.2"])
 path = op_dir(contract.op_package) / schema.relative_path()
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(schema.schema_text(), encoding="utf-8")
@@ -190,6 +191,7 @@ print(path)
 运行 `python ~/make_moe_schema.py`，会写出 `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json`（`<uuid0>` 只对应 kernel-less 版本，是临时的）。名字里只有 `shuffled_16x16`，因为它不是第一个声明的 layout；其余 attr/dtype 都是各自第一个声明的值，不进名字（`aklr/ops/README.md` 的 Names 一节）。除 `kernel.sources` 和测量字段外，文件内容与已提交的 `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json` 完全相同。新文件节选：
 
 ```json
+"models": ["glm-5.2"],
 "axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 6144, ...}, "n_experts": {..., "value": 257}, "topk": {..., "value": 9},
          "inter_dim": {..., "value": 256}, "gate_up_rows": {..., "value": 512}, "model_blocks": {..., "value": 192}, "inter_blocks": {..., "value": 8}},
 "attrs": {"activation": "silu", "quant_type": "per_1x32", "doweight_stage1": false, "gate_mode": "separated", "has_expert_mask": false, "act_quant": 4},

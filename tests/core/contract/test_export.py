@@ -61,17 +61,25 @@ class TestExport:
         seeded = export_dir / gemm_dir.name / "impls" / "flydsl" / "old" / "old.json"
         seeded.parent.mkdir(parents=True)
         seeded.write_text(json.dumps({"kernel": {"sources": sources}}))
-        results = export.export_schemas(None, records, export_dir, language="flydsl")
+        results = export.export_schemas(None, records, export_dir, language="flydsl", model="test-model")
         assert sorted(r.is_added for r in results) == [False, True]
         served, added = sorted(results, key=lambda r: r.is_added)
         assert served.relative_path == PurePosixPath(committed_path.relative_to(gemm_dir.parent))
+        assert (served.lacks_model, added.lacks_model) == (True, False)
         path = export_dir / added.relative_path
         assert sorted(export_dir.rglob("*.json")) == sorted([path] + ([seeded] if kept else []))
         schema = registry.parse_schema(path.read_bytes(), str(path))
         assert schema.point(schema.workloads[0].axes) == case.point
+        assert schema.models == ("test-model",)
         # parsing then writing restores a schema byte for byte
         text = committed_path.read_bytes()
         assert registry.parse_schema(text, "copy").schema_text().encode() == text
+
+    def test_model_must_be_a_schema_model_name(self, tmp_path: Path) -> None:
+        """A ``--model`` no schema could name is a usage error before any call is read."""
+        with pytest.raises(SystemExit) as exited:
+            export.main(["--language", "flydsl", "--model", "Kimi-K3"], export_dir=tmp_path)
+        assert exited.value.code == 2
 
     def test_a_point_outside_the_domain_is_skipped(self, tmp_path: Path) -> None:
         """An idle rank's call of no rows: no kernel can serve it, so it adds no schema."""
@@ -86,7 +94,10 @@ class TestExport:
             target=KERNEL_TARGET,
             n_calls=3,
         )
-        assert export.export_schemas(None, [record], tmp_path / "export", language="flydsl") == []
+        assert (
+            export.export_schemas(None, [record], tmp_path / "export", language="flydsl", model="test-model")
+            == []
+        )
 
     def test_a_point_of_other_keys_is_an_error(self, tmp_path: Path) -> None:
         """A call recorded under another form of the contract is not taken as outside the domain."""
@@ -101,7 +112,7 @@ class TestExport:
             n_calls=1,
         )
         with pytest.raises(ValueError, match="axes"):
-            export.export_schemas(None, [record], tmp_path / "export", language="flydsl")
+            export.export_schemas(None, [record], tmp_path / "export", language="flydsl", model="test-model")
 
     @pytest.mark.parametrize(
         ("language", "entry_point"),
@@ -119,7 +130,7 @@ class TestExport:
             target=KERNEL_TARGET,
             n_calls=1,
         )
-        (added,) = export.export_schemas(None, [record], tmp_path, language=language)
+        (added,) = export.export_schemas(None, [record], tmp_path, language=language, model="test-model")
         path = tmp_path / added.relative_path
         kernel = ContractRegistry.default().parse_schema(path.read_bytes(), str(path)).kernel
         assert (kernel.language, kernel.entry_point) == (language, entry_point)

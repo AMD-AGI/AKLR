@@ -4,6 +4,9 @@
   "contract_id": "paged_attention_decode@1.0",
   "description": "Decode attention over a paged KV cache: query head h of each request attends to KV head h // (n_heads / n_kv_heads) of the first context_lens tokens its block_tables row names, block_size tokens a block; with sliding_window > 0 only to the last sliding_window of them. Logits are q . k * scale.",
   "op_type": "attention",
+  "models": [
+    "muse-spark"
+  ],
   "axes": {
     "batch": {
       "type": "var",

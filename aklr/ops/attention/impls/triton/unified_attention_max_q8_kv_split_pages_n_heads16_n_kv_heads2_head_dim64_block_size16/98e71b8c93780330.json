@@ -4,6 +4,9 @@
   "contract_id": "unified_attention@1.0",
   "description": "Causal varlen attention of a batch of requests' new tokens over a paged KV cache, vLLM's multi-token decode: request i owns query rows cu_seqlens_q[i] to cu_seqlens_q[i + 1] and the first seqused_k[i] tokens its block_table row names, block_size tokens a block, its new tokens last. Query j of a request of L new tokens sits at position seqused_k - L + j and reads the tokens at or before it; with window_size[0] >= 0 only those at most window_size[0] before it (causal: window_size[1] is not read). Query head h reads KV head h // (n_heads / n_kv_heads); logits are q . k * softmax_scale.",
   "op_type": "attention",
+  "models": [
+    "muse-spark"
+  ],
   "axes": {
     "total_q": {
       "type": "var",
