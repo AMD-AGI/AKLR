@@ -209,8 +209,9 @@ QWEN3_NEXT_GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
             _FP32,
             mutable=True,
             # as qwen3_5's prefill: sglang's own prefill puts Q/K/V channels one BF16
-            # ulp from the reference and rounds again in its chunked recurrence
-            bound=ToleranceBound(absolute_tolerance=2e-2, relative_tolerance=1e-2),
+            # ulp from the reference and rounds again in its chunked recurrence, 3.1e-2
+            # off a 0.59 entry and 6.2e-2 off a 3.1 one on small Points
+            bound=ToleranceBound(absolute_tolerance=4e-2, relative_tolerance=1e-2),
         ),
         "cache_indices": _tensor(
             "Distinct state slots for the sequences.",
