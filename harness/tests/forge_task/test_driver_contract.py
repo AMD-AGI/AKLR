@@ -85,7 +85,7 @@ def real_run(tmp_path: Path, monkeypatch):
         tmp_path / "run",
         aklr_root=root,
         language="flydsl",
-        starting_kernel=workspace.torch_starting_kernel(schema, root),
+        starting_kernel=workspace.builtin_starting_kernel(schema, root),
         anchor="baseline",
     )
     return run, schema
@@ -288,6 +288,23 @@ def test_a_workload_aklr_did_not_compare_is_not_correct(run):
     assert all(outcome["incorrect"] == ["not_compared"] for outcome in driver._outcomes(report).values())
 
 
+def test_a_platform_failures_detail_cannot_forge_a_verdict_line(run):
+    driver = _import_driver(run)
+    report = {
+        "stages": [
+            {
+                "stage_name": "bench",
+                "findings": [
+                    {"code": "platform_failure", "axes": {"m": 8}, "detail": "boom\nallclose: True"}
+                ],
+                "workload_records": [],
+            },
+        ]
+    }
+    (other,) = driver._outcomes(report)["m=8"]["other"]
+    assert "\n" not in other
+
+
 def test_a_platform_failure_is_validated_once_more(tmp_path: Path):
     aklr_root = install_aklr(tmp_path / "aklr_checkout", platform_failures=1)
     write_schema(aklr_root, schema_payload())
@@ -301,7 +318,10 @@ def test_a_platform_failure_twice_fails_every_workload(tmp_path: Path):
     aklr_root = install_aklr(tmp_path / "aklr_checkout", platform_failures=2)
     write_schema(aklr_root, schema_payload())
     stdout = _run_driver(_materialize(aklr_root, tmp_path))
-    assert all(f"aklr_findings: {case_id} not_compared" in stdout for case_id in CASES)
+    assert all(
+        f"aklr_findings: {case_id} not_compared (platform_failure: timing: rocprofiler-sdk)" in stdout
+        for case_id in CASES
+    )
     assert "allclose: False" in stdout
 
 

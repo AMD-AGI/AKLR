@@ -32,7 +32,7 @@ SKILLS = {
     "gluon": (WIKI, WIKI / "triton"),
 }
 
-# A torch statement that computes a gemm-contract schema into its preallocated output, by the operand rank.
+# A torch statement that computes a plain gemm-contract schema into its preallocated output, by the operand rank.
 _TORCH_GEMMS = {
     2: "torch.matmul(a, b.t() if trans_b else b, out=out)",
     3: "torch.bmm(a, b.transpose(1, 2) if trans_b else b, out=out)",
@@ -101,24 +101,6 @@ class Run:
         return self.root / "forge_loop_resume.sh"
 
 
-def _api_params(schema: Schema, aklr_root: Path) -> list[str]:
-    """The keyword arguments AKLR calls the schema's entry with, as its contract states them."""
-    completed = subprocess.run(
-        [
-            sys.executable,
-            str(ASSETS / "aklr_api_params.py"),
-            str(aklr_root),
-            str(schema.path),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode:
-        raise StartingKernelError(f"AKLR could not read {schema.path}:\n{completed.stderr[-2000:]}")
-    return json.loads(completed.stdout)
-
-
 def read_starting_kernel(path: Path) -> dict[str, str]:
     """The starting kernel's files by name: a file is ``kernel.py``; a directory gives every ``*.py`` directly in it,
     ``kernel.py`` among them, which AKLR imports as the modules of one package."""
@@ -133,20 +115,51 @@ def read_starting_kernel(path: Path) -> dict[str, str]:
     return files
 
 
-def torch_starting_kernel(schema: Schema, aklr_root: Path) -> dict[str, str]:
-    """A torch implementation of a gemm-contract schema, written into its preallocated output: one file."""
-    if schema.op_type != "gemm":
+def builtin_starting_kernel(schema: Schema, aklr_root: Path) -> dict[str, str]:
+    """A schema's starting kernel, one file writing into the preallocated outputs: torch's product for a plain
+    gemm, and for any other contract, which torch cannot compute, its AKLR baseline."""
+    # The keyword arguments AKLR calls the entry with, its outputs, and the contract's baseline as [module, name].
+    completed = subprocess.run(
+        [sys.executable, str(ASSETS / "aklr_api_params.py"), str(aklr_root), str(schema.path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode:
+        raise StartingKernelError(f"AKLR could not read {schema.path}:\n{completed.stderr[-2000:]}")
+    entry = json.loads(completed.stdout)
+    params = entry["params"]
+    signature = f"def run(*, {', '.join(params)}):\n"
+    if schema.op_type == "gemm" and set(params) <= {"a", "b", "trans_b", "bias", "out_dtype", "out"}:
+        rank = len(schema.inputs["a"]["shape"])
+        return {
+            "kernel.py": (
+                f'"""Starting point for {schema.name}: torch writes the product into the preallocated output."""\n\n'
+                f"import torch\n\n\n{signature}    {_TORCH_GEMMS[rank]}\n"
+            )
+        }
+    if entry["baseline"] is None:
         raise StartingKernelError(
-            f"no built-in starting kernel for op {schema.op_type!r}; pass --starting-kernel"
+            f"{schema.name}: no built-in starting kernel, as {schema.op_type!r}'s contract has no AKLR baseline; "
+            "pass --starting-kernel"
         )
-    rank = len(schema.inputs["a"]["shape"])
-    params = _api_params(schema, aklr_root)
+    outputs = entry["outputs"]
+    if not outputs or not set(outputs) <= set(params):
+        raise StartingKernelError(
+            f"{schema.name}: the entry does not take every output {outputs} preallocated; pass --starting-kernel"
+        )
+    module, name = entry["baseline"]
+    call = ", ".join(f"{param}={param}" for param in params)
     return {
         "kernel.py": (
-            f'"""Starting point for {schema.name}: torch writes the product into the preallocated output."""\n\n'
-            "import torch\n\n\n"
-            f"def run(*, {', '.join(params)}):\n"
-            f"    {_TORCH_GEMMS[rank]}\n"
+            f'"""Starting point for {schema.name}: AKLR\'s baseline for its contract, its results in the preallocated '
+            'outputs."""\n\n'
+            f"from {module} import {name}\n\n\n{signature}"
+            f"    result = {name}({call})\n"
+            "    results = result if isinstance(result, (tuple, list)) else (result,)\n"
+            f"    for target, value in zip(({', '.join(outputs)},), results, strict=True):\n"
+            "        if value is not target:\n"
+            "            target.copy_(value)\n"
         )
     }
 

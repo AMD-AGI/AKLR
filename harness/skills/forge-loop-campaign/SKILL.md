@@ -58,6 +58,18 @@ echo $! > $RUN/forge_loop.pid
 - Look in every few minutes, no more: `tail $RUN/forge_loop.log`, the dashboard, and each round's own account in
   `$RUN/workspace/forge_experiments/lessons/iter_NNN.md`.
 
+## Called by an automation
+
+When a scheduled automation runs the campaign, not a session with a user:
+
+- Start no timer and no progress loop: the caller's schedule observes the run and reports.
+- When the caller has already given the campaign its card (a container or shell whose
+  `HIP_VISIBLE_DEVICES` selects it), pass KernelForge no `--gpu`, `--gpus` or `--gpu-pool`. They set
+  `HIP_VISIBLE_DEVICES` for every process KernelForge starts, replacing the caller's mask, so `--gpu 0`
+  puts every campaign of a node on its first card. Without them each step inherits the caller's card.
+- The caller may run the stress gate of step 6 in its own checkout instead of this workspace. It is
+  still required before publishing.
+
 ## Stopping and resuming
 
 - After the current round: `touch $RUN/workspace/.stop`. At once: `kill -- -$(cat $RUN/forge_loop.pid)`, which
