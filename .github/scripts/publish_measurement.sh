@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # publish_measurement.sh REPORT_DIR...: rebuild the bot branch aklr-perf/main on main from the
-# lanes' validation reports. Carries the bot branch's still-current measurements, then this
+# test jobs' validation reports. Carries the bot branch's still-current measurements, then this
 # run's; the newest measurement of a file wins. The commit body lists "<sha> <path>" per
 # published file (the next run's carry) and one Measured-SHA trailer per sha (lint's check).
 # %q escapes newlines, so an artifact name cannot inject workflow commands.

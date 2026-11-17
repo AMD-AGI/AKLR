@@ -438,9 +438,9 @@ A replayed graph pays none of the host cost; eager calls (an uncaptured many-tok
   the image and at `:1379` in the wheel and in the v3.8.0 tag *(field, E12)*: confirm compile-only findings on the
   image.
 - **The baseline's aiter.** Most `aklr/ops` baselines call aiter (the bf16 GEMM's is its tuned `gemm_a16w16`, S46). CI's
-  aiter lane installs ROCm/aiter at `aiter` in `stack.json` (dbd8bf5 at 43e112e and on main) over the image's own (`aiter_image`,
-  for now the sglang image); its sglang lane times sglang's plugins against the sglang image's own aiter (e7d2453f2, read from the image's build in
-  [measured_a_different_build.md](../pitfalls/measured_a_different_build.md)), and its vllm lane times vLLM's plugins against the vllm image's own aiter; the aiter lane checks that the installed `amd-aiter` version carries `+g` and the commit's first 7 characters (S36); `report.json` does not
+  aiter-test installs ROCm/aiter at `aiter` in `stack.json` (dbd8bf5 at 43e112e and on main) over the image's own (`aiter_image`,
+  for now the sglang image); its sglang-test times sglang's plugins against the sglang image's own aiter (e7d2453f2, read from the image's build in
+  [measured_a_different_build.md](../pitfalls/measured_a_different_build.md)), and its vllm-test times vLLM's plugins against the vllm image's own aiter; aiter-test checks that the installed `amd-aiter` version carries `+g` and the commit's first 7 characters (S36); `report.json` does not
   record aiter, so print `importlib.metadata.version("amd-aiter")` beside your results. A run on the image's aiter times
   another baseline. Install the pinned one as CI does (without the variable, aiter's setup swaps in its Triton, S36):
   `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<aiter in stack.json>"`.
