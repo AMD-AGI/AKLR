@@ -10,7 +10,7 @@ from aklr.plugins.vllm.models.muse_spark.contract import MUSE_SPARK_MOE
 
 __all__ = ["muse_spark_moe"]
 
-_VERSIONS = ("0.33.0rc1.dev910",)
+_VERSIONS = ("0.33.0rc1.dev910", "0.33.0")
 _NORM_EXPERTS_GROUP = "muse_spark.norm_experts"
 # set on the pooled rows whose pre-expert norm the experts apply: (weight, eps, gain_center)
 _DEFERRED_NORM = "_aklr_muse_deferred_norm"
