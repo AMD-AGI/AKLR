@@ -38,6 +38,7 @@ def _select_fused_moe(args, kwargs):
         intermediate_pad,
         bias1,
         bias2,
+        _splitk,
         swiglu_limit,
         beta,
         linear_beta,
@@ -59,8 +60,8 @@ def _select_fused_moe(args, kwargs):
     ) = args
     # block_size_M other than -1 pins aiter's tile; the stage-2 scatter (ep_*) writes the rows into the peers'
     # buffers, where AKLR returns them; deterministic asks for a fixed order of the top-k sums, which AKLR's
-    # is not. aiter's sorting policy only schedules its own sort, and the HERD routing factor only scales
-    # herd_topk's candidates.
+    # is not. aiter's sorting policy only schedules its own sort, the HERD routing factor only scales
+    # herd_topk's candidates, and splitk asks aiter for a split of K, which moves only the order of the sums.
     if (
         block_size_M != -1
         or hidden_pad
@@ -175,6 +176,7 @@ def _run_fused_moe(
     intermediate_pad,
     bias1,
     bias2,
+    splitk,
     swiglu_limit,
     beta,
     linear_beta,
