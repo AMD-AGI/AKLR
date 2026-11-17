@@ -435,8 +435,8 @@ def test_mla_paged_decode_hands_aklr_one_q_and_writes_aiters_o(monkeypatch, aklr
     monkeypatch.setattr(mla, "flash_mla_with_kvcache", api)
     call = _call("mla_paged_decode")
     _, run = _select("mla_paged_decode", call)
-    o, lse = run(*_args("mla_paged_decode", call))
-    assert o is call["o"] and lse is None and torch.equal(o, output[:, 0])
+    lse = run(*_args("mla_paged_decode", call))
+    assert lse.numel() == 0 and lse.dtype == torch.float32 and torch.equal(call["o"], output[:, 0])
     (q, kv_cache), kwargs = api.calls[0]
     assert q.shape == (2, 1, 4, 576) and q.data_ptr() == call["q_nope"].data_ptr()
     assert kv_cache.shape == (8, 1, 1, 576) and kv_cache.data_ptr() == call["kv_c"].data_ptr()
@@ -459,8 +459,8 @@ def test_mla_paged_decode_takes_several_causal_queries_over_a_flat_table(monkeyp
     monkeypatch.setattr(mla, "flash_mla_with_kvcache", api)
     call = _call("mla_paged_decode_mtp")
     _, run = _select("mla_paged_decode_mtp", call)
-    o, got_lse = run(*_args("mla_paged_decode_mtp", call))
-    assert o is call["o"] and got_lse is lse and bool((o == 5).all())
+    got_lse = run(*_args("mla_paged_decode_mtp", call))
+    assert got_lse is lse and bool((call["o"] == 5).all())
     (q, _), kwargs = api.calls[0]
     assert q.shape == (2, 3, 4, 576) and q.data_ptr() == call["q_nope"].data_ptr()
     assert kwargs["cu_seqlens_k"] is call["seq_info"] and kwargs["cache_seqlens"] is None

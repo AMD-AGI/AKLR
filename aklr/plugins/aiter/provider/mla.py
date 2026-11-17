@@ -247,9 +247,10 @@ def _run_mla_paged_decode(
         q_nope, q_pe, kv_c, page_table, seq_info, sm_scale, k_pe, kv_pe_offset, use_2d_view, kv_scale
     )
     output, lse = served(flash_mla_with_kvcache(*call_args, **call_kwargs))
-    # AKLR's api takes no output: aiter's caller reads its o
+    # AKLR's api takes no output: aiter's caller reads its o. aiter's op returns lse alone, an empty fp32
+    # tensor when return_lse is off (a custom op cannot return None for a tensor)
     o.copy_(output.view(o.shape))
-    return o, (lse if return_lse else None)
+    return lse if return_lse else torch.empty(0, dtype=torch.float32, device=o.device)
 
 
 def _context_lens(context_lens):
