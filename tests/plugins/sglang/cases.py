@@ -282,6 +282,47 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         )
         for n_routed in (8, 16)
     ),
+    # Kimi-K3.1's KDA chain verify shrunk: two heads (12 at TP8), chains of 3 tokens (5), a ring of 4
+    # rows (16); then the softplus gate on one head. No padding request is drawn: sglang's kernel
+    # leaves a padding request's output rows unwritten, which the GPU baseline test would compare.
+    *(
+        PointSpec(
+            contract_id="kda_chain_verify_ring@1.0",
+            axes={
+                "n_requests": n_requests,
+                "n_tokens": n_requests * n_verify_tokens,
+                "n_verify_tokens": n_verify_tokens,
+                "n_heads": n_heads,
+                "n_slots": n_slots,
+                "n_lines": n_lines,
+                "ring_len": ring_len,
+            },
+            dtypes={
+                "mixed_qkv": "bfloat16",
+                "conv_weight": "float32",
+                "conv_state": "bfloat16",
+                "cache_indices": "int32",
+                "conv_window": "bfloat16",
+                "window_indices": "int32",
+                "a": "bfloat16",
+                "b": "bfloat16",
+                "a_log": "float32",
+                "dt_bias": "float32",
+                "ssm_state": "float32",
+                "ring_v": "bfloat16",
+                "ring_k": "bfloat16",
+                "ring_g": "float32",
+                "ring_beta": "float32",
+                "output": "bfloat16",
+            },
+            attrs={"has_lower_bound": has_lower_bound},
+            layout_variant_name="row_major",
+        )
+        for n_requests, n_verify_tokens, n_heads, n_slots, n_lines, ring_len, has_lower_bound in (
+            (4, 3, 2, 8, 4, 4, True),
+            (3, 2, 1, 5, 3, 2, False),
+        )
+    ),
     PointSpec(
         contract_id="gdn_prefill_group_fp8_quant@1.0",
         axes={
@@ -811,5 +852,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "mla_kc_rope_cache@1.0",
         "mla_qkv_a_norm@1.0",
         "mla_vc@1.0",
+        "kda_chain_verify_ring@1.0",
     }
 )

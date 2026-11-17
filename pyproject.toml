@@ -37,7 +37,7 @@ include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
 "aklr.ops" = ["*/impls/*/*/*.json"]
-"aklr.plugins" = ["*/*/*/impls/*/*/*.json"]
+"aklr.plugins" = ["*/*/*/impls/*/*/*.json", "*/*/*/*.hip"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]
