@@ -25,7 +25,10 @@ Run `aklr export check`, a targeted `aklr validate --base <validation base> --st
 stress gate with a driver made in the validator: `python harness/scripts/forge_task prepare` from the
 validator clone into `<campaign>/validate`, the frozen `kernel.py` placed in that workspace, then its
 `driver.py --stress`. Never run the worker's driver. Read every target Point with
-`harness/skills/read-validation/SKILL.md`. Pull the reports to this host at once and record their
+`harness/skills/read-validation/SKILL.md`. A re-optimization's Points are judged against the incumbent
+(`graph/incumbent`), not the baseline: deliver it only when at least one Point's lower bound against the
+incumbent reaches 1.05, and list those Points in the PR body; the new file goes beside the incumbent,
+which keeps serving the other Points (dispatch serves the faster file at each Point). Pull the reports to this host at once and record their
 SHA-256 in the ledger; delivery uses only that copy. Any failure means no PR and no automatic repair.
 
 Before cleanup, while the GPU is still held, fetch main and run freshness from the validation base. If it

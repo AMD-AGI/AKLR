@@ -16,8 +16,11 @@ policy:
     - type: manual
       schemas: []  # Repository-relative paths to schema JSON files.
     - type: kernel-less  # Schemas with no kernel and a workload no sibling schema's kernel serves.
+    - type: roofline  # Schemas with a kernel, the most microseconds over the roofline first; needs published `microseconds`.
+      min_gap_us: 4  # A workload counts only when its published time is at least this far over the roofline's.
   batch_size: 10
   allowed_ops: [all]  # Op names, or all.
+  target_models: [all]  # Models one of which must call a schema (harness/automations/shepherd/models/), such as kimi-k3; or all.
   backends: [flydsl, triton]  # Schema languages forge_task can drive (flydsl, triton, gluon).
   max_parallel_campaigns: 8  # Campaigns at once, one per GPU of a pool node. On probation: 1.
   max_open_prs: 8

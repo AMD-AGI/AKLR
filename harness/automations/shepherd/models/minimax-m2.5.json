@@ -1,0 +1,72 @@
+{
+  "model": "minimax-m2.5",
+  "source": "the commits that added each workload (closed #194); calls not measured",
+  "calls": {
+    "minimax_m2_fp8_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim384": {
+      "n_tokens=1": 1,
+      "n_tokens=2": 1,
+      "n_tokens=4": 1,
+      "n_tokens=8": 1,
+      "n_tokens=16": 1,
+      "n_tokens=32": 1,
+      "n_tokens=64": 1,
+      "n_tokens=128": 1,
+      "n_tokens=256": 1,
+      "n_tokens=1024": 1,
+      "n_tokens=2048": 1,
+      "n_tokens=4096": 1,
+      "n_tokens=8192": 1,
+      "n_tokens=16384": 1
+    },
+    "minimax_m2_fp8_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts64_inter_dim1536": {
+      "n_tokens=1": 1,
+      "n_tokens=2": 1,
+      "n_tokens=4": 1,
+      "n_tokens=8": 1,
+      "n_tokens=16": 1,
+      "n_tokens=32": 1,
+      "n_tokens=64": 1,
+      "n_tokens=128": 1,
+      "n_tokens=256": 1,
+      "n_tokens=1024": 1,
+      "n_tokens=2048": 1,
+      "n_tokens=4096": 1,
+      "n_tokens=8192": 1,
+      "n_tokens=16384": 1
+    },
+    "minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim512": {
+      "n_tokens=1": 1,
+      "n_tokens=2": 1,
+      "n_tokens=4": 1,
+      "n_tokens=8": 1,
+      "n_tokens=16": 1,
+      "n_tokens=32": 1,
+      "n_tokens=64": 1,
+      "n_tokens=128": 1,
+      "n_tokens=256": 1,
+      "n_tokens=1024": 1,
+      "n_tokens=2048": 1,
+      "n_tokens=4096": 1,
+      "n_tokens=6144": 1,
+      "n_tokens=8192": 1,
+      "n_tokens=16384": 1
+    },
+    "minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts64_inter_dim1536": {
+      "n_tokens=1": 1,
+      "n_tokens=2": 1,
+      "n_tokens=4": 1,
+      "n_tokens=8": 1,
+      "n_tokens=16": 1,
+      "n_tokens=32": 1,
+      "n_tokens=64": 1,
+      "n_tokens=128": 1,
+      "n_tokens=256": 1,
+      "n_tokens=1024": 1,
+      "n_tokens=2048": 1,
+      "n_tokens=4096": 1,
+      "n_tokens=6144": 1,
+      "n_tokens=8192": 1,
+      "n_tokens=16384": 1
+    }
+  }
+}

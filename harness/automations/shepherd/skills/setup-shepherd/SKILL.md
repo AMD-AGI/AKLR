@@ -53,7 +53,7 @@ Ask for or confirm, in one pass:
 - Mode: `run`, `observe` or `drain`.
 - State directory, cluster, image digest and runtime revision. Offer found values: the image is `AKLR_CI_IMAGE` in `.github/workflows/ci.yaml`, resolved to its digest. The runtime is the Hyperloom `AKLR` branch commit (KernelForge) plus the flydsl version `harness/scripts/forge_task/README.md` pins.
 - `execution.round_hours`: the round's lease, no longer than the automation's measured run limit (step 4).
-- Strategies (`manual` paths, `kernel-less`), `batch_size`, `allowed_ops`, `backends`, `max_parallel_campaigns`, `max_open_prs`, `execution.pool_hours`, `cooldown_hours`.
+- Strategies (`manual` paths, `kernel-less`, `roofline` and its `min_gap_us`), `batch_size`, `allowed_ops`, `target_models`, `backends`, `max_parallel_campaigns`, `max_open_prs`, `execution.pool_hours`, `cooldown_hours`.
 - Campaign model, reasoning effort, loop hours, node hours, model USD, `max_auto_resumes`, and `model_usd_per_hour`: the highest hourly spend of the model with KernelForge, from provider billing.
 - Cumulative budget, its recorded authorization, and the provider's hard limit: the spend cap on the API key or gateway the campaign calls (`claude auth status`, `ANTHROPIC_BASE_URL`). If none exists, the owner must set one.
 - Publication: draft PRs, PR comments, `ci:gpu` label, branch prefix, and the issue that is told when a round needs the owner (`attention_issue`; its subscribers are notified by GitHub).

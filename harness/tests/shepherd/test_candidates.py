@@ -163,3 +163,106 @@ def test_a_manual_schema_is_kept_wherever_its_strategy_stands(tmp_path):
     assert [(c["path"], c["strategy"]) for c in listed(tmp_path, "HEAD", [])["candidates"]] == [
         (path, "manual")
     ]
+
+
+def test_roofline_takes_kernels_by_time_over_the_roofline_times_the_target_models_calls(tmp_path):
+    """A bf16 GEMM of n=128, k=512 has its roofline at the timer's floor, 4.1 µs. A workload's gap is its
+    published time, or the baseline's where faster, over that, counted when at least min_gap_us and once per
+    call of the target models; the most first, after the kernel-less candidates."""
+
+    def gemm(*workloads, kernel=True, contract="gemm@1.0"):
+        tensor = {"dtype": "bfloat16"}
+        return {
+            "contract_id": contract,
+            "axes": {
+                "m": {"type": "var"},
+                "n": {"type": "const", "value": 128},
+                "k": {"type": "const", "value": 512},
+            },
+            "attrs": {},
+            "inputs": {"a": {**tensor, "shape": ["m", "k"]}, "b": {**tensor, "shape": ["n", "k"]}},
+            "outputs": {"out": {**tensor, "shape": ["m", "n"]}},
+            "layout_variants": {"by_name": {"row_major": {}}},
+            "kernel": {"sources": ["k.py"] if kernel else []},
+            "workloads": [
+                {"axes": {"m": m}, "accuracy": "passed", "speedup": speedup, "microseconds": us}
+                for m, us, speedup in workloads
+            ],
+        }
+
+    schemas = {
+        "often": gemm((1, 7.1, 2.0)),  # 3 µs over, 61 calls
+        "far": gemm(
+            (1, 54.1, 2.0), (2, 5.1, 2.0)
+        ),  # 50 µs over, 2 calls of each model; 1 µs over: not counted
+        "slow": gemm((1, 20.2, 0.5)),  # the baseline serves it in 10.1 µs: 6 µs over
+        "near": gemm((1, 5.1, 2.0)),  # 1 µs over
+        "unpublished": gemm((1, None, 2.0)),
+        "attention": gemm((1, 54.1, 2.0), contract="unified_attention@1.0"),
+        "uncalled": gemm((1, 54.1, 2.0)),
+        "empty": gemm((4, None, 2.0), kernel=False),
+    }
+    for name, schema in schemas.items():
+        path = tmp_path / f"aklr/ops/gemm/impls/flydsl/{name}/a.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(schema))
+    tables = {
+        "kimi-k3": {
+            "often": {"m=1": 61},
+            "far": {"m=1": 2, "m=2": 2},
+            "slow": {"m=1": 1},
+            "empty": {"m=4": 1},
+        }
+        | dict.fromkeys(("near", "unpublished", "attention"), {"m=1": 1}),
+        "glm-5.2": {"far": {"m=1": 2}},
+    }
+    (tmp_path / "harness/automations/shepherd/models").mkdir(parents=True)
+    for model, calls in tables.items():
+        (tmp_path / f"harness/automations/shepherd/models/{model}.json").write_text(
+            json.dumps({"model": model, "calls": calls})
+        )
+    git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "aklr", "harness"], check=True)
+    subprocess.run([*git, "commit", "-qm", "schemas"], check=True)
+
+    def found(target_models):
+        (tmp_path / "config.yaml").write_text(
+            "policy:\n  strategies:\n    - type: roofline\n      min_gap_us: 2\n    - type: kernel-less\n"
+            f"  allowed_ops: [all]\n  backends: [flydsl]\n  target_models: {target_models}\n"
+        )
+        result = listed(tmp_path, "HEAD", [])
+        return (
+            [(c["path"].split("/")[5], c["strategy"], c.get("gap_us")) for c in result["candidates"]],
+            {s["path"].split("/")[5]: s["reason"] for s in result["skipped"]},
+        )
+
+    candidates, skipped = found("[all]")
+    assert candidates == [
+        ("empty", "kernel-less", None),
+        ("far", "roofline", 200.0),
+        ("often", "roofline", 183.0),
+        ("slow", "roofline", 6.0),
+    ]
+    assert skipped == {
+        "near": "roofline: no workload a target model calls is min_gap_us over",
+        "unpublished": "roofline: no published time",
+        "attention": "roofline: no cost formula for unified_attention",
+        "uncalled": "roofline: no workload a target model calls is min_gap_us over",
+    }
+    candidates, skipped = found("[kimi-k3]")
+    assert candidates[:3] == [
+        ("empty", "kernel-less", None),
+        ("often", "roofline", 183.0),
+        ("far", "roofline", 100.0),
+    ]
+    assert skipped["uncalled"] == "no model in policy.target_models calls it"
+    assert found("[glm-5.2]")[0] == [("far", "roofline", 100.0)]
+    (tmp_path / "config.yaml").write_text(
+        "policy:\n  strategies:\n    - type: roofline\n  allowed_ops: [all]\n  backends: [flydsl]\n"
+    )
+    command = [sys.executable, "-I", str(SCRIPT), "list", "--config", "config.yaml", "--commit", "HEAD"]
+    failed = subprocess.run(
+        [*command, "--ledger", "ledger.json"], cwd=tmp_path, capture_output=True, text=True
+    )
+    assert failed.returncode == 2 and "min_gap_us is a positive number, not None" in failed.stderr

@@ -114,7 +114,8 @@ authorization or a cap erases no commitment. Each round may set the top-level `w
 
 Each campaign records:
 
-- Identity: `id` (unique, required), repository, schema path, SHA-256 of the input, regime (M range and workloads, or none),
+- Identity: `id` (unique, required), repository, schema path, SHA-256 of the input, strategy (and a roofline
+  candidate's `gap_us`), regime (M range and workloads, or none),
   base SHA, the `contract_key` its candidate was listed with, config snapshot, creation time.
 - Bounds: `bounds`, fixed at admission (`model`, `model_usd`, absolute `deadline`); the automatic resume
   count; and once cleanup is confirmed `settled_model_usd` with the observations it came from, outside

@@ -3,8 +3,12 @@
 Run at the repository root.
 
 `candidate.py list --config .shepherd/configuration.yaml --commit <main SHA> --ledger <file>` prints the
-candidates at that commit, by strategy order with the configuration's filters, as {path, op, backend,
-input_sha256, strategy, contract_key} sorted by path, then the skipped ones with their reason. The ledger
+candidates at that commit, by the configuration's strategies and filters, as {path, op, backend,
+input_sha256, strategy, contract_key} sorted by path, then the `roofline` ones (each with its `gap_us`), the
+most `gap_us` first, then the skipped ones with their reason. `kernel-less` takes the schemas without a
+kernel; `roofline` the ones with a kernel: `gap_us` is the microseconds their workloads' published times, or
+the baseline's where faster, are over the roofline's (roofline.py), each times the target models' calls of
+that workload (model_calls.py), summed over the workloads at least `min_gap_us` over per call. The ledger
 (a file holding `state.py show`'s output) skips what a campaign still works on, delivered, cools down or
 found blocked; when that campaign had a regime, only that regime is closed, listed in the candidate's
 `skip_regimes`. Competing PRs, the AKLR-baseline check and the GEMM regime split stay with the round.
@@ -18,11 +22,16 @@ changes, or the base is no longer an ancestor of main); 2: error, treat as unkno
 import argparse
 import hashlib
 import json
+import math
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I imports no sibling module otherwise
+from model_calls import ModelCalls  # noqa: E402
+from roofline import Cost, Roofline  # noqa: E402
 
 OPS = PurePosixPath("aklr/ops")
 
@@ -64,25 +73,38 @@ class Candidate:
         """The policy's candidates at the commit and the skipped ones, each with its strategy."""
         policy = config["policy"]
         allowed, backends = policy["allowed_ops"], policy["backends"]
+        target_models = set(policy.get("target_models") or ["all"])
+        model_calls, roofline = ModelCalls.load(commit), Roofline()
         # What lifts a blocked contract when it changes: the op's code (see `contract_key` below), this
         # checkout's forge_task and the runtime.
         forge_task = git("rev-parse", "HEAD:harness/scripts/forge_task", check=False).stdout.decode().strip()
         runtime = (config.get("execution") or {}).get("runtime_revision")
         now, op_trees = datetime.now(timezone.utc), {}
         listed = {}  # path -> strategy; manual wins wherever it stands, as it names the schema.
+        scanning = {}  # type -> strategy, of those that take what they find under aklr/ops
         for strategy in policy["strategies"]:
             if strategy["type"] == "manual":
                 listed.update(dict.fromkeys(strategy.get("schemas") or [], "manual"))
-            elif strategy["type"] == "kernel-less":
-                tree = git("ls-tree", "-r", "--name-only", commit, "--", str(OPS)).stdout.decode()
-                for path in tree.splitlines():
-                    try:
-                        cls.of(path)
-                    except ValueError:
-                        continue
-                    listed.setdefault(path, "kernel-less")
+            elif strategy["type"] in ("kernel-less", "roofline"):
+                min_gap_us = strategy.get("min_gap_us")
+                if strategy["type"] == "roofline" and not (
+                    isinstance(min_gap_us, int | float) and min_gap_us > 0
+                ):
+                    raise ValueError(
+                        f"a roofline strategy's min_gap_us is a positive number, not {min_gap_us!r}"
+                    )
+                scanning[strategy["type"]] = strategy
             else:
                 raise ValueError(f"unknown strategy {strategy['type']!r}")
+        if scanning:
+            tree = git("ls-tree", "-r", "--name-only", commit, "--", str(OPS)).stdout.decode()
+            for path in tree.splitlines():
+                try:
+                    cls.of(path)
+                except ValueError:
+                    continue
+                # Until its file is read: a file with a kernel is roofline's, one without kernel-less's.
+                listed.setdefault(path, next(iter(scanning)))
         paths = sorted(listed)
         # Contents of each path at the commit, None when it is missing there.
         batch = git("cat-file", "--batch", stdin="".join(f"{commit}:{p}\n" for p in paths).encode()).stdout
@@ -119,20 +141,23 @@ class Candidate:
                 skipped.append({**entry, "reason": str(exc)})
                 continue
             try:
-                kernel = json.loads(blob).get("kernel") or {}
+                schema = json.loads(blob)
+                kernel = schema.get("kernel") or {}
                 backend = kernel.get("language") or candidate.path.parts[-3]
             except (ValueError, AttributeError):
                 # One unreadable file on main must not hide every other candidate.
                 skipped.append({**entry, "reason": "not a schema: a JSON object whose kernel is an object"})
                 continue
+            if strategy != "manual":
+                strategy = entry["strategy"] = "roofline" if kernel.get("sources") else "kernel-less"
+                if strategy not in scanning:
+                    continue  # No strategy takes it: nothing to report.
             entry.update(op=candidate.op, backend=backend, input_sha256=hashlib.sha256(blob).hexdigest())
             if strategy == "kernel-less":
-                workloads = {cls.workload_key(w) for w in json.loads(blob).get("workloads") or []}
-                # Has a kernel, or every workload is served by a kernel of a sibling schema: not
-                # kernel-less, nothing to report. One unserved workload keeps the whole schema.
-                if kernel.get("sources") or (
-                    workloads and workloads <= served.get(candidate.path.parent, set())
-                ):
+                workloads = {cls.workload_key(w) for w in schema.get("workloads") or []}
+                # Every workload is served by a kernel of a sibling schema: not kernel-less, nothing to
+                # report. One unserved workload keeps the whole schema.
+                if workloads and workloads <= served.get(candidate.path.parent, set()):
                     continue
             if "all" not in allowed and candidate.op not in allowed:
                 skipped.append({**entry, "reason": "op not in policy.allowed_ops"})
@@ -140,6 +165,37 @@ class Candidate:
             if backend not in backends:
                 skipped.append({**entry, "reason": "language not in policy.backends"})
                 continue
+            targets = model_calls.callers(candidate.name)
+            if "all" not in target_models:
+                targets = [model for model in targets if model in target_models]
+                if not targets:
+                    skipped.append({**entry, "reason": "no model in policy.target_models calls it"})
+                    continue
+            if strategy == "roofline":
+                try:
+                    gaps = [
+                        (
+                            w["microseconds"] * min(1.0, w["speedup"])
+                            - roofline.seconds(Cost.of(schema, w["axes"])) * 1e6,
+                            model_calls.calls(targets, candidate.name, w["axes"]),
+                        )
+                        for w in schema.get("workloads") or []
+                        if w.get("accuracy") == "passed" and w.get("microseconds") is not None
+                    ]
+                except (ValueError, KeyError, TypeError) as exc:
+                    skipped.append({**entry, "reason": f"roofline: {exc}"})
+                    continue
+                # A few microseconds over a short call are not worth a campaign, whatever their ratio.
+                counted = [
+                    gap * calls for gap, calls in gaps if gap >= scanning["roofline"]["min_gap_us"] and calls
+                ]
+                if not counted:
+                    reason = (
+                        "no workload a target model calls is min_gap_us over" if gaps else "no published time"
+                    )
+                    skipped.append({**entry, "reason": f"roofline: {reason}"})
+                    continue
+                entry["gap_us"] = round(sum(counted), 1)
             op_dir = candidate.op_dir
             if op_dir not in op_trees:
                 # The op directory without `impls/`, whose measurement updates are expected.
@@ -193,7 +249,7 @@ class Candidate:
                 skipped.append({**entry, "reason": reason})
             else:
                 candidates.append({**entry, **({"skip_regimes": regimes} if regimes else {})})
-        candidates.sort(key=lambda entry: entry["path"])
+        candidates.sort(key=lambda entry: (-entry.get("gap_us", math.inf), entry["path"]))
         return {"commit": commit, "candidates": candidates, "skipped": skipped}
 
     def is_relevant(self, path, gitlink):

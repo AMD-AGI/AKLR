@@ -1,12 +1,27 @@
 # shepherd
 
 shepherd gives you one automation that optimizes AKLR kernels unattended. Each round observes GitHub
-and the GPU jobs, advances each KernelForge campaign as far as confirmed results allow, admits new
-kernel-less schemas into free GPUs, validates the kernel, opens a draft PR and follows it until a maintainer
+and the GPU jobs, advances each KernelForge campaign as far as confirmed results allow, admits the schemas
+its strategies pick (kernel-less ones, then the kernels with the most time over the roofline) into free GPUs, validates the kernel, opens a draft PR and follows it until a maintainer
 merges or closes it.
 
 The files in this directory are dormant setup and automation sources. They do not appear as slash skills.
 The round reuses the optimization, GPU, validation, PR and reporting skills in `harness/skills/`.
+
+## Model call tables
+
+`models/<model>.json` says which Points a model's serving calls and how often: `calls` maps a schema's `name`
+to its workloads' axes (`m=1,n=32`, as the schema writes them) and each to the number of calls in the forward
+pass that reaches it. `policy.target_models` keeps only the schemas a target model calls, and the `roofline`
+strategy weighs each workload's time over the roofline by these calls. A `1` is a seed, not a measurement
+(`source` says where a table came from). A PR that adds a schema or a Point adds it to the table of each
+model whose serving calls it; `harness/tests/shepherd/test_model_calls.py` checks that every committed schema
+is in some table.
+
+The roofline a workload is measured against is the shepherd's own
+(`skills/optimize-and-deliver-kernels/scripts/roofline.py`): the least time one call's matrix math and bytes
+take on MI355X, from the schema file alone. It has formulas for the GEMM contracts and `fused_moe`, and
+counts bytes alone for the memory-bound ones; a schema of any other contract is skipped by `roofline`.
 
 ## Set it up
 

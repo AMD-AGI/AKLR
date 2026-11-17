@@ -1,6 +1,6 @@
 ---
 name: optimize-and-deliver-kernels
-description: Optimize kernel-less AKLR schemas with KernelForge and deliver them as draft PRs, one round per run (observe, chain actions until one must wait, record state). Use only from the configured shepherd automation or a manual round.
+description: Optimize the AKLR schemas the configured strategies pick (kernel-less ones, then the kernels with the most time over the roofline) with KernelForge and deliver them as draft PRs, one round per run (observe, chain actions until one must wait, record state). Use only from the configured shepherd automation or a manual round.
 disable-model-invocation: true
 ---
 
@@ -153,16 +153,21 @@ Admit only in `run`, one campaign at a time, while all of these hold:
      --config .shepherd/configuration.yaml --commit <main SHA> --ledger <show output>
    ```
 
-   It applies the strategies, `allowed_ops` and `backends`, and skips from the ledger what a campaign
-   still works on, already delivered, cools down or found blocked. It lists the skipped paths with
-   their reason. Never edit its list by hand.
-2. Split a GEMM schema whose workloads span small and large M into one candidate per regime, at the
-   crossover from `harness/skills/forge-loop-campaign/SKILL.md`'s analysis. A candidate is its path,
-   input hash and regime (the M range and its workloads). Drop the regimes its `skip_regimes` names.
-   Deduplicate and sort by path then regime.
+   It applies the strategies, `allowed_ops`, `target_models` and `backends`, and skips from the ledger
+   what a campaign still works on, already delivered, cools down or found blocked. `kernel-less` takes the
+   schemas without a kernel; `roofline` the ones with a kernel, each with its `gap_us`: the microseconds
+   its workloads' published times are over the roofline's, each times the target models' calls of that
+   workload ([model call tables](../../README.md#model-call-tables)), summed over the workloads at least
+   `min_gap_us` over. It lists the roofline candidates last, the most `gap_us` first, and the skipped
+   paths with their reason. Never edit or reorder its list by hand.
+2. Split a GEMM schema whose workloads span small and large M into one candidate per regime, in its
+   place, at the crossover from `harness/skills/forge-loop-campaign/SKILL.md`'s analysis. A candidate is
+   its path, input hash, strategy and regime (the M range and its workloads). Drop the regimes its
+   `skip_regimes` names. Deduplicate, keeping the script's order.
 3. Skip what the script cannot see, recording the reason and strategy:
    - a competing PR;
-   - a contract with no AKLR baseline that is not a plain GEMM (forge_task has no starting kernel for it);
+   - a kernel-less candidate whose contract has no AKLR baseline and is not a plain GEMM (forge_task has
+     no starting kernel for it);
    - a missing environment;
    - a non-GEMM schema spanning both small and large M (the owner splits it).
 
@@ -177,7 +182,10 @@ Admit only in `run`, one campaign at a time, while all of these hold:
    outlives the deadline) stays within the cumulative caps, and the scheduler and model hard limits
    cover the whole campaign.
 6. For a regime candidate, write its schema file holding only its workloads outside the clone, as
-   forge-loop-campaign does.
+   forge-loop-campaign does. A roofline candidate is a re-optimization of the kernel main serves (the
+   incumbent): write its schema file outside the clone with `kernel.sources` emptied, keeping the
+   `<op>/impls/<language>/<name>/<uuid>.json` layout forge_task reads the op from, and the incumbent's
+   sources as files in a directory of their own.
 7. Save phase `admitted`, `bounds.model_usd`, `bounds.deadline`, `pool`, `gpu` and the candidate's
    `contract_key` in one save. The pool is already started: it was saved with `bounds.node_hours` and
    its allocation intent before allocating, and with its `end` once it started.
