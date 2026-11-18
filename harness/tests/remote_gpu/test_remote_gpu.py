@@ -4,6 +4,8 @@ The fake `ssh` runs its command here, so the paths "on the cluster" are local pa
 has a holder that starts bg tasks; n1 has none, so a task never starts there.
 """
 
+import base64
+import json
 import os
 import re
 import shutil
@@ -663,7 +665,7 @@ def test_git_seed_rejects_options_and_non_network_transports(env, tmp_path, orig
 
 
 def test_all_embedded_remote_scripts_parse():
-    for path in (RG, RG.parents[1] / "templates/slurm.sh"):
+    for path in (RG, RG.parents[1] / "templates/slurm.sh", RG.parents[1] / "templates/safe.sh"):
         text = path.read_text()
         for match in re.finditer(r"read -r -d '' (\w+) <<'([^']+)'\n(.*?)\n\2\n", text, re.S):
             result = subprocess.run(["bash", "-n"], input=match[3], capture_output=True, text=True)
@@ -868,3 +870,118 @@ def test_bg_refused_for_its_arguments_leaves_the_name_free(env):
         assert result.returncode == 0, result.stderr
     finally:
         stop_holder(holder)
+
+
+SAFE_ENV = """\
+DESCRIPTION='fake safe'
+HOST=fakehost
+LOGIN_HOSTS=''
+LOGIN_PROFILE=0
+PRIORITY=1
+WORK_ROOT=$HOME/work
+HOME_FULL=0
+DOCKER_FLAGS=''
+ACCOUNTS=''
+BURST_QOS=''
+ALLOC_AGGRESSIVE=0
+PARTITION=team-ws
+EXTEND=0
+MAX_TIME=24:00:00
+GPUS_PER_NODE=0
+GPU_ARCH=gfx950
+SAFE_URL=https://safe.invalid
+SAFE_KIND=PyTorchJob
+SAFE_IMAGE=registry.invalid/rocm:1
+SAFE_RESOURCES='{"cpu":"96","memory":"512Gi"}'
+"""
+
+# A SaFE API of one workload: its phase is the file $HOME/safe/phase, DELETE makes it a 404.
+FAKE_SAFE_CURL = r"""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+
+args, root = sys.argv[1:], Path(os.environ["HOME"]) / "safe"
+root.mkdir(exist_ok=True)
+method = args[args.index("-X") + 1]
+url = next(a for a in args if a.startswith("https://safe.invalid/api/v1"))
+path = url.removeprefix("https://safe.invalid/api/v1")
+with open(root / "calls", "a") as log:
+    log.write(" ".join(args) + "\n")
+code, reply = 200, {}
+if method == "POST":
+    (root / "post.json").write_text(args[args.index("--data-binary") + 1])
+    reply = {"workloadId": "rg-abc12"}
+elif path.startswith("/nodes"):
+    free = {"phase": "Ready", "available": True, "availResources": {"amd.com/gpu": 8}}
+    reply = {"items": [free, dict(free, available=False)]}
+elif (root / "deleted").exists():
+    code, reply = 404, {"errorCode": "Primus.00004"}
+elif method == "DELETE":
+    (root / "deleted").touch()
+else:
+    phase = (root / "phase").read_text().strip() if (root / "phase").exists() else "Pending"
+    pods = [{"phase": "Running", "adminNodeName": "n0"}] if phase == "Running" else []
+    reply = {"phase": phase, "pods": pods, "timeout": 14400, "secondsUntilTimeout": 14000,
+             "startTime": "2026-01-01T00:00:00", "workspaceId": "team-ws", "message": "in | queue"}
+print(json.dumps(reply))
+print(code, end="")
+"""
+
+
+def test_safe_adapter_allocates_a_workload_runs_in_its_pod_and_deletes_it(env):
+    home = Path(env["HOME"])
+    cluster = home / ".remote-gpu/clusters/fake"
+    (cluster / "cluster.env").write_text(SAFE_ENV)
+    shutil.copy(RG.parents[1] / "templates/safe.sh", cluster / "cluster.sh")
+    (home / ".remote-gpu/fake.key").write_text("ak-test\n")
+    curl = Path(env["PATH"].split(":")[0]) / "curl"
+    curl.write_text(FAKE_SAFE_CURL)
+    curl.chmod(0o755)
+
+    assert "free=1 " in rg(env, "free").stdout
+
+    result = rg(env, "alloc", "--no-wait", "-t", "2:00:00", "-x", "bad-node")
+    assert result.returncode == 0, result.stderr
+    job = re.search(r"job=(fake:\d+) state=PENDING", result.stdout)[1]
+    post = json.loads((home / "safe/post.json").read_text())
+    assert post["groupVersionKind"]["kind"] == "PyTorchJob"
+    assert (post["workspaceId"], post["images"], post["timeout"]) == ("team-ws", ["registry.invalid/rocm:1"], 7200)
+    assert post["resources"] == [{"cpu": "96", "memory": "512Gi", "replica": 1, "gpu": "0"}]
+    assert post["excludedNodes"] == ["bad-node"]
+    assert "ak-test" not in (home / "safe/calls").read_text()
+
+    # The pod: SaFE runs the entry point, which is the shared holder.
+    pod = subprocess.Popen(
+        ["bash", "-c", base64.b64decode(post["entryPoints"][0]).decode()], env=env, start_new_session=True
+    )
+    try:
+        (home / "safe/phase").write_text("Running")
+        result = rg(env, "ready", "-j", job, "--wait", "60")
+        assert result.returncode == 0, result.stderr
+        assert "nodes=n0 " in result.stdout
+        assert job.split(":")[1] in rg(env, "ls").stdout
+
+        result = rg(env, "exec", "-j", job, "--", "bash", "-c", 'echo "out $1"; echo err >&2; exit 7', "_", "a b")
+        assert (result.returncode, result.stdout) == (7, "out a b\n"), result.stderr
+        assert "err" in result.stderr
+
+        # A killed caller stops its command in the pod, which no signal from the login node reaches.
+        caller = subprocess.Popen([str(RG), "exec", "-j", job, "--", "sleep", "4321"], env=env)
+        in_pod = ["pgrep", "-fx", "sleep 4321"]
+        deadline = time.time() + 20
+        while subprocess.run(in_pod, capture_output=True).returncode and time.time() < deadline:
+            time.sleep(0.5)
+        caller.terminate()
+        caller.wait(timeout=10)
+        deadline = time.time() + 20
+        while subprocess.run(in_pod, capture_output=True).returncode == 0 and time.time() < deadline:
+            time.sleep(0.5)
+        assert subprocess.run(in_pod, capture_output=True).returncode == 1
+
+        result = rg(env, "release", "-j", job)
+        assert "OK released" in result.stdout, result.stderr
+        assert (home / "safe/deleted").exists()
+        assert pod.wait(timeout=30) == 0   # the entry point ends, so the workload does
+    finally:
+        stop_holder(pod)
+    assert rg(env, "exec", "-j", job, "--", "true").returncode == 203

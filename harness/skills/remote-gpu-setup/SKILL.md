@@ -1,6 +1,6 @@
 ---
 name: remote-gpu-setup
-description: Add, re-probe, update or remove the clusters remote-gpu allocates on (~/.remote-gpu/clusters/), and verify them. Use for /remote-gpu-setup, when remote-gpu has no cluster or none that fits the task, or when the user asks to add, check or remove a cluster.
+description: Add, re-probe, update or remove the clusters remote-gpu allocates on (~/.remote-gpu/clusters/), Slurm-family clusters and Primus-SaFE workspaces, and verify them. Use for /remote-gpu-setup, when remote-gpu has no cluster or none that fits the task, or when the user asks to add, check or remove a cluster.
 argument-hint: "[add|update|remove] [NAME]"
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/../remote-gpu/scripts/remote-gpu *) Bash(${CLAUDE_SKILL_DIR}/../remote-gpu/scripts/probe-cluster *)
 ---
@@ -35,7 +35,8 @@ One AskUserQuestion: add, update one (stale first), remove one, or done.
 
 ## 3. Act
 
-- **add**: `add-cluster.md` steps 1–4. A name already listed is an `update`.
+- **add**: `add-cluster.md` steps 1–4. A name already listed is an `update`. For a Primus-SaFE
+  workspace, read its last section first: it changes each step.
 - **update**: copy the directory to `~/.remote-gpu/clusters/.<name>.bak/`, run `probe-cluster` on
   its `HOST`, and show each key the probe disagrees with as `KEY: old -> new`. Ask which to take;
   keep the user's own choices (`PARTITION`, `ACCOUNTS`, `BURST_QOS`, `PRIORITY`, `DOCKER_FLAGS`)

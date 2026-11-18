@@ -1,6 +1,6 @@
 ---
 name: remote-gpu
-description: "Allocate whole remote GPU nodes on the Slurm-family clusters under ~/.remote-gpu/clusters/ and use them through one `remote-gpu` CLI: get nodes, run commands or docker images, start long background jobs, sync files, release. Use whenever a task needs a real GPU / ROCm machine that isn't local: run/benchmark/profile/test a kernel or model on MI355X/gfx950 or another AMD GPU, multi-node torchrun, \"get a node\", Slurm, spur, salloc/sbatch/srun, aggressive allocation, or a temporary/preemptible machine."
+description: "Allocate whole remote GPU nodes on the clusters under ~/.remote-gpu/clusters/ (Slurm, spur, Primus-SaFE workspaces) and use them through one `remote-gpu` CLI: get nodes, run commands or docker images, start long background jobs, sync files, release. Use whenever a task needs a real GPU / ROCm machine that isn't local: run/benchmark/profile/test a kernel or model on MI355X/gfx950 or another AMD GPU, multi-node torchrun, \"get a node\", Slurm, spur, SaFE, salloc/sbatch/srun, aggressive allocation, or a temporary/preemptible machine."
 argument-hint: "[--cluster NAME] <alloc|ready|exec|bg|wait|logs|release|extend|free|ls|info|push|pull> [args...]"
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/remote-gpu *)
 ---
@@ -34,8 +34,14 @@ Each cluster is `~/.remote-gpu/clusters/<name>/`, shared by every clone on this 
 them. Choose by the manifests, not by guessing:
 
 ```bash
-grep -H -E '^(DESCRIPTION|GPU_ARCH|GPUS_PER_NODE|MAX_TIME|PREEMPTION)=' ~/.remote-gpu/clusters/*/cluster.env
+grep -H -E '^(DESCRIPTION|SCHEDULER|GPU_ARCH|GPUS_PER_NODE|MAX_TIME|PREEMPTION)=' ~/.remote-gpu/clusters/*/cluster.env
 ```
+
+`SCHEDULER=safe` is a Primus-SaFE workspace. The same commands drive it, within these limits: one
+node per job; every command runs as root in the manifest's `SAFE_IMAGE`, so `--image` and `--mount`
+fail (rc 127); no `shell` or `extend`. `free=0` there can still start: the workspace may add a node
+for a pending job, and `reason=` says so. With `SAFE_KIND=Deployment` an idle job is not released
+before its time limit, so release it yourself.
 
 If there is none, the user names one not listed, or none has the `GPU_ARCH` the task needs, run
 the `remote-gpu-setup` skill. Never write `~/.remote-gpu/clusters/` yourself.

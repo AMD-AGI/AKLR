@@ -102,3 +102,50 @@ $RG release -j <name>:ID
 
 `gfx_target_version` 90500 is gfx950, 90402 is gfx942, 90010 is gfx90a; fix `GPU_ARCH` if it
 differs. If all of this passed, set `VERIFIED` to today. Tell the user what passed and what was not tried.
+
+## A Primus-SaFE workspace
+
+SaFE is Kubernetes, yet it fits the same two files: a job is one workload in a workspace, and the
+adapter is `templates/safe.sh`. The pod cannot be reached from outside, so every command goes
+through files on a volume that both the pod and a login host mount. What changes in each step:
+
+**Inputs.** Three, asked for only if not given: the SaFE URL, the user's SaFE API key, and the ssh
+destination of a login host that mounts the workspace's volume at the same path as its pods and
+reaches the URL (usually the login node of the Slurm or spur cluster on the same site).
+
+**The key.** Get it with a secret prompt, never in chat, and put it on the login host only:
+
+```bash
+ssh <host> 'umask 077; mkdir -p ~/.remote-gpu && cat > ~/.remote-gpu/<name>.key' < <key file>
+```
+
+Never print it, and never write it into `cluster.env`, `cluster.sh` or the repo.
+
+**1. Probe.** `probe-cluster <host> <SAFE_URL> <name>` adds the user's workspaces and flavors. An
+empty workspace list means the key or the URL is wrong.
+
+**2. Decide.** The workspace must mount a volume (`hostpath:/path`) that the probe also lists as a
+network filesystem of the login host. Its scopes give `SAFE_KIND`: `Train` means `PyTorchJob`;
+without it, `Infer` means `Deployment`, where an idle job keeps its node until `release` or `-t`.
+Tell the user when it is `Deployment`. Ask which workspace when several fit, and which image the
+jobs run in.
+
+**3. cluster.env.** As above, except:
+
+| key | value |
+|---|---|
+| `SCHEDULER`, `SCHEDULER_VERSION` | `safe`, `''` |
+| `PARTITION` | the workspace ID |
+| `ACCOUNTS`, `BURST_QOS`, `ALLOC_AGGRESSIVE`, `EXTEND`, `DOCKER`, `NODE_SSH` | `''`, `''`, 0, 0, 0, 0 |
+| `MAX_TIME` | `24:00:00` unless the user gives a limit |
+| `PREEMPTION` | from the workspace's preempt flag |
+| `NODE_COUNT`, `GPU_MODEL`, `GPUS_PER_NODE`, `CPUS_PER_NODE`, `MEM_PER_NODE_GB` | the workspace's node count and its flavor |
+| `WORK_ROOT` | `<the volume's mountPath>/$USER`, which the user makes if it is missing. Not `auto`: it could pick a filesystem the pods do not mount. This is the one absolute path allowed |
+| `SAFE_URL`, `SAFE_KIND`, `SAFE_IMAGE` | the URL, step 2, the image |
+| `SAFE_RESOURCES` | what one pod asks for beside all GPUs: well under the flavor's CPU and memory, since the node keeps some. The template's value fits an 8-GPU MI355X node |
+
+**4. cluster.sh.** Copy `templates/safe.sh`, put the name in its first line, change nothing.
+
+**5. Verify.** The same commands, without the `--image` line: there is no docker in the pod, and
+every command runs as root in `SAFE_IMAGE`. Also not there: `-N 2`+, `shell`, `extend`. `free=0`
+is not final: a workspace that scales up adds a node for a pending job, and its `reason=` says so.
