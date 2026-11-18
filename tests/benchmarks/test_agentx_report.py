@@ -10,12 +10,12 @@ import shutil
 import subprocess
 from html import escape
 from pathlib import Path
-from unittest import mock
 
 import pytest
 import yaml
+from agentx_ci import report_all, serving_config, utils
 
-from tests.benchmarks.agentx_results import REPO, report_all, serving_config, utils
+from tests.benchmarks.agentx_results import REPO
 
 
 class ReportOutcomeCase:
@@ -88,7 +88,7 @@ class ReportOutcomeCase:
         self.check_step = self.workflow["jobs"]["report"]["steps"][-1]
         self.site_count = 0
         # Rendering the target page is independent of plan/result validation and CI outcomes.
-        monkeypatch.setattr(report_all, "write_report", mock.Mock())
+        monkeypatch.setattr(report_all, "write_report", lambda *_args, **_kwargs: None)
 
     def render(self, previous=None):
         self.site_count += 1
@@ -220,8 +220,13 @@ def test_an_empty_or_partial_mode_keeps_successful_measurements(case, kept):
     assert case.check(site) == 0
 
 
+def unreadable(_path):
+    raise PermissionError("cannot read results")
+
+
 def test_unreadable_results_are_saved_as_a_report_failure(case):
-    with mock.patch.object(report_all, "read_json", side_effect=PermissionError("cannot read results")):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(report_all, "read_json", unreadable)
         site, target = case.render()
     assert target["error"] == "cannot read results"
     assert target["failure_stage"] == "report"

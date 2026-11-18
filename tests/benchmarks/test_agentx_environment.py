@@ -4,23 +4,15 @@
 from __future__ import annotations
 
 import copy
-import importlib
 import json
 import os
-import sys
-from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-
-with mock.patch.object(
-    sys, "path", [str(Path(__file__).resolve().parents[2] / "benchmarks/agentx"), *sys.path]
-):
-    runtime = importlib.import_module("agentx_ci.runtime")
-    analysis = importlib.import_module("agentx_ci.performance_analysis")
-    serving_config = importlib.import_module("agentx_ci.serving_config")
+from agentx_ci import performance_analysis as analysis
+from agentx_ci import runtime, serving_config
 
 IMAGE_ID = "sha256:" + "a" * 64
 IMAGE_REFERENCE = "example.invalid/server@sha256:" + "b" * 64
@@ -135,7 +127,7 @@ class EnvironmentCase:
             "peer_access": [[True]],
         }
         self.use_environ()
-        with ExitStack() as stack:
+        with pytest.MonkeyPatch.context() as patch:
             patches = {
                 "aklr_sha": "2" * 40,
                 "source_dirty": False,
@@ -146,10 +138,9 @@ class EnvironmentCase:
                 "server_packages": {"sglang": "0.5.22"},
                 "run_live": self.aggregate,
             }
-            calls = {
-                name: stack.enter_context(mock.patch.object(runtime, name, return_value=value))
-                for name, value in patches.items()
-            }
+            calls = {name: mock.Mock(return_value=value) for name, value in patches.items()}
+            for name, double in calls.items():
+                patch.setattr(runtime, name, double)
             if measurements is not None:
                 calls["run_live"].side_effect = measurements
             code = runtime.main(["--serving", str(serving_path), "--out", str(out), "--run-id", "fixture"])
@@ -169,8 +160,9 @@ class EnvironmentCase:
 
 @pytest.fixture
 def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    with mock.patch.object(runtime, "wait_gpus_idle", return_value=0.0) as gpus_idle:
-        yield EnvironmentCase(tmp_path, monkeypatch, gpus_idle)
+    gpus_idle = mock.Mock(return_value=0.0)
+    monkeypatch.setattr(runtime, "wait_gpus_idle", gpus_idle)
+    return EnvironmentCase(tmp_path, monkeypatch, gpus_idle)
 
 
 @pytest.mark.parametrize("failed_mode", [0, 1], ids=["disabled", "enabled"])
@@ -250,18 +242,17 @@ def test_process_cleanup_failure_stops_the_sweep_and_keeps_earlier_measurements(
         path.write_text(json.dumps(case.aggregate))
         return 0
 
-    with (
-        mock.patch.object(runtime, "port_free", return_value=True),
-        mock.patch.object(runtime, "wait_ready"),
-        mock.patch.object(runtime.subprocess, "Popen") as server,
-        mock.patch.object(runtime, "run_client", side_effect=client),
-        mock.patch.object(
-            runtime.os,
-            "killpg",
-            side_effect=[ProcessLookupError()] * failed_index
-            + [PermissionError("cannot terminate process group")],
-        ) as kill,
-    ):
+    server = mock.Mock()
+    kill = mock.Mock(
+        side_effect=[ProcessLookupError()] * failed_index
+        + [PermissionError("cannot terminate process group")]
+    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(runtime, "port_free", mock.Mock(return_value=True))
+        patch.setattr(runtime, "wait_ready", mock.Mock())
+        patch.setattr(runtime.subprocess, "Popen", server)
+        patch.setattr(runtime, "run_client", client)
+        patch.setattr(runtime.os, "killpg", kill)
         code, results, calls = case.run_main(measurements=runtime.run_live)
     points = results["control"]["points"] + results["points"]
     assert code == 1
@@ -281,11 +272,11 @@ def test_process_cleanup_failure_stops_the_sweep_and_keeps_earlier_measurements(
 
 
 def test_client_cleanup_failure_is_distinct_from_a_measurement_failure():
-    with (
-        mock.patch.object(runtime.subprocess, "Popen") as process,
-        mock.patch.object(runtime.os, "killpg", side_effect=PermissionError("cannot stop client")),
-    ):
-        process.return_value.wait.return_value = 0
+    process = mock.Mock()
+    process.return_value.wait.return_value = 0
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(runtime.subprocess, "Popen", process)
+        patch.setattr(runtime.os, "killpg", mock.Mock(side_effect=PermissionError("cannot stop client")))
         with pytest.raises(runtime.CleanupError, match="PermissionError: cannot stop client"):
             runtime.run_client(["fixture-client"], timeout=1)
 
@@ -293,7 +284,9 @@ def test_client_cleanup_failure_is_distinct_from_a_measurement_failure():
 def test_verified_defaults_are_read_once_and_not_taken_from_ambient_values(case):
     case.write_inspection()
     case.use_environ()
-    with mock.patch.object(runtime, "read_json", wraps=runtime.read_json) as reader:
+    reader = mock.Mock(wraps=runtime.read_json)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(runtime, "read_json", reader)
         identity, defaults = runtime.execution_identity(case.serving)
         reader.assert_called_once_with(str(case.inspection_path))
         case.inspection_path.unlink()
@@ -313,13 +306,13 @@ def test_server_overrides_and_client_environment_stay_separate(case):
     out.mkdir()
     (out / "tp1-c1.json").write_text(json.dumps(case.aggregate))
     case.use_environ()
-    with (
-        mock.patch.object(runtime, "port_free", return_value=True),
-        mock.patch.object(runtime.subprocess, "Popen") as server,
-        mock.patch.object(runtime, "wait_ready"),
-        mock.patch.object(runtime, "stop"),
-        mock.patch.object(runtime, "run_client", return_value=0) as client,
-    ):
+    server, client = mock.Mock(), mock.Mock(return_value=0)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(runtime, "port_free", mock.Mock(return_value=True))
+        patch.setattr(runtime.subprocess, "Popen", server)
+        patch.setattr(runtime, "wait_ready", mock.Mock())
+        patch.setattr(runtime, "stop", mock.Mock())
+        patch.setattr(runtime, "run_client", client)
         assert runtime.run_live(case.point, out, case.host) == case.aggregate
     case.gpus_idle.assert_called_once_with()
     server_env = server.call_args.kwargs["env"]
@@ -340,11 +333,11 @@ def test_server_overrides_and_client_environment_stay_separate(case):
 
 def test_trace_preparation_and_package_inspection_keep_original_environment(case):
     case.use_environ()
-    with (
-        mock.patch.object(runtime, "run_client", return_value=0) as prepare,
-        mock.patch.object(runtime.subprocess, "check_output", return_value="{}") as packages,
-        mock.patch.object(runtime, "verify_trace_loaders"),
-    ):
+    prepare, packages = mock.Mock(return_value=0), mock.Mock(return_value="{}")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(runtime, "run_client", prepare)
+        patch.setattr(runtime.subprocess, "check_output", packages)
+        patch.setattr(runtime, "verify_trace_loaders", mock.Mock())
         runtime.prepare_traces(case.host, [case.point], case.root / "prepare.log")
         runtime.client_packages(case.host)
     for env in (prepare.call_args.kwargs["env"], packages.call_args.kwargs["env"]):
@@ -383,7 +376,8 @@ def test_exact_model_ref_keeps_pinned_offline_tokenizer(case):
     revision = case.serving["weights"]["revision"].encode()
     hub, model_dir, snapshot, main, args = case.prepare_model_hub(revision)
     case.use_environ({"HF_HUB_CACHE": str(hub)})
-    with mock.patch.object(runtime, "fetch_inferencex", return_value=case.root / "inferencex"):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(runtime, "fetch_inferencex", mock.Mock(return_value=case.root / "inferencex"))
         host = runtime.host_settings(args, case.serving)
     assert main.stat().st_size == 40
     assert host["model_path"] == str(snapshot)
@@ -395,10 +389,12 @@ def test_exact_model_ref_keeps_pinned_offline_tokenizer(case):
 def test_model_ref_trailing_newline_is_rejected_before_client_setup(case):
     hub, _, _, main, args = case.prepare_model_hub(case.serving["weights"]["revision"].encode() + b"\n")
     case.use_environ({"HF_HUB_CACHE": str(hub)})
+    fetch = mock.Mock()
     with (
-        mock.patch.object(runtime, "fetch_inferencex") as fetch,
+        pytest.MonkeyPatch.context() as patch,
         pytest.raises(RuntimeError, match="must contain exactly the pinned revision"),
     ):
+        patch.setattr(runtime, "fetch_inferencex", fetch)
         runtime.host_settings(args, case.serving)
     assert main.stat().st_size == 41
     fetch.assert_not_called()
@@ -535,9 +531,11 @@ def amd_smi(*used_mb, wrap=False):
 
 
 @pytest.mark.parametrize("wrap", [False, True], ids=["list", "wrapped"])
-def test_vram_use_reads_whole_percent_from_either_amd_smi_layout(wrap):
-    with mock.patch.object(runtime.subprocess, "run", return_value=amd_smi(283, 2949, 294896, wrap=wrap)):
-        assert runtime.vram_used_percent() == {0: 0, 1: 1, 2: 100}
+def test_vram_use_reads_whole_percent_from_either_amd_smi_layout(monkeypatch, wrap):
+    monkeypatch.setattr(
+        runtime.subprocess, "run", mock.Mock(return_value=amd_smi(283, 2949, 294896, wrap=wrap))
+    )
+    assert runtime.vram_used_percent() == {0: 0, 1: 1, 2: 100}
 
 
 @pytest.mark.parametrize(
@@ -550,21 +548,19 @@ def test_vram_use_reads_whole_percent_from_either_amd_smi_layout(wrap):
     ],
     ids=["not-runnable", "nonzero-exit", "unreadable", "no-gpus"],
 )
-def test_unreadable_amd_smi_aborts_the_sweep(message, outcome):
+def test_unreadable_amd_smi_aborts_the_sweep(monkeypatch, message, outcome):
     effect = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
-    with (
-        mock.patch.object(runtime.subprocess, "run", **effect),
-        pytest.raises(runtime.CleanupError, match=message),
-    ):
+    monkeypatch.setattr(runtime.subprocess, "run", mock.Mock(**effect))
+    with pytest.raises(runtime.CleanupError, match=message):
         runtime.vram_used_percent()
 
 
 def test_wait_returns_once_every_gpu_reads_zero():
-    readings = [{0: 0, 1: 37}, {0: 0, 1: 2}, {0: 0, 1: 0}]
-    with (
-        mock.patch.object(runtime, "vram_used_percent", side_effect=readings) as read,
-        mock.patch.object(runtime.time, "sleep") as sleep,
-    ):
+    read = mock.Mock(side_effect=[{0: 0, 1: 37}, {0: 0, 1: 2}, {0: 0, 1: 0}])
+    sleep = mock.Mock()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(runtime, "vram_used_percent", read)
+        patch.setattr(runtime.time, "sleep", sleep)
         runtime.wait_gpus_idle(timeout_s=300, poll_s=5)
     assert read.call_count == 3
     assert sleep.call_count == 2
@@ -573,9 +569,10 @@ def test_wait_returns_once_every_gpu_reads_zero():
 def test_wait_times_out_naming_the_busy_gpus():
     clock = iter([0, 0, 200, 301])
     with (
-        mock.patch.object(runtime, "vram_used_percent", return_value={0: 0, 5: 12}),
-        mock.patch.object(runtime.time, "monotonic", side_effect=lambda: next(clock)),
-        mock.patch.object(runtime.time, "sleep"),
+        pytest.MonkeyPatch.context() as patch,
         pytest.raises(runtime.CleanupError, match=r"after 300 s: GPU5 12%"),
     ):
+        patch.setattr(runtime, "vram_used_percent", mock.Mock(return_value={0: 0, 5: 12}))
+        patch.setattr(runtime.time, "monotonic", lambda: next(clock))
+        patch.setattr(runtime.time, "sleep", mock.Mock())
         runtime.wait_gpus_idle(timeout_s=300, poll_s=5)

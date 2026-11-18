@@ -5,20 +5,12 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-from unittest import mock
 
 import pytest
+from agentx_ci import performance_analysis as analysis
+from agentx_ci import report, report_all, utils
 
-from tests.benchmarks.agentx_results import (
-    POINT_IDS,
-    REPO,
-    analysis,
-    fail,
-    formal_results,
-    report,
-    report_all,
-    utils,
-)
+from tests.benchmarks.agentx_results import POINT_IDS, REPO, fail, formal_results
 
 
 class BaselineCase:
@@ -29,7 +21,7 @@ class BaselineCase:
         self.relative = utils.target_path("fixture", "fixture-gpu", "sglang")
         self.site_count = 0
         # Git history is independent of baseline eligibility and metric comparisons.
-        monkeypatch.setattr(report, "landed", mock.Mock(return_value=None))
+        monkeypatch.setattr(report, "landed", lambda _base, _head, _cwd, _repo_url: None)
 
     def publish(self, results, previous=None):
         self.site_count += 1

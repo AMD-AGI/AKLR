@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import argparse
 import copy
-import importlib
 import json
 import re
-import sys
 from pathlib import Path
 from unittest import mock
 
@@ -16,10 +14,8 @@ import pytest
 import yaml
 
 AGENTX = Path(__file__).resolve().parents[2] / "benchmarks/agentx"
-with mock.patch.object(sys, "path", [str(AGENTX), *sys.path]):
-    plan = importlib.import_module("agentx_ci.plan")
-    sc = importlib.import_module("agentx_ci.serving_config")
-    ci_image = importlib.import_module("agentx_ci.ci_image")
+from agentx_ci import ci_image, plan
+from agentx_ci import serving_config as sc
 
 RUNNER_LABEL = "agentx-mi355x"
 IMAGE = "example.invalid/server@sha256:" + "a" * 64
@@ -225,8 +221,9 @@ class PlanCase:
 
 @pytest.fixture
 def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    with mock.patch.object(ci_image, "run_image", return_value=IMAGE) as run_image:
-        yield PlanCase(tmp_path, monkeypatch, run_image)
+    run_image = mock.Mock(return_value=IMAGE)
+    monkeypatch.setattr(ci_image, "run_image", run_image)
+    return PlanCase(tmp_path, monkeypatch, run_image)
 
 
 @pytest.fixture
@@ -341,9 +338,9 @@ def test_client_and_trace_come_from_the_schema(case, message, mutate):
     path.write_text(json.dumps(broken))
     with pytest.raises(sc.RecipeError, match=message):
         sc.template(path)
-    with mock.patch.object(sc, "RECIPE_SCHEMA", path):
-        with pytest.raises(sc.RecipeError, match=message):
-            sc.build_run(case.recipe(), case.definition_of())
+    case.monkeypatch.setattr(sc, "RECIPE_SCHEMA", path)
+    with pytest.raises(sc.RecipeError, match=message):
+        sc.build_run(case.recipe(), case.definition_of())
 
 
 def test_plan_names_each_point_from_model_arm_and_conc(case):

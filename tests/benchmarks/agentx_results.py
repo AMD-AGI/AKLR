@@ -1,22 +1,14 @@
 # SPDX-License-Identifier: MIT
-"""AgentX result payloads and the agentx_ci modules the AgentX tests share."""
+"""AgentX result payloads the AgentX tests share."""
 
 from __future__ import annotations
 
 import copy
-import importlib
-import sys
 from pathlib import Path
-from unittest import mock
+
+from agentx_ci import serving_config, utils
 
 REPO = Path(__file__).resolve().parents[2]
-with mock.patch.object(sys, "path", [str(REPO / "benchmarks/agentx"), *sys.path]):
-    utils = importlib.import_module("agentx_ci.utils")
-    runtime = importlib.import_module("agentx_ci.runtime")
-    analysis = importlib.import_module("agentx_ci.performance_analysis")
-    report = importlib.import_module("agentx_ci.report")
-    report_all = importlib.import_module("agentx_ci.report_all")
-    serving_config = importlib.import_module("agentx_ci.serving_config")
 
 FULL_RESPONSE = "p90_full_response_intvty"
 E2E = "p90_e2e_norm_intvty"

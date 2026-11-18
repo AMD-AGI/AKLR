@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import copy
-from unittest import mock
 
 import pytest
+from agentx_ci import performance_analysis as analysis
+from agentx_ci import report, report_all, utils
 
-from tests.benchmarks.agentx_results import REPO, analysis, fail, formal_results, report, report_all, utils
+from tests.benchmarks.agentx_results import REPO, fail, formal_results
 
 
 def set_metrics(point, throughput, interactivity=20):
@@ -16,6 +17,16 @@ def set_metrics(point, throughput, interactivity=20):
     metrics = point["raw_data"]["request_metrics"]
     metrics["throughput"]["per_gpu"]["total_tput_tps"] = throughput
     metrics["latency"]["full_response_itl"]["p90"] = 1 / interactivity
+
+
+@pytest.fixture
+def charted(monkeypatch: pytest.MonkeyPatch) -> list[list[dict]]:
+    """The series of each chart report draws, in order."""
+    drawn = []
+    monkeypatch.setattr(
+        report, "svg_chart", lambda _title, series, *_args, **_kwargs: drawn.append(series) or ""
+    )
+    return drawn
 
 
 def slim(points):
@@ -365,7 +376,7 @@ def test_curves_use_only_points_with_verified_measurements():
     assert comparison["combined"]["tput_geomean_ratio"] is None
 
 
-def test_settings_changed_on_every_point_reports_a_curve_method():
+def test_settings_changed_on_every_point_reports_a_curve_method(charted):
     current = formal_results("current")
     baseline = formal_results("previous")
     for point in current["points"]:
@@ -373,9 +384,8 @@ def test_settings_changed_on_every_point_reports_a_curve_method():
     comparison = analysis.compare(current, baseline)
     assert comparison["arms"]["tp1"]["status"] == "curve"
     assert comparison["method"] == "curve"
-    with mock.patch.object(report, "svg_chart", return_value="") as chart:
-        report.charts(current, baseline, comparison, "en")
-    previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
+    report.charts(current, baseline, comparison, "en")
+    previous = [item for item in charted[-1] if item["color"] == report.BASELINE_COLOR]
     assert previous[0]["line"] == slim(analysis.verified(baseline, "tp1"))
 
 
@@ -404,7 +414,7 @@ def test_changed_points_stay_out_of_the_combined_frontier(change):
     assert combined <= max(arm, 6)
 
 
-def test_renamed_arms_under_a_run_level_change_keep_the_previous_frontier():
+def test_renamed_arms_under_a_run_level_change_keep_the_previous_frontier(charted):
     current = formal_results("current")
     baseline = formal_results("previous")
     for mode in (current, current["control"]):
@@ -417,9 +427,8 @@ def test_renamed_arms_under_a_run_level_change_keep_the_previous_frontier():
     assert comparison["method"] == "curve"
     assert comparison["combined"]["status"] == "curve"
     assert comparison["combined"]["baseline_frontier"] == slim(analysis.measured(baseline))
-    with mock.patch.object(report, "svg_chart", return_value="") as chart:
-        report.charts(current, baseline, comparison, "en")
-    previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
+    report.charts(current, baseline, comparison, "en")
+    previous = [item for item in charted[-1] if item["color"] == report.BASELINE_COLOR]
     assert previous[0]["line"] == slim(analysis.measured(baseline))
 
 
@@ -465,7 +474,7 @@ def test_curves_compare_only_shared_traces():
     assert analysis.compare_curve(current[2:], other, "fixture")["status"] == "curve-no-overlap"
 
 
-def test_changed_selection_compares_frontiers():
+def test_changed_selection_compares_frontiers(charted):
     current = formal_results("current")
     baseline = formal_results("previous")
     for mode in (current, current["control"]):
@@ -476,26 +485,24 @@ def test_changed_selection_compares_frontiers():
     assert "point selection policy or selected recipes changed" in comparison["notes"]
     assert comparison["arms"]["tp1"]["status"] == "curve"
 
-    with mock.patch.object(report, "svg_chart", return_value="") as chart:
-        report.charts(current, baseline, comparison, "en")
-    previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
+    report.charts(current, baseline, comparison, "en")
+    previous = [item for item in charted[-1] if item["color"] == report.BASELINE_COLOR]
     assert previous[0]["line"] == slim(analysis.measured(baseline))
     html = report.comparison_tables(comparison, "zh")
     assert "曲线比较" in html
     assert "合并前沿" in html
 
 
-def test_previous_frontier_contains_only_matching_successful_points():
+def test_previous_frontier_contains_only_matching_successful_points(charted):
     current = formal_results("current")
     baseline = formal_results("previous")
     fail(current["points"][1])
     change_settings(current["points"][2], "duration")
     comparison = analysis.compare(current, baseline)
 
-    with mock.patch.object(report, "svg_chart", return_value="") as chart:
-        report.charts(current, baseline, comparison, "en")
+    report.charts(current, baseline, comparison, "en")
 
-    series = chart.call_args.args[1]
+    series = charted[-1]
     previous = [item for item in series if item["color"] == report.BASELINE_COLOR]
     assert len(previous) == 1
     assert previous[0]["line"] == slim([baseline["points"][0]])
@@ -505,28 +512,26 @@ def test_previous_frontier_contains_only_matching_successful_points():
     fail(current["points"][0])
     comparison = analysis.compare(current, baseline)
     assert comparison["method"] == "curve"
-    with mock.patch.object(report, "svg_chart", return_value="") as chart:
-        report.charts(current, baseline, comparison, "en")
-    previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
+    report.charts(current, baseline, comparison, "en")
+    previous = [item for item in charted[-1] if item["color"] == report.BASELINE_COLOR]
     assert previous[0]["line"] == slim(analysis.verified(baseline, "tp1"))
 
 
-def test_chart_lines_connect_every_successful_point():
+def test_chart_lines_connect_every_successful_point(charted):
     current = formal_results("current")
     set_metrics(current["points"][0], 100, 40)
     set_metrics(current["points"][1], 50, 20)
     set_metrics(current["points"][2], 10, 30)
     fail(current["control"]["points"][1])
-    with mock.patch.object(report, "svg_chart", return_value="") as chart:
-        report.charts(current, None, {"status": "none"}, "en")
-    disabled, enabled = chart.call_args.args[1]
+    report.charts(current, None, {"status": "none"}, "en")
+    disabled, enabled = charted[-1]
     assert enabled["line"] == [current["points"][i] for i in (1, 2, 0)]
     assert len(analysis.frontier(enabled["line"])) == 1
     assert disabled["line"] == report.through_all(analysis.measured(current["control"]))
     assert len(disabled["line"]) == len(current["control"]["points"]) - 1
 
 
-def test_partial_report_exports_gains_and_drops_the_all_success_requirement(tmp_path):
+def test_partial_report_exports_gains_and_drops_the_all_success_requirement(tmp_path, monkeypatch):
     current = formal_results("current")
     baseline = formal_results("previous")
     fail(current["points"][1])
@@ -535,8 +540,8 @@ def test_partial_report_exports_gains_and_drops_the_all_success_requirement(tmp_
     set_metrics(current["points"][0], 150)
     set_metrics(current["control"]["points"][0], 100)
     set_metrics(baseline["points"][0], 100)
-    with mock.patch.object(report, "landed", return_value=None):
-        report.write_report(current, baseline, tmp_path, "https://example.invalid/repo", REPO)
+    monkeypatch.setattr(report, "landed", lambda _base, _head, _cwd, _repo_url: None)
+    report.write_report(current, baseline, tmp_path, "https://example.invalid/repo", REPO)
     summary = utils.read_json(tmp_path / "report.json")
     html = (tmp_path / "index.html").read_text()
 
