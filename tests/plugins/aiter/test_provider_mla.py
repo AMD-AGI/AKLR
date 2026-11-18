@@ -756,14 +756,17 @@ class _EntryPoint:
 
 @pytest.fixture
 def aiter_plugin(monkeypatch):
-    """aiter's plugin interface with AKLR installed and enabled, and each op of this file routed
-    to a native that must not run."""
+    """aiter's plugin interface with AKLR installed and enabled. Each op of this file aiter does not route
+    itself (the plugin interface alone, or a module routing it not imported) is routed to a native that
+    must not run; the others keep aiter's own route and contract."""
     plugin = pytest.importorskip("aiter.plugin")
     plugin._reset_for_testing()
     monkeypatch.setattr(plugin, "_entry_points", lambda: (_EntryPoint("aklr", provider.provider),))
     monkeypatch.setattr(provider, "ready", lambda: True)
     routes = {}
     for op, (version, params) in AITER_SIGNATURES.items():
+        if op in plugin._routed_ops:
+            continue
 
         def native(*args, **kwargs):
             raise AssertionError("aiter's kernel ran for a call AKLR serves")
@@ -788,7 +791,8 @@ def aiter_plugin(monkeypatch):
 
 @pytest.mark.parametrize("case", list(_calls()))
 def test_aiter_hands_a_call_aklr_serves_to_aklrs_run(monkeypatch, aiter_plugin, case):
-    """The real dispatch: defaults applied, the run checked against the contract, then called."""
+    """The real dispatch: defaults applied, the run checked against the contract, then called where the
+    route is the test's own (calling aiter's would build its kernels)."""
     _answer(monkeypatch, KERNEL)
     for module, name in (
         (mla, "mla_decode_fwd"),
@@ -807,8 +811,9 @@ def test_aiter_hands_a_call_aklr_serves_to_aklrs_run(monkeypatch, aiter_plugin, 
     by_name = {n: call[n] for n in names[len(required) :]}
     decision = plugin.explain(op, *(call[n] for n in required), **by_name).decision
     assert (decision.route, decision.provider) == ("provider", "aklr")
-    aiter_plugin.routes[op](*(call[n] for n in required), **by_name)
-    assert plugin.last_decision().route == "provider"
+    if op in aiter_plugin.routes:
+        aiter_plugin.routes[op](*(call[n] for n in required), **by_name)
+        assert plugin.last_decision().route == "provider"
 
 
 def _fake_result(api_name):
