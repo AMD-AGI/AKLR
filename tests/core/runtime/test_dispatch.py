@@ -216,30 +216,36 @@ class TestKernelDispatcher:
         assert dispatcher.dispatch(call) is FallbackReason.OUT_OF_CONTRACT
 
     @pytest.mark.parametrize(
-        ("other", "reason"),
+        ("others", "reason"),
         [
-            ({"accuracy": "passed", "speedup": 0.5}, None),
-            ({"accuracy": "failed"}, FallbackReason.INACCURATE),
+            (({"accuracy": "passed", "speedup": 0.5},), None),
+            (({"accuracy": "failed"},), FallbackReason.INACCURATE),
+            (({"accuracy": "failed"}, {"accuracy": "passed", "speedup": 0.5}), FallbackReason.INACCURATE),
         ],
-        ids=["too_slow", "failed"],
+        ids=["too_slow", "failed", "failed_beside_too_slow"],
     )
     def test_any_size_axis_needs_one_workload_qualified(
         self,
         builder_registry: BuilderRegistry,
-        other: dict[str, Any],
+        others: tuple[dict[str, Any], ...],
         reason: FallbackReason | None,
     ) -> None:
         """Workloads differing in an any_size axis alone share a key, served if one of
         them qualifies: one too slow beside it still serves the case's call, a failed one
-        does not."""
+        does not, and is the reason even beside one too slow."""
         case = OpCase.of("gdn_decode@1.0")
         workload = case.contract.workload_for(case.point, {})
-        doubled = {**workload.axes, "n_slots": 2 * workload.axes["n_slots"]}
+        n_slots = workload.axes["n_slots"]
         _, dispatcher = self._state_dispatcher(
             builder_registry,
             (
                 workload.model_copy(update={"accuracy": "passed", "speedup": 2.0}),
-                workload.model_copy(update={"axes": doubled, **other}),
+                *(
+                    workload.model_copy(
+                        update={"axes": {**workload.axes, "n_slots": (i + 2) * n_slots}, **other}
+                    )
+                    for i, other in enumerate(others)
+                ),
             ),
             min_speedup=1.0,
         )
