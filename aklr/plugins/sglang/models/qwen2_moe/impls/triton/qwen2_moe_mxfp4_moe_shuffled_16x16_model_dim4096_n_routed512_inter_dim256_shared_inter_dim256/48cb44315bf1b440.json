@@ -182,8 +182,8 @@
         "n_tokens": 96
       },
       "accuracy": "passed",
-      "speedup": 1.232,
-      "microseconds": 143.0
+      "speedup": 1.203,
+      "microseconds": 141.0
     }
   ],
   "layout_variants": {

@@ -165,8 +165,8 @@
         "routed_scaling_factor": 2.5
       },
       "accuracy": "passed",
-      "speedup": 1.4,
-      "microseconds": 175.0
+      "speedup": 1.343,
+      "microseconds": 178.0
     },
     {
       "axes": {
@@ -176,8 +176,8 @@
         "routed_scaling_factor": 2.5
       },
       "accuracy": "passed",
-      "speedup": 1.316,
-      "microseconds": 236.0
+      "speedup": 1.308,
+      "microseconds": 237.0
     },
     {
       "axes": {
@@ -187,8 +187,8 @@
         "routed_scaling_factor": 2.5
       },
       "accuracy": "passed",
-      "speedup": 1.36,
-      "microseconds": 282.0
+      "speedup": 1.351,
+      "microseconds": 290.0
     }
   ],
   "layout_variants": {
