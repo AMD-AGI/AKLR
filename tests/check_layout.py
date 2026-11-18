@@ -10,22 +10,33 @@ from pathlib import Path
 
 def main() -> int:
     errors = []
-    for path in sorted(Path("tests").rglob("*.py")):
+    paths = sorted(Path("tests").rglob("*.py"))
+    for directory in sorted({parent for path in paths for parent in path.parents if parent.parts}):
+        if not (directory / "__init__.py").is_file():
+            errors.append(f"{directory}/: no __init__.py")
+    for path in paths:
         is_test = path.name.startswith("test_")
         package = Path("aklr", *path.parts[1:-1])
         if is_test and not package.is_dir():
             errors.append(f"{path}: no {package}/ to test; a test's directory mirrors aklr/")
-        if not (path.parent / "__init__.py").is_file():
-            errors.append(f"{path}: no __init__.py in {path.parent}/")
         for node in ast.walk(ast.parse(path.read_text(), str(path))):
             if isinstance(node, ast.Import | ast.ImportFrom):
-                # `from tests.x import test_y` names the module in node.names, not node.module
-                module = getattr(node, "module", None)
-                names = [f"{module}.{alias.name}" if module else alias.name for alias in node.names]
-                names += [module] if module else []
-                for name in names:
+                # only import statements are seen: importlib.import_module("...") is not
+                module = getattr(node, "module", None) or ""
+                modules = [module] if module else []
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                else:
+                    # `from pkg import name`: name is a module only if pkg/name.py exists
+                    parts = module.split(".") if module else []
+                    roots = [path.parents[node.level - 1]] if node.level else [Path(), path.parent]
+                    modules += [
+                        f"{module}.{alias.name}"
+                        for alias in node.names
+                        if any(root.joinpath(*parts, f"{alias.name}.py").is_file() for root in roots)
+                    ]
+                for name in modules:
                     last = name.rpartition(".")[2]
-                    # any spelling: `tests.x.test_y`, `.test_y`, bare `test_y`
                     if last.startswith("test_") or last == "conftest":
                         errors.append(
                             f"{path}:{node.lineno}: imports {name}; shared code goes in a helper module, "
