@@ -56,6 +56,7 @@ payload=$(jq -n --arg image "$IMAGE" --arg entry "$(base64 -w0 <<< "$entry")" --
           | with_entries(select(.value != null and .value != ""))),
     # High (2 of 0-2): a CI run should not queue behind batch work.
     priority: 2,
+    ttlSecondsAfterFinished: 60,
     useWorkspaceStorage: true
   }')
 created=$(api -X POST "$SAFE_API/api/v1/workloads" -d "$payload") ||
