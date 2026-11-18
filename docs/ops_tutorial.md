@@ -211,6 +211,38 @@ There are three outcomes:
 
 How to read an accuracy failure, and whether a slow result is the machine's noise: `harness/skills/read-validation/SKILL.md`. How to make a kernel fast: `harness/skills/kb/SKILL.md`.
 
+**Thresholds**: a kernel the base does not serve is timed against what serves today: the kernel already serving a Point (≥ **1.05**, Entry), else the baseline (the backend function the op's seam adapter wraps; ≥ **1.05**, or ≥ **0.99**, Retain, on a first release); a kernel the base already serves keeps its Points at ≥ **0.99** over the baseline. Runtime serving requires a stored speedup ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses its bar, or computes wrong (`outputs_mismatch`, `wrong_outputs`, `candidate_raised`, `build_failed`, `task_crashed`, `task_timeout`, written as `accuracy: failed`), is only recorded in the report's demotions and does not fail validate; both kinds need handling. Only when no workload is correct with a published speedup ≥ 1.05 does the schema report `no_admitted_workload`.
+
+### Ops that need the bench customized
+
+By default the bench runs an op's task on one rank, in a reused process, with nothing set up first, draws each
+workload's inputs by the schema's init and times it in CUDA graphs. Only a group op (several ranks) and mla
+differ: such an op adds a file named after its op type to `aklr/core/validation/stages/bench/_ops/` and registers
+an `OpBench` subclass there, overriding only what differs:
+
+```python
+class MegaMoeBench(OpBench, name="mega_moe"):
+    @classmethod
+    def ranks(cls, schema: Schema) -> int:  # default 1
+        return schema.const_axes["ep_size"]
+
+    @classmethod
+    def setup(cls, schema: Schema) -> None:  # default: nothing; on every rank, before the build
+        ...  # mori's symmetric heap over the task's process group, torch.distributed.group.WORLD
+```
+
+- The class methods say how the op's tasks run, from the schema alone. `isolate` (default `ranks > 1`) runs
+  each task in fresh processes, as `--isolate <op_type>` does. With `isolate` False, `setup` runs once per task
+  in a reused process, so it must be idempotent; it must not change global numeric settings (TF32 and the like).
+- The instance methods are how a workload is measured once the Candidate is built, from coarse to fine:
+  `measure` (a whole workload), `trials` (the accuracy check of each trial), `draws` (every trial's inputs, and
+  so how many trials there are), `time` (one trial's timing) and `clock` (reading one call's milliseconds).
+  Override the finest one that differs: `clock` for another timer, `draws` for inputs from another source.
+- A bench decides how a workload is measured, never whether it passes: its task returns raw times, and the
+  opponent, the threshold and the verdict are the bench stage's.
+- Import heavy libraries inside `setup`, never at the module's top: the bench imports every module of `_ops/`
+  not starting with `_`.
+
 ## 5. Open a PR, and when it takes effect
 
 - Write the body following `.github/pull_request_template.md`, with the results of step 4 and where the scenario and the values of `m` come from.

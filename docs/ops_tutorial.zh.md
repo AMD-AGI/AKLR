@@ -211,6 +211,8 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/ait
 
 精度错误怎么读、慢是不是机器波动造成的，见 `harness/skills/read-validation/SKILL.md`。怎么把 kernel 写快，见 `harness/skills/kb/SKILL.md`。
 
+**门槛**：base 尚未服务的 kernel 要对比今天正在服务的实现：已服务该 Point 的 kernel（≥ **1.05**，Entry），否则对比基线（op 的 seam adapter 包装的后端函数；≥ **1.05**，首次发布时 ≥ **0.99**，Retain）；base 已在服务的 kernel 相对基线保持 ≥ **0.99**。运行时服务要求存储的 speedup ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标或计算错误（`outputs_mismatch`、`wrong_outputs`、`candidate_raised`、`build_failed`、`task_crashed`、`task_timeout`，写成 `accuracy: failed`）的 Point 只记进 report 的 demotions，不会让 validate 失败，两类都要处理。只有没有一个 workload 既正确、发布的 speedup 又 ≥ 1.05 时，schema 才报 `no_admitted_workload`。
+
 ## 5. 提 PR，合入后什么时候生效
 
 - PR 正文按 `.github/pull_request_template.md` 写，贴上第 4 步的结果，写明场景和 `m` 从哪里来。

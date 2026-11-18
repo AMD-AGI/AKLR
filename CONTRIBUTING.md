@@ -39,9 +39,14 @@ for kernel lifecycle changes.
 performance tests, at the commit `aiter` in `stack.json`, which CI installs over the image's
 AITER (with the FlyDSL it pins). Install it the same way before validating locally:
 `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<that commit>"`.
-To time an op against an AITER function, call it from the contract's baseline class in the op's
-`baseline.py`. To move the baseline, change that commit: the next validation re-measures every
-kernel against it.
+
+AKLR does not edit AITER. The dispatcher, which the SGLang and vLLM plugins start,
+replaces each AITER entry point an `@adapter` in `aklr/seam/aiter.py` names with its
+stand-in, under every name a loaded module binds it to. What the op is timed against is the
+`baseline` of its schema's `Standard`, in `aklr/plugins/aiter/<op>/baseline.py`: it calls the AITER function the
+adapter wraps. To route a new AITER function, declare its `@adapter`, and give the schema's standard a
+baseline that calls it. To move the baseline, change that commit and update the adapters and the baselines
+to its signatures together: the next validation re-measures every kernel against it.
 
 ## GPU CI runners
 
@@ -84,10 +89,3 @@ The local container receives only the test environment variables and a copy of t
 Its per-stage timeout is unchanged, failing tests still upload reports, and the final cleanup
 step removes the job's container. This does not change the separate AgentX workflow.
 There is no automatic fallback between backends when the selected runners are busy or offline.
-
-For PRs changing only kernel schemas under `aklr/plugins/aiter` (optionally with Markdown case
-notes under `harness/skills/kb/cases/`), AITER's GPU baseline/reference comparison
-runs every small point for the affected contract IDs. A replacement includes the IDs
-from both versions. Unrecognized changes or a contract without a small point use the
-full comparison. The other unit tests and per-image kernel validation keep their usual
-coverage. Pushes and manual runs perform the full unit suite.

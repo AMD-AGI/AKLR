@@ -1,42 +1,51 @@
 # How AKLR Times and Judges a Point
 
-Sources: `aklr/core/validation/stages/_measure.py`, `stages/_bench/_stage.py`,
-`stages/_bench/_report.py`, `aklr/core/platform/env.py`.
+Sources: `aklr/core/validation/stages/bench/` (`_measure/_profile.py` for the timing and statistics,
+`_plan/` for what a Point is timed against, `_verdict/` for the judging), `aklr/core/platform/env.py`.
+
+## Accuracy
+
+- Each Point is checked on `--num-trials` input sets (default 3), drawn by the schema's `init` with
+  a seed from the schema name, the Point's workload key (today its axes) and the trial, rank 0's as a
+  single rank's: the bench, the forge driver and the op tests draw the same input sets. Each trial calls the kernel once,
+  eagerly, the way dispatch calls it, and compares its outputs with the Reference's by the schema's
+  `check`. Only a Point that passes every trial is timed.
 
 ## Timing
 
 - Every call is replayed in a CUDA graph and preceded by a 1 GiB cache flush inside the graph, so
-  weights and activations come from HBM on every call.
-- One warm-up round, then rounds until a look decides (`ROUND_LOOKS`: after 16 and 32 rounds,
-  timing stops once every threshold a verdict reads is under the lower bound or over the upper one:
-  the gate's, and against the baseline also the entry ratio 1.05, which a workload's speedup
-  reaches to qualify, and the dispatch minimum, both against the speedup bounds to 3 decimals, as
-  stored). Each
-  round times the candidate and the versus side (the baseline, or a served kernel); its log ratio
-  is `log(t_versus / t_candidate)`. `n_rounds` in a report says where it stopped.
+  weights and activations come from HBM on every call. A timing is the kernel tracer's GPU time per
+  call in a 20 ms graph; a tracer fault is timed again once.
+- Each trial's input set is timed once its check passes: the candidate and its opponent once each,
+  in a seeded shuffled order (`bench_cudagraph` warms up and repeats the call itself). A trial's
+  log ratio is `log(t_opponent / t_candidate)`.
+- What a Point is timed against:
+
+  | Case | Opponent | Threshold | Speedup written back |
+  |---|---|---|---|
+  | the base serves this very kernel | Baseline | Retain | measured |
+  | the base serves another kernel, with a stored speedup s | Incumbent | Entry | ratio × s |
+  | the base serves another kernel, without one | Incumbent | Entry | none |
+  | nothing served, no base or a first release | Baseline | Retain | measured |
+  | nothing served otherwise | Baseline | Entry | measured |
+  | neither a Baseline nor an Incumbent | nothing | - | none |
 
 ## Judging
 
-- The gate is the one-sided Student-t lower bound of the mean log ratio, exponentiated, at
-  α = 0.05 split over the two looks (`LOOK_ALPHA`), so stopping early keeps the false-pass rate.
-  For the gate only, each round's log ratio is clamped to ±ln 2 (`MAX_ABS_LOG_RATIO`): a report's
-  ratio column never shows more than 2.000, and a bound near 0.5 can fall just under it. At either
-  end, read the medians.
-- Thresholds (`THRESHOLD_RATIOS`, `AKLR_MIN_SPEEDUP`):
-
-  | | ratio | applies to |
-  |---|---|---|
-  | entry | 1.05 (`DEFAULT_MIN_SPEEDUP`) | a new or changed kernel, vs the baseline; a schema needs one Point whose stored `speedup` reaches it |
-  | retain | 0.99 | a kept kernel vs the baseline, and any kernel vs a served one |
-  | dispatch | 1.05 (default) | the stored `speedup` a Point needs to be served |
-
-- The stored `speedup` (written back by CI) is the graph lower bound vs the baseline computed from
-  the **unclamped** rounds, to 3 decimals. A schema qualifies on that same number, so with the
-  default `AKLR_MIN_SPEEDUP` a schema that passes is served at its qualifying Points; its other
-  Points are measured and never served.
-- Without `--base`, a named kernel counts as kept: its Points are gated at 0.99, not 1.05, and it is
-  not timed against a served kernel; it still needs one Point at 1.05 to qualify. Validate with
-  `--base origin/main` before trusting a pass.
+- The gate is the mean log ratio over the trials, exponentiated: their geometric mean. No confidence
+  bound: a ratio near a threshold can flip between runs. For the gate only, each trial's log ratio
+  is clamped to ±ln 2: a report's `ratio` never shows more
+  than 2.000. At either end, read the medians.
+- Thresholds: Entry 1.05 (`DEFAULT_MIN_SPEEDUP`; `not_faster` at or below it), Retain 0.99
+  (`regressed` at or below it), and dispatch's `AKLR_MIN_SPEEDUP`, 1.05 by default, the stored
+  `speedup` a Point needs to be served.
+- A schema is admitted when at least one Point is correct and its speedup over its opponent, to 3
+  decimals, reaches Entry (>=, as dispatch compares a stored one), even where its gate was Retain;
+  where nothing is timed, correctness is enough.
+- The stored `speedup` is the geometric mean of the **unclamped** trials, to 3 decimals. A Point
+  whose stored speedup is under 1.05 is never served.
+- Without `--base`, nothing is served at the base: Points are held to Retain against the Baseline.
+  Validate with `--base origin/main` before trusting a pass.
 
 ## What moves a result
 
@@ -48,15 +57,15 @@ Sources: `aklr/core/validation/stages/_measure.py`, `stages/_bench/_stage.py`,
   add + RMSNorm at hidden 6144 took 3.9 – 4.5 µs from 1 to 256 tokens, for both kernels. A gain of
   0.1 – 0.25 µs there is a fixed latency difference: 1.04 – 1.05 on one node, 1.023 – 1.025 on
   another for the same sources.
-- **Spike rounds.** Two candidate rounds of 32 at +35 % and +21 % over the median took a Point with a
-  median ratio of 1.024 to a lower bound of 0.995. They come from the node: a CI run validating 88
-  schemas on 8 GPUs at once had spike rounds on both sides. The stored speedup includes them
-  unclamped.
+- **Spike timings.** Under the former 32-round protocol, two candidate rounds at +35 % and +21 % over
+  the median took a Point with a median ratio of 1.024 to a lower bound of 0.995. They come from the
+  node: a CI run validating 88 schemas on 8 GPUs at once had spikes on both sides. With one timing
+  per trial, a spike moves the geometric mean directly; the stored speedup includes it unclamped.
 - **Node and load.** The same kernel sources (add + RMSNorm) validated on a development node and on
   CI's, which ran 88 schemas on 8 GPUs at once, moved per Point by −2.5 % to +2.3 %; the same node
   twice moved them by under 1 %. A margin of a few percent is node-dependent.
-- **Sweeps are not the gate.** A config sweep's single-input-set median predicted validate's lower
-  bound within −6 % to +2 % in these runs. Settle choices worth 1 – 2 % with validate.
+- **Sweeps are not the gate.** A config sweep's single-input-set median predicted the former
+  protocol's lower bound within −6 % to +2 % in these runs. Settle choices worth 1 – 2 % with validate.
 - **Hot caches overstate.** A benchmark that replays without flushing can keep a decode GEMM's weight
   in MI355X's 256 MB MALL; AKLR reads it from HBM every call (a 25 MB weight took ~6 µs, about
   4.2 TB/s). Re-tune a configuration found hot.
