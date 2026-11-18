@@ -20,7 +20,7 @@ flowchart TD
     R --> V["3. 本地验证<br/>validate --base origin/main --stages audit,bench"]
     V -->|"no_qualifying_workload：失败"| D
     V -->|"demoted（性能或正确性不过）：删掉这些 workload"| R
-    V -->|"通过：report.md / report.json"| P["4. 开 PR + ci:gpu<br/>CI：code-lint（含 audit）→ unittest-aklr → GPU validate"]
+    V -->|"通过：report.md / report.json"| P["4. 开 PR + ci:gpu<br/>CI：code-lint（含 audit）→ aiter-test → sglang-test → vllm-test"]
     P -->|"合入 main"| M["4. main 的 push CI 重新测量<br/>publish-measurement bot 更新 aklr-perf/main PR"]
     M -->|"bot PR 合入"| N["4. workload 带上 accuracy / speedup / microseconds"]
 ```
@@ -37,7 +37,7 @@ flowchart TD
 
 ### 1. A contract 不存在：创建 contract
 
-参考仓库里的 `harness/skills/aklr-port-generated-kernels/references/new-op.md` 依次实现以下文件：
+参考仓库里的 `harness/skills/port-generated-kernels/references/new-op.md` 依次实现以下文件：
 
 1. `contract.py`：定义 `OpContract` 和 `CONTRACTS`（registry 会自动发现）；`op_type` 取目录名 `<op>`；按数学含义命名；多输出时不能有叫 `out` 的；每个输出给出 `error_bounds`，contract 给出 `determinism`。
 2. `reference.py`：float64 的 `<contract>_reference(point, row_major_args, to_float64)`。
@@ -86,7 +86,7 @@ path.write_text(s.schema_text(), encoding="utf-8")
 - `sources`：flydsl/triton，入口是 `kernel.py::run`，其他文件只能相对导入；hip 用 `.hip`/`.h`，入口是 `kernel.hip::run`。入口文件开头必须有描述 kernel 的 docstring（hip 为开头注释）。推荐用 `narrow(..., kernel=...)` + `schema_text()` 写出。path 规则：
   - flydsl/triton：Python kernel 是一个扁平包，path 里不能有 `/`，也不能有 `__init__.py`；
   - hip：可以用多级目录，如 `include/utils.h`；
-- `requires`：工具链版本约束，必填。至少写上 kernel 自己的语言，以开发时用的版本作下限：`{"flydsl": ">=0.3.2"}`、`{"triton": ">=3.8"}` 或 `{"hip": ">=7.15"}`（torch 报告的 HIP 版本，不是 ROCm 版本：ROCm 10.0 里的 HIP 是 7.15）。没写的 kernel，`python -m aklr export check` 会报错；运行时，环境里的版本不满足 `requires` 的 kernel 会被跳过。
+- `requires`：工具链版本约束，必填。至少写上 kernel 自己的语言，以开发时用的版本作下限：`{"flydsl": ">=0.3.2"}`、`{"triton": ">=3.8"}` 或 `{"hip": ">=7.15"}`（torch 报告的 HIP 版本，不是 ROCm 版本：ROCm 10.0 里的 HIP 是 7.15）。没写的 kernel，`python -m aklr export check` 会报错；运行时，环境里的版本不满足 `requires` 的 kernel 会被跳过。kernel import 了 torch 以外的库，也要写上，比如 `{"mori": ">=1.2.4"}`；import 了却没写，`export check` 会报错。
 - `author`：作者署名。
 
 source 字段全部填写完毕后，重新执行 1.B 脚本（把 `"sources": []` 换成 `[SourceFile(path=..., content=...), ...]`，`SourceFile` 从 `aklr.core.contract.spec` 导入，写法见示例第 1 步脚本），生成新 uuid 的 schema 文件。
@@ -114,8 +114,8 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - 提交 PR 不写 `accuracy`/`speedup`/`microseconds`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`/`microseconds`。
 
 **CI 规则**：
-- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ unittest-aklr（GPU：全部 pytest）→ validation（GPU：`validate --base <合并基> --stages audit,bench`，只在有要 bench 的 schema 时运行）。
-- 只有 `aklr/core/` 下的非 `.md` 改动才测全部 schema，其他改动（schema、文档、新建 `aklr/ops/<op>` 等）只测改动集合里的 schema（`validation_scope.py`）。
+- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ aiter-test（GPU，`aiter_image`，暂时是 sglang 镜像，覆盖安装对照 aiter：`tests/core`、`tests/ops`、`tests/benchmarks`，再 `validate --base <合并基> --under aklr/ops --exclude aklr/ops/mega_moe`，mega_moe 的 baseline 要等 mori 修复）→ sglang-test（同一台机器，`sglang_image` 原样：`tests/plugins/aiter`、`tests/plugins/sglang`，再 `validate --under aklr/plugins --exclude aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）→ vllm-test（同一台机器，`vllm_image` 原样：`tests/plugins/vllm`，再 `validate --under aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）。只在有要 bench 的 schema 时验证。
+- 只有 `aklr/core/` 下的非 `.md` 改动和 `stack.json` 才测全部 schema，其他改动（schema、文档、新建 `aklr/ops/<op>` 等）只测改动集合里的 schema（`validation_scope.py`）。
 
 ## 5. 运行时分发
 

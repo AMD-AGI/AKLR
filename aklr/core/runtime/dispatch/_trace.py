@@ -72,9 +72,7 @@ class Trace:
         """A dispatch of ``contract`` at ``key`` (``None``: unkeyed), served by the runnable
         ``served``, else falling back for the ``FallbackReason`` ``served``."""
         if isinstance(served, Runnable):
-            meta = served.metadata
-            kernel = f"{meta.build_type}:{meta.schema_name}:{meta.content_hash[:12]}"
-            outcome, reason = "served", "-"
+            kernel, outcome, reason = served.metadata.kernel_ref, "served", "-"
         else:
             kernel, outcome, reason = "-", "fallback", served.value
         if not self._is_new((contract.contract_id, key, kernel, reason)):

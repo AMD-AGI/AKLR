@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import api
-from aklr.ops.mla.contract import FLASH_MLA_WITH_KVCACHE, FP8_PAGED_MQA_LOGITS, MLA_DECODE_FWD
+from aklr.ops.mla.contract import (
+    FLASH_MLA_WITH_KVCACHE,
+    FP8_PAGED_MQA_LOGITS,
+    FP8_PAGED_MQA_LOGITS_VERIFY,
+    MLA_DECODE_FWD,
+)
 
-__all__ = ["flash_mla_with_kvcache", "fp8_paged_mqa_logits", "mla_decode_fwd"]
+__all__ = ["flash_mla_with_kvcache", "fp8_paged_mqa_logits", "fp8_paged_mqa_logits_verify", "mla_decode_fwd"]
 
 
 @api(FLASH_MLA_WITH_KVCACHE)
@@ -35,6 +40,20 @@ def flash_mla_with_kvcache(
 
 @api(FP8_PAGED_MQA_LOGITS)
 def fp8_paged_mqa_logits(
+    q,
+    kv_cache,
+    weights,
+    context_lens,
+    block_tables,
+    logits,
+    *,
+    page_size,
+    preshuffled=True,
+): ...
+
+
+@api(FP8_PAGED_MQA_LOGITS_VERIFY)
+def fp8_paged_mqa_logits_verify(
     q,
     kv_cache,
     weights,

@@ -69,9 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Execute inside the prepared container using the launcher's verified execution metadata",
     )
     parser.add_argument("--out", type=Path, required=True, help="Host directory for results and logs")
-    parser.add_argument(
-        "--image", help="Must match the planned image, which plan takes from .github/workflows/ci.yaml"
-    )
+    parser.add_argument("--image", help="Must match the planned image, which plan takes from stack.json")
     parser.add_argument("--cache", type=Path, help="Host kernel cache directory; defaults to <out>/cache")
     parser.add_argument("--work", type=Path, help="Host runtime/trace workspace; defaults to <out>/work")
     parser.add_argument("--run-id", help="Run identifier; must match the plan for report --plan")

@@ -40,7 +40,7 @@ These two vLLM calls:
 - `fused_rmsnorm_expand`, called by `MuseSpark1xMoE._pool` (`models/muse_spark/amd/model.py`): computes step 2 above and returns the normalized, expanded rows.
 - `MuseSparkAiterExperts.apply`, called by `FusedMoEKernelModularImpl._fused_experts` (`models/muse_spark/amd/muse_moe_runner.py`): computes steps 3–7 above and hands each route's output to vLLM's later steps (step 8).
 
-Their parameters in vLLM 0.33.0rc1.dev910, which the routes copy exactly, `self` included for the method:
+Their parameters in vLLM 0.33.0, which the routes copy exactly, `self` included for the method:
 
 ```python
 def fused_rmsnorm_expand(x, weight, eps, gain_center, input_scale, repeats): ...
@@ -79,7 +79,7 @@ The first argument of `@vllm_route` is the caller, the second the replaced funct
 @vllm_route(
     "vllm.models.muse_spark.amd.model.MuseSpark1xMoE._pool",
     "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
-    versions=("0.33.0rc1.dev910",),
+    versions=("0.33.0rc1.dev910", "0.33.0"),
     group="muse_spark.norm_experts",
 )
 def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):  # exactly the replaced function's parameters
@@ -116,7 +116,7 @@ def _would_serve(x, weight, eps, gain_center, layer):
 @vllm_route(
     "vllm.model_executor.layers.fused_moe.modular_kernel.FusedMoEKernelModularImpl._fused_experts",
     "vllm.models.muse_spark.amd.muse_moe_runner.MuseSparkAiterExperts.apply",
-    versions=("0.33.0rc1.dev910",),
+    versions=("0.33.0rc1.dev910", "0.33.0"),
     group="muse_spark.norm_experts",
 )
 def _experts_apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, ...):
@@ -213,7 +213,7 @@ VLLM_ROCM_USE_AITER=1 VLLM_ROCM_MUSE_MOE_REDUCE_DTYPE=bf16 VLLM_USE_BREAKABLE_CU
     --language-model-only --attention-backend ROCM_AITER_FA
 ```
 
-The full launch options are in [Muse Spark's definitions](../aklr/benchmarks/models/muse_spark/DEFINITIONS.md). The log reports the hooked calls (`aklr hooks N calls of vLLM 0.33.0rc1.dev910`), and the model's replies must stay correct.
+The full launch options are in [Muse Spark's definitions](../aklr/benchmarks/models/muse_spark/DEFINITIONS.md). The log reports the hooked calls (`aklr hooks N calls of vLLM 0.33.0`), and the model's replies must stay correct.
 
 ## Next
 

@@ -247,6 +247,27 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         layout_variant_name="row_major",
     ),
     PointSpec(
+        contract_id="fp8_paged_mqa_logits_verify@1.0",
+        axes={
+            "batch": 2,
+            "next_n": 3,
+            "n_heads": 32,
+            "n_pages": 4,
+            "max_blocks": 2,
+            "max_seq_len": 128,
+        },
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_cache": "uint8",
+            "weights": "float32",
+            "context_lens": "int32",
+            "block_tables": "int32",
+            "logits": "float32",
+        },
+        attrs={"page_size": 64, "preshuffled": True},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
         contract_id="fused_moe@1.0",
         axes={
             "n_tokens": 4,
@@ -742,6 +763,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "mla_prefill_varlen@1.0",
         "mla_prefill_varlen_lse@1.0",
         "fp8_paged_mqa_logits@1.0",  # gfx942 reads its fp8 bytes as e4m3fnuz
+        "fp8_paged_mqa_logits_verify@1.0",
         "per_group_quant_fp8@1.0",
         "per_group_quant_mxfp8@1.0",
         "sparse_prefill_mxfp8@1.0",

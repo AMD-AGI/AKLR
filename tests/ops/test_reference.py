@@ -40,6 +40,9 @@ class TestReference:
 
     @pytest.mark.gpu
     def test_backend_matches_reference(self, op_case: OpCase) -> None:
+        """The backend, an implementation independent of the reference, checks the reference: equal
+        integer outputs, floating ones at an SQNR, the contract's own min_sqnr_db where it
+        declares one. Other bounds are the kernels', per element; the backend is held to 20 dB."""
         if op_case.needs_gfx950 and DeviceTarget.current().arch != "gfx950":
             pytest.skip("the backend runs the Point only on gfx950")
         args = op_case.inputs()
@@ -47,31 +50,33 @@ class TestReference:
         outputs = op_case.contract.call_mutable_tensors(op_case.contract.baseline()(**call), call)
         results = op_case.compare(outputs, args, baseline_outputs=outputs)
         output_specs = semantics.mutable_tensor_declarations(op_case.request.schema_json)
-        baseline_relative = {
+        integral = {
             o
             for o, spec in output_specs.items()
-            if spec["error_bounds"] and spec["error_bounds"][0][1]["kind"] == "baseline_relative"
+            if semantics.DTYPE_TRAITS[spec["dtype"]["any_of"][0]].is_integral
         }
-        failed = {o: r.detail for o, r in results.items() if not r.is_passed and o not in baseline_relative}
-        assert failed == {}
-        # self-baselined compare is vacuous: check the reference by relative L2 error
-        # shortcut: 0.1 uncalibrated (MI300X skips), set to ~3-5x the gfx950 ratio once measured
+        assert {o: results[o].detail for o in integral if not results[o].is_passed} == {}
         reference = op_case.reference_outputs(args)
-        for o in baseline_relative:
+        for o in output_specs.keys() - integral:
+            bound = output_specs[o]["error_bounds"][0][1]
+            # shortcut: 20 dB uncalibrated (MI300X skips), set from the gfx950 SQNRs once measured
+            min_sqnr_db = bound["min_sqnr_db"] if bound["kind"] == "sqnr" else 20.0
             error = (outputs[o].cpu().double() - reference[o]).norm()
-            assert error <= 0.1 * reference[o].norm(), (
+            assert error <= 10 ** (-min_sqnr_db / 20) * reference[o].norm(), (
                 o,
-                (error / reference[o].norm()).item(),
+                min_sqnr_db,
+                (20 * (reference[o].norm() / error).log10()).item(),
             )
 
 
+@pytest.mark.parametrize("contract_id", ["fp8_paged_mqa_logits@1.0", "fp8_paged_mqa_logits_verify@1.0"])
 def test_mqa_logits_reference_is_the_same_in_chunks(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, contract_id: str
 ) -> None:
-    """One row a chunk gives fp8_paged_mqa_logits' reference bit for bit."""
+    """One row a chunk gives the paged MQA logits references bit for bit."""
     import aklr.ops.mla.reference as mla_reference
 
-    case = OpCase.of("fp8_paged_mqa_logits@1.0")
+    case = OpCase.of(contract_id)
     args = case.inputs()
     whole = case.reference_outputs(args)["logits"]
     monkeypatch.setattr(mla_reference, "_CHUNK_ELEMENTS", 1)

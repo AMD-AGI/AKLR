@@ -135,12 +135,13 @@ than `__init__.py`, sorted and unique (a hip kernel's: [hip kernels](#hip-kernel
 file describes the kernel; its prose carries no history, commit or speedup, and trailing `key: value` metadata lines
 (such as `legacy_solution:`, `keep_commit:`, `device_edits:`) are allowed; audit rejects an empty docstring (SA4).
 
-`requires` maps a toolchain to a PEP 440 specifier of the versions the kernel needs, such as
+`requires` maps a toolchain or library to a PEP 440 specifier of the versions the kernel needs, such as
 `{"triton": ">=3.8"}`; a dev or rc build counts as its release. A kernel with sources names at least its
 language's toolchain (`TOOLCHAINS`): `flydsl`, `triton`, or `hip` for hip and hsaco kernels, which is the HIP
-version torch was built with (`torch.version.hip`), not the ROCm release (ROCm 10.0 ships HIP 7.15);
-`export check` rejects one that does not (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
-reports `no_matching_toolchain`. Give the version the kernel was developed on as the lower bound, and an upper bound
+version torch was built with (`torch.version.hip`), not the ROCm release (ROCm 10.0 ships HIP 7.15), and every
+library it imports beyond torch, such as `{"mori": ">=1.2.4"}` (`Library` in `aklr/core/contract/spec/_kernel.py`);
+`export check` rejects one that misses either (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
+skips it too, listing it in the report. Give the version the kernel was developed on as the lower bound, and an upper bound
 only once a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
 
 `author` names who wrote the kernel: a person, a team or an agent, such as `"GEAK"`. It is one line without
@@ -367,7 +368,7 @@ A schema file carries no semantics stamp. After a change to the schema format, r
 |---|---|---|
 | `python -m aklr export [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
 | `python -m aklr export check` | checks every committed schema and `impls/`; no GPU, no environment | 0 clean, 1 problems on stderr, 2 usage |
-| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
+| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] [--under DIR] [--exclude DIR] [--no-timing] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md`. `--under` keeps the schemas under DIR, `--exclude` drops them; `--no-timing` builds and checks the kernels only, on the workloads not recorded `failed` (dispatch never serves those), timing and writing back nothing; any finding fails it. A schema whose `kernel.requires` the environment misses is skipped, as dispatch skips it | 0 passed, 1 failed, 2 usage, 3 aborted |
 
 Options and stages of `validate`: `python -m aklr validate --help`.
 
@@ -384,4 +385,5 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 | `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |
 | `AKLR_MEASURED_DIR` | a path | a directory laid out like the checkout whose schemas replace the committed ones they name |
 | `AKLR_SGLANG_PLUGIN` | `1`, `0`, unset | `1`: the sglang plugin hooks sglang's layers to its ops (`aklr/plugins/README.md`); any other value is an error |
+| `AKLR_AITER_PLUGIN` | `1`, `0`, unset | `1`: the sglang and vLLM plugins enable AKLR as a provider of aiter's kernel plugin interface (`aklr/plugins/README.md`), whatever `AKLR_SGLANG_PLUGIN` and `AKLR_VLLM_PLUGIN` say; any other value is an error |
 | `AKLR_TRACE` | `plugin`, `op`, `all`, `0`, unset | log, as warnings, each distinct hooked call once per process: `plugin` the vLLM and sglang routes (`[aklr plugin]` lines, logger `aklr.trace.plugin`), `op` every op api dispatch, including the ones aiter makes (`[aklr op]` lines, logger `aklr.trace.op`: the Point, and the kernel serving it or the fallback reason), `all` both; CUDA graph replays run no Python and log nothing; any other value is an error |

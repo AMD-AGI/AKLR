@@ -30,7 +30,7 @@ def kimi_k3_attn_res(
 @vllm_route(
     "vllm.models.kimi_k3.amd.linear._apply_attn_res",
     "vllm.models.kimi_k3.amd.linear.attn_res",
-    versions=("0.33.0rc1.dev910",),
+    versions=("0.33.0rc1.dev910", "0.33.0"),
 )
 def _attn_res(
     prefix,

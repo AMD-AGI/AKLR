@@ -2,13 +2,18 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """What sglang 0.5.22 runs on HIP by default: for DeepseekSparseAttnBackend._forward_triton_decode,
-its triton split-K sparse MLA decode; for the DSA indexer's decode top-k, sgl_kernel's."""
+its triton split-K sparse MLA decode; for forward_extend's sparse MLA prefill, triton_sparse_mla_fwd;
+for the DSA indexer's decode top-k, sgl_kernel's."""
 
 from __future__ import annotations
 
 from aklr.plugins.sglang.layers.dsa_backend.contract import ROPE_DIM
 
-__all__ = ["dsa_sparse_mla_decode_baseline", "dsa_topk_transform_baseline"]
+__all__ = [
+    "dsa_sparse_mla_decode_baseline",
+    "dsa_sparse_mla_prefill_baseline",
+    "dsa_topk_transform_baseline",
+]
 
 
 def dsa_sparse_mla_decode_baseline(q, kv_cache, topk_indices, sm_scale, output=None):
@@ -21,6 +26,23 @@ def dsa_sparse_mla_decode_baseline(q, kv_cache, topk_indices, sm_scale, output=N
 
     latent = q.shape[-1] - ROPE_DIM
     attended = triton_sparse_mla_decode_splitk(
+        q_nope=q[..., :latent],
+        q_rope=q[..., latent:],
+        kv=kv_cache.view(kv_cache.shape[0], 1, -1),
+        indices=topk_indices.unsqueeze(1),
+        sm_scale=sm_scale,
+        d_v=latent,
+    )
+    # [1, tokens, heads, latent], as the backend returns it
+    return attended.squeeze(0)
+
+
+def dsa_sparse_mla_prefill_baseline(q, kv_cache, topk_indices, sm_scale, output=None):
+    """triton_sparse_mla_fwd as forward_extend calls it (sparse prefill: max_topk_length > 512)."""
+    from sglang.kernels.ops.attention.dsa.triton_sparse_mla import triton_sparse_mla_fwd
+
+    latent = q.shape[-1] - ROPE_DIM
+    attended = triton_sparse_mla_fwd(
         q_nope=q[..., :latent],
         q_rope=q[..., latent:],
         kv=kv_cache.view(kv_cache.shape[0], 1, -1),
