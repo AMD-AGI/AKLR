@@ -7,7 +7,7 @@ set -eo pipefail
 head=$(git rev-parse HEAD)
 # The validation base: incumbents and the change set start here; empty validates everything.
 validation_base=
-# Whether the bot wrote the change's measured fields (speedup, accuracy, microseconds).
+# Whether the bot wrote the change's measured fields (the workloads' evaluations).
 measured_by_bot=false
 if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
   # Checkout tests the PR merge commit; its first parent is the

@@ -17,12 +17,14 @@ if [[ ${#reports[@]} == 0 ]]; then
   echo 'committed=false' >> "$GITHUB_OUTPUT"
   exit 0
 fi
-schema_path='^aklr/(ops|plugins(/[^/]+)+)/[^/]+/impls/[^/]+/[^/]+/[0-9a-f]{16}\.json$'
-authored='del(.workloads[] | .speedup, .accuracy, .microseconds)'
-# Every workload measured; speedup absent only on a failed one, microseconds wherever no baseline was timed.
+schema_path='^aklr/ops/[^/]+/impls/[^/]+/[^/]+/[0-9a-f]{16}\.json$'
+authored='del(.workloads[] | .evaluations)'
+# Every workload measured on some hardware, each speedup and time positive.
 shape='(.workloads | length > 0) and all(.workloads[];
-  all(.speedup, .microseconds; . == null or (type == "number" and . > 0)) and
-  (.accuracy == "passed" and .speedup != null or .accuracy == "failed"))'
+  (.evaluations | length > 0) and all(.evaluations[];
+    (.accuracy == "passed" or .accuracy == "failed") and
+    (.microseconds == null or (.microseconds | type == "number" and . > 0)) and
+    all((.speedup // {})[]; .value | type == "number" and . > 0)))'
 manifest=$RUNNER_TEMP/manifest
 # accept <file> <path> <sha>: copy over main's file iff only measured fields change.
 accept() {
@@ -73,7 +75,6 @@ if git diff --quiet; then
 fi
 stray=$(comm -23 <(git diff --name-only | sort) <(cut -d' ' -f2 "$manifest" | sort -u))
 [[ -z $stray ]] || { printf '::error::Changed outside the accepted schemas: %q\n' "$stray"; exit 1; }
-python -m aklr export check
 # The last measurement per changed path; a carried value already on main drops out.
 published=$(awk 'NR == FNR {changed[$0]; next} $2 in changed {sha[$2] = $1} END {for (p in sha) print sha[p], p}' \
   <(git diff --name-only) "$manifest" | sort -k2)

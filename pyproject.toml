@@ -24,20 +24,16 @@ dependencies = [
 ]
 
 [project.entry-points."sglang.srt.plugins"]
-aklr = "aklr.plugins.sglang:register"
+aklr = "aklr.core.runtime.dispatch:register_sglang_plugin"
 
 [project.entry-points."vllm.general_plugins"]
-aklr = "aklr.plugins.vllm:register"
-
-[project.entry-points."aiter.plugins"]
-aklr = "aklr.plugins.aiter.provider:provider"
+aklr = "aklr.core.runtime.dispatch:register_vllm_plugin"
 
 [tool.setuptools.packages.find]
 include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
 "aklr.ops" = ["*/impls/*/*/*.json"]
-"aklr.plugins" = ["*/*/*/impls/*/*/*.json", "*/*/*/*.hip"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]
@@ -65,6 +61,14 @@ ignore = [
 [tool.pytest.ini_options]
 # The AgentX tests import the agentx_ci package from benchmarks/agentx.
 pythonpath = ["benchmarks/agentx"]
+testpaths = ["tests"]
+# -ra lists every skip with its reason: a skipped GPU test is neither red nor green.
+addopts = ["--strict-markers", "--strict-config", "-ra"]
+xfail_strict = true
+markers = [
+    "gpu(n=1): needs n GPUs and the backends (aiter, sglang)",
+    "gfx950: needs a gfx950 GPU (the committed schemas' target)",
+]
 
 [tool.coverage.run]
 branch = true

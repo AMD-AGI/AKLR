@@ -17,39 +17,42 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 
 ## Where the result is
 
-- The test jobs' `Run unit tests ... and validation on a GPU node` steps, whose log ends with the validation (`aiter-test`: `aklr/ops`; `sglang-test` and `vllm-test`: their plugins, then `aklr/ops` untimed): the progress per schema, the outcome counts,
-  and the findings, e.g. `not_faster <schema>: graph vs baseline ratio_lower_bound 0.9950 < 1.05`.
-  It names the schema, not the Point. `regressed (demoted)` there counts demotions, not findings.
-- The run's artifacts `validation-report-<job>-<attempt>` for each of the three jobs, and
-  `validation-check-sglang-test-<attempt>` and `validation-check-vllm-test-<attempt>` (`aklr/ops` built and checked
-  in each image, no timing, no `schemas/`): `report.md` (one row per Point: verdict,
-  `graph/baseline`, `graph/incumbent`, then the findings), `report.json`, `schemas/` (the schemas
-  with the measured fields) and `baseline/` (what each Point was timed against).
+- The test jobs' `Run unit tests ... and validation on a GPU node` steps, whose log ends with the validation
+  (`aiter-test`: `aklr/ops` timed; `sglang-test` and `vllm-test`: `aklr/ops` built and checked in their images,
+  untimed): a line per batch (schema, Points, speedup range, accuracy), then the stage's findings and its count
+  of demotions. A finding names the schema; a demotion's Point is in the report.
+- The run's artifact `validation-report-aiter-test-<attempt>`: `report.md` (one row per Point: verdict,
+  what it was timed against, ratio, speedup and both medians; then the demotions, the findings and the
+  schemas skipped for a `kernel.build.requires` the image misses), `report.json` and `schemas/` (the
+  schemas with the measured fields). `validation-check-sglang-test-<attempt>` and
+  `validation-check-vllm-test-<attempt>` hold the untimed checks' reports, with no `schemas/`.
 - Nothing else is kept: the job deletes its GPU workload and that workload's files when it ends.
   Use the artifact. A job cancelled or timed out before its tests ended has no reports, only its
   step log.
 
 ## `report.json`
 
-- Top level: `version`, `head_sha`, `base_sha`, `measurement_profile`, `platform`, `schema_paths`,
-  `bench_paths`, `stages`.
-- `stages[]` has `stage_name` (`audit`, `bench`), `status`, `findings[]` (`code`,
-  `schema_path`, `axes`, `detail`); the bench stage adds `demotions[]` and `workload_records[]`.
-- A workload record: `schema_path`, `axes`, `kernel_content_hash`, `baseline` (what it was timed
-  against: a `<contract>_baseline` function or a committed schema), `is_timed`, `is_kept`,
-  `worst_violation_fraction`, `timings[]`.
-- A timing: `mode` (`graph`), `versus` (`baseline` or `incumbent`), `threshold` (`entry` or
-  `retain`), `n_rounds`, `ratio_lower_bound` (the gate's, clamped), `log_ratio_mean` and `min_ratio`
-  (unclamped), and the per-round `candidate_milliseconds` / `versus_milliseconds`.
+- Top level: `version` (3: records and findings name a `workload`, version 2's `axes`), `head_sha`, `base_sha`, `platform`, `schema_paths`, `bench_paths`, `stages`.
+- `stages[]` has `stage_name` (`audit`, `bench`), `status`, `findings[]` (`code`, `schema_path`,
+  `workload`, `detail`; `workload` is the workload's key, `{"axes": {"M": 4}}`, or null); the bench stage adds `demotions[]`, `records[]`, `profile` (the measurement
+  profile: trials, graph budget, Entry, Retain),
+  `protocol` (its digest, with the timer's sources: results under another protocol are not
+  comparable) and `evaluations` (what is written back, by schema path and the workload key's text,
+  `M=4`).
+- A record: `schema_path`, `workload`, `verdict` (its first finding's code, or `passed`), `is_demoted`,
+  `versus` (`baseline`, `incumbent` or `nothing`), `versus_name` (the Baseline's name or the Incumbent's
+  path), `kernel_hash`, and `comparison` (none when not timed): `ratio` (the gate's,
+  clamped), `speedup` (unclamped), and the per-trial `candidate_ms` /
+  `opponent_ms`.
 
 ```python
 import json, statistics as st
 r = json.load(open("report.json"))
 bench = next(s for s in r["stages"] if s["stage_name"] == "bench")
-for w in bench["workload_records"]:
-    if "<schema name>" in w["schema_path"]:
-        for t in w["timings"]:
-            c, v = t["candidate_milliseconds"], t["versus_milliseconds"]
-            print(w["axes"], t["versus"], round(t["ratio_lower_bound"], 4),
-                  round(st.median(v) / st.median(c), 4), max(c) / st.median(c))
+for w in bench["records"]:
+    c = w["comparison"]
+    if "<schema name>" in w["schema_path"] and c:
+        cm, om = c["candidate_ms"], c["opponent_ms"]
+        print(w["workload"]["axes"], w["verdict"], w["versus"], round(c["ratio"], 4),
+              round(st.median(om) / st.median(cm), 4), max(cm) / st.median(cm))
 ```
