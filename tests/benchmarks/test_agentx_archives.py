@@ -150,7 +150,7 @@ def test_single_result_entry_can_rerender_without_rewriting_the_archive(case):
         assert utils.read_json(out / "results.json") == original
         summary = utils.read_json(out / "report.json")
         point = summary["frontiers"]["combined"][0]
-        assert point["p90_full_response_intvty"] == pytest.approx(1 / 0.00351)
+        assert point["p90_full_response_intvty"] == pytest.approx(1 / 0.00351, abs=5e-8)
         source = out / "results.json"
 
 

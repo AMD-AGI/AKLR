@@ -404,6 +404,7 @@ def test_json_schema_matches_the_contract(case):
     assert not validator.is_valid(run)
 
 
+@pytest.mark.usefixtures("case")  # build_run reads the run image: keep stack.json out of this test
 def test_repository_recipes_match_agentx_yaml():
     config = plan.load_config(AGENTX / "agentx.yaml")
     paths = sorted((AGENTX / "recipes").glob("*/*/*/serving.*.json"))

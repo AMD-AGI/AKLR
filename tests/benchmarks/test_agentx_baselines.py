@@ -162,9 +162,9 @@ def test_partial_baseline_round_trips_and_compares_only_successful_points(case):
     assert comparison["baseline_run"] == "previous-run"
     arm = comparison["arms"]["tp1"]
     rows = {row["conc"]: row for row in arm["points"]}
-    assert rows[1]["tput_ratio"] == pytest.approx(1.25)
-    assert rows[1]["intvty_ratio"] == pytest.approx(2)
-    assert arm["tput_geomean_ratio"] == pytest.approx(1.25)
+    assert rows[1]["tput_ratio"] == pytest.approx(1.25, abs=5e-8)
+    assert rows[1]["intvty_ratio"] == pytest.approx(2, abs=5e-8)
+    assert arm["tput_geomean_ratio"] == pytest.approx(1.25, abs=5e-8)
     for conc in (2, 3):
         assert rows[conc].get("tput_ratio") is None
         assert rows[conc].get("intvty_ratio") is None
@@ -185,7 +185,7 @@ def test_interrupted_baseline_compares_matching_point_measurements(case):
     comparison = utils.read_json(site / case.relative / "report.json")["comparison"]
     assert comparison["status"] == "ok"
     rows = {row["conc"]: row for row in comparison["arms"]["tp1"]["points"]}
-    assert rows[1]["tput_ratio"] == pytest.approx(1.2)
+    assert rows[1]["tput_ratio"] == pytest.approx(1.2, abs=5e-8)
     assert rows[2].get("tput_ratio") is None
     assert rows[3]["baseline"] is None
     assert rows[3].get("tput_ratio") is None
@@ -236,7 +236,7 @@ def test_changed_point_settings_compare_frontiers_instead_of_points(case):
     assert arm["status"] == "curve"
     assert arm["changed_concs"] == [1]
     assert arm["points"] == []
-    assert arm["tput_geomean_ratio"] == pytest.approx(1)
+    assert arm["tput_geomean_ratio"] == pytest.approx(1, abs=5e-8)
 
 
 @pytest.mark.parametrize("mismatch", ["source", "image", "mode-switch"])

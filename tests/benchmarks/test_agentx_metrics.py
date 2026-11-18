@@ -127,10 +127,10 @@ def test_paired_and_weekly_ratios_use_full_response_after_migration():
     previous = utils.validated_results(previous)
     paired = analysis.compare_aklr(current)
     assert paired["status"] == "ok"
-    assert paired["points"][0]["intvty_ratio"] == pytest.approx(0.00359 / 0.00351)
+    assert paired["points"][0]["intvty_ratio"] == pytest.approx(0.00359 / 0.00351, abs=5e-8)
     weekly = analysis.compare(current, previous)
     assert weekly["status"] == "ok"
-    assert weekly["arms"]["tp1"]["points"][0]["intvty_ratio"] == pytest.approx(2)
+    assert weekly["arms"]["tp1"]["points"][0]["intvty_ratio"] == pytest.approx(2, abs=5e-8)
 
 
 class ReportMetricMigrationCase:
@@ -216,7 +216,7 @@ def test_historical_baseline_with_raw_is_normalized_for_comparison_without_rewri
     assert baseline == original
     assert stored == original
     assert summary["comparison"]["status"] == "ok"
-    assert summary["comparison"]["arms"]["tp1"]["points"][0]["intvty_ratio"] == pytest.approx(2)
+    assert summary["comparison"]["arms"]["tp1"]["points"][0]["intvty_ratio"] == pytest.approx(2, abs=5e-8)
     assert "pareto" in target["baselines"]
     assert not target["baseline_unavailable"]
 

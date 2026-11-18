@@ -82,7 +82,7 @@ def test_failed_points_on_different_sides_leave_the_successful_intersection():
     assert [row["conc"] for row in comparison["points"]] == [1]
     assert comparison["points"][0]["tput_ratio"] == 2
     assert comparison["points"][0]["intvty_ratio"] == 2
-    assert comparison["tput_geomean_ratio"] == pytest.approx(2)
+    assert comparison["tput_geomean_ratio"] == pytest.approx(2, abs=5e-8)
 
 
 def test_unfinished_modes_with_different_recorded_points_can_compare():
@@ -125,7 +125,7 @@ def test_point_settings_failures_exclude_only_the_affected_pair(change):
 
     assert comparison["status"] == "ok"
     assert [row["conc"] for row in comparison["points"]] == [1, 3]
-    assert comparison["tput_geomean_ratio"] == pytest.approx(4)
+    assert comparison["tput_geomean_ratio"] == pytest.approx(4, abs=5e-8)
 
 
 @pytest.mark.parametrize(
@@ -245,7 +245,7 @@ def test_failed_record_metadata_does_not_block_other_successful_points():
     rows = {row["conc"]: row for row in arm["points"]}
     assert rows[1]["tput_ratio"] == 1.5
     assert rows[1]["intvty_ratio"] == 2
-    assert arm["tput_geomean_ratio"] == pytest.approx(1.5)
+    assert arm["tput_geomean_ratio"] == pytest.approx(1.5, abs=5e-8)
     for conc in (2, 3):
         assert rows[conc].get("tput_ratio") is None
 
@@ -285,7 +285,7 @@ def test_one_changed_point_does_not_disable_the_whole_arm(change):
     assert rows[2].get("tput_ratio") is None
     assert rows[2].get("reason")
     assert rows[3]["tput_ratio"] == 6
-    assert arm["tput_geomean_ratio"] == pytest.approx(3)
+    assert arm["tput_geomean_ratio"] == pytest.approx(3, abs=5e-8)
 
 
 def test_changed_grid_still_compares_unchanged_shared_points():
@@ -345,7 +345,7 @@ def test_execution_changes_compare_frontiers(path, value):
     arm = comparison["arms"]["tp1"]
     assert arm["status"] == "curve"
     assert arm["points"] == []
-    assert arm["tput_geomean_ratio"] == pytest.approx(1)
+    assert arm["tput_geomean_ratio"] == pytest.approx(1, abs=5e-8)
 
 
 @pytest.mark.parametrize("change", ["other_trace", "other_gpu", "other_client"])
@@ -444,12 +444,12 @@ def test_frontiers_interpolate_in_log_interactivity_over_the_shared_range():
     assert curve["overlap"] == [20, 40]
     assert [row["intvty"] for row in curve["positions"]] == [20, 40]
     first, last = curve["positions"]
-    assert first["current"] == pytest.approx(75)
-    assert first["tput_ratio"] == pytest.approx(1.25)
-    assert last["baseline"] == pytest.approx(60 - 55 / 2)
-    assert curve["tput_ratio_min"] == pytest.approx(1.25)
-    assert curve["tput_ratio_max"] == pytest.approx(50 / 32.5)
-    assert curve["tput_geomean_ratio"] == pytest.approx((1.25 * 50 / 32.5) ** 0.5)
+    assert first["current"] == pytest.approx(75, abs=5e-8)
+    assert first["tput_ratio"] == pytest.approx(1.25, abs=5e-8)
+    assert last["baseline"] == pytest.approx(60 - 55 / 2, abs=5e-8)
+    assert curve["tput_ratio_min"] == pytest.approx(1.25, abs=5e-8)
+    assert curve["tput_ratio_max"] == pytest.approx(50 / 32.5, abs=5e-8)
+    assert curve["tput_geomean_ratio"] == pytest.approx((1.25 * 50 / 32.5) ** 0.5, abs=5e-8)
 
 
 def test_frontiers_without_a_shared_range_only_chart():
@@ -469,7 +469,7 @@ def test_curves_compare_only_shared_traces():
     current += traced(points((10, 9999), (40, 9999)), "b" * 40)
     baseline = traced(points((10, 100), (40, 50)), "a" * 40)
     curve = analysis.compare_curve(current, baseline, "fixture")
-    assert curve["tput_geomean_ratio"] == pytest.approx(1)
+    assert curve["tput_geomean_ratio"] == pytest.approx(1, abs=5e-8)
     other = traced(points((10, 100), (40, 50)), "c" * 40)
     assert analysis.compare_curve(current[2:], other, "fixture")["status"] == "curve-no-overlap"
 
@@ -548,8 +548,8 @@ def test_partial_report_exports_gains_and_drops_the_all_success_requirement(tmp_
     pairing = summary["aklr_comparison"]
     assert pairing["status"] == "ok"
     assert len(pairing["points"]) == 1
-    assert pairing["tput_geomean_ratio"] == pytest.approx(1.5)
-    assert summary["comparison"]["arms"]["tp1"]["tput_geomean_ratio"] == pytest.approx(1.5)
+    assert pairing["tput_geomean_ratio"] == pytest.approx(1.5, abs=5e-8)
+    assert summary["comparison"]["arms"]["tp1"]["tput_geomean_ratio"] == pytest.approx(1.5, abs=5e-8)
     assert "+50.0%" in html
     assert "1 matched pairs" in html
     assert "1 对匹配测量点" in html
