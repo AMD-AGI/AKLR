@@ -266,13 +266,20 @@ class _CompileTripwire(NamedTuple):
 
     @classmethod
     def resolve(cls) -> _CompileTripwire:
+        import flydsl
         import flydsl.compiler.jit_function as flydsl_jit
         import triton.runtime.jit as triton_jit
+        from packaging.version import Version
 
-        hooks = (
-            (triton_jit.JITFunction, "_do_compile"),
-            (flydsl_jit, "_build_call_state"),
+        # FlyDSL before 0.5 reaches _build_call_state on a specialization's first call in the process
+        # only; from 0.5 every call of a JitFunction traces again and rebuilds it, so the compile itself
+        # is the hook
+        flydsl_hook = (
+            (flydsl_jit, "_build_call_state")
+            if Version(flydsl.__version__).release < (0, 5)
+            else (flydsl_jit.MlirCompiler, "compile")
         )
+        hooks = ((triton_jit.JITFunction, "_do_compile"), flydsl_hook)
         for owner, name in hooks:
             getattr(owner, name)
         return cls(hooks)
