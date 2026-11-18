@@ -11,10 +11,11 @@ This guide covers the AKLR AgentX performance pipeline, GitHub triggers, local C
 ```mermaid
 flowchart TD
     T["Manual, PR label, or scheduled trigger"] --> P["plan: check recipes and add run-layer fields"]
-    X["InferenceX / cookbook"] -.->|"recipe module, reviewed PR"| L["recipes/#lt;family#gt;/#lt;target#gt;/#lt;framework#gt;/serving.#lt;model#gt;.json"] --> P
+    X["InferenceX / cookbook"] -.->|"reviewed PR"| L["serving.#lt;model#gt;.json"] --> P
     P --> S["sweep: prepare the environment, test models and points serially, save results"]
-    S --> R["report: validate results, generate reports and baselines, summarize outcomes"]
-    R -->|"Publishing enabled"| D["pages: deploy the uploaded Pages artifact"]
+    S --> R["report: validate results, summarize outcomes"]
+    R -->|"main, publishing enabled"| D["publish: replace this run's targets in site-data/agentx"]
+    D -.->|"workflow_run"| W["site.yaml: deploy site-data to Pages"]
     P -.->|"Upload"| A["agentx-plan artifact"]
     A -.->|"Read serving.json"| S
     A -.->|"Read manifest.json"| R
@@ -36,7 +37,7 @@ The form has **6 workflow inputs**, plus GitHub's **Branch / Use workflow from**
 | `frameworks` | `all` | Enabled serving frameworks within the selected targets, `sglang` and/or `vllm`, comma-separated |
 | `points` | Empty | Smoke run: recipe `ARM:CONC` points, such as `tp8-ep1-none-spec-mtp:1`, separated by commas; requires exactly one selected model/target/framework run; empty runs every Pareto point in the recipe |
 | `duration_s` | Empty | Override each point's measurement duration in seconds; a positive integer such as `60`; empty inherits the recipe duration, currently `3600` seconds for AgentX |
-| `publish` | `false`, unchecked | Deploy the report to GitHub Pages when checked; generated result and report artifacts are still uploaded when unchecked |
+| `publish` | `false`, unchecked | When checked, replace the corresponding content on the site with this run's measured targets (section 1.4) |
 
 ### 1.2 Trigger with a PR Label
 
@@ -61,6 +62,10 @@ Set the repository variable `AGENTX_SCHEDULE_ENABLED` to `true` to enable the we
 | --- | --- | --- | --- | --- |
 | Schedule | All enabled frameworks of the targets assigned to `agentx-mi355x` | Recipe Pareto points | 3600 seconds | Yes |
 
+### 1.4 Publishing to the Site
+
+Every result on the site comes from `main`. Each CI writes only its own directory of the `site-data` branch. [site.yaml](../../.github/workflows/site.yaml) is the only workflow in the repository with `pages: write`, and it deploys this branch to GitHub Pages. **site.yaml** runs after each `AKLR-agentx-ci` run on `main` completes, or manually. It deploys the newest `site-data`: every directory with a `section.json`, plus a home page built from those files.
+
 ## 2. CLI Commands
 
 ### 2.1 Environment and Entry Point
@@ -80,6 +85,7 @@ python3 -m agentx_bench pipeline --help
 | `plan` | Load recipe files for one or more model/target/framework runs and generate a manifest for report validation |
 | `sweep` | Install the current checkout in Docker, install the Rust toolchain and build the TreeCore once for SGLang, then execute a serving plan. Before each point's server starts, it waits until `amd-smi` reads 0% VRAM use on every GPU; after 300 seconds it aborts the sweep |
 | `report` | Render a single result; with `--plan`, validate the plan, build a site, and manage baselines |
+| `publish` | Merge a site from `report --plan` into `agentx/` of a `site-data` checkout by model/target/framework run (section 1.4) |
 
 ### 2.2 Run the Pipeline
 
@@ -334,17 +340,16 @@ The script downloads the Linux x64 runner, registers it with `config.sh --unatte
 
 ### 4.2 Configure Repository Variables and Verify
 
-Set these variables under **Settings → Secrets and variables → Actions → Variables**:
+1. Set these variables under **Settings → Secrets and variables → Actions → Variables**:
 
 | Repository variable | Required | Value and purpose |
 | --- | --- | --- |
 | `AGENTX_HF_HUB_DIR` | Yes | Absolute path to the weights hub on the runner, such as `/data/hf/hub` |
 | `AGENTX_SCHEDULE_ENABLED` | To enable scheduled runs | Set to the string `true`; controls scheduled triggers only, independently of manual or PR label triggers |
-| `AGENTX_PAGES_URL` | For a custom site URL | Root URL for reading the previous site and baselines; defaults to `https://<owner>.github.io/<repo>` |
 
 The selected target's `runner_label` in `agentx.yaml` must match registration's `--label`; both are `agentx-mi355x` in this example.
 
-To publish reports, set the build and deployment source to **GitHub Actions** under **Settings → Pages**. Ensure that the `github-pages` environment allows deployments from the target branch.
+2. To publish reports, set the build and deployment source to **GitHub Actions** under **Settings → Pages**; the `github-pages` environment must allow `main`. The publish job reads `AKLR_BOT_APP_ID` and `AKLR_BOT_PRIVATE_KEY` from the `bot` environment (whose deployment branches allow only `main`), and the `AKLR_BOT_LOGIN` variable. The App needs `contents: write` permission.
 
 Confirm that the runner appears Online / Idle on GitHub, then check the service on the host:
 

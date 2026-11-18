@@ -3,3 +3,7 @@
 # AgentX CI authorization: the allowlist and the workflow that enforces it.
 /benchmarks/agentx/allowlist.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
 /.github/workflows/agentx-ci.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
+
+# Results site: the only Pages deploy and the site-data writer.
+/.github/workflows/site.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
+/.github/scripts/commit_site_data.sh	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
