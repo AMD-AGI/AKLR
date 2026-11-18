@@ -175,6 +175,12 @@ In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §3.
   expert (§8). Its note: L2 hit ~34% streaming against ~59% cached, ~22% faster at an effective M of 8192
   (`host.py:125-138`). On dense small-M GEMMs
   the B policy also coupled with the K tile (`../gemm/small_m.md` §6).
+- **aiter's mixed stage 2 ignores the tuned row's `b_nt`.** Its fp4 and fp8 stage-2 builder takes `b_nt` and drops
+  it, so a row named `_bnt2` loads w2 cached like `_bnt0` (the source, and two ways to restore it:
+  `../flydsl/moe.md` § grouped_sorted_tokens §4). *(field, E46)* On #122's MXFP4 fused MoE (`e6c03532`: hidden 6144,
+  128 experts, top-4, inter 768, an atomic stage 2 that asks for `b_nt` 2 up to 1024 tokens and 0 above), the whole
+  call at 512 tokens took 217.5 µs with `nt` on the w2 loads and 256.8 µs without (1.18×); at 3112 tokens, where it
+  asks for 0, 359.2 and 358.5 µs.
 - **Non-temporal is a property of each load, not of the operand.** *(field, E8)* Choosing per M-block — cached when a
   neighbour in sorted order has the same expert (`sorted_expert_ids[blk ± 1] == expert`), non-temporal otherwise —
   gained 1.82% over all-non-temporal on an a4w4 score over 8–128 tokens. Conditions:
@@ -355,3 +361,4 @@ tokens; the ruler is AKLR's graph timer (bench_cudagraph, L2 flushed per replay)
 - E43 [2026-11, gfx950 (MI355X), aiter dbd8bf5, FlyDSL 0.3.2, N=8 rounds at 112 tokens and 6 at 40, Kineto kernel time, arms back to back, order swapped each round] sort buffers sized for the 896 global experts against topk_ids remapped to the 112 local experts plus one discard slot: at 112 tokens the FlyDSL sort 22.32 → 8.85 µs, aiter's default Opus sort 10.57 → 8.93 µs; at 40 tokens the Opus sort 10.54 → 12.34 µs (at 113 experts aiter ran its one-kernel sort) (fused MoE SiTUv2, fp8 activations × MXFP4 weights, 112 of 896 experts local, top-16, model dim 3584, inter 3072)
 - E44 [2026-11, gfx950 (MI355X), HIP 7.15, N=21 rounds, hipEvent time per launch, arms alternated; A-vs-A within 0.11%] a 2-way K split across the waves of a block (partials summed through LDS) against 4 N-waves over the whole K, the same LDS, K step and prefetch depth: 1.086× at K = 2048, 1.020× at K = 32768 (bf16 weight-streaming kernel: 16 experts × 32 rows × N = 7168, 1792 blocks, 768 resident)
 - E45 [2026-11, gfx950 (MI355X), HIP 7.15, rocprofv3, N=11 rounds, ratio `nt` / default per round; A-vs-A within 0.49%] 4-byte words streamed once per launch, `nt` the only ISA difference: each 128 B line read whole by one load 0.901 alone and 0.987 beside a 512 MiB `nt` weight stream (16-byte loads 0.905 alone); split across 4 waves 1.272 and 1.030, with `TCP_TCC_READ_REQ` 1.491× and 2.135× (`buffer_load_dword` microbenchmark)
+- E46 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=60 rounds, one process, the two builds alternating (order swapped on odd rounds), a 1 GiB write before each call, CUDA-event time of the whole call (sort, quantization, stage 1, stage 2), median per build; inputs drawn by the contract] #122's aklr/ops/fused_moe/impls/flydsl/fused_moe_swiglu_has_swiglu_limit_shuffled_16x16_model_dim6144_n_experts128_topk4_inter_dim768/e6c03532d8c6d67c.json as shipped (`cache_modifier=b_nt` on the stage-2 w2 load at kernel.py:2316; stage-2 `b_nt` 2 at n_tokens ≤ 1024 and 0 above, `_config` at :2979-2985) against the same file without that line: n_tokens 512 217.5 against 256.8 µs; n_tokens 3112 359.2 against 358.5; the two builds' outputs differed by no more than the shipped build's own run-to-run difference (its stage 2 adds atomically) (MXFP4 fused MoE)
