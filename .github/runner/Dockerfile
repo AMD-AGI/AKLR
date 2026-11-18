@@ -5,13 +5,16 @@ ARG BASE
 FROM ${BASE}
 ARG BASE
 ARG RUNNER_VERSION=2.338.2
+# The checksum the runner's release notes publish for actions-runner-linux-x64.
+ARG RUNNER_SHA256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
 # ci.yaml compares this with stack.json: a pod keeps the image its workload was created with.
 ENV AKLR_RUNNER_BASE=${BASE}
 USER root
 # Primus-SaFE starts /home/runner/config.sh and run.sh as uid 1001.
 RUN useradd --uid 1001 --create-home --home-dir /home/runner runner \
- && curl -fsSL "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
-    | tar xz -C /home/runner \
+ && curl -fsSL -o /tmp/runner.tar.gz "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+ && echo "${RUNNER_SHA256}  /tmp/runner.tar.gz" | sha256sum -c - \
+ && tar xzf /tmp/runner.tar.gz -C /home/runner && rm /tmp/runner.tar.gz \
  && /home/runner/bin/installdependencies.sh \
  && apt-get install -y --no-install-recommends jq \
  && rm -rf /var/lib/apt/lists/* \
