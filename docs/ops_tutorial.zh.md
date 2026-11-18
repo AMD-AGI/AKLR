@@ -109,12 +109,12 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 ## 4. PR 与 CI
 
 **PR 规则**：
-- 按 `.github/pull_request_template.md` 写正文。kernel 和 code PR 都加 `ci:gpu`（fork 的 PR，或作者没有 write 权限的 PR，GPU job 要等 maintainer 批准后才跑）；kernel PR 贴 3. 的结果；
+- 按 `.github/pull_request_template.md` 写正文。kernel 和 code PR 都加 `ci:gpu`（外部贡献者的 CI 要等 maintainer 批准后才跑）；kernel PR 贴 3. 的结果；
 - 新算子的代码（`contract.py` 等，属于 code）单独提 PR；kernel-less schema（模板里叫 contract）和带 kernel 的 schema 各按模板对应一节填写。
 - 提交 PR 不写 `accuracy`/`speedup`/`microseconds`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`/`microseconds`。
 
 **CI 规则**：
-- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ aiter-test（GPU，`aiter_image`，暂时是 sglang 镜像，覆盖安装对照 aiter：`tests/core`、`tests/ops`、`tests/benchmarks`，再 `validate --base <合并基> --under aklr/ops --exclude aklr/ops/mega_moe`，mega_moe 的 baseline 要等 mori 修复）→ sglang-test（同一台机器，`sglang_image` 原样：`tests/plugins/aiter`、`tests/plugins/sglang`，再 `validate --under aklr/plugins --exclude aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）→ vllm-test（同一台机器，`vllm_image` 原样：`tests/plugins/vllm`，再 `validate --under aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）。只在有要 bench 的 schema 时验证。
+- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ aiter-test（GPU，`aiter_image`，暂时是 sglang 镜像，覆盖安装对照 aiter：`tests/core`、`tests/ops`、`tests/benchmarks`，再 `validate --base <合并基> --under aklr/ops --exclude aklr/ops/mega_moe`，mega_moe 的 baseline 要等 mori 修复）→ sglang-test（`sglang_image` 原样：`tests/plugins/aiter`、`tests/plugins/sglang`，再 `validate --under aklr/plugins --exclude aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）→ vllm-test（`vllm_image` 原样：`tests/plugins/vllm`，再 `validate --under aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）。只在有要 bench 的 schema 时验证。
 - 只有 `aklr/core/` 下的非 `.md` 改动和 `stack.json` 才测全部 schema，其他改动（schema、文档、新建 `aklr/ops/<op>` 等）只测改动集合里的 schema（`validation_scope.py`）。
 
 ## 5. 运行时分发

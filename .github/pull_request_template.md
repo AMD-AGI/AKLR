@@ -99,7 +99,7 @@ need ran on this head. -->
 <!-- Required for every kind but documents. -->
 Affects: <!-- models, ops, shapes; for code, which kernels or stages (often: every kernel) -->
 AgentX: <!-- model ids from benchmarks/agentx/agentx.yaml this PR can change, comma-separated (e.g. glm52-fp4), or only all.
-The ci:agentx-mi355x run measures only these; without a valid id it skips AgentX. -->
+An AgentX reviewer authorizes the ci:agentx-mi355x run by commenting `/agentx-mi355x <model ids>`; it measures those. -->
 If wrong: <!-- wrong output, a crash, slower than the baseline, a CI failure -->
 Undo: <!-- `AKLR_DISABLE=<contract id>` turns one op off; otherwise `git revert`, and what that
 does not undo (a schema or measurement version, published measurements) -->

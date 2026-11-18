@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on HIP by default: for DeepseekSparseAttnBackend._forward_triton_decode,
+"""What sglang 0.5.23 runs on HIP by default: for DeepseekSparseAttnBackend._forward_triton_decode,
 its triton split-K sparse MLA decode; for forward_extend's sparse MLA prefill, triton_sparse_mla_fwd;
 for the DSA indexer's decode top-k, sgl_kernel's."""
 

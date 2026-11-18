@@ -36,12 +36,12 @@ With `AKLR_SGLANG_PLUGIN=1`, each call of `DeepseekV2MoE.forward_normal` first r
 
 ### 1. Find the function to replace
 
-`DeepseekV2MoE.forward_normal` in SGLang's `srt/models/deepseek_v2.py` computes steps 1–10 above and returns the layer's output, summed over the GPUs when `self.reduce_results` is set. Its parameters in SGLang 0.5.22, which the route copies exactly:
+`DeepseekV2MoE.forward_normal` in SGLang's `srt/models/deepseek_v2.py` computes steps 1–10 above and returns the layer's output, summed over the GPUs when `self.reduce_results` is set. Its parameters in SGLang 0.5.23, which the route copies exactly:
 
 ```python
 def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_ids=None, input_ids_global=None,
-                   skip_shared_experts=False, num_token_non_padded=None, use_vision_topk=False,
-                   return_moe_output=False):
+                   skip_shared_experts=False, use_vision_topk=False, return_moe_output=False,
+                   leave_output_sum=False):
 ```
 
 ### 2. Create the package
@@ -65,7 +65,7 @@ As in step 1. A of the ops tutorial. For this op:
 The route goes in `api.py`, beside the op's entry function. Some parameters are omitted below:
 
 ```python
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
 def _moe_forward_normal(self, hidden_states, ...):  # exactly the replaced function's parameters
     # an SGLang configuration AKLR does not support
     if _forward_normal_falls_back(self, ...):
@@ -144,7 +144,7 @@ SGLANG_USE_AITER=1 AKLR_SGLANG_PLUGIN=1 python -m sglang.launch_server \
     --model-path <GLM-5 MXFP4 checkpoint> --tensor-parallel-size 8 --trust-remote-code
 ```
 
-The log reports the hooked functions (`aklr hooks N sglang functions on sglang 0.5.22`), and the model's replies must stay correct.
+The log reports the hooked functions (`aklr hooks N sglang functions on sglang 0.5.23`), and the model's replies must stay correct.
 
 A new route also reports its end-to-end gain: benchmark the same server with the op off (`AKLR_DISABLE=deepseek_v2_mxfp4_moe@1.0`) and on, and put the result in the PR's `End to end` section. The criterion is 2% on a stated workload ([acceptance criteria](acceptance_criteria.md)).
 

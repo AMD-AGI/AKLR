@@ -69,7 +69,7 @@ def _flash_with_lse(q, k, v, layer, ps):
 
 @sglang_route(
     "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._build_prefill_ps_metadata",
-    versions=("0.5.22",),
+    versions=("0.5.22", "0.5.23"),
     eager=True,
 )
 def _build_prefill_ps_metadata(
@@ -153,7 +153,7 @@ def _lse_pass(q, k, v, layer, ps):
 
 @sglang_route(
     "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._mla_fp8_prefill_attn_ps",
-    versions=("0.5.22",),
+    versions=("0.5.22", "0.5.23"),
     eager=True,
 )
 def _mla_fp8_prefill_attn_ps(self, q, k, v, layer, ps):
