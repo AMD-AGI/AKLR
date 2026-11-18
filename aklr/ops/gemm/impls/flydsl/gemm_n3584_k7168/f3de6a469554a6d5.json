@@ -64,31 +64,31 @@
         "m": 7
       },
       "accuracy": "passed",
-      "speedup": 1.282,
-      "microseconds": 9.84
+      "speedup": 1.127,
+      "microseconds": 9.95
     },
     {
       "axes": {
         "m": 14
       },
       "accuracy": "passed",
-      "speedup": 1.233,
-      "microseconds": 10.9
+      "speedup": 1.028,
+      "microseconds": 11.1
     },
     {
       "axes": {
         "m": 21
       },
       "accuracy": "passed",
-      "speedup": 1.512,
-      "microseconds": 11.0
+      "speedup": 1.052,
+      "microseconds": 11.1
     },
     {
       "axes": {
         "m": 28
       },
       "accuracy": "passed",
-      "speedup": 1.48,
+      "speedup": 1.047,
       "microseconds": 11.3
     },
     {
@@ -96,23 +96,23 @@
         "m": 35
       },
       "accuracy": "passed",
-      "speedup": 1.709,
-      "microseconds": 11.8
+      "speedup": 1.043,
+      "microseconds": 11.9
     },
     {
       "axes": {
         "m": 42
       },
       "accuracy": "passed",
-      "speedup": 1.864,
-      "microseconds": 12.2
+      "speedup": 1.034,
+      "microseconds": 12.3
     },
     {
       "axes": {
         "m": 49
       },
       "accuracy": "passed",
-      "speedup": 1.415,
+      "speedup": 1.02,
       "microseconds": 12.9
     },
     {
@@ -120,15 +120,15 @@
         "m": 56
       },
       "accuracy": "passed",
-      "speedup": 1.399,
-      "microseconds": 13.4
+      "speedup": 1.008,
+      "microseconds": 13.3
     },
     {
       "axes": {
         "m": 70
       },
       "accuracy": "passed",
-      "speedup": 1.708,
+      "speedup": 1.208,
       "microseconds": 14.3
     },
     {
@@ -136,7 +136,7 @@
         "m": 84
       },
       "accuracy": "passed",
-      "speedup": 1.476,
+      "speedup": 1.154,
       "microseconds": 15.2
     },
     {
@@ -144,8 +144,8 @@
         "m": 98
       },
       "accuracy": "passed",
-      "speedup": 1.305,
-      "microseconds": 15.9
+      "speedup": 1.138,
+      "microseconds": 16.0
     }
   ],
   "layout_variants": {
