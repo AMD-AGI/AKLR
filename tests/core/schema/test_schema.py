@@ -107,6 +107,40 @@ class TestSchemaFile:
             Schema(**(fields | change))
 
 
+@pytest.mark.parametrize(
+    ("axes", "error"),
+    [
+        ({"m": 4, "width": 8}, "non-variable axes ['width']"),
+        ({"m": 4, "typo": 8}, "non-variable axes ['typo']"),
+    ],
+    ids=["constant_override", "unknown_axis"],
+)
+def test_schema_rejects_invalid_workload_axes(axes: dict[str, int], error: str) -> None:
+    with pytest.raises(ValidationError, match=re.escape(error)):
+        _schema(axes={"m": Var(), "width": Const(value=8)}, workloads=[Workload(axes=axes)])
+
+
+def test_a_recorded_workload_may_lack_an_axis_only_outputs_have() -> None:
+    # tracing reads a call's axes off its inputs: the audit, not the schema, asks for the outputs'
+    schema = _schema(
+        axes={"m": Var(), "n": Var()},
+        inputs={"a": Tensor(["m"])},
+        outputs={"out": Tensor(["m", "n"])},
+        workloads=[Workload(axes={"m": 4})],
+    )
+    assert schema.workloads[0].axes == {"m": 4}
+
+
+def test_workload_can_omit_axis_used_only_by_optional_input() -> None:
+    schema = _schema(
+        axes={"m": Var(), "bias_len": Var(), "width": Const(value=8)},
+        inputs={"a": Tensor(["m"]), "bias": Tensor(["bias_len"], optional=True)},
+        outputs={"out": Tensor(["m", "width"])},
+        workloads=[Workload(axes={"m": 4})],
+    )
+    assert schema.workloads[0].axes == {"m": 4}
+
+
 def _schema(**fields) -> Schema:
     return Schema(
         **{

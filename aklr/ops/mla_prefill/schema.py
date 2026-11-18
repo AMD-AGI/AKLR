@@ -287,12 +287,11 @@ def _mla_prefill_varlen(lse: bool, variant: str, when: str, constraints: tuple[s
             *constraints,
         ],
         inputs={
-            "q": Tensor(["n_q", "n_heads", "qk_head_dim"], dtype="bfloat16", description="Queries."),
-            "k": Tensor(["n_kv", "n_heads", "qk_head_dim"], dtype="bfloat16", description="Keys."),
-            "v": Tensor(["n_kv", "n_heads", "v_head_dim"], dtype="bfloat16", description="Values."),
+            "q": Tensor(["n_q", "n_heads", "qk_head_dim"], description="Queries."),
+            "k": Tensor(["n_kv", "n_heads", "qk_head_dim"], description="Keys."),
+            "v": Tensor(["n_kv", "n_heads", "v_head_dim"], description="Values."),
             "cu_seqlens_q": Tensor(
                 ["n_offsets"],
-                dtype="int32",
                 description="Where each sequence's queries start in q, then where the last ends.",
             ),
             "qkv_fp8": Scalar(

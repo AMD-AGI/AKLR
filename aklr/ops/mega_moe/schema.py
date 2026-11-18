@@ -95,12 +95,10 @@ MEGA_MOE = Schema(
         "hidden_states": Tensor(["n_tokens", "model_dim"], description="Token activations of this rank."),
         "w1": Tensor(
             ["n_experts", "gate_up_rows", "packed_model_dim"],
-            dtype="float4_e2m1fn_x2",
             description="Gate-up projection of this rank's experts, two values a byte.",
         ),
         "w2": Tensor(
             ["n_experts", "model_dim", "packed_inter_dim"],
-            dtype="float4_e2m1fn_x2",
             description="Down projection of this rank's experts, two values a byte.",
         ),
         "topk_weights": Tensor(["n_tokens", "topk"], description="Routing weight of each chosen expert."),
@@ -109,12 +107,10 @@ MEGA_MOE = Schema(
         ),
         "w1_scale": Tensor(
             ["w1_scale_rows", "w1_scale_columns"],
-            dtype="float8_e8m0fnu",
             description="Per 1 x 32 block of w1.",
         ),
         "w2_scale": Tensor(
             ["w2_scale_rows", "w2_scale_columns"],
-            dtype="float8_e8m0fnu",
             description="Per 1 x 32 block of w2.",
         ),
         "ep_size": Scalar("int32", description="Ranks of the expert-parallel group."),
