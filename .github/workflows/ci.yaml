@@ -75,7 +75,7 @@ jobs:
       - name: Report whether GPU jobs run
         run: |
           if [[ $GPU_ENABLED == true ]]; then
-            echo '🟢 GPU jobs are eligible: aiter-test, then sglang-test, then vllm-test.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '🟢 GPU jobs are eligible: aiter-test, sglang-test and vllm-test.' | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo '⏭️ PR GPU jobs require the ci:gpu label.' | tee -a "$GITHUB_STEP_SUMMARY"
           fi
@@ -165,15 +165,17 @@ jobs:
             exit "$code"
           fi
 
-  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; then sglang-test and
+  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; beside it sglang-test and
   # vllm-test. No secrets and no actions/cache: they run the PR's code and kernels.
   aiter-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
     runs-on: aklr-safe
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema.
-    timeout-minutes: 180
+    # TIMEOUT_MINUTES limits the run on the GPU node; timeout-minutes also covers the wait for one.
+    timeout-minutes: 480
     env:
+      TIMEOUT_MINUTES: 180
       IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
       TESTS: tests/core tests/ops tests/benchmarks
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
@@ -327,12 +329,12 @@ jobs:
   # sglang's own code; aklr/ops is built and checked only, its timing being aiter-test's.
   # aklr/plugins/vllm is vllm-test's.
   sglang-test:
-    needs: [code-lint, aiter-test]
-    # After aiter-test, whatever its result.
-    if: ${{ !cancelled() && needs.code-lint.result == 'success' && needs.code-lint.outputs.gpu_enabled == 'true' }}
+    needs: code-lint
+    if: needs.code-lint.outputs.gpu_enabled == 'true'
     runs-on: aklr-safe
-    timeout-minutes: 150
+    timeout-minutes: 480
     env:
+      TIMEOUT_MINUTES: 150
       IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
       TESTS: tests/plugins/aiter tests/plugins/sglang
       PLUGINS: --under aklr/plugins --exclude aklr/plugins/vllm
@@ -356,12 +358,12 @@ jobs:
   # vllm-test: the vllm image as it ships, AKLR alone installed. aklr/plugins/vllm is timed in it;
   # aklr/ops is built and checked only, as in sglang-test.
   vllm-test:
-    needs: [code-lint, sglang-test]
-    # After sglang-test, whatever its result.
-    if: ${{ !cancelled() && needs.code-lint.result == 'success' && needs.code-lint.outputs.gpu_enabled == 'true' }}
+    needs: code-lint
+    if: needs.code-lint.outputs.gpu_enabled == 'true'
     runs-on: aklr-safe
-    timeout-minutes: 60
+    timeout-minutes: 480
     env:
+      TIMEOUT_MINUTES: 60
       IMAGE: ${{ needs.code-lint.outputs.vllm_image }}
       TESTS: tests/plugins/vllm
       PLUGINS: --under aklr/plugins/vllm

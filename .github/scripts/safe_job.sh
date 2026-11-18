@@ -15,13 +15,13 @@ storage=$(awk '$2 ~ "^/shared_nfs/users/[^/]+$" {print $2; exit}' /proc/mounts)
 export RUN_DIR=$storage/aklr-ci-runs/$name
 
 if [[ ${1:-} == delete ]]; then
+  rm -rf "$RUN_DIR"
   ids=$(api GET "?workspaceId=$WORKSPACE&kind=Deployment&limit=100" |
     jq -r --arg name "$name" '.items[]?.workloadId | select(startswith($name))')
   for id in $ids; do
     echo "🧹 Deleting the workload $id"
     api DELETE "/$id" > /dev/null
   done
-  rm -rf "$RUN_DIR"
   exit
 fi
 
@@ -32,7 +32,8 @@ cp "${1:?usage: safe_job.sh <script> | delete}" "$RUN_DIR/script.sh"
 
 pod_command=$(
   cat << 'EOF'
-if [ ! -e "$RUN_DIR/exit_code" ]; then
+if [ ! -e "$RUN_DIR/started" ]; then
+  touch "$RUN_DIR/started"
   {
     work=$(mktemp -d)
     export REPORTS=$work/reports
@@ -44,6 +45,9 @@ if [ ! -e "$RUN_DIR/exit_code" ]; then
     tar -C "$REPORTS" -cf "$RUN_DIR/reports.tar" .
   } >> "$RUN_DIR/log" 2>&1
   echo "$code" > "$RUN_DIR/exit_code"
+elif [ ! -e "$RUN_DIR/exit_code" ]; then
+  echo "::error::The GPU pod restarted during the script" >> "$RUN_DIR/log"
+  echo 1 > "$RUN_DIR/exit_code"
 fi
 exec sleep infinity
 EOF
@@ -57,17 +61,23 @@ workload=$(jq -n --arg name "$name" --arg command "$(base64 -w0 <<< "$pod_comman
   resources: [{replica: 1, gpu: "8", cpu: "96", memory: "512Gi", sharedMemory: "64Gi", ephemeralStorage: "300Gi"}],
   env: ({RUN_DIR: env.RUN_DIR} + ($ENV | with_entries(select(.key | IN($pass | splits(" +")))))),
   priority: 2,
-  timeout: 10800,
-  ttlSecondsAfterFinished: 60,
+  timeout: (env.TIMEOUT_MINUTES | tonumber * 60),
   useWorkspaceStorage: true
 }' | api POST '' -d @- | jq -r '.workloadId // error(tostring)')
 echo "🚀 Workload $workload in $IMAGE"
 
 tail --pid=$$ -F "$RUN_DIR/log" 2> /dev/null &
-last_phase=''
+last_phase='' lost=0
 until [[ -s $RUN_DIR/exit_code ]]; do
   sleep 15
-  phase=$(api GET "/$workload" | jq -r .phase) || continue
+  if ! phase=$(api GET "/$workload" | jq -r .phase); then
+    if ((++lost == 8)); then
+      echo "::error::Workload $workload is gone: deleted, or stopped after $TIMEOUT_MINUTES minutes"
+      exit 1
+    fi
+    continue
+  fi
+  lost=0
   [[ $phase == "$last_phase" ]] || echo "⏳ Workload $workload: $phase"
   last_phase=$phase
   if [[ $phase == Failed || $phase == Stopped ]]; then
