@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on aiter on gfx950 for these steps of
+"""What sglang 0.5.22 and 0.5.23 run on aiter on gfx950 for these steps of
 DeepseekMLARocmForwardMixin.forward_absorb_rocm_prepare and forward_absorb_rocm_core, kv_b_proj
 in fp8 at one scale per tensor (GLM-5.2's, which sglang quantizes at load): the aiter kernels
 forward_mla_rocm binds, called as it calls them."""
