@@ -251,12 +251,10 @@ def _paged_attention_decode(split: bool, init: Any) -> Schema:
             "value_cache": Tensor(cache, description="The values of every cached token, block by block."),
             "block_tables": Tensor(
                 ["batch", "max_blocks"],
-                dtype="int32",
                 description="The blocks of each request, in context order.",
             ),
             "context_lens": Tensor(
                 ["batch"],
-                dtype="int32",
                 description="Cached tokens of each request, the query's own included.",
             ),
             "scale": Scalar("float32", description="Multiplies every logit."),
@@ -348,17 +346,14 @@ def _unified_attention(split: bool, init: Any) -> Schema:
             "v": Tensor(cache, description="The values of every cached token, block by block."),
             "cu_seqlens_q": Tensor(
                 ["n_offsets"],
-                dtype="int32",
                 description="Where each request's query rows start, then total_q.",
             ),
             "seqused_k": Tensor(
                 ["batch"],
-                dtype="int32",
                 description="Cached tokens of each request, its new tokens included.",
             ),
             "block_table": Tensor(
                 ["batch", "max_blocks"],
-                dtype="int32",
                 description="The blocks of each request, in context order.",
             ),
             "softmax_scale": Scalar("float32", description="Multiplies every logit."),

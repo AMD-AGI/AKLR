@@ -181,8 +181,8 @@ GEMM_BF16_NT = Schema(
         "out.dtype in ('bfloat16', 'float16', 'float32')",
     ],
     inputs={
-        "a": Tensor(["M", "K"], dtype="bfloat16", description="Activations."),
-        "b": Tensor(["N", "K"], dtype="bfloat16", description="Weights."),
+        "a": Tensor(["M", "K"], description="Activations."),
+        "b": Tensor(["N", "K"], description="Weights."),
         "bias": Tensor(["N"], optional=True, description="Added to every output row."),
     },
     outputs={
@@ -220,8 +220,8 @@ GEMM_A8W8_NT = Schema(
     inputs={
         "a": Tensor(["M", "K"], description="Activations."),
         "b": Tensor(["N", "K"], description="Weights."),
-        "a_scale": Tensor(["M", "one"], dtype="float32", description="Per row of a."),
-        "b_scale": Tensor(["N", "one"], dtype="float32", description="Per output column."),
+        "a_scale": Tensor(["M", "one"], description="Per row of a."),
+        "b_scale": Tensor(["N", "one"], description="Per output column."),
         "bias": Tensor(
             ["N"],
             dtype="float32",
@@ -293,12 +293,10 @@ def _blockscaled(
             "b": Tensor(["N", "K"], description="Weights."),
             "a_scale": Tensor(
                 (["M", "K_div_block"] if scale_major_mode == "K" else ["K_div_block", "M"]),
-                dtype="float32",
                 description="Per 1 x 128 block of a.",
             ),
             "b_scale": Tensor(
                 ["N_div_block", "K_div_block"],
-                dtype="float32",
                 description="Per 128 x 128 block of b.",
             ),
         },
@@ -390,8 +388,8 @@ def _mxfp4(shuffled: bool, reference: Any) -> Schema:
             *constraints,
         ],
         inputs={
-            "a": Tensor(["M", "K_div_2"], dtype="float4_e2m1fn_x2", description="Activations."),
-            "b": Tensor(["N", "K_div_2"], dtype="float4_e2m1fn_x2", description="Weights."),
+            "a": Tensor(["M", "K_div_2"], description="Activations."),
+            "b": Tensor(["N", "K_div_2"], description="Weights."),
             "a_descale": Tensor(a_descale, description="Per 1 x 32 block of a."),
             "b_descale": Tensor(b_descale, description="Per 1 x 32 block of b."),
             "bias": Tensor(
@@ -448,10 +446,9 @@ def _bmm(name: str, nt: bool, reference: Any, init: Any) -> Schema:
         },
         constraints=["out.dtype in ('bfloat16', 'float16', 'float32')"],
         inputs={
-            "A": Tensor(["batch_size", "M", "K"], dtype="bfloat16", description="Activations."),
+            "A": Tensor(["batch_size", "M", "K"], description="Activations."),
             "B": Tensor(
                 ["batch_size", "N", "K"] if nt else ["batch_size", "K", "N"],
-                dtype="bfloat16",
                 description="Weights.",
             ),
         },

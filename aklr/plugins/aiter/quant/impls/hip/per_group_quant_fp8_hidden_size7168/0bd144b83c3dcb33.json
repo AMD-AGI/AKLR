@@ -44,7 +44,7 @@
         "n_tokens",
         "hidden_size"
       ],
-      "dtype": null,
+      "dtype": "bfloat16",
       "description": "Finite BF16 activations."
     }
   },

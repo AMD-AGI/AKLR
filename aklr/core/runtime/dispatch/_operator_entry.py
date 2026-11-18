@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
+from dataclasses import replace
 from typing import ClassVar
 
 from aklr.core.platform.device import DeviceTarget
@@ -43,7 +44,7 @@ class OperatorEntry:
         workload of the dataset was measured against) and UNMEASURED."""
         self.config = config
         self._ranked: dict[str, dict[DispatchKey, tuple[KernelFunction, ...]]] = {}
-        self._best: dict[str, dict[tuple[tuple[str, int], ...], KernelFunction]] = {}
+        self._best: dict[str, dict[DispatchKey, KernelFunction]] = {}
         kernels = {s.kernel.name: KernelFunction(s) for s in schemas if s.kernel is not None}
 
         for baseline in sorted({self.UNMEASURED, *baselines}):
@@ -60,7 +61,7 @@ class OperatorEntry:
                         measured[name] = max(measured.get(name, 0.0), speedup.value)
 
             ranked = self._ranked.setdefault(baseline, {})
-            wins: dict[tuple[tuple[str, int], ...], Counter[str]] = {}
+            wins: dict[DispatchKey, Counter[str]] = {}
             for key, by_kernel in speedups.items():
                 rank_by = baseline
                 # UNMEASURED ranks by the baseline most of the key's kernels were measured against
@@ -69,9 +70,9 @@ class OperatorEntry:
                     rank_by = min(common, key=lambda b: (-common[b], b), default=self.UNMEASURED)
                 names = sorted(by_kernel, key=lambda k: (-by_kernel[k].get(rank_by, 0.0), k))
                 ranked[key] = tuple(kernels[name] for name in names)
-                wins.setdefault(key.consts, Counter())[names[0]] += 1
-            # a kernel is specialized to its Const axes: the best one is the best of those axes' keys
-            self._best[baseline] = {consts: kernels[won.most_common(1)[0][0]] for consts, won in wins.items()}
+                wins.setdefault(replace(key, vars=()), Counter())[names[0]] += 1
+            # a kernel is specialized to its Const axes and dtypes: the best one is the best of their keys
+            self._best[baseline] = {fixed: kernels[won.most_common(1)[0][0]] for fixed, won in wins.items()}
 
     def slot(self, baseline: str | None) -> str:
         return baseline if baseline in self._ranked else self.UNMEASURED
@@ -86,7 +87,7 @@ class OperatorEntry:
         if candidates:
             return candidates[0]
         if self.config.on_miss_policy == "use_best_kernel":
-            return self._best[self.slot(baseline)].get(key.consts)
+            return self._best[self.slot(baseline)].get(replace(key, vars=()))
         return None
 
     def prewarm(self) -> None:

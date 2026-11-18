@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any, ClassVar
 
@@ -36,14 +37,28 @@ class Dispatcher:
 
     _instance: ClassVar[Dispatcher | None] = None
     _env_initialized: ClassVar[bool] = False
+    _env_error: ClassVar[Exception | None] = None
+    _env_lock: ClassVar[threading.RLock] = threading.RLock()
 
     @classmethod
     def get_instance(cls) -> Dispatcher | None:
-        """The active dispatcher; the first call starts one from the env unless AKLR_DISABLE=1."""
-        if cls._instance is None and not cls._env_initialized:
-            cls._env_initialized = True
-            if not RuntimeEnv().is_all_disabled:
-                cls._instance = cls(SchemaCollection.from_path())
+        """The active dispatcher; the first call starts one from the env unless AKLR_DISABLE=1. An env it cannot
+        start from raises a RuntimeError from its error on every call."""
+        if cls._instance is None:
+            # a second thread waits for the first one's start; the flag set first stops a nested call starting again
+            with cls._env_lock:
+                if not cls._env_initialized:
+                    cls._env_initialized = True
+                    try:
+                        if not RuntimeEnv().is_all_disabled:
+                            cls._instance = cls(SchemaCollection.from_path())
+                    except Exception as e:
+                        cls._env_error = e
+            if cls._instance is None and cls._env_error is not None:
+                # a new error each time: one raised again would keep every caller's frames in its traceback
+                raise RuntimeError(
+                    f"AKLR's dispatcher could not start from the environment: {cls._env_error}"
+                ) from cls._env_error
         return cls._instance
 
     def __init__(
@@ -62,10 +77,12 @@ class Dispatcher:
             configs = dispatch_config
 
         target = DeviceTarget.current()
+        disabled = RuntimeEnv().disabled_op_types
         by_op: dict[str, list[Schema]] = {}
         for schemas in schema_collection.schemas.values():
             for schema in schemas:
-                by_op.setdefault(schema.op_name, []).append(schema)
+                if schema.op_type not in disabled:
+                    by_op.setdefault(schema.op_name, []).append(schema)
         baselines = {
             baseline
             for schemas in by_op.values()
@@ -119,15 +136,21 @@ class Dispatcher:
         baseline; with none, return fallback(), or raise when there is no fallback."""
         entry = self._entries.get(schema.op_name)
         kernel = None
-        if entry is not None:
-            key = DispatchKey.from_call(schema, call)
+        try:
+            key = None if entry is None else DispatchKey.from_call(schema, call)
+        except ValueError as e:
+            # shapes the schema does not describe: a miss, the backend's to take or refuse. The error is not
+            # kept past here: held in a local, it and this frame would keep the call's tensors until a collection
+            if fallback is None:
+                raise RuntimeError(f"Dispatch miss for '{schema.op_name}' and no fallback provided") from e
+            key = None
+        if key is not None:
             axes = dict(key.consts + key.vars)
             kernel = entry.lookup(key, baseline)
-            candidates = entry.candidates(key, baseline)
             if (
                 self._tuner is not None
-                and len(candidates) > 1
                 and entry.slot(baseline) == OperatorEntry.UNMEASURED
+                and len(candidates := entry.candidates(key, baseline)) > 1
             ):
                 by_name = {candidate.name: candidate for candidate in candidates}
                 kernel = by_name[

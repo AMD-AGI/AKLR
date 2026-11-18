@@ -171,6 +171,15 @@ class Schema:
                         )
         return self
 
+    @model_validator(mode="after")
+    def _validate_workload_axes(self) -> Schema:
+        # an axis left out is not an error here: tracing records a call's axes off its inputs alone
+        var_axes = set(self.var_axes)
+        for index, workload in enumerate(self.workloads):
+            if extra := workload.axes.keys() - var_axes:
+                raise ValueError(f"workloads[{index}] contains non-variable axes {sorted(extra)}")
+        return self
+
     @cached_property
     def const_axes(self) -> Dict[str, int]:
         return {
@@ -391,9 +400,8 @@ class Schema:
             parts.append(f"{pfx}{axis_values[n]}")
         return prefix + ("_" + "_".join(parts) if parts else "")
 
-    def for_call(self, call: Dict[str, Any]) -> Schema:
-        """This schema at call: Const axes, name and tensor dtypes read from the call's arguments."""
-        values = extract_axes(self.const_axis_extractors, call)
+    def call_dtypes(self, call: Dict[str, Any]) -> Dict[str, Optional[str]]:
+        """The dtype call gives each tensor input and output, None where neither it nor the schema names one."""
 
         def call_dtype(key: str, tensor: Tensor) -> Optional[str]:
             t = _get_tensor(call, tensor.param or key, tensor.tuple_idx)
@@ -423,6 +431,15 @@ class Schema:
                         return dtype
             return None
 
+        dtypes = {key: input_dtype(key, inp) for key, inp in self.inputs.items() if isinstance(inp, Tensor)}
+        return dtypes | {
+            key: output_dtype(out) for key, out in self.outputs.items() if isinstance(out, Tensor)
+        }
+
+    def for_call(self, call: Dict[str, Any]) -> Schema:
+        """This schema at call: Const axes, name and tensor dtypes read from the call's arguments."""
+        values = extract_axes(self.const_axis_extractors, call)
+        dtypes = self.call_dtypes(call)
         return replace(
             self,
             name=self.schema_name(values),
@@ -436,11 +453,11 @@ class Schema:
                 if not (isinstance(marker, Const) and marker.extract is not None and axis not in values)
             },
             inputs={
-                key: (replace(inp, dtype=input_dtype(key, inp)) if isinstance(inp, Tensor) else inp)
+                key: (replace(inp, dtype=dtypes[key]) if isinstance(inp, Tensor) else inp)
                 for key, inp in self.inputs.items()
             },
             outputs={
-                key: (replace(out, dtype=output_dtype(out)) if isinstance(out, Tensor) else out)
+                key: (replace(out, dtype=dtypes[key]) if isinstance(out, Tensor) else out)
                 for key, out in self.outputs.items()
             },
         )

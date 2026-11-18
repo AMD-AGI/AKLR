@@ -118,8 +118,11 @@ class AuditStage(PipelineStage):
         for w in schema.workloads:
             key = WorkloadKey.from_workload(w)
             at = f"workload {{{key}}}"
-            if not set(w.axes) <= set(schema.var_axes):
-                errors.append(f"{at}: axes are not of {schema.var_axes}")
+            try:
+                # axes of absent optional inputs may be left out, the outputs' may not: the bench builds from them
+                schema.get_output_shapes(w.axes)
+            except ValueError as e:
+                errors.append(f"{at}: {e}")
             if key in seen:
                 errors.append(f"{at}: repeats")
             seen.append(key)

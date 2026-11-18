@@ -65,12 +65,10 @@ TOPK_TRANSFORM_PAGED = Schema(
     inputs={
         "scores": Tensor(
             ["n_tokens", "n_candidates"],
-            dtype="float32",
             description="Candidate scores per row.",
         ),
         "seq_lens": Tensor(
             ["n_tokens"],
-            dtype="int32",
             description="Valid candidates per row, a prefix the page table covers.",
         ),
         "page_tables": Tensor(

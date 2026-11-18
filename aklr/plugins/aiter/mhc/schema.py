@@ -90,20 +90,17 @@ MHC_PRE = Schema(
     inputs={
         "residual": Tensor(
             ["n_tokens", "n_streams", "hidden_size"],
-            dtype="bfloat16",
             description="Four residual streams.",
         ),
         "proj_weight": Tensor(
             ["n_mix_logits", "projection_size"],
-            dtype="float32",
             description="Projects the flattened streams to the mix logits.",
         ),
         "mix_scale": Tensor(
             ["n_mix_scales"],
-            dtype="float32",
             description="Scale of the pre, post and combination logits.",
         ),
-        "mix_bias": Tensor(["n_mix_logits"], dtype="float32", description="Bias of the mix logits."),
+        "mix_bias": Tensor(["n_mix_logits"], description="Bias of the mix logits."),
         "rms_eps": Scalar(
             "float32",
             description="Added to the mean square of the streams.",
@@ -179,22 +176,18 @@ MHC_POST = Schema(
     inputs={
         "x": Tensor(
             ["n_tokens", "hidden_size"],
-            dtype="bfloat16",
             description="The layer's output.",
         ),
         "residual": Tensor(
             ["n_tokens", "n_streams", "hidden_size"],
-            dtype="bfloat16",
             description="Four residual streams.",
         ),
         "post_mix": Tensor(
             ["n_tokens", "n_streams", "one"],
-            dtype="float32",
             description="Weight of x in each new stream.",
         ),
         "comb_mix": Tensor(
             ["n_tokens", "n_streams", "n_streams"],
-            dtype="float32",
             description="Weight of old stream i in new stream j, at [i, j].",
         ),
     },
@@ -262,35 +255,29 @@ MHC_FUSED_POST_PRE = Schema(
     inputs={
         "x": Tensor(
             ["n_tokens", "hidden_size"],
-            dtype="bfloat16",
             description="The layer's output.",
         ),
         "residual": Tensor(
             ["n_tokens", "n_streams", "hidden_size"],
-            dtype="bfloat16",
             description="Four residual streams.",
         ),
         "post_mix": Tensor(
             ["n_tokens", "n_streams", "one"],
-            dtype="float32",
             description="Weight of x in each new stream.",
         ),
         "comb_mix": Tensor(
             ["n_tokens", "n_streams", "n_streams"],
-            dtype="float32",
             description="Weight of old stream i in new stream j, at [i, j].",
         ),
         "proj_weight": Tensor(
             ["n_mix_logits", "projection_size"],
-            dtype="float32",
             description="Projects the flattened streams to the mix logits.",
         ),
         "mix_scale": Tensor(
             ["n_mix_scales"],
-            dtype="float32",
             description="Scale of the pre, post and combination logits.",
         ),
-        "mix_bias": Tensor(["n_mix_logits"], dtype="float32", description="Bias of the mix logits."),
+        "mix_bias": Tensor(["n_mix_logits"], description="Bias of the mix logits."),
         "rms_eps": Scalar(
             "float32",
             description="Added to the mean square of the streams.",
