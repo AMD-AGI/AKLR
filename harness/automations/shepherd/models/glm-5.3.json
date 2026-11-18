@@ -1,6 +1,7 @@
 {
   "model": "glm-5.3",
   "source": "the commits that added each workload (closed #194); calls not measured",
+  "per": "forward pass",
   "calls": {
     "add_rms_norm_hidden_size6144": {
       "n_tokens=4": 1,

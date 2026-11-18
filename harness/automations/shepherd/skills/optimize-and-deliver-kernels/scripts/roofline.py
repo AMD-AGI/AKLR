@@ -122,3 +122,16 @@ class Roofline:
                 raise ValueError(f"no matrix-core rate for {cost.flops_dtype}")
             math_seconds = cost.flops / self.flops_per_second[cost.flops_dtype]
         return max(math_seconds, cost.bytes_moved / self.bytes_per_second, self.floor_seconds)
+
+    def gaps_us(self, schema):
+        """Each published workload of the schema file's json ``schema``: its axes, and the microseconds the time
+        served today (the kernel's, or the baseline's where faster) is over this roofline. ``ValueError`` as
+        ``Cost.of`` and ``seconds``."""
+        return [
+            (
+                w["axes"],
+                w["microseconds"] * min(1.0, w["speedup"]) - self.seconds(Cost.of(schema, w["axes"])) * 1e6,
+            )
+            for w in schema.get("workloads") or []
+            if w.get("accuracy") == "passed" and w.get("microseconds") is not None
+        ]

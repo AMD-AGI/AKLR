@@ -1,6 +1,7 @@
 {
   "model": "qwen3.5",
   "source": "the commits that added each workload (closed #194); calls not measured",
+  "per": "forward pass",
   "calls": {
     "fused_moe_shuffled_16x16_model_dim4096_n_experts513_topk11_inter_dim512": {
       "n_tokens=4": 1,

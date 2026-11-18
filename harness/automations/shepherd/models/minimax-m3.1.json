@@ -1,6 +1,7 @@
 {
   "model": "minimax-m3.1",
   "source": "the commits that added each workload (closed #194); calls not measured",
+  "per": "forward pass",
   "calls": {
     "fused_moe_swiglu_has_swiglu_limit_shuffled_16x16_model_dim6144_n_experts128_topk4_inter_dim768": {
       "n_tokens=1": 1,

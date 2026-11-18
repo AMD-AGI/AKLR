@@ -1,6 +1,7 @@
 {
   "model": "kimi-k3",
   "source": "the commits that added each workload (closed #194); calls not measured",
+  "per": "forward pass",
   "calls": {
     "add_attn_res_hidden_size7168_n_bank_rows8": {
       "n_tokens=1": 1,

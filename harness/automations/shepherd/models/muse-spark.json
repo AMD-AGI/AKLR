@@ -1,6 +1,7 @@
 {
   "model": "muse-spark",
   "source": "the commits that added each workload (closed #194); calls not measured",
+  "per": "forward pass",
   "calls": {
     "fused_moe_has_expert_mask_shuffled_16x16_model_dim4096_n_experts32_topk2_inter_dim4096_global_experts257": {
       "n_tokens=8": 1,

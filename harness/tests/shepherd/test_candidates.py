@@ -219,7 +219,7 @@ def test_roofline_takes_kernels_by_time_over_the_roofline_times_the_target_model
     (tmp_path / "harness/automations/shepherd/models").mkdir(parents=True)
     for model, calls in tables.items():
         (tmp_path / f"harness/automations/shepherd/models/{model}.json").write_text(
-            json.dumps({"model": model, "calls": calls})
+            json.dumps({"model": model, "per": "forward pass", "calls": calls})
         )
     git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t"]
     subprocess.run([*git, "init", "-q"], check=True)

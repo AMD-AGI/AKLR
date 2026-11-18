@@ -31,7 +31,7 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # -I imports no sibling module otherwise
 from model_calls import ModelCalls  # noqa: E402
-from roofline import Cost, Roofline  # noqa: E402
+from roofline import Roofline  # noqa: E402
 
 OPS = PurePosixPath("aklr/ops")
 
@@ -173,21 +173,16 @@ class Candidate:
                     continue
             if strategy == "roofline":
                 try:
-                    gaps = [
-                        (
-                            w["microseconds"] * min(1.0, w["speedup"])
-                            - roofline.seconds(Cost.of(schema, w["axes"])) * 1e6,
-                            model_calls.calls(targets, candidate.name, w["axes"]),
-                        )
-                        for w in schema.get("workloads") or []
-                        if w.get("accuracy") == "passed" and w.get("microseconds") is not None
-                    ]
+                    gaps = roofline.gaps_us(schema)
                 except (ValueError, KeyError, TypeError) as exc:
                     skipped.append({**entry, "reason": f"roofline: {exc}"})
                     continue
                 # A few microseconds over a short call are not worth a campaign, whatever their ratio.
                 counted = [
-                    gap * calls for gap, calls in gaps if gap >= scanning["roofline"]["min_gap_us"] and calls
+                    gap * calls
+                    for axes, gap in gaps
+                    if gap >= scanning["roofline"]["min_gap_us"]
+                    and (calls := model_calls.calls(targets, candidate.name, axes))
                 ]
                 if not counted:
                     reason = (

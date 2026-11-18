@@ -1,6 +1,7 @@
 {
   "model": "qwen3-next",
   "source": "the commits that added each workload (closed #194); calls not measured",
+  "per": "forward pass",
   "calls": {
     "gated_attention_decode_group_fp8_quant_qkv_dim4608_n_kv_heads1_head_dim256": {
       "n_tokens=1,n_slots=4097,n_positions=262144,n_offsets=2,n_kv_tokens=4096": 1,
