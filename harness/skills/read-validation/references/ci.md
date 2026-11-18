@@ -25,8 +25,9 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
   in each image, no timing, no `schemas/`): `report.md` (one row per Point: verdict,
   `graph/baseline`, `graph/incumbent`, then the findings), `report.json`, `schemas/` (the schemas
   with the measured fields) and `baseline/` (what each Point was timed against).
-- The runners' work directories live on the CI's nodes under the CI's account; other accounts cannot
-  read them. Use the artifact.
+- Nothing else is kept: the job deletes its GPU workload and that workload's files when it ends.
+  Use the artifact. A job cancelled or timed out before its tests ended has no reports, only its
+  step log.
 
 ## `report.json`
 

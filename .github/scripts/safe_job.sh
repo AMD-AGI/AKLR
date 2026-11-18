@@ -1,136 +1,83 @@
 #!/usr/bin/env bash
-# Runs gpu_tests.sh on a Primus-SaFE GPU node, in $IMAGE, and waits for it: packs the checkout into
-# a run directory on the workspace's shared storage, submits a workload that unpacks and runs it,
-# streams its log, exits with its exit code and deletes the workload. The reports stay in $RUN_DIR
-# for the upload steps; `safe_job.sh cleanup` then removes it, and the workload if it is still there.
-#
-# Runs on the aklr-safe runner, a Primus-SaFE GithubRunner pod with no GPU: the platform gives it
-# USER_APIKEY and WORKSPACE, and mounts the owner's directory on the workspace's shared storage,
-# which the GPU workload mounts too.
 set -euo pipefail
-: "${SAFE_API:?}" "${USER_APIKEY:?}" "${WORKSPACE:?}"
 
-# The API's certificate is signed by AMD's CA, which the runner image does not carry.
-ca=$RUNNER_TEMP/amd-ca.pem
 certs=https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs
-curl --silent --show-error --fail --location "$certs/amd-root-ca.crt" "$certs/amd-issuing-ca.crt" > "$ca"
+curl -fsSL --retry 3 "$certs/amd-root-ca.crt" "$certs/amd-issuing-ca.crt" > "$RUNNER_TEMP/amd-ca.pem"
+
 api() {
-  curl --silent --show-error --fail-with-body --max-time 60 --cacert "$ca" \
-    -H "Authorization: Bearer $USER_APIKEY" -H 'Content-Type: application/json' "$@"
+  curl -sS --fail-with-body --max-time 60 --cacert "$RUNNER_TEMP/amd-ca.pem" -X "$1" \
+    -H "Authorization: Bearer $USER_APIKEY" -H 'Content-Type: application/json' \
+    "https://global.primus-safe.amd.com/api/v1/workloads$2" "${@:3}"
 }
 
-# `safe_job.sh cleanup`, the job's always() step: a cancelled job is killed before its EXIT trap ends.
-if [[ ${1:-} == cleanup ]]; then
-  [[ -z ${SAFE_WORKLOAD:-} ]] || api -X DELETE "$SAFE_API/api/v1/workloads/$SAFE_WORKLOAD" > /dev/null ||
-    echo "::warning::Workload $SAFE_WORKLOAD was not deleted here; the next run's sweep deletes it"
-  [[ -z ${RUN_DIR:-} ]] || rm -rf "$RUN_DIR"
-  exit 0
-fi
-: "${IMAGE:?}" "${TESTS:?}" "${GH_TOKEN:?}"
+name=aklr-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${GITHUB_JOB%-test}
+storage=$(awk '$2 ~ "^/shared_nfs/users/[^/]+$" {print $2; exit}' /proc/mounts)
+export RUN_DIR=$storage/aklr-ci-runs/$name
 
-# Workloads a killed runner left behind hold a GPU node: delete those of finished runs and of this
-# run's earlier attempts. Names are aklr-ci-<run>-<attempt>-<job>.
-api "$SAFE_API/api/v1/workloads?workspaceId=$WORKSPACE&kind=Deployment&limit=100" |
-  jq -r '.items[]?.workloadId | select(test("^aklr-ci-[0-9]+-"))' | while read -r stale; do
-    IFS=- read -r _ _ run attempt _ <<< "$stale"
-    if [[ $run == "$GITHUB_RUN_ID" ]]; then
-      [[ $attempt != "$GITHUB_RUN_ATTEMPT" ]] || continue
-    else
-      status=$(curl --silent --fail --max-time 30 -H "Authorization: Bearer $GH_TOKEN" \
-        "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$run" | jq -r .status) || continue
-      [[ $status == completed ]] || continue
-    fi
-    echo "🧹 Deleting the leftover workload $stale"
-    api -X DELETE "$SAFE_API/api/v1/workloads/$stale" > /dev/null || true
+if [[ ${1:-} == delete ]]; then
+  ids=$(api GET "?workspaceId=$WORKSPACE&kind=Deployment&limit=100" |
+    jq -r --arg name "$name" '.items[]?.workloadId | select(startswith($name))')
+  for id in $ids; do
+    echo "🧹 Deleting the workload $id"
+    api DELETE "/$id" > /dev/null
   done
+  rm -rf "$RUN_DIR"
+  exit
+fi
 
-# The platform starts the runner with umask 077; the workload reaches the run directory as
-# another user, through the storage's shared group.
 umask 007
-shared=$(awk '$2 ~ "^/shared_nfs/users/[^/]+$" {print $2; exit}' /proc/mounts)
-[[ -n $shared ]] || { echo "::error::The runner pod mounts no /shared_nfs/users/<owner> directory"; exit 1; }
-export JOB=$GITHUB_JOB
-export RUN_DIR=$shared/aklr-ci-runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$JOB
-echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
-rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
 tar -C "$GITHUB_WORKSPACE" -cf "$RUN_DIR/src.tar" .
-touch "$RUN_DIR/log"
+cp "${1:?usage: safe_job.sh <script> | delete}" "$RUN_DIR/script.sh"
 
-# The workspace runs services (the Infer scope), not batch jobs: the workload is a one-replica
-# Deployment that runs the tests once and then idles until this script deletes it. A pod that
-# restarts must not run them again.
-# shellcheck disable=SC2016 # expanded by the workload's shell
-entry='if [ -e "$RUN_DIR/started" ]; then
-  [ -e "$RUN_DIR/exit_code" ] || { echo "::error::The GPU pod restarted during the tests" >> "$RUN_DIR/log"; echo 1 > "$RUN_DIR/exit_code"; }
-else
-  id > "$RUN_DIR/started"
-  mkdir -p /tmp/aklr-ci/src && cd /tmp/aklr-ci/src && tar -xf "$RUN_DIR/src.tar" &&
-    bash .github/scripts/gpu_tests.sh >> "$RUN_DIR/log" 2>&1
-  echo "$?" > "$RUN_DIR/exit_code"
+pod_command=$(
+  cat << 'EOF'
+if [ ! -e "$RUN_DIR/exit_code" ]; then
+  {
+    work=$(mktemp -d)
+    export REPORTS=$work/reports
+    mkdir "$work/src" "$REPORTS"
+    cd "$work/src"
+    tar -xf "$RUN_DIR/src.tar"
+    bash "$RUN_DIR/script.sh"
+    code=$?
+    tar -C "$REPORTS" -cf "$RUN_DIR/reports.tar" .
+  } >> "$RUN_DIR/log" 2>&1
+  echo "$code" > "$RUN_DIR/exit_code"
 fi
-exec sleep infinity'
-# One whole MI355X node.
-payload=$(jq -n --arg image "$IMAGE" --arg entry "$(base64 -w0 <<< "$entry")" --arg workspace "$WORKSPACE" \
-  --arg name "aklr-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${JOB%-test}" '{
-    displayName: $name,
-    description: "AKLR CI \(env.GITHUB_REPOSITORY) run \(env.GITHUB_RUN_ID) \(env.JOB)",
-    workspaceId: $workspace,
-    groupVersionKind: {kind: "Deployment", version: "v1"},
-    images: [$image],
-    entryPoints: [$entry],
-    resources: [{replica: 1, gpu: "8", cpu: "96", memory: "512Gi", sharedMemory: "64Gi", ephemeralStorage: "300Gi"}],
-    env: (env | {RUN_DIR, JOB, TESTS, VALIDATE, BASE, MEASURED_BY_BOT, AKLR_BASELINE_AITER, PLUGINS}
-          | with_entries(select(.value != null and .value != ""))),
-    # High (2 of 0-2): a CI run should not queue behind batch work.
-    priority: 2,
-    ttlSecondsAfterFinished: 60,
-    useWorkspaceStorage: true
-  }')
-created=$(api -X POST "$SAFE_API/api/v1/workloads" -d "$payload") ||
-  { echo "::error::Primus-SaFE refused the workload: $created"; exit 1; }
-workload=$(jq -er .workloadId <<< "$created")
-echo "SAFE_WORKLOAD=$workload" >> "$GITHUB_ENV"
-echo "🚀 Primus-SaFE workload $workload in $IMAGE"
+exec sleep infinity
+EOF
+)
+workload=$(jq -n --arg name "$name" --arg command "$(base64 -w0 <<< "$pod_command")" --arg pass "${PASS_ENV:-}" '{
+  displayName: $name,
+  workspaceId: env.WORKSPACE,
+  groupVersionKind: {kind: "Deployment", version: "v1"},
+  images: [env.IMAGE],
+  entryPoints: [$command],
+  resources: [{replica: 1, gpu: "8", cpu: "96", memory: "512Gi", sharedMemory: "64Gi", ephemeralStorage: "300Gi"}],
+  env: ({RUN_DIR: env.RUN_DIR} + ($ENV | with_entries(select(.key | IN($pass | splits(" +")))))),
+  priority: 2,
+  timeout: 10800,
+  ttlSecondsAfterFinished: 60,
+  useWorkspaceStorage: true
+}' | api POST '' -d @- | jq -r '.workloadId // error(tostring)')
+echo "🚀 Workload $workload in $IMAGE"
 
-tail -n +1 -F "$RUN_DIR/log" 2>/dev/null &
-tail_pid=$!
-# Always: the workload holds its GPU node until it is deleted, also after a cancelled or timed-out job.
-trap 'kill "$tail_pid" 2>/dev/null || true
-api -X DELETE "$SAFE_API/api/v1/workloads/$workload" > /dev/null || echo "::error::Could not delete workload $workload; delete it in Primus-SaFE"' EXIT
-
-phase=
-failures=0
-running_since=
+tail --pid=$$ -F "$RUN_DIR/log" 2> /dev/null &
+last_phase=''
 until [[ -s $RUN_DIR/exit_code ]]; do
   sleep 15
-  # A pod that cannot write the run directory idles without a word.
-  if [[ -n $running_since && ! -e $RUN_DIR/started ]] && ((SECONDS - running_since > 300)); then
-    echo "::error::Workload $workload has run for 5 minutes without writing $RUN_DIR/started; the pod cannot reach the shared run directory"
-    stat -c '%A %u:%g %n' "$shared" "$RUN_DIR"
-    exit 1
-  fi
-  if detail=$(api "$SAFE_API/api/v1/workloads/$workload"); then
-    failures=0
-    new=$(jq -r .phase <<< "$detail")
-    [[ $new == "$phase" ]] || echo "⏳ workload $workload: $new"
-    phase=$new
-    [[ $phase != Running || -n $running_since ]] || { running_since=$SECONDS; echo "pod: $(jq -c '[.pods[]? | {podId, adminNodeName}]' <<< "$detail")"; }
-    if [[ $phase =~ ^(Failed|Stopped)$ ]]; then
-      echo "::error::Workload $workload ended $phase before the tests finished"
-      jq -r '.conditions // [] | .[] | "\(.type // ""): \(.reason // "") \(.message // "")"' <<< "$detail"
-      exit 1
-    fi
-  elif ((++failures >= 20)); then
-    echo "::error::Lost the Primus-SaFE API for 5 minutes"
+  phase=$(api GET "/$workload" | jq -r .phase) || continue
+  [[ $phase == "$last_phase" ]] || echo "⏳ Workload $workload: $phase"
+  last_phase=$phase
+  if [[ $phase == Failed || $phase == Stopped ]]; then
+    echo "::error::Workload $workload $phase before the script finished"
     exit 1
   fi
 done
-# The log's last lines reach the shared storage after the exit code does.
 sleep 5
-echo "GPU workload ran as: $(cat "$RUN_DIR/started")"
-# The workload ran the PR's code: a link it left here would make the upload steps read the runner's files.
-find "$RUN_DIR" -type l -delete
-code=$(< "$RUN_DIR/exit_code")
-[[ $code =~ ^[0-9]+$ ]] || { echo "::error::Unreadable exit code from workload $workload"; exit 1; }
-exit "$code"
+kill $!
+
+mkdir -p "$RUNNER_TEMP/gpu-reports"
+tar -C "$RUNNER_TEMP/gpu-reports" -xf "$RUN_DIR/reports.tar"
+exit "$(< "$RUN_DIR/exit_code")"

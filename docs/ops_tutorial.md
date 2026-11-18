@@ -109,12 +109,12 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 ## 4. PR and CI
 
 **PR rules**:
-- Write the body following `.github/pull_request_template.md`. Add `ci:gpu` to both kernel and code PRs (on a fork PR, or one whose author lacks write access, the GPU jobs wait for a maintainer to approve them); a kernel PR pastes the results from 3.;
+- Write the body following `.github/pull_request_template.md`. Add `ci:gpu` to both kernel and code PRs (an external contributor's CI run waits for a maintainer to approve it); a kernel PR pastes the results from 3.;
 - The code for a new op (`contract.py` and the rest, which counts as code) goes in its own PR; the kernel-less schema (called contract in the template) and the schema with the kernel each fill in their own section of the template.
 - Do not write `accuracy`/`speedup`/`microseconds` in a submitted PR (writing them by hand reports `perf_edited`). After merge, main's push CI remeasures and `publish-measurement` updates the `aklr-perf/main` bot PR; only after that bot PR is squash-merged under its own title do the workloads carry `accuracy`/`speedup`/`microseconds`.
 
 **CI rules**:
-- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → aiter-test (GPU, `aiter_image`, for now the sglang image, with the baseline aiter installed over its own: `tests/core`, `tests/ops`, `tests/benchmarks`, then `validate --base <merge base> --under aklr/ops --exclude aklr/ops/mega_moe`, mega_moe's baseline needing a mori fix) → sglang-test (the same node, `sglang_image` as it ships: `tests/plugins/aiter`, `tests/plugins/sglang`, then `validate --under aklr/plugins --exclude aklr/plugins/vllm` and `--under aklr/ops --no-timing`) → vllm-test (the same node, `vllm_image` as it ships: `tests/plugins/vllm`, then `validate --under aklr/plugins/vllm` and `--under aklr/ops --no-timing`). Validation runs only when there are schemas to bench.
+- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → aiter-test (GPU, `aiter_image`, for now the sglang image, with the baseline aiter installed over its own: `tests/core`, `tests/ops`, `tests/benchmarks`, then `validate --base <merge base> --under aklr/ops --exclude aklr/ops/mega_moe`, mega_moe's baseline needing a mori fix) → sglang-test (`sglang_image` as it ships: `tests/plugins/aiter`, `tests/plugins/sglang`, then `validate --under aklr/plugins --exclude aklr/plugins/vllm` and `--under aklr/ops --no-timing`) → vllm-test (`vllm_image` as it ships: `tests/plugins/vllm`, then `validate --under aklr/plugins/vllm` and `--under aklr/ops --no-timing`). Validation runs only when there are schemas to bench.
 - Only non-`.md` changes under `aklr/core/` and `stack.json` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
 
 ## 5. Runtime dispatch
