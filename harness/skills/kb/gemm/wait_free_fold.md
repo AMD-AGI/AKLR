@@ -174,7 +174,17 @@ What was checked, and what was not, is under Cost and risk.
 
 - A fold that waits is faster where its work spreads over all splits: the owner-per-slice spin fold beat this one
   by 15.6% at m=128 (8 splits, one workgroup now reads 7 planes) and by 22% at m=256 on a larger tile
-  *(field, E1)*. That speed is not available safely; fewer splits win back part of it, a cheaper partial format less.
+  *(field, E1)*. A spin fold returned millions of NaN on streams limited to 64 and 128 CUs (E3). A fold that
+  waits is safe when each wait is bounded and a split that runs out hands its share on instead of writing
+  (`../attention/split_kv.md` §2, Bounded wait), with launch-tagged arrival words in a per-call workspace: #159's
+  `gemm_n3648_k7168` (`df3ce763`, FOLD 4 at m 40 and 48, FOLD 5 at m 80–240) sums each split's share once the
+  arrival mask is full, waits at most 2000 `s_memrealtime` ticks (20 µs), then hands its share by compare-and-swap
+  to the split that completes the mask, and allocates its words with `torch.empty` per call (S18). *(field, E21)* It
+  gave no wrong, non-finite or nondeterministic output beside a matmul process on the same GPU, on two streams,
+  with graph replays beside eager calls and with two graphs replayed at once; the records do not say whether any
+  wait ran out. The kernel is served at those Points, 1.146–1.870 over the baseline *(field, E22)*; no ablation
+  separates the fold's share of that. Without a wait, fewer splits win back part of the speed, a cheaper partial
+  format less.
   *(field, E18)* At m=128, split 4 on 128×96 tiles (still 256 workgroups) read 43.3 µs against 47.6 for the shipped
   split 8, but 24–45% slower on 64×192 tiles or half the workgroups; fp16 partials (only while the sums fit fp16)
   read 2.7% less, and bf16-rounded ones broke the contract's error bound.
@@ -201,6 +211,17 @@ What was checked, and what was not, is under Cost and risk.
 
 - The counter fold's whole read goes through one workgroup: the cost grows with the split count (E1).
 - Each call owns its counters and partials, so overlapping calls do not share synchronization memory.
+- **A workspace cached per (device, stream) is shared by every CUDA graph captured on that stream.** In Triton,
+  #212's `gemm_n32_k6144` (`65f19013`) keeps its partials and counters in a `functools.cache` keyed on the device and
+  the current stream, zeroes the counters once and relies on the folding split's reset to 0 (S19). Under capture
+  the key is the capture stream, and torch's default capture stream is one per process, so graphs replayed at once,
+  or a replay beside an eager call on the capture stream, share one set of partials and counters. *(field, E23)* At
+  m 6–96, eager calls on the capture stream beside replays on another stream gave 30–33 wrong outputs of 400, and
+  two graphs replayed on two streams 164–214 of 400 (relative error up to 2.2); eager calls on one or two streams,
+  and beside a matmul process, none. Allocating and zeroing the workspace for each call made under capture fixed it,
+  but the zeroing is captured and runs on every replay: *(field, E24)* 0.77–1.10 over the baseline on AKLR's graph
+  ruler, against 1.33–1.95 for the shipped kernel. Not tested: carving each capture's slice from a region zeroed
+  once before capture, which needs no zeroing per replay because the folding split returns its counter to 0.
 - Zeroing per-call counters adds one kernel to every split-K call: *(field, E5)* one `torch.zeros(64, int32)`
   before a bf16 GEMM (N=4096, K=2048, m=128) took the call from 8.013 to 11.909 µs. Against counters kept in
   AKLR's former kernel state (no longer offered): *(field, E4)* 4.2 µs at m=32, 4.2 at m=64, 4.7 at m=128, 3.1 at
@@ -255,6 +276,10 @@ What was checked, and what was not, is under Cost and risk.
 - E18 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=6 rounds, AKLR bench_cudagraph, arms rotated] m=128 on the shipped gemm_n6144_k16384 kernel (bf16, K=16384), only the split, tile or partial format changed: shipped split 8 (128×192) 47.47–47.61 µs; split 4, 128×96, 256 workgroups 43.20–43.32; split 4 on 64×192 1.450×, on 128 workgroups 1.242×; unscaled fp16 partials 0.973×; bf16-rounded partials 9 elements past the contract's error bound
 - E19 [2026-11, gfx950 (MI355X), HIP 7.15, N=10 trials × 64 tiles per cell, one split held back 300 µs or none] HIP replicas of the S7 and S14 counters, split 4, the counter word preset under this launch's tag: S7 completed word 640/640 tiles right; S14 word at or past `SPLIT` 640/640 tiles unwritten; a word left part-way on either 640/640 wrong with a split held back, 0–64 of 640 without; other tags, zero or random words 640/640 right
 - E20 [2026-11, gfx950 (MI355X), HIP 7.15 (no FlyDSL kernel), N=21 rounds, graphs of 20 calls, arms rotated, median of per-round ratios] minimal split-K fold, 4 splits per tile each adding 1 to a 64-bit counter with `global_atomic_add_x2`, 256 and 1024 workgroups: counters 8 B against 256 B apart 0.9935 and 0.9982; a tile's per-wave words in one 128 B slot against a line per wave 0.9906 and 0.9919 (probe kernel)
+- E21 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=2000 calls per m beside the matmul process (1000 fresh inputs, each run twice); N=? for the stream and graph arms; each output against fp32 `a @ bᵀ` (wrong: non-finite or relative max error > 2e-2) and bit for bit against a serial call or its twin] df3ce7632a470864 at m 40–240 (FOLD 4 at 40 and 48, FOLD 5 from 80): beside a second process running back-to-back bf16 8192 × 8192 matmuls on the same GPU; calls on one stream and on two streams; eager calls on the capture stream alternating with replays of a graph on another stream; two graphs, both captured on one stream, replayed on two streams: 0 wrong, 0 non-finite, 0 differing, in every arm (bf16 GEMM n3648 k7168)
+- E22 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI, stored speedup per Point] df3ce7632a470864 at m 40, 48 (FOLD 4) 1.870, 1.819; at m 80, 96, 112, 120, 160, 200, 240 (FOLD 5) 1.619, 1.469, 1.269, 1.248, 1.169, 1.146, 1.158 (bf16 GEMM n3648 k7168; AMD-AGI/AKLR@e193b1d9, CI run 44081029964)
+- E23 [2026-11, gfx950 (MI355X), Triton of the sglang 0.5.22 image (no FlyDSL kernel), N=400 outputs per m and arm (200 rounds of one call on each of two streams), 2000 calls per m beside the matmul process; each output against fp32 `a @ bᵀ` (wrong: non-finite or relative max error > 2e-2) and bit for bit against a serial call; counters zeroed before each arm] 65f19013d279858b at m 6–96: eager calls on a capture stream alternating with replays, on another stream, of a graph captured on it: 30–33 wrong of 400; two graphs captured on that one stream, replayed on two streams: 164–214 wrong of 400, worst relative error 2.2; eager on one stream, eager on two streams, and beside a second process running bf16 8192 × 8192 matmuls on the same GPU: 0 wrong (bf16 GEMM n32 k6144, Triton)
+- E24 [2026-11, gfx950 (MI355X), Triton of the sglang 0.5.22 image (no FlyDSL kernel), N=?, AKLR validate on one MI355X (graph replays, 1 GiB flush before each call)] 65f19013d279858b at m 6–96 as shipped 1.33–1.95 per Point; a copy that allocates and zeroes the partials and counters for each call made under capture and keeps them for that graph's replays 0.77–1.10, with 0 wrong outputs in E23's graph arms (bf16 GEMM n32 k6144, Triton)
 - S1 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:49 `_SC01 = 17`, system-scope access past the non-coherent caches
 - S2 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:426 `s_waitcnt vmcnt(0)` before the arrival
 - S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:430 the agent-scope `atomicrmw add`
@@ -272,3 +297,5 @@ What was checked, and what was not, is under Cost and risk.
 - S15 the N=256, K=6144 campaign's final kernel, not committed: two splits: `atomicrmw xchg` of the tag, the one that reads it back is second and swaps the sentinel back; lane 0 of each wave after its `vmcnt(0)`; own partial from registers plus the partner's
 - S16 the N=256, K=6144 campaign's final kernel, not committed: one 128 B counter slot per tile, one 8 B word per wave; the tag is the dispatch id alone
 - S17 aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json#kernel.py:489 `slot_off`: two fp32 sums and the 64-bit tag (`dispatch.id` · H1 + `queue.ptr` · H2, :481) per 16 B slot, stored `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509
+- S18 aklr/ops/gemm/impls/flydsl/gemm_n3648_k7168/df3ce7632a470864.json#kernel.py:1231 FOLD 4 / 5: a split that does not complete the arrival mask polls its word until its bit is gone or the mask is full, for at most `_sk_WAIT_TICKS` = 2000 `s_memrealtime` ticks (:780, "100 MHz" at :779), then sets its abandon bit by compare-and-swap (:1250-1254); the split that completes the mask merges its own and the abandoned shares and zeroes the word (:1222-1228); a word an earlier launch left is claimed by compare-and-swap (:1196-1203); one 64-bit word per (tile, wave) (:875); FOLD per m in `_N3648` (:1328-1338); the workspace a `torch.empty` per call (:1406)
+- S19 aklr/ops/gemm/impls/triton/gemm_n32_k6144/65f19013d279858b.json#kernel.py:82 `@functools.cache` `_workspace(device, stream)`: partials `torch.empty`, counters `torch.zeros` (:85), keyed on the stream current at launch (:95); a split stores its partial `.wt` (:61) and counts in with `atomic_add` (:64); the one that reads `SPLIT - 1` folds and resets the counter with `atomic_xchg` (:71)
