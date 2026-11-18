@@ -760,6 +760,13 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    PointSpec(
+        contract_id="mla_v_absorb@1.0",
+        axes={"n_tokens": 4, "n_heads": 2, "v_head_dim": 32},
+        dtypes={"attn_output": "bfloat16", "w_vc": "bfloat16", "output": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(

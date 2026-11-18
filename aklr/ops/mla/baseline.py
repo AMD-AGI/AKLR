@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import weakref
 
-__all__ = ["flash_mla_with_kvcache_baseline", "fp8_paged_mqa_logits_baseline", "mla_decode_fwd_baseline"]
+__all__ = [
+    "flash_mla_with_kvcache_baseline",
+    "fp8_paged_mqa_logits_baseline",
+    "fp8_paged_mqa_logits_verify_baseline",
+    "mla_decode_fwd_baseline",
+]
 
 # aiter's work schedule for a kv_indptr, by the tensor's id while it lives: a framework plans
 # it once a step for every MLA layer, not at each call
@@ -112,6 +117,26 @@ def fp8_paged_mqa_logits_baseline(
         logits.shape[1],
         Preshuffle=preshuffled,
         KVBlockSize=page_size,
+    )
+    return logits
+
+
+def fp8_paged_mqa_logits_verify_baseline(
+    q, kv_cache, weights, context_lens, block_tables, logits, *, page_size, preshuffled
+):
+    """sglang's verify logits with its kernel off: aiter's kernel a query row at a time, over the
+    block table row-expanded as sglang passes it. The expansion, a copy sglang makes once a
+    step, is timed with each call here."""
+    batch, next_n = q.shape[:2]
+    fp8_paged_mqa_logits_baseline(
+        q.flatten(0, 1).unsqueeze(1),
+        kv_cache,
+        weights.flatten(0, 1),
+        context_lens.flatten(),
+        block_tables.repeat_interleave(next_n, dim=0),
+        logits.view(batch * next_n, -1),
+        page_size=page_size,
+        preshuffled=preshuffled,
     )
     return logits
 
