@@ -6,18 +6,11 @@ from __future__ import annotations
 import copy
 from html import escape
 from pathlib import Path
-from unittest import mock
 
 import pytest
+from agentx_ci import report, report_all, utils
 
-from tests.benchmarks.agentx_results import (
-    REPO,
-    formal_results,
-    legacy_results,
-    report,
-    report_all,
-    utils,
-)
+from tests.benchmarks.agentx_results import REPO, formal_results, legacy_results
 
 
 class ArchiveCase:
@@ -25,7 +18,7 @@ class ArchiveCase:
         self.root = root
         self.relative = utils.target_path("fixture", "fixture-gpu", "sglang")
         self.serial = 0
-        monkeypatch.setattr(report, "landed", mock.Mock(return_value=None))
+        monkeypatch.setattr(report, "landed", lambda _base, _head, _cwd, _repo_url: None)
 
     def directory(self, name):
         self.serial += 1

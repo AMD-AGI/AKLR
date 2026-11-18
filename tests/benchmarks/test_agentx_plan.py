@@ -5,9 +5,8 @@ from __future__ import annotations
 
 import argparse
 import copy
-import importlib
 import json
-import sys
+import re
 from pathlib import Path
 from unittest import mock
 
@@ -15,10 +14,8 @@ import pytest
 import yaml
 
 AGENTX = Path(__file__).resolve().parents[2] / "benchmarks/agentx"
-with mock.patch.object(sys, "path", [str(AGENTX), *sys.path]):
-    plan = importlib.import_module("agentx_ci.plan")
-    sc = importlib.import_module("agentx_ci.serving_config")
-    ci_image = importlib.import_module("agentx_ci.ci_image")
+from agentx_ci import ci_image, plan
+from agentx_ci import serving_config as sc
 
 RUNNER_LABEL = "agentx-mi355x"
 IMAGE = "example.invalid/server@sha256:" + "a" * 64
@@ -152,12 +149,16 @@ class PlanCase:
             (args.out / plan.target_path(model_id, target_id, framework_id) / "serving.json").read_text()
         )
 
-    def run_with_pr_body(self, body: str, *extra: str):
+    def run_with_comment(self, body: str, *extra: str, comments: list[dict] | None = None):
         output, summary = self.root / "github-output", self.root / "github-summary"
         output.unlink(missing_ok=True)
         summary.unlink(missing_ok=True)
-        pr_body = self.root / "pr-body.md"
-        pr_body.write_text(body)
+        pr_comments = self.root / "pr-comments.json"
+        if comments is None:
+            comments = [{"user": "author", "body": "Ready."}, {"user": "RuibinCheung", "body": body}]
+        pr_comments.write_text(json.dumps(comments))
+        allowlist = self.root / "allowlist.yaml"
+        allowlist.write_text("reviewers: [RuibinCheung, xiaobochen-amd, jiejingzhangamd]\n")
         self.next_run += 1
         out = self.root / f"pr-plan-{self.next_run}"
         env = {"GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)}
@@ -169,8 +170,10 @@ class PlanCase:
                 str(self.config),
                 "--runner-label",
                 RUNNER_LABEL,
-                "--pr-body",
-                str(pr_body),
+                "--pr-comments",
+                str(pr_comments),
+                "--allowlist",
+                str(allowlist),
                 *extra,
                 "--out",
                 str(out),
@@ -180,6 +183,20 @@ class PlanCase:
             dict(line.split("=", 1) for line in output.read_text().splitlines()) if output.exists() else {}
         )
         return code, values, out
+
+    def run_manual(self, actor: str, ref: str):
+        allowlist = self.root / "allowlist.yaml"
+        allowlist.write_text("reviewers: [RuibinCheung, xiaobochen-amd]\n")
+        summary = self.root / "github-summary"
+        summary.unlink(missing_ok=True)
+        self.next_run += 1
+        out = self.root / f"manual-plan-{self.next_run}"
+        argv = ["--config", str(self.config), "--runner-label", RUNNER_LABEL, "--allowlist", str(allowlist)]
+        argv += ["--manual-actor", actor, "--manual-ref", ref, "--out", str(out)]
+        self.monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        self.monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        code = plan.main(argv)
+        return code, out, summary.read_text() if summary.exists() else ""
 
     def serving_of_built(self):
         args = self.args(models="first", targets="mi355x", frameworks="sglang")
@@ -204,8 +221,9 @@ class PlanCase:
 
 @pytest.fixture
 def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    with mock.patch.object(ci_image, "run_image", return_value=IMAGE) as run_image:
-        yield PlanCase(tmp_path, monkeypatch, run_image)
+    run_image = mock.Mock(return_value=IMAGE)
+    monkeypatch.setattr(ci_image, "run_image", run_image)
+    return PlanCase(tmp_path, monkeypatch, run_image)
 
 
 @pytest.fixture
@@ -320,9 +338,9 @@ def test_client_and_trace_come_from_the_schema(case, message, mutate):
     path.write_text(json.dumps(broken))
     with pytest.raises(sc.RecipeError, match=message):
         sc.template(path)
-    with mock.patch.object(sc, "RECIPE_SCHEMA", path):
-        with pytest.raises(sc.RecipeError, match=message):
-            sc.build_run(case.recipe(), case.definition_of())
+    case.monkeypatch.setattr(sc, "RECIPE_SCHEMA", path)
+    with pytest.raises(sc.RecipeError, match=message):
+        sc.build_run(case.recipe(), case.definition_of())
 
 
 def test_plan_names_each_point_from_model_arm_and_conc(case):
@@ -552,8 +570,8 @@ def test_cli_filter_limits_manifest_and_github_job_matrix(planned):
     assert planned.runs(manifest) == [(job["model"], job["target"], job["framework"]) for job in jobs]
 
 
-def test_pr_description_selects_only_its_declared_models(planned):
-    code, values, out = planned.run_with_pr_body("## Risk\nAffects: decode\n**AgentX**: `second`\n")
+def test_comment_selects_only_its_requested_models(planned):
+    code, values, out = planned.run_with_comment("/agentx-mi355x `second`\r\nDecode changed.\n")
     assert code == 0
     assert values["skipped"] == "false"
     jobs = json.loads(values["matrix"])["include"]
@@ -563,9 +581,11 @@ def test_pr_description_selects_only_its_declared_models(planned):
     assert "selects second;" in (planned.root / "github-summary").read_text()
 
 
-@pytest.mark.parametrize("body", ["AgentX: all\n", "AgentX: `ALL`\n"], ids=["all", "quoted-uppercase"])
-def test_pr_description_all_runs_every_enabled_model(planned, body):
-    code, values, _ = planned.run_with_pr_body(body)
+@pytest.mark.parametrize(
+    "body", ["/agentx-mi355x all\n", "/agentx-mi355x `ALL`\n"], ids=["all", "quoted-uppercase"]
+)
+def test_comment_all_runs_every_enabled_model(planned, body):
+    code, values, _ = planned.run_with_comment(body)
     assert code == 0
     assert values["count"] == "3"
 
@@ -573,35 +593,33 @@ def test_pr_description_all_runs_every_enabled_model(planned, body):
 @pytest.mark.parametrize(
     ("body", "message"),
     [
-        ("AgentX: first, missing\n", "Not an enabled model id, skipped: `missing`."),
-        ("AgentX: missing\n", "selects no model"),
-        ("No line\n", "selects no model"),
+        ("/agentx-mi355x first, missing\n", "Not an enabled model id, skipped: `missing`."),
+        ("/agentx-mi355x missing\n", "selects no model"),
+        ("/agentx-mi355x\n", "selects no model"),
     ],
-    ids=["one-unknown-id", "only-unknown-ids", "no-line"],
+    ids=["one-unknown-id", "only-unknown-ids", "no-ids"],
 )
-def test_pr_description_scope_problems_warn_on_github(planned, capsys, body, message):
+def test_comment_scope_problems_warn_on_github(planned, capsys, body, message):
     planned.monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    code, _, _ = planned.run_with_pr_body(body)
+    code, _, _ = planned.run_with_comment(body)
     assert code == 0
     warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith("::warning")]
     assert len(warnings) == 1
     assert message in warnings[0]
-    planned.run_with_pr_body("AgentX: first\n")
+    planned.run_with_comment("/agentx-mi355x first\n")
     assert "::warning" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
-    "body",
-    ["## Why\nNo AgentX line.\n", "AgentX: <!-- model ids from agentx.yaml,\nor all -->\n", "AgentX:\n"],
-    ids=["no-line", "template-comment", "empty-line"],
+    "body", ["/agentx-mi355x\nfirst\n", "/agentx-mi355x , \n"], ids=["ids-on-the-next-line", "only-commas"]
 )
-def test_pr_description_without_models_skips_without_a_plan(planned, body):
-    code, values, out = planned.run_with_pr_body(body)
+def test_comment_without_models_skips_without_a_plan(planned, body):
+    code, values, out = planned.run_with_comment(body)
     assert code == 0
     assert values == {"matrix": '{"include": []}', "count": "0", "skipped": "true"}
     assert not out.exists()
     assert (
-        "selects no model on an `AgentX:` line; skipping AgentX."
+        "@RuibinCheung's `/agentx-mi355x` comment selects no model; skipping AgentX."
         in (planned.root / "github-summary").read_text()
     )
 
@@ -609,16 +627,16 @@ def test_pr_description_without_models_skips_without_a_plan(planned, body):
 @pytest.mark.parametrize(
     ("body", "count", "models", "note"),
     [
-        ("AgentX: first, missing\n", "2", ["first", "first"], "skipped: `missing`."),
-        ("AgentX: all, first\n", "2", ["first", "first"], "skipped: `all`."),
-        ("AgentX: FIRST\n", "2", ["first", "first"], "selects first;"),
-        ("AgentX: first\n* AgentX: second\n", "3", ["first", "first", "second"], "selects first,second"),
-        ("AgentX: none, second\n", "1", ["second"], "skipped: `none`."),
+        ("/agentx-mi355x first, missing\n", "2", ["first", "first"], "skipped: `missing`."),
+        ("/agentx-mi355x all, first\n", "2", ["first", "first"], "skipped: `all`."),
+        ("/agentx-mi355x FIRST\n", "2", ["first", "first"], "selects first;"),
+        ("/AgentX-MI355X first\n/agentx-mi355x second\n", "2", ["first", "first"], "selects first;"),
+        ("/agentx-mi355x none, second\n", "1", ["second"], "skipped: `none`."),
     ],
-    ids=["unknown-id", "all-beside-an-id", "uppercase-id", "two-lines", "none-beside-an-id"],
+    ids=["unknown-id", "all-beside-an-id", "uppercase-id", "first-line-only", "none-beside-an-id"],
 )
-def test_pr_description_never_fails_the_plan(planned, body, count, models, note):
-    code, values, _ = planned.run_with_pr_body(body)
+def test_comment_never_fails_the_plan(planned, body, count, models, note):
+    code, values, _ = planned.run_with_comment(body)
     assert code == 0
     assert values["count"] == count
     assert [job["model"] for job in json.loads(values["matrix"])["include"]] == models
@@ -628,14 +646,14 @@ def test_pr_description_never_fails_the_plan(planned, body, count, models, note)
 @pytest.mark.parametrize(
     ("body", "note"),
     [
-        ("AgentX: none\n", "skipping AgentX"),
-        ("AgentX: missing\n", "skipping AgentX"),
-        ("AgentX: -, other\n", "skipped: `-`, `other`."),
+        ("/agentx-mi355x none\n", "skipping AgentX"),
+        ("/agentx-mi355x missing\n", "skipping AgentX"),
+        ("/agentx-mi355x -, other\n", "skipped: `-`, `other`."),
     ],
     ids=["none", "unknown-id", "dash-and-unknown-id"],
 )
-def test_pr_description_matching_nothing_skips(planned, body, note):
-    code, values, out = planned.run_with_pr_body(body)
+def test_comment_matching_nothing_skips(planned, body, note):
+    code, values, out = planned.run_with_comment(body)
     assert code == 0
     assert values["skipped"] == "true"
     assert not out.exists()
@@ -643,28 +661,188 @@ def test_pr_description_matching_nothing_skips(planned, body, note):
     assert note in (planned.root / "github-summary").read_text()
 
 
-def test_pr_body_with_explicit_models_is_a_cli_error(planned):
-    code, values, _ = planned.run_with_pr_body("AgentX: first\n", "--models", "second")
+def test_comment_with_explicit_models_is_a_cli_error(planned):
+    code, values, _ = planned.run_with_comment("/agentx-mi355x first\n", "--models", "second")
     assert (code, values) == (1, {})
 
 
-def test_pr_description_parsing():
-    enabled = ["first", "second"]
-    assert plan.declared_models("- AgentX: second, first,, second\n", enabled) == ("second,first", [])
-    assert plan.declared_models("AgentX: `first` second\n", enabled) == ("first,second", [])
-    assert plan.declared_models("**AgentX:** NONE\n", enabled) == ("", ["NONE"])
-    assert plan.declared_models("", enabled) == ("", [])
-    assert plan.declared_models("Uses AgentX: later.\n## AgentX: first\n", enabled) == ("", [])
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("/agentx-mi355x\tsecond, first,, second\n", ("second,first", [])),
+        ("/agentx-mi355x `first` second\n", ("first,second", [])),
+        ("/agentx-mi355x NONE\n", ("", ["NONE"])),
+        ("", ("", [])),
+        ("- /agentx-mi355x first\n", ("", [])),
+        ("AgentX: first\n", ("", [])),
+        ("    /agentx-mi355x first\n", ("", [])),
+        (" /agentx-mi355x first\n", ("", [])),
+    ],
+    ids=[
+        "tab-and-repeats",
+        "quoted-id",
+        "unknown-id",
+        "empty",
+        "list-item",
+        "old-line",
+        "code-indent",
+        "one-space",
+    ],
+)
+def test_comment_parsing(body, expected):
+    assert plan.requested_models(body, ["first", "second"]) == expected
 
 
-def test_pr_description_matches_model_ids_ignoring_case():
+def test_comment_matches_model_ids_ignoring_case():
     enabled = ["glm52-fp4", "minimaxm31flash-fp4"]
-    body = "AgentX: glm52, GLM52-FP4, minimax, glm52-fp4\n"
-    assert plan.declared_models(body, enabled) == ("glm52-fp4", ["glm52", "minimax"])
-    assert plan.declared_models("AgentX: glm52-fp4 not all of them\n", enabled) == (
+    body = "/agentx-mi355x glm52, GLM52-FP4, minimax, glm52-fp4\n"
+    assert plan.requested_models(body, enabled) == ("glm52-fp4", ["glm52", "minimax"])
+    assert plan.requested_models("/agentx-mi355x glm52-fp4 not all of them\n", enabled) == (
         "glm52-fp4",
         ["not", "all", "of", "them"],
     )
+
+
+@pytest.mark.parametrize(
+    "comments",
+    [
+        [],
+        [{"user": "author", "body": "/agentx-mi355x all"}],
+        [{"user": "RuibinCheung", "body": "Looks good.\n/agentx-mi355x first"}],
+        [{"user": "RuibinCheung", "body": "/agentx-mi355xfirst"}],
+        [{"user": "RuibinCheung", "body": "    /agentx-mi355x all"}],
+        [{"user": "RuibinCheung", "body": "\t/agentx-mi355x all"}],
+        [{"user": "RuibinCheung", "body": "```\n/agentx-mi355x all\n```"}],
+        [{"user": "RuibinCheung", "body": "LGTM"}, {"user": "someone", "body": "/agentx-mi355x first"}],
+    ],
+    ids=[
+        "no-comments",
+        "author-only",
+        "not-on-the-first-line",
+        "no-space-after-command",
+        "space-indented",
+        "tab-indented",
+        "code-fenced",
+        "outsider-after-reviewer",
+    ],
+)
+def test_plan_fails_without_an_allowlisted_reviewers_request(planned, capsys, comments):
+    planned.monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    code, values, out = planned.run_with_comment("", comments=comments)
+    assert (code, values) == (1, {})
+    assert not out.exists()
+    message = "No AgentX reviewer has authorized this PR. Ask one of @RuibinCheung, @xiaobochen-amd, @jiejingzhangamd"
+    captured = capsys.readouterr()
+    assert message in (planned.root / "github-summary").read_text()
+    assert message in captured.err
+    errors = [line for line in captured.out.splitlines() if line.startswith("::error")]
+    assert len(errors) == 1
+    assert "re-run this workflow" in errors[0]
+
+
+def test_latest_allowlisted_request_selects_the_models(planned):
+    comments = [
+        {"user": "xiaobochen-amd", "body": "/agentx-mi355x all"},
+        {"user": "JIEJINGZHANGAMD", "body": "/agentx-mi355x second", "url": "https://example.invalid/c/2"},
+        {"user": "author", "body": "/agentx-mi355x first"},
+        {"user": "RuibinCheung", "body": "Thanks.\n/agentx-mi355x first"},
+    ]
+    code, values, _ = planned.run_with_comment("", comments=comments)
+    assert code == 0
+    assert [job["model"] for job in json.loads(values["matrix"])["include"]] == ["second"]
+    assert (
+        "@JIEJINGZHANGAMD's `/agentx-mi355x` comment (https://example.invalid/c/2) selects second;"
+        in (planned.root / "github-summary").read_text()
+    )
+
+
+def test_manual_run_by_an_allowlisted_reviewer_on_main_plans(planned):
+    code, out, _ = planned.run_manual("ruibincheung", "refs/heads/main")
+    assert code == 0
+    assert (out / "manifest.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("actor", "ref", "message"),
+    [
+        (
+            "someone",
+            "refs/heads/main",
+            "@someone may not start AgentX manually. Ask one of @RuibinCheung, @xiaobochen-amd",
+        ),
+        ("RuibinCheung", "refs/heads/feature", "Manual AgentX runs use main only, not refs/heads/feature"),
+    ],
+    ids=["outsider", "other-ref"],
+)
+def test_manual_run_is_refused_off_the_allowlist_or_off_main(planned, capsys, actor, ref, message):
+    code, out, summary = planned.run_manual(actor, ref)
+    assert code == 1
+    assert not out.exists()
+    assert message in summary
+    assert any(
+        line.startswith("::error") and message in line for line in capsys.readouterr().out.splitlines()
+    )
+
+
+def test_manual_actor_needs_its_ref(case):
+    with pytest.raises(SystemExit, match="2"):
+        plan.main(
+            ["--config", str(case.config), "--manual-actor", "RuibinCheung", "--out", str(case.root / "x")]
+        )
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["{}", "reviewers: []\n", "reviewers: [ok, 'not a login']\n", "reviewers: [Ok, ok]\n"],
+    ids=["no-reviewers-key", "empty", "invalid-login", "duplicate-ignoring-case"],
+)
+def test_reviewers_file_must_list_distinct_github_logins(tmp_path, text):
+    path = tmp_path / "allowlist.yaml"
+    path.write_text(text)
+    with pytest.raises(plan.ConfigError, match=re.escape(str(path))):
+        plan.load_reviewers(path)
+
+
+def agentx_workflow():
+    return yaml.safe_load((AGENTX.parents[1] / ".github/workflows/agentx-ci.yaml").read_text())
+
+
+def test_allowlist_and_workflow_read_the_pr_comments():
+    assert "RuibinCheung" in plan.load_reviewers()
+    steps = agentx_workflow()["jobs"]["plan"]["steps"]
+    read = next(
+        step for step in steps if step.get("name") == "Read the PR comments that may authorize AgentX"
+    )
+    assert "issues/$PR_NUMBER/comments" in read["run"]
+    assert "--paginate" in read["run"]
+    resolve = next(step for step in steps if step.get("id") == "resolve")
+    assert '--pr-comments "$RUNNER_TEMP/$PR_COMMENTS"' in resolve["run"]
+    assert '--manual-actor "$MANUAL_ACTOR" --manual-ref "$GITHUB_REF"' in resolve["run"]
+    assert (
+        resolve["env"]["MANUAL_ACTOR"]
+        == "${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || '' }}"
+    )
+    main_allowlist = next(step for step in steps if step.get("name") == "Read main's AgentX allowlist")
+    assert main_allowlist["if"] == "github.event_name != 'schedule'"
+    assert "contents/benchmarks/agentx/allowlist.yaml?ref=main" in main_allowlist["run"]
+    assert '> "$RUNNER_TEMP/allowlist.yaml"' in main_allowlist["run"]
+    assert '--allowlist "$RUNNER_TEMP/$ALLOWLIST"' in resolve["run"]
+
+
+def test_workflow_queue_allowlist_matches_the_allowlist_file():
+    group = agentx_workflow()["concurrency"]["group"]
+    lists = re.findall(r"fromJSON\('(\[[^']*\])'\),\s*github\.triggering_actor\)", group)
+    assert len(lists) == 1
+    assert json.loads(lists[0]) == plan.load_reviewers()
+    assert "github.ref != 'refs/heads/main'" in group
+    assert "format('agentx-refused-{0}', github.run_id)" in group
+
+
+def test_sweep_and_report_need_this_attempts_plan():
+    jobs = agentx_workflow()["jobs"]
+    assert jobs["plan"]["outputs"]["attempt"] == "${{ github.run_attempt }}"
+    for job in ("sweep", "report"):
+        assert "needs.plan.outputs.attempt == github.run_attempt" in jobs[job]["if"]
 
 
 def test_smoke_points_narrow_the_selection(planned):

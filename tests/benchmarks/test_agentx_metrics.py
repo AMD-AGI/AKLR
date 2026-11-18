@@ -5,22 +5,12 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-from unittest import mock
 
 import pytest
+from agentx_ci import performance_analysis as analysis
+from agentx_ci import report, report_all, runtime, utils
 
-from tests.benchmarks.agentx_results import (
-    E2E,
-    FULL_RESPONSE,
-    REPO,
-    aggregate,
-    analysis,
-    legacy_results,
-    report,
-    report_all,
-    runtime,
-    utils,
-)
+from tests.benchmarks.agentx_results import E2E, FULL_RESPONSE, REPO, aggregate, legacy_results
 
 
 def test_runtime_matches_csv_reciprocal_instead_of_other_interactivity_fields():
@@ -150,7 +140,7 @@ class ReportMetricMigrationCase:
         self.config = self.root / "config.yaml"
         self.config.write_text("report:\n  repo_url: https://example.invalid/repo\n")
         # Git history is independent of report metrics; keep this suite offline.
-        monkeypatch.setattr(report, "landed", mock.Mock(return_value=None))
+        monkeypatch.setattr(report, "landed", lambda _base, _head, _cwd, _repo_url: None)
 
     def build_with_baseline(self, baseline, *, formal=False, current=None, expected_status="ok"):
         current = copy.deepcopy(current) if current is not None else legacy_results()

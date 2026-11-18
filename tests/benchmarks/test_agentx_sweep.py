@@ -4,26 +4,18 @@
 from __future__ import annotations
 
 import copy
-import importlib
 import json
-import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
 
 import pytest
-
-with mock.patch.object(
-    sys, "path", [str(Path(__file__).resolve().parents[2] / "benchmarks/agentx"), *sys.path]
-):
-    sweep = importlib.import_module("agentx_ci.sweep")
-    docker_launch = importlib.import_module("agentx_ci.docker_launch")
-    serving_config = importlib.import_module("agentx_ci.serving_config")
+from agentx_ci import docker_launch, serving_config, sweep
 
 
 class SweepCase:
     def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         self.root = root
+        self.monkeypatch = monkeypatch
         self.summary_path = self.root / "summary.md"
         monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(self.summary_path))
         target = {
@@ -55,8 +47,8 @@ class SweepCase:
                 (args.out / "results.json").write_text(before)
             return code
 
-        with mock.patch.object(docker_launch, "run", side_effect=run):
-            result = sweep.main(["--serving", str(self.root / "serving.json"), "--out", str(self.root)])
+        self.monkeypatch.setattr(docker_launch, "run", run)
+        result = sweep.main(["--serving", str(self.root / "serving.json"), "--out", str(self.root)])
         if save:
             assert (self.root / "results.json").read_text() == before
         return result, self.summary_path.read_text()
@@ -142,8 +134,9 @@ def test_duplicate_measurements_are_not_reported_as_successful(sweep_case):
 
 
 class DockerOutcomeCase:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         self.root = root
+        self.monkeypatch = monkeypatch
         self.serving = {
             "schema": 4,
             "model": {"id": "fixture"},
@@ -182,7 +175,7 @@ class DockerOutcomeCase:
     def launch(self, *, completed):
         self.commands = []
 
-        def command(argv, **_kwargs):
+        def command(_launcher, argv, **_kwargs):
             self.commands.append(argv)
             if argv[:3] == ["docker", "start", "--attach"]:
                 current = json.loads((self.args.out / "results.json").read_text())
@@ -210,18 +203,18 @@ class DockerOutcomeCase:
                 return 0, ""
             return 0, str(self.root / "git-metadata")
 
-        with (
-            mock.patch.object(docker_launch.Launcher, "command", side_effect=command),
-            mock.patch.object(docker_launch.Launcher, "image", return_value=("sha256:fixture", {})),
-            mock.patch.object(docker_launch.Launcher, "cleanup", return_value=None),
-        ):
-            code = docker_launch.run(self.args, [])
+        self.monkeypatch.setattr(docker_launch.Launcher, "command", command)
+        self.monkeypatch.setattr(
+            docker_launch.Launcher, "image", lambda _launcher, _reference: ("sha256:fixture", {})
+        )
+        self.monkeypatch.setattr(docker_launch.Launcher, "cleanup", lambda _launcher, _name, _started: None)
+        code = docker_launch.run(self.args, [])
         return code, json.loads((self.args.out / "results.json").read_text())
 
 
 @pytest.fixture
-def docker_case(tmp_path: Path) -> DockerOutcomeCase:
-    return DockerOutcomeCase(tmp_path)
+def docker_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DockerOutcomeCase:
+    return DockerOutcomeCase(tmp_path, monkeypatch)
 
 
 def test_all_failed_measurements_keep_completion_and_individual_errors(docker_case):

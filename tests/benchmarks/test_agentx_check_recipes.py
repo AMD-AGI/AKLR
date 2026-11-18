@@ -3,12 +3,9 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import shutil
-import sys
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -16,8 +13,7 @@ import pytest
 pytest.importorskip("jsonschema")
 
 AGENTX = Path(__file__).resolve().parents[2] / "benchmarks/agentx"
-with mock.patch.object(sys, "path", [str(AGENTX), *sys.path]):
-    check = importlib.import_module("agentx_ci.check_recipes")
+from agentx_ci import check_recipes as check
 
 FP4 = "recipes/GLM/mi355x/sglang/serving.glm52-fp4.json"
 

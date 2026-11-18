@@ -24,13 +24,13 @@ Solid arrows show job execution order; dashed arrows show artifact uploads and r
 
 ### 1.1 Trigger with a GitHub Runner
 
-Open the [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml), click **Run workflow**, select an AKLR branch, fill in the parameters below, and click **Run workflow** in the form. See section 4 for runner registration and setup.
+Open the [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml), click **Run workflow**; only the reviewers in `main`'s `allowlist.yaml` may start or re-run a manual run, and only from `main`; re-run with **Re-run all jobs**, since a re-run that reuses the plan skips the sweep. Fill in the parameters below and click **Run workflow** in the form. See section 4 for runner registration and setup.
 
 The form has **6 workflow inputs**, plus GitHub's **Branch / Use workflow from** selector: 7 settings in total. All 6 inputs can be left at their defaults.
 
 | Setting / input | Default | Meaning |
 | --- | --- | --- |
-| Branch / Use workflow from | Default branch, usually `main` | Select the **AKLR** workflow, source, configuration, and recipe revision |
+| Branch / Use workflow from | Default branch, `main` | Must be `main`; other branches fail the plan |
 | `models` | `all` | Enabled model IDs, separated by commas, such as `glm52-fp4`; `all` selects every enabled model |
 | `targets` | `all` | Enabled target IDs within the selected models, such as `mi355x`, separated by commas; selected runs execute serially in plan order |
 | `frameworks` | `all` | Enabled serving frameworks within the selected targets, `sglang` and/or `vllm`, comma-separated |
@@ -44,16 +44,14 @@ For a PR from a branch in this repository targeting `main`, add **`ci:agentx-mi3
 
 | Trigger | Model / target scope | Points | Duration per AKLR off/on measurement | Publish Pages |
 | --- | --- | --- | --- | --- |
-| PR label `ci:agentx-mi355x` | Enabled frameworks of the targets assigned to `agentx-mi355x`, of the models on the PR description's `AgentX:` line | Recipe Pareto points | 600 seconds | No |
+| PR label `ci:agentx-mi355x` | Enabled frameworks of the targets assigned to `agentx-mi355x`, of the models an allowlisted reviewer's `/agentx-mi355x` comment names | Recipe Pareto points | 600 seconds | No |
 
 Notes:
 
 - Opening a PR, pushing new commits to it, or reopening it triggers a run when it carries this label. A label event starts AgentX tests only when the newly added label is `ci:agentx-mi355x`.
 - Pushing new commits while keeping the label triggers a new run and automatically cancels that PR's running or queued AgentX run.
-- `ci:agentx-mi355x` is a **GitHub Actions runner label**. PR runs select only the enabled models, targets and frameworks whose target has `runner_label: agentx-mi355x`.
-- The `AgentX:` line of the PR description (see the PR template) lists the models the change can affect by their ids in `agentx.yaml`, ignoring case (see `agentx.yaml` for the supported models), separated by commas or spaces, such as `AgentX: glm52-fp4, minimaxm31flash-fp4`; `AgentX: all`, with `all` as the only name, runs every enabled model.
-- Unlisted models are skipped. Without the line, or with only the template comment, the run is skipped. Names that are not enabled model ids are skipped too.
-- The plan job reads the PR description when it runs. After editing the `AgentX:` line, re-run the workflow or push a new commit to apply it; editing the description alone does not start a run.
+- A reviewer in `allowlist.yaml` authorizes the run and picks its models with a PR comment whose first line is `/agentx-mi355x` followed by model ids in `agentx.yaml`, ignoring case, separated by commas or spaces, such as `/agentx-mi355x glm52-fp4, minimaxm31flash-fp4`; `/agentx-mi355x all`, with `all` as the only name, runs every enabled model.
+- A comment does not start a run. After a reviewer comments, re-run all jobs or push a new commit. Authorization uses `main`'s `allowlist.yaml`, so a PR that edits the list takes effect only after it merges. The authorization stays with the PR, so later commits run under the same request until a reviewer comments again.
 
 ### 1.3 Scheduled Runs
 
