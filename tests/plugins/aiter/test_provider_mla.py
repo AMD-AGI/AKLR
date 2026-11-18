@@ -2,9 +2,9 @@
 # Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """AKLR as aiter's kernel plugin for aiter's MLA and mHC routes: mla_decode_fwd, mla_paged_decode,
-fp8_paged_mqa_logits, mla_sparse_prefill_v4 and mhc_fused_post_pre. What each selector takes, what it
-declines, the AKLR call its run makes, and, with an aiter that has the plugin interface, that aiter
-hands such a call to AKLR."""
+fp8_paged_mqa_logits, mla_sparse_prefill_v4, flash_attn_varlen and mhc_fused_post_pre. What each
+selector takes, what it declines, the AKLR call its run makes, and, with an aiter that has the plugin
+interface, that aiter hands such a call to AKLR."""
 
 import importlib
 import inspect
@@ -148,6 +148,38 @@ AITER_SIGNATURES = {
             ("res_preshuffle", False),
         ),
     ),
+    "flash_attn_varlen": (
+        1,
+        (
+            ("q", _REQUIRED),
+            ("k", _REQUIRED),
+            ("v", _REQUIRED),
+            ("cu_seqlens_q", _REQUIRED),
+            ("cu_seqlens_k", _REQUIRED),
+            ("max_seqlen_q", _REQUIRED),
+            ("max_seqlen_k", _REQUIRED),
+            ("min_seqlen_q", 0),
+            ("dropout_p", 0.0),
+            ("softmax_scale", None),
+            ("logits_soft_cap", 0.0),
+            ("causal", False),
+            ("window_size", (-1, -1, 0)),
+            ("bias", None),
+            ("alibi_slopes", None),
+            ("deterministic", False),
+            ("return_lse", False),
+            ("return_attn_probs", False),
+            ("how_v3_bf16_cvt", 1),
+            ("block_table", None),
+            ("out", None),
+            ("cu_seqlens_q_padded", None),
+            ("cu_seqlens_k_padded", None),
+            ("sink_ptr", None),
+            ("q_descale", None),
+            ("k_descale", None),
+            ("v_descale", None),
+        ),
+    ),
 }
 # the entries test_provider.AITER_CONTRACTS takes for these ops
 AITER_CONTRACTS = {
@@ -161,11 +193,34 @@ def _split_q(*lead):
     return q[..., :512], q[..., 512:]
 
 
+VARLEN_HEADS = 4
+
+
+def _varlen(n_q: int, n_k: int):
+    """flash_attn_varlen as vLLM's MLA prefill calls it with the lse, over one sequence: bf16 q and k of
+    192-value rows, v the 128-value strided view of kv_b's output."""
+    z = torch.zeros
+    kv = z(n_k, VARLEN_HEADS, 320, dtype=BF16)
+    return {
+        **{name: default for name, default in AITER_SIGNATURES["flash_attn_varlen"][1]},
+        "q": z(n_q, VARLEN_HEADS, 192, dtype=BF16),
+        "k": z(n_k, VARLEN_HEADS, 192, dtype=BF16),
+        "v": kv[..., 192:],
+        "cu_seqlens_q": torch.tensor([0, n_q], dtype=I32),
+        "cu_seqlens_k": torch.tensor([0, n_k], dtype=I32),
+        "max_seqlen_q": n_q,
+        "max_seqlen_k": n_k,
+        "return_lse": True,
+    }
+
+
 def _calls():
     """A call AKLR's contract takes, per case, by aiter's parameter names, every default given."""
     z = torch.zeros
     q_nope, q_pe = _split_q(2, 4)
     mtp_nope, mtp_pe = _split_q(2, 3, 4)
+    new_tokens = _varlen(300, 300)
+    new_tokens["cu_seqlens_k"] = new_tokens["cu_seqlens_q"]  # vLLM passes the one tensor twice
     paged = {
         "q_nope": q_nope,
         "q_pe": q_pe,
@@ -261,6 +316,8 @@ def _calls():
             "w_preshuffle_bf16": False,
             "res_preshuffle": False,
         },
+        "flash_attn_varlen": {**new_tokens, "causal": True, "softmax_scale": 0.1},
+        "flash_attn_varlen_chunk": _varlen(300, 900),
     }
 
 
@@ -274,7 +331,10 @@ def _kwargs(case: str, call=None, **changes):
 
 
 def _op(case: str) -> str:
-    return "mla_paged_decode" if case.startswith("mla_paged_decode") else case
+    for op in ("mla_paged_decode", "flash_attn_varlen"):
+        if case.startswith(op):
+            return op
+    return case
 
 
 def _call(case: str, **changes):
@@ -401,6 +461,27 @@ DECLINED = [
     ("mhc_fused_post_pre", {"w_preshuffle_bf16": True}),
     ("mhc_fused_post_pre", {"res_preshuffle": True}),
     ("mhc_fused_post_pre", {"post_layer_mix": torch.zeros(4, 4, 2)}),
+    ("flash_attn_varlen", {"return_lse": False}),  # a prefill with no context to merge
+    ("flash_attn_varlen", {"return_attn_probs": True}),
+    ("flash_attn_varlen", {"dropout_p": 0.1}),
+    ("flash_attn_varlen", {"logits_soft_cap": 30.0}),
+    ("flash_attn_varlen", {"window_size": (128, 0, 0)}),
+    ("flash_attn_varlen", {"window_size": (-1, -1, 4)}),  # sink tokens
+    ("flash_attn_varlen", {"bias": torch.zeros(300, 300)}),
+    ("flash_attn_varlen", {"alibi_slopes": torch.zeros(VARLEN_HEADS)}),
+    ("flash_attn_varlen", {"block_table": torch.zeros(1, 8, dtype=I32)}),
+    ("flash_attn_varlen", {"out": torch.zeros(300, VARLEN_HEADS, 128, dtype=BF16)}),
+    ("flash_attn_varlen", {"cu_seqlens_q_padded": torch.tensor([0, 300], dtype=I32)}),
+    ("flash_attn_varlen", {"sink_ptr": torch.zeros(VARLEN_HEADS)}),
+    (
+        "flash_attn_varlen",
+        {"q_descale": torch.ones(1), "k_descale": torch.ones(1), "v_descale": torch.ones(1)},
+    ),
+    ("flash_attn_varlen", {"q": torch.zeros(300, VARLEN_HEADS, 192, dtype=torch.float16)}),
+    ("flash_attn_varlen", {"k": torch.zeros(300, VARLEN_HEADS, 192, dtype=FP8)}),
+    ("flash_attn_varlen", {"q": torch.zeros(300, VARLEN_HEADS, 192, dtype=BF16, requires_grad=True)}),
+    # a decode step's extend over the whole context
+    ("flash_attn_varlen_chunk", {"q": torch.zeros(255, VARLEN_HEADS, 192, dtype=BF16)}),
 ]
 
 
@@ -522,6 +603,58 @@ def test_mhc_fused_post_pre_hands_aklr_its_post_mix_per_stream(monkeypatch, aklr
     }
 
 
+def _varlen_result(q, k, v, offsets, **kwargs):
+    """mla_prefill_varlen_lse's (output, lse as [tokens, heads]), the lse numbering its entries."""
+    rows = q.shape[0]
+    lse = torch.arange(rows * VARLEN_HEADS, dtype=F32).view(rows, VARLEN_HEADS)
+    return torch.zeros(rows, VARLEN_HEADS, v.shape[-1], dtype=BF16), lse
+
+
+def test_flash_attn_varlen_over_new_tokens_reaches_aklr_causal_in_fp8(monkeypatch, aklr_serves):
+    api = _Api(_varlen_result)
+    monkeypatch.setattr(mla_prefill, "mla_prefill_varlen_lse", api)
+    call = _call("flash_attn_varlen")
+    _, run = _select("flash_attn_varlen", call)
+    output, lse = run(*_args("flash_attn_varlen", call))
+    (q, k, v, offsets), kwargs = api.calls[0]
+    assert q is call["q"] and k is call["k"] and offsets is call["cu_seqlens_q"]
+    assert v.is_contiguous() and v.data_ptr() != call["v"].data_ptr() and v.shape == call["v"].shape
+    # the queries' own rows as keys: AKLR's default
+    assert kwargs == {"qkv_fp8": True, "causal": True, "cu_seqlens_k": None, "sm_scale": 0.1}
+    assert output.shape == (300, VARLEN_HEADS, 128)
+    # aiter's lse is [heads, tokens]
+    assert (
+        lse.shape == (VARLEN_HEADS, 300) and lse.is_contiguous() and lse[3, 2].item() == 2 * VARLEN_HEADS + 3
+    )
+
+
+def test_flash_attn_varlen_over_a_context_chunk_reaches_aklr_without_the_mask(monkeypatch, aklr_serves):
+    api = _Api(_varlen_result)
+    monkeypatch.setattr(mla_prefill, "mla_prefill_varlen_lse", api)
+    call = _call("flash_attn_varlen_chunk")
+    _, run = _select("flash_attn_varlen_chunk", call)
+    _, lse = run(*_args("flash_attn_varlen_chunk", call))
+    _, kwargs = api.calls[0]
+    assert kwargs == {
+        "qkv_fp8": True,
+        "causal": False,
+        "cu_seqlens_k": call["cu_seqlens_k"],
+        "sm_scale": 192**-0.5,
+    }
+    assert lse.shape == (VARLEN_HEADS, 300)
+
+
+def test_flash_attn_varlen_hands_aklr_offsets_on_a_16_byte_boundary(monkeypatch, aklr_serves):
+    api = _Api(_varlen_result)
+    monkeypatch.setattr(mla_prefill, "mla_prefill_varlen_lse", api)
+    unaligned = torch.tensor([7, 0, 300], dtype=I32)[1:]
+    call = _call("flash_attn_varlen_chunk", cu_seqlens_q=unaligned)
+    _, run = _select("flash_attn_varlen_chunk", call)
+    run(*_args("flash_attn_varlen_chunk", call))
+    (_, _, _, offsets), _ = api.calls[0]
+    assert offsets.data_ptr() % 16 == 0 and offsets.tolist() == [0, 300]
+
+
 def test_a_fallback_after_select_accepted_raises(monkeypatch, aklr_serves):
     """aiter does not fall back once run started; a fallback there is a bug, not a decline."""
     _, run = _select("mla_sparse_prefill_v4")
@@ -580,6 +713,7 @@ def test_aiter_hands_a_call_aklr_serves_to_aklrs_run(monkeypatch, aiter_plugin, 
         (mla, "fp8_paged_mqa_logits"),
         (mla_prefill, "sparse_prefill_mxfp8"),
         (mhc, "mhc_fused_post_pre"),
+        (mla_prefill, "mla_prefill_varlen_lse"),
     ):
         monkeypatch.setattr(module, name, _Api(_fake_result(name)))
     plugin, op = aiter_plugin.plugin, _op(case)
@@ -597,6 +731,8 @@ def test_aiter_hands_a_call_aklr_serves_to_aklrs_run(monkeypatch, aiter_plugin, 
 def _fake_result(api_name):
     if api_name == "flash_mla_with_kvcache":
         return lambda q, *a, **k: (torch.zeros(*q.shape[:-1], 512, dtype=BF16), torch.zeros(q.shape[:-1]))
+    if api_name == "mla_prefill_varlen_lse":
+        return _varlen_result
     if api_name == "sparse_prefill_mxfp8":
         return lambda q_nope, *a, **k: torch.zeros(*q_nope.shape, dtype=BF16)
     return ("aklr",)
