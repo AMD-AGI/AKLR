@@ -2,13 +2,47 @@
 # Runs gpu_tests.sh on a Primus-SaFE GPU node, in $IMAGE, and waits for it: packs the checkout into
 # a run directory on the workspace's shared storage, submits a workload that unpacks and runs it,
 # streams its log, exits with its exit code and deletes the workload. The reports stay in $RUN_DIR
-# for the upload steps.
+# for the upload steps; `safe_job.sh cleanup` then removes it, and the workload if it is still there.
 #
 # Runs on the aklr-safe runner, a Primus-SaFE GithubRunner pod with no GPU: the platform gives it
 # USER_APIKEY and WORKSPACE, and mounts the owner's directory on the workspace's shared storage,
 # which the GPU workload mounts too.
 set -euo pipefail
-: "${SAFE_API:?}" "${IMAGE:?}" "${TESTS:?}" "${USER_APIKEY:?}" "${WORKSPACE:?}"
+: "${SAFE_API:?}" "${USER_APIKEY:?}" "${WORKSPACE:?}"
+
+# The API's certificate is signed by AMD's CA, which the runner image does not carry.
+ca=$RUNNER_TEMP/amd-ca.pem
+certs=https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs
+curl --silent --show-error --fail --location "$certs/amd-root-ca.crt" "$certs/amd-issuing-ca.crt" > "$ca"
+api() {
+  curl --silent --show-error --fail-with-body --max-time 60 --cacert "$ca" \
+    -H "Authorization: Bearer $USER_APIKEY" -H 'Content-Type: application/json' "$@"
+}
+
+# `safe_job.sh cleanup`, the job's always() step: a cancelled job is killed before its EXIT trap ends.
+if [[ ${1:-} == cleanup ]]; then
+  [[ -z ${SAFE_WORKLOAD:-} ]] || api -X DELETE "$SAFE_API/api/v1/workloads/$SAFE_WORKLOAD" > /dev/null ||
+    echo "::warning::Workload $SAFE_WORKLOAD was not deleted here; the next run's sweep deletes it"
+  [[ -z ${RUN_DIR:-} ]] || rm -rf "$RUN_DIR"
+  exit 0
+fi
+: "${IMAGE:?}" "${TESTS:?}" "${GH_TOKEN:?}"
+
+# Workloads a killed runner left behind hold a GPU node: delete those of finished runs and of this
+# run's earlier attempts. Names are aklr-ci-<run>-<attempt>-<job>.
+api "$SAFE_API/api/v1/workloads?workspaceId=$WORKSPACE&kind=Deployment&limit=100" |
+  jq -r '.items[]?.workloadId | select(test("^aklr-ci-[0-9]+-"))' | while read -r stale; do
+    IFS=- read -r _ _ run attempt _ <<< "$stale"
+    if [[ $run == "$GITHUB_RUN_ID" ]]; then
+      [[ $attempt != "$GITHUB_RUN_ATTEMPT" ]] || continue
+    else
+      status=$(curl --silent --fail --max-time 30 -H "Authorization: Bearer $GH_TOKEN" \
+        "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$run" | jq -r .status) || continue
+      [[ $status == completed ]] || continue
+    fi
+    echo "🧹 Deleting the leftover workload $stale"
+    api -X DELETE "$SAFE_API/api/v1/workloads/$stale" > /dev/null || true
+  done
 
 # The platform starts the runner with umask 077; the workload reaches the run directory as
 # another user, through the storage's shared group.
@@ -22,15 +56,6 @@ rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
 tar -C "$GITHUB_WORKSPACE" -cf "$RUN_DIR/src.tar" .
 touch "$RUN_DIR/log"
-
-# The API's certificate is signed by AMD's CA, which the runner image does not carry.
-ca=$RUNNER_TEMP/amd-ca.pem
-certs=https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs
-curl --silent --show-error --fail --location "$certs/amd-root-ca.crt" "$certs/amd-issuing-ca.crt" > "$ca"
-api() {
-  curl --silent --show-error --fail-with-body --max-time 60 --cacert "$ca" \
-    -H "Authorization: Bearer $USER_APIKEY" -H 'Content-Type: application/json' "$@"
-}
 
 # The workspace runs services (the Infer scope), not batch jobs: the workload is a one-replica
 # Deployment that runs the tests once and then idles until this script deletes it. A pod that
@@ -47,7 +72,7 @@ fi
 exec sleep infinity'
 # One whole MI355X node.
 payload=$(jq -n --arg image "$IMAGE" --arg entry "$(base64 -w0 <<< "$entry")" --arg workspace "$WORKSPACE" \
-  --arg name "aklr-ci-$GITHUB_RUN_ID-${JOB%-test}" '{
+  --arg name "aklr-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${JOB%-test}" '{
     displayName: $name,
     description: "AKLR CI \(env.GITHUB_REPOSITORY) run \(env.GITHUB_RUN_ID) \(env.JOB)",
     workspaceId: $workspace,
@@ -65,6 +90,7 @@ payload=$(jq -n --arg image "$IMAGE" --arg entry "$(base64 -w0 <<< "$entry")" --
 created=$(api -X POST "$SAFE_API/api/v1/workloads" -d "$payload") ||
   { echo "::error::Primus-SaFE refused the workload: $created"; exit 1; }
 workload=$(jq -er .workloadId <<< "$created")
+echo "SAFE_WORKLOAD=$workload" >> "$GITHUB_ENV"
 echo "🚀 Primus-SaFE workload $workload in $IMAGE"
 
 tail -n +1 -F "$RUN_DIR/log" 2>/dev/null &

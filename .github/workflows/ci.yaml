@@ -177,6 +177,7 @@ jobs:
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema.
     timeout-minutes: 180
     env:
+      SAFE_API: https://global.primus-safe.amd.com
       IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
       TESTS: tests/core tests/ops tests/benchmarks
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
@@ -192,7 +193,8 @@ jobs:
       - &gpu_tests
         name: Run unit tests (${{ env.TESTS }}) and validation on a GPU node
         env:
-          SAFE_API: https://global.primus-safe.amd.com
+          # Reads other runs' status, to delete the workloads of finished ones.
+          GH_TOKEN: ${{ github.token }}
           VALIDATE: ${{ needs.code-lint.outputs.has_bench_paths }}
           BASE: ${{ needs.code-lint.outputs.validation_base }}
           MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
@@ -232,10 +234,11 @@ jobs:
           name: validation-report-${{ github.job }}-${{ github.run_attempt }}
           path: ${{ env.RUN_DIR }}/validation-report/
           retention-days: 90
+      # always(): a cancelled job's GPU workload would otherwise hold its node.
       - &remove_run_dir
-        name: Remove the shared run directory
+        name: Delete the GPU workload and the shared run directory
         if: always()
-        run: '[[ -z ${RUN_DIR:-} ]] || rm -rf "$RUN_DIR"'
+        run: bash .github/scripts/safe_job.sh cleanup
 
   # sglang-test: the sglang image as it ships, AKLR alone installed. Its plugins are timed against
   # sglang's own code; aklr/ops is built and checked only, its timing being aiter-test's.
@@ -247,6 +250,7 @@ jobs:
     runs-on: aklr-safe
     timeout-minutes: 150
     env:
+      SAFE_API: https://global.primus-safe.amd.com
       IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
       TESTS: tests/plugins/aiter tests/plugins/sglang
       PLUGINS: --under aklr/plugins --exclude aklr/plugins/vllm
@@ -276,6 +280,7 @@ jobs:
     runs-on: aklr-safe
     timeout-minutes: 60
     env:
+      SAFE_API: https://global.primus-safe.amd.com
       IMAGE: ${{ needs.code-lint.outputs.vllm_image }}
       TESTS: tests/plugins/vllm
       PLUGINS: --under aklr/plugins/vllm
