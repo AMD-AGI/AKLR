@@ -35,6 +35,8 @@ class FastKeyCodec:
     packed_tensors: frozenset[str]
     # the key's indices of any_size axes, which match_key leaves out
     any_size_indices: tuple[int, ...]
+    # the key's indices of bucketed axes, which match_key reduces to their bit length
+    bucketed_indices: tuple[int, ...] = ()
 
     @classmethod
     def from_contract(cls, contract: OpContract) -> FastKeyCodec:
@@ -47,6 +49,7 @@ class FastKeyCodec:
             "_layout_variant_idx",
         )
         any_size_indices = tuple(i for i, n in enumerate(contract.domain.axes) if contract.axes[n].any_size)
+        bucketed_indices = tuple(i for i, n in enumerate(contract.domain.axes) if contract.axes[n].bucketed)
         dtype_names, primary_storage_dtypes, packed_tensors = {}, {}, set()
         for t in tensors:
             dtypes = contract.dtypes_of(t)
@@ -66,11 +69,27 @@ class FastKeyCodec:
             MappingProxyType(primary_storage_dtypes),
             frozenset(packed_tensors),
             any_size_indices,
+            bucketed_indices,
         )
 
     def match_key(self, key: FastKey) -> FastKey:
         """``key`` as kernels are matched: each any_size axis ``None``, so a schema
-        serving one value of it serves every value."""
+        serving one value of it serves every value; each bucketed axis its value's bit
+        length, so a schema serving one value of it serves every value of that length."""
+        values = list(key)
+        for i in self.any_size_indices:
+            values[i] = None
+        # a bucketed axis: its power-of-two range, [2**(b - 1), 2**b), marked so no exact value equals it
+        for i in self.bucketed_indices:
+            if values[i] is not None:
+                values[i] = ("bucket", int(values[i]).bit_length())
+        return tuple(values)
+
+    def exact_key(self, key: FastKey) -> FastKey:
+        """``key`` as a measured workload is matched before its range: ``match_key``'s with each bucketed axis's own
+        value, so a workload measured at the call's value decides it alone."""
+        if not self.any_size_indices:
+            return key
         values = list(key)
         for i in self.any_size_indices:
             values[i] = None

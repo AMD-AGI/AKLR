@@ -70,11 +70,17 @@ class AxisSpec(FrozenModel):
     # a var axis the kernel does not depend on (a KV cache's rows): a schema serving one
     # value serves them all, its workloads' values only what bench runs
     any_size: bool = False
+    # a var axis the kernel serves at any value, matched by power-of-two range: a schema
+    # serving the workloads of one range (values of one bit length) serves every value
+    # in it, as long as each of its workloads there qualifies
+    bucketed: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> AxisSpec:
-        if self.any_size and not self.is_var:
-            raise ValueError("an any_size axis is a var axis")
+        if (self.any_size or self.bucketed) and not self.is_var:
+            raise ValueError("an any_size or bucketed axis is a var axis")
+        if self.any_size and self.bucketed:
+            raise ValueError("an axis is any_size or bucketed, not both")
         if self.kind == "derived":
             if self.expr is None or self.lo is not None or self.hi is not None:
                 raise ValueError("a derived axis has expr and no lo/hi")
@@ -139,6 +145,7 @@ def axis(
     multiple_of: int = 1,
     is_var: bool = False,
     any_size: bool = False,
+    bucketed: bool = False,
 ) -> AxisSpec:
     return AxisSpec(
         kind="int",
@@ -148,6 +155,7 @@ def axis(
         multiple_of=multiple_of,
         is_var=is_var,
         any_size=any_size,
+        bucketed=bucketed,
     )
 
 

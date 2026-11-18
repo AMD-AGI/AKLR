@@ -43,7 +43,7 @@ BIASED_GROUPED_TOPK = OpContract(
     ),
     op_type="topk",
     axes={
-        "n_tokens": axis("Tokens routed in this call.", 1, 65536, is_var=True),
+        "n_tokens": axis("Tokens routed in this call.", 1, 65536, is_var=True, bucketed=True),
         "n_experts": axis("Experts scored per token.", 1, 1024),
         "topk": axis("Experts chosen per token.", 1, 1024),
     },
@@ -116,7 +116,7 @@ TOPK_TRANSFORM_PAGED = OpContract(
     ),
     op_type="topk",
     axes={
-        "n_tokens": axis("Rows, one per token.", 1, 65536, is_var=True),
+        "n_tokens": axis("Rows, one per token.", 1, 65536, is_var=True, bucketed=True),
         "n_candidates": axis(
             "Candidate scores per row, 4-float aligned rows.",
             4,

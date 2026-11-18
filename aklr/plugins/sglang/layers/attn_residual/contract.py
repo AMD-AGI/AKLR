@@ -43,7 +43,7 @@ _MATH = (
     "memory in sglang: a kernel reads none of them."
 )
 _AXES = {
-    "n_tokens": axis("Tokens.", 1, 65536, is_var=True),
+    "n_tokens": axis("Tokens.", 1, 65536, is_var=True, bucketed=True),
     # sglang's kernel keeps the scored rows of a token in registers: at most 8 x 8192
     "hidden_size": axis("Width of the residual stream.", 256, 8192, multiple_of=256),
     "n_bank_rows": axis("Rows the bank holds per token.", 2, 16),

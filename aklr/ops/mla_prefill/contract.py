@@ -76,7 +76,7 @@ SPARSE_PREFILL_MXFP8 = OpContract(
     ),
     op_type="mla_prefill",
     axes={
-        "n_tokens": axis("Query rows.", 1, 16384, is_var=True),
+        "n_tokens": axis("Query rows.", 1, 16384, is_var=True, bucketed=True),
         "n_heads": axis("Query heads.", 16, 128, multiple_of=16),
         "prefix_rows": axis("Rows of the prefix pool.", 1, 8388608, is_var=True),
         "extend_rows": axis("Rows of the extend pool.", 1, 131072, is_var=True),

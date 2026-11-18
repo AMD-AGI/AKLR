@@ -95,7 +95,7 @@ KIMI_K3_LATENT_MOE = OpContract(
     ),
     op_type="kimi_k3",
     axes={
-        "n_tokens": axis("Tokens in this call.", 1, 65536, is_var=True),
+        "n_tokens": axis("Tokens in this call.", 1, 65536, is_var=True, bucketed=True),
         "model_dim": axis("Hidden size.", 256, 16384, multiple_of=256),
         "latent_dim": axis("The routed experts' hidden size.", 256, 16384, multiple_of=256),
         "n_routed": axis("Routed experts: the router's rows.", 32, 1024, multiple_of=32),
@@ -207,7 +207,7 @@ KIMI_K3_MLA_VC_OUTPUT_GATE = OpContract(
     ),
     op_type="kimi_k3",
     axes={
-        "n_tokens": axis("Tokens in this call.", 1, 65536, is_var=True),
+        "n_tokens": axis("Tokens in this call.", 1, 65536, is_var=True, bucketed=True),
         "n_heads": axis("Query heads on this rank.", 1, 128),
         "v_head_dim": axis("Value head size.", 32, 512, multiple_of=32),
         "gate_dim": derived_axis("Gate and output width.", "n_heads * v_head_dim"),
@@ -256,7 +256,7 @@ KIMI_K3_MLA_PREFILL_GATE = OpContract(
     ),
     op_type="kimi_k3",
     axes={
-        "n_tokens": axis("Tokens in this prefill.", 1, 65536, is_var=True),
+        "n_tokens": axis("Tokens in this prefill.", 1, 65536, is_var=True, bucketed=True),
         "n_offsets": axis("Offsets in qo_indptr: one more than the sequences.", 2, 2049, is_var=True),
         "n_heads": axis("Query heads on this rank.", 1, 128),
         "gate_dim": derived_axis("Gate and output width.", "n_heads * 128"),

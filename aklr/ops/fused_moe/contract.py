@@ -77,7 +77,7 @@ FUSED_MOE = OpContract(
     description="Route each token to its top-k experts, run both projections, combine.",
     op_type="fused_moe",
     axes={
-        "n_tokens": axis("Tokens routed in this call.", 1, 65536, is_var=True),
+        "n_tokens": axis("Tokens routed in this call.", 1, 65536, is_var=True, bucketed=True),
         "model_dim": axis("Hidden size.", 128, 16384, multiple_of=128),
         "n_experts": axis("Local experts on this rank.", 1, 1024),
         "topk": axis("Experts per token.", 1, 32),

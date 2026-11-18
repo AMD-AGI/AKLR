@@ -8,8 +8,9 @@ import ast
 import functools
 import inspect
 import logging
+import sys
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Final
 
@@ -76,6 +77,15 @@ _FALLBACK_PRECEDENCE: Final = (
 )
 
 
+def _is_range_safe(runnable: Runnable) -> bool:
+    """Whether the kernel's module sets ``RANGE_SAFE = True``: it builds no variant per value of a bucketed axis
+    (a launch cached per token count compiles on every new one while serving), so a range's unmeasured values cost
+    no more than its measured ones."""
+    metadata = getattr(runnable, "metadata", None)
+    name = None if metadata is None else metadata.misc.get("module_name")
+    return bool(getattr(sys.modules.get(name) if name else None, "RANGE_SAFE", False))
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class DispatchTable:
     """One contract's committed kernels on one device, keyed by each Point's FastKey as
@@ -89,6 +99,14 @@ class DispatchTable:
     # keys with candidates but no qualified one; a plain dict, as runnables
     fallback_reasons: dict[FastKey, FallbackReason]
     match_key: Callable[[FastKey], FastKey]
+    # a contract with a bucketed axis: a call's exact key (``FastKeyCodec.exact_key``), served first where a
+    # workload measured there qualifies; None without one
+    exact_key: Callable[[FastKey], FastKey] | None = None
+    # a served range key -> per bucketed axis, the lowest and highest value its schema measured in that range: an
+    # unmeasured value is served only between them (a kernel's tile classes end at its last measured value, past which
+    # it may build per value or not run at all)
+    spans: dict[FastKey, tuple[tuple[int, int], ...]] = field(default_factory=dict)
+    bucketed_indices: tuple[int, ...] = ()
 
     @classmethod
     def from_schemas(
@@ -102,14 +120,25 @@ class DispatchTable:
         """The table serving, per Point of the given workloads."""
         codec = FastKeyCodec.from_contract(contract)
         best: dict[FastKey, tuple[tuple[bool, float, str], Runnable]] = {}
+        spans: dict[FastKey, tuple[tuple[int, int], ...]] = {}
         fallback_reasons: dict[FastKey, FallbackReason] = {}
+        bucketed = bool(codec.bucketed_indices)
         for schema, runnable, workloads in schema_runnables:
             # workloads differing in any_size axes alone share a key: the schema serves it
-            # only if each of them qualifies, at the lowest rank among them
+            # only if each of them qualifies, at the lowest rank among them; with a bucketed
+            # axis, each workload's own value is a key, served before its range's, which a
+            # kernel serves only if it declares RANGE_SAFE (``_is_range_safe``)
+            ranges = not bucketed or _is_range_safe(runnable)
             keyed: dict[FastKey, list[WorkloadSpec]] = {}
+            measured: dict[FastKey, list[FastKey]] = {}  # a range key -> the measured keys in it
             for workload in workloads:
-                key = codec.match_key(codec.to_fast_key(schema.point(workload.axes)))
-                keyed.setdefault(key, []).append(workload)
+                fast_key = codec.to_fast_key(schema.point(workload.axes))
+                if ranges:
+                    keyed.setdefault(codec.match_key(fast_key), []).append(workload)
+                    if bucketed:
+                        measured.setdefault(codec.match_key(fast_key), []).append(fast_key)
+                if bucketed:
+                    keyed.setdefault(codec.exact_key(fast_key), []).append(workload)
             for key, same in keyed.items():
                 failing = [w for w in same if not w.qualifies(min_speedup)]
                 if not failing:
@@ -117,6 +146,11 @@ class DispatchTable:
                     # strict: an equal rank shares a content hash, i.e.
                     if key not in best or rank > best[key][0]:
                         best[key] = (rank, runnable)
+                        if key in measured:
+                            spans[key] = tuple(
+                                (min(k[i] for k in measured[key]), max(k[i] for k in measured[key]))
+                                for i in codec.bucketed_indices
+                            )
                 for workload in failing:
                     if workload.accuracy == "failed":
                         reason = FallbackReason.INACCURATE
@@ -136,6 +170,9 @@ class DispatchTable:
             set(),
             {key: reason for key, reason in fallback_reasons.items() if key not in best},
             codec.match_key,
+            codec.exact_key if bucketed else None,
+            {key: span for key, span in spans.items() if key in best},
+            codec.bucketed_indices,
         )
 
     @property
@@ -152,13 +189,27 @@ class DispatchTable:
         key = self.fast_key(call)
         if key is None:
             return None, None, FallbackReason.OUT_OF_CONTRACT
-        match = self.match_key(key)
-        runnable = self.runnables.get(match)
+        runnable = exact = None
+        if self.exact_key is not None:
+            match = exact = self.exact_key(key)
+            runnable = self.runnables.get(match)
         if runnable is None:
-            reason = self.fallback_reasons.get(match) or (
-                FallbackReason.NO_WORKLOAD
-                if self.runnables or self.fallback_reasons
-                else FallbackReason.NO_SCHEMA
+            match = self.match_key(key)
+            runnable = self.runnables.get(match)
+            span = self.spans.get(match) if runnable is not None else None
+            if span is not None and not all(
+                lo <= key[i] <= hi for i, (lo, hi) in zip(self.bucketed_indices, span, strict=True)
+            ):
+                runnable = None  # outside what its schema measured in the range
+        if runnable is None:
+            reason = (
+                self.fallback_reasons.get(match)
+                or self.fallback_reasons.get(exact)
+                or (
+                    FallbackReason.NO_WORKLOAD
+                    if self.runnables or self.fallback_reasons
+                    else FallbackReason.NO_SCHEMA
+                )
             )
             return key, match, reason
         if match not in self.warmed_keys and torch.cuda.is_current_stream_capturing():

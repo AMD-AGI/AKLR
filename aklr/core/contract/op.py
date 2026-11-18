@@ -655,7 +655,7 @@ class OpContract(FrozenModel):
                 axes[name] = a
             elif a.kind == "int":
                 value = a.lo if name in absent else point.axes[name]
-                update = {"lo": value, "hi": value, "is_var": False, "any_size": False}
+                update = {"lo": value, "hi": value, "is_var": False, "any_size": False, "bucketed": False}
                 axes[name] = a.model_copy(update=update)
             else:
                 axes[name] = a.model_copy(update={"expr": symbols[name]})
