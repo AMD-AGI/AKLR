@@ -89,6 +89,7 @@ if [[ -n ${AKLR_BASELINE_AITER:-} ]]; then
   python3 -m aklr validate "${flags[@]}" --under aklr/ops --exclude aklr/ops/mega_moe \
     --out "$RUN_DIR/validation-report"
 else
+  : "${PLUGINS:?}"
   echo "::group::Validate plugins ($PLUGINS), check aklr/ops"
   plugins=0 ops=0
   # shellcheck disable=SC2086 # PLUGINS is a list of flags

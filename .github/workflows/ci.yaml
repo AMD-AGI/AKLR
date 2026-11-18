@@ -243,7 +243,7 @@ jobs:
   sglang-test:
     needs: [code-lint, aiter-test]
     # After aiter-test, whatever its result.
-    if: ${{ !cancelled() && needs.code-lint.outputs.gpu_enabled == 'true' }}
+    if: ${{ !cancelled() && needs.code-lint.result == 'success' && needs.code-lint.outputs.gpu_enabled == 'true' }}
     runs-on: aklr-safe
     timeout-minutes: 150
     env:
@@ -272,7 +272,7 @@ jobs:
   vllm-test:
     needs: [code-lint, sglang-test]
     # After sglang-test, whatever its result.
-    if: ${{ !cancelled() && needs.code-lint.outputs.gpu_enabled == 'true' }}
+    if: ${{ !cancelled() && needs.code-lint.result == 'success' && needs.code-lint.outputs.gpu_enabled == 'true' }}
     runs-on: aklr-safe
     timeout-minutes: 60
     env:

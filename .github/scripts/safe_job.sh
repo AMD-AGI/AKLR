@@ -19,8 +19,12 @@ tar -C "$GITHUB_WORKSPACE" -cf "$RUN_DIR/src.tar" .
 touch "$RUN_DIR/log"
 chmod a+rw "$RUN_DIR/log"
 
+# The API's certificate is signed by AMD's CA, which the runner image does not carry.
+ca=$RUNNER_TEMP/amd-ca.pem
+certs=https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs
+curl --silent --show-error --fail --location "$certs/amd-root-ca.crt" "$certs/amd-issuing-ca.crt" > "$ca"
 api() {
-  curl --silent --show-error --fail-with-body --max-time 60 \
+  curl --silent --show-error --fail-with-body --max-time 60 --cacert "$ca" \
     -H "Authorization: Bearer $USER_APIKEY" -H 'Content-Type: application/json' "$@"
 }
 
@@ -50,12 +54,9 @@ echo "🚀 Primus-SaFE workload $workload in $IMAGE"
 phase=
 tail -n +1 -F "$RUN_DIR/log" 2>/dev/null &
 tail_pid=$!
-finish() {
-  kill "$tail_pid" 2>/dev/null || true
-  # A cancelled or timed-out job must not leave its GPU node running.
-  [[ $phase =~ ^(Succeeded|Failed|Stopped)$ ]] || api -X DELETE "$SAFE_API/api/v1/workloads/$workload" > /dev/null || true
-}
-trap finish EXIT
+# A cancelled or timed-out job must not leave its GPU node running.
+trap 'kill "$tail_pid" 2>/dev/null || true
+[[ $phase =~ ^(Succeeded|Failed|Stopped)$ ]] || api -X DELETE "$SAFE_API/api/v1/workloads/$workload" > /dev/null || true' EXIT
 
 failures=0
 while [[ ! $phase =~ ^(Succeeded|Failed|Stopped)$ ]]; do
@@ -72,9 +73,10 @@ while [[ ! $phase =~ ^(Succeeded|Failed|Stopped)$ ]]; do
 done
 # The log's last lines reach the shared storage after the phase does.
 sleep 5
-if [[ -s $RUN_DIR/exit_code ]]; then
-  exit "$(< "$RUN_DIR/exit_code")"
-fi
+# The workload ran the PR's code: a link it left here would make the upload steps read the runner's files.
+find "$RUN_DIR" -type l -delete
+code=$(cat "$RUN_DIR/exit_code" 2>/dev/null || true)
+[[ ! $code =~ ^[0-9]+$ ]] || exit "$code"
 echo "::error::Workload $workload ended $phase before the tests ran"
 jq -r '.conditions // [] | .[] | "\(.type // ""): \(.reason // "") \(.message // "")"' <<< "$detail"
 exit 1
