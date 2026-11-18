@@ -18,7 +18,7 @@ __all__: list[str] = []
 @vllm_route(
     "vllm._aiter_ops._rocm_aiter_fused_moe_impl",
     "aiter.fused_moe.fused_moe",
-    versions=("0.33.0rc1.dev910", "0.34.0"),
+    versions=("0.34.0",),
 )
 def _fused_moe(
     hidden_states,

@@ -8,7 +8,7 @@ from tests.plugins.sglang import cases
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("op_case", OpCase.params(cases.SMALL_POINTS))
+@pytest.mark.parametrize("op_case", OpCase.params(cases.BACKEND_POINTS))
 def test_backend_matches_reference(op_case: OpCase) -> None:
     """``check_backend_matches_reference`` in sglang-test: sglang's call on the aiter its image ships."""
     op_case.check_backend_matches_reference()

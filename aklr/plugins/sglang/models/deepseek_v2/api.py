@@ -88,12 +88,24 @@ def _forward_normal_falls_back(mlp, skip_shared_experts, use_vision_topk, return
         skip_shared_experts
         or use_vision_topk
         or return_moe_output
+        or _masks_padded_rows()
         or moe_blocks.runtime_falls_back()
         or moe_blocks.experts_fall_back(mlp.experts, _EXPERT_FORMATS)
         or mlp._fuse_shared_experts_inside_sbo
         or mlp.is_hash
         or mlp.gate.e_score_correction_bias_vl is not None
     )
+
+
+def _masks_padded_rows() -> bool:
+    """Whether sglang's top-k masks padded rows here: the bound it reads from the forward context
+    (resolve_routing_inputs), forward_normal's num_token_non_padded until 0.5.23."""
+    from sglang.srt.model_executor.forward_context import get_forward_context, has_forward_context
+
+    if not has_forward_context():
+        return False
+    get_bound = get_forward_context().moe_num_token_non_padded
+    return get_bound is not None and get_bound() is not None
 
 
 def _moe_call(mlp, hidden_states):

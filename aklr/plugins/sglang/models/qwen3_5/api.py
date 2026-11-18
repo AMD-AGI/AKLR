@@ -172,15 +172,19 @@ def gated_attention_prefill(
 
 @sglang_route("sglang.srt.models.qwen3_5.Qwen3_5GatedDeltaNet.forward", versions=("0.5.22", "0.5.23"))
 def _gdn_forward(self, hidden_states, forward_batch):
+    # sglang 0.5.23 relabels a decode under DP attention a one-token extend, the decode kept as
+    # logical_forward_mode: such a batch stays on sglang (0.5.22 has no logical mode)
+    if (
+        getattr(forward_batch, "logical_forward_mode", forward_batch.forward_mode)
+        != forward_batch.forward_mode
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
     from sglang.srt.model_executor.forward_batch_info import ForwardMode
     from sglang.srt.model_executor.forward_context import get_attn_backend
 
-    # sglang 0.5.23's linear-attention backend reads a DP-relabeled decode (a one-token extend) as
-    # the decode it is; 0.5.22 has no logical mode
-    mode = getattr(forward_batch, "logical_forward_mode", forward_batch.forward_mode)
-    if mode == ForwardMode.DECODE:
+    if forward_batch.forward_mode == ForwardMode.DECODE:
         run = _decode
-    elif mode == ForwardMode.EXTEND:
+    elif forward_batch.forward_mode == ForwardMode.EXTEND:
         run = _prefill
     else:
         return FallbackReason.OUT_OF_CONTRACT

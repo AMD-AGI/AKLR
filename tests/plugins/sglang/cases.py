@@ -189,17 +189,16 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
-    # Kimi-K3's latent MoE, its routed experts at full size in their gate-up-interleaved layout,
-    # as sglang holds them for aiter's a8w4 path: aiter runs only the expert shapes it has tuned
-    # (kimik3_a8w4_tuned_fmoe.csv), any other goes to a CK build that has no SiTU
+    # Kimi-K3's latent MoE shrunk: 32 routed experts of latent size 256 in their
+    # gate-up-interleaved layout, as sglang holds them for aiter's a8w4 path
     PointSpec(
         contract_id="kimi_k3_latent_moe@1.0",
         axes={
             "n_tokens": 4,
             "model_dim": 256,
-            "latent_dim": 3584,
-            "n_routed": 896,
-            "inter_dim": 384,
+            "latent_dim": 256,
+            "n_routed": 32,
+            "inter_dim": 128,
             "shared_inter_dim": 128,
         },
         dtypes={
@@ -703,6 +702,14 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+)
+# test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
+# tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
+BACKEND_POINTS: tuple[PointSpec, ...] = tuple(
+    point.model_copy(update={"axes": {**point.axes, "latent_dim": 3584, "n_routed": 896, "inter_dim": 384}})
+    if point.contract_id == "kimi_k3_latent_moe@1.0"
+    else point
+    for point in SMALL_POINTS
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
