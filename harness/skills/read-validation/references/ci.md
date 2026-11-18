@@ -5,8 +5,9 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 
 ## Scope
 
-- GPU jobs run on a PR labelled `ci:gpu`, in Primus-SaFE runner pods built on the stack images
-  (`.github/runner/Dockerfile`); an external contributor's run waits for a maintainer's approval.
+- GPU jobs run on a PR labelled `ci:gpu`: the Primus-SaFE runner `aklr-safe` submits each as a
+  workload on one GPU node (`.github/scripts/safe_job.sh`). An external contributor's run waits
+  for a maintainer's approval.
 - `python -m aklr validate --base <base>` with no schema paths, as CI runs it, picks:
   - the changed schemas, when every changed path is a schema file or a document (`docs/`, `*.md`);
   - **every committed schema** otherwise. A PR that also touches an op's Python, tests or any
@@ -16,7 +17,7 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 
 ## Where the result is
 
-- The test jobs' `Validate` steps (`aiter-test`: `aklr/ops`; `sglang-test` and `vllm-test`: their plugins, then `aklr/ops` untimed): the progress per schema, the outcome counts,
+- The test jobs' `Run unit tests ... and validation on a GPU node` steps, whose log ends with the validation (`aiter-test`: `aklr/ops`; `sglang-test` and `vllm-test`: their plugins, then `aklr/ops` untimed): the progress per schema, the outcome counts,
   and the findings, e.g. `not_faster <schema>: graph vs baseline ratio_lower_bound 0.9950 < 1.05`.
   It names the schema, not the Point. `regressed (demoted)` there counts demotions, not findings.
 - The run's artifacts `validation-report-<job>-<attempt>` for each of the three jobs, and
