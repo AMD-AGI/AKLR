@@ -8,7 +8,7 @@ set -euo pipefail
 : "${RUN_DIR:?}" "${JOB:?}" "${TESTS:?}"
 
 # The runner user removes the run directory; this pod may write it as another user.
-trap 'chmod -R a+rwX "$RUN_DIR" 2>/dev/null || true' EXIT
+trap 'chmod -R g+rwX "$RUN_DIR" 2>/dev/null || true' EXIT
 
 export PYTHONDONTWRITEBYTECODE=1
 git config --global --add safe.directory '*'
