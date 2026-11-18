@@ -54,6 +54,8 @@ payload=$(jq -n --arg image "$IMAGE" --arg entry "$(base64 -w0 <<< "$entry")" --
     resources: [{replica: 1, gpu: "8", cpu: "96", memory: "512Gi", sharedMemory: "64Gi", ephemeralStorage: "300Gi"}],
     env: (env | {RUN_DIR, JOB, TESTS, VALIDATE, BASE, MEASURED_BY_BOT, AKLR_BASELINE_AITER, PLUGINS}
           | with_entries(select(.value != null and .value != ""))),
+    # High (2 of 0-2): a CI run should not queue behind batch work.
+    priority: 2,
     useWorkspaceStorage: true
   }')
 created=$(api -X POST "$SAFE_API/api/v1/workloads" -d "$payload") ||
