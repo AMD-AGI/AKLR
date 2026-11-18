@@ -273,6 +273,7 @@ def register_calls(monkeypatch):
     """What register() did, in order."""
     calls = []
     monkeypatch.setattr(plugin, "register_sglang_plugin", lambda: calls.append("aklr starts"))
+    monkeypatch.setattr(plugin.monokernels, "register_specs", lambda: calls.append("monokernel specs"))
     monkeypatch.setattr(
         plugin, "op_packages", lambda: ("aklr.plugins.aiter.provider.gemm", "aklr.plugins.sglang.x.y")
     )
@@ -291,10 +292,12 @@ def register_calls(monkeypatch):
     ],
 )
 def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
-    """The layer routes hook only with AKLR_SGLANG_PLUGIN=1, and not with AKLR_DISABLE=1."""
+    """The layer routes hook only with AKLR_SGLANG_PLUGIN=1, and not with AKLR_DISABLE=1; the
+    monokernel specs register unless AKLR_DISABLE=1."""
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
+    specs = [] if env.get(ENV_DISABLE) == "1" else ["monokernel specs"]
     routes = (
         [
             "aklr.plugins.sglang.x.y.api",
@@ -303,7 +306,7 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
         if hooked
         else []
     )
-    assert register_calls == ["aklr starts", *routes]
+    assert register_calls == ["aklr starts", *specs, *routes]
 
 
 def test_any_other_switch_value_ends_the_process(monkeypatch, register_calls):

@@ -24,7 +24,8 @@ aklr/plugins/
 │   │       ├── reference.py  reference implementation written from the math, used to verify kernel correctness
 │   │       ├── baseline.py   SGLang's original implementation, the baseline for kernel performance
 │   │       └── impls/        kernel implementations, one JSON file per kernel
-│   └── layers/               mirrors SGLang's srt/layers/, with the same layout
+│   ├── layers/               mirrors SGLang's srt/layers/, with the same layout
+│   └── monokernels/          specs for SGLang's --enable-amd-monokernel, one package per model: spec.py and its layer ops
 ├── vllm/                     the vLLM plugin (AKLR_VLLM_PLUGIN=1)
 │   ├── __init__.py           entry: hooks the routes in each worker once its device is bound
 │   ├── hook.py               @vllm_route wraps the function a vLLM function looks up at run time
