@@ -49,7 +49,7 @@ defaults:
 
 jobs:
   # The audit gate rejects invalid schemas, audit violations and mixed changes
-  # before any GPU node is requested.
+  # before any GPU job starts.
   code-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -58,8 +58,7 @@ jobs:
       actions: read
       pull-requests: read
     env:
-      # Forks too: gpu-node.yaml holds a fork PR, or one whose author or sender lacks write access,
-      # for approval.
+      # Forks too: the repository's Actions settings hold an external contributor's run for approval.
       GPU_ENABLED: >-
         ${{ github.event_name != 'pull_request' ||
             contains(github.event.pull_request.labels.*.name, 'ci:gpu') }}
@@ -166,30 +165,20 @@ jobs:
             exit "$code"
           fi
 
-  # The Spur host's jobs run from main, never from a PR's own workflow (gpu-node.yaml);
-  # a local ./ path would be the PR's copy.
-  prepare-gpu:
+  # GPU jobs run on the Primus-SaFE runner pool aklr-safe (a GithubRunner workload on the Crusoe
+  # cluster); its docker daemon starts each job's container.
+  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; then sglang-test and
+  # vllm-test on the same runner. No secrets and no actions/cache: they run the PR's code and kernels.
+  aiter-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@main
-    with:
-      operation: prepare
-
-  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; then sglang-test and
-  # vllm-test on the same node. No secrets and no actions/cache: they run the PR's code and kernels.
-  aiter-test:
-    needs: [code-lint, prepare-gpu]
-    # "Re-run failed jobs" reuses an earlier attempt's node, which release-gpu already freed.
-    if: needs.prepare-gpu.outputs.attempt == github.run_attempt
-    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
+    runs-on: aklr-safe
     container:
       image: ${{ needs.code-lint.outputs.aiter_image }}
       options: &gpu_container_options >-
         --device=/dev/kfd --device=/dev/dri --ipc=host
         --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema.
-    # The three test jobs run within the node's lease (manage_spur_runner.sh, 8 hours unless
-    # AKLR_SPUR_TIME_LIMIT): their timeouts sum under it.
     timeout-minutes: 180
     env:
       TESTS: tests/core tests/ops tests/benchmarks
@@ -331,7 +320,7 @@ jobs:
           name: validation-report-${{ github.job }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/validation-report/
           retention-days: 90
-      # The container writes as root; the non-root runner must clean up before the next job on this node.
+      # The container writes as root; the non-root runner must clean up before the next job on this runner.
       - &normalize_work_permissions
         name: Normalize this job's work permissions
         if: always()
@@ -342,10 +331,10 @@ jobs:
   # sglang's own code; aklr/ops is built and checked only, its timing being aiter-test's.
   # aklr/plugins/vllm is vllm-test's.
   sglang-test:
-    needs: [code-lint, prepare-gpu, aiter-test]
-    # After aiter-test on the same node, whatever its result.
-    if: ${{ !cancelled() && needs.prepare-gpu.result == 'success' && needs.prepare-gpu.outputs.attempt == github.run_attempt }}
-    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
+    needs: [code-lint, aiter-test]
+    # After aiter-test, whatever its result.
+    if: ${{ !cancelled() && needs.code-lint.outputs.gpu_enabled == 'true' }}
+    runs-on: aklr-safe
     container:
       image: ${{ needs.code-lint.outputs.sglang_image }}
       options: *gpu_container_options
@@ -394,10 +383,10 @@ jobs:
   # vllm-test: the vllm image as it ships, AKLR alone installed. aklr/plugins/vllm is timed in it;
   # aklr/ops is built and checked only, as in sglang-test.
   vllm-test:
-    needs: [code-lint, prepare-gpu, sglang-test]
-    # After sglang-test on the same node, whatever its result.
-    if: ${{ !cancelled() && needs.prepare-gpu.result == 'success' && needs.prepare-gpu.outputs.attempt == github.run_attempt }}
-    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
+    needs: [code-lint, sglang-test]
+    # After sglang-test, whatever its result.
+    if: ${{ !cancelled() && needs.code-lint.outputs.gpu_enabled == 'true' }}
+    runs-on: aklr-safe
     container:
       image: ${{ needs.code-lint.outputs.vllm_image }}
       options: *gpu_container_options
@@ -420,20 +409,8 @@ jobs:
       - *upload_check
       - *normalize_work_permissions
 
-  # After the last GPU job, so the node is freed while coverage-report runs. Also after a
-  # failed or cancelled prepare-gpu: it may have submitted before failing.
-  release-gpu:
-    needs: [prepare-gpu, aiter-test, sglang-test, vllm-test]
-    if: always() && needs.prepare-gpu.result != 'skipped'
-    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@main
-    with:
-      operation: release
-      # The node of the attempt that allocated it, not necessarily the current attempt's.
-      runner_label: ${{ needs.prepare-gpu.outputs.runner_label }}
-      allocation_id: ${{ needs.prepare-gpu.outputs.allocation_id }}
-
   coverage-report:
-    needs: [code-lint, prepare-gpu, aiter-test, sglang-test, vllm-test]
+    needs: [code-lint, aiter-test, sglang-test, vllm-test]
     # The required check: always runs, since a skipped job would satisfy one on its own.
     if: always()
     runs-on: ubuntu-latest
@@ -518,13 +495,12 @@ jobs:
         env:
           LINT: ${{ needs.code-lint.result }}
           GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
-          GPU_RESULTS: ${{ needs.prepare-gpu.result }} ${{ needs.aiter-test.result }} ${{ needs.sglang-test.result }} ${{ needs.vllm-test.result }}
+          GPU_RESULTS: ${{ needs.aiter-test.result }} ${{ needs.sglang-test.result }} ${{ needs.vllm-test.result }}
         run: |
           [[ $LINT == success ]] || { echo '::error::code-lint did not succeed'; exit 1; }
           [[ $GPU_ENABLED == true ]] || exit 0
-          # The test jobs are skipped after "Re-run failed jobs", which reuses a released node.
-          [[ $GPU_RESULTS == 'success success success success' ]] ||
-            { echo "::error::prepare-gpu, aiter-test, sglang-test, vllm-test: $GPU_RESULTS; after Re-run failed jobs, use Re-run all jobs."; exit 1; }
+          [[ $GPU_RESULTS == 'success success success' ]] ||
+            { echo "::error::aiter-test, sglang-test, vllm-test: $GPU_RESULTS"; exit 1; }
 
   # Publishes a main push run's measurements through one rolling bot PR, aklr-perf/main
   # -> main; no GPU, never runs PR code. The artifact is untrusted: only measured-field

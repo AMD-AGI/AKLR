@@ -5,8 +5,8 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 
 ## Scope
 
-- GPU jobs run on a PR labelled `ci:gpu`; on a fork PR, or when its author or sender lacks write
-  access, they wait for a maintainer's approval (`gpu-node.yaml`).
+- GPU jobs run on a PR labelled `ci:gpu`, on the Primus-SaFE runner `aklr-safe`; an external
+  contributor's run waits for a maintainer's approval.
 - `python -m aklr validate --base <base>` with no schema paths, as CI runs it, picks:
   - the changed schemas, when every changed path is a schema file or a document (`docs/`, `*.md`);
   - **every committed schema** otherwise. A PR that also touches an op's Python, tests or any
