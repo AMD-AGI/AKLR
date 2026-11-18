@@ -1,11 +1,14 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch import api
-from aklr.plugins.aiter.mla.contract import (
-    FLASH_MLA_WITH_KVCACHE,
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.plugins.aiter.mla.schema import (
+    FLASH_MLA_WITH_KVCACHE_VARIANTS,
     FP8_PAGED_MQA_LOGITS,
     FP8_PAGED_MQA_LOGITS_VERIFY,
     MLA_DECODE_FWD,
@@ -21,7 +24,7 @@ __all__ = [
 ]
 
 
-@api(FLASH_MLA_WITH_KVCACHE)
+@aklr_api(FLASH_MLA_WITH_KVCACHE_VARIANTS)
 def flash_mla_with_kvcache(
     q,
     kv_cache,
@@ -40,40 +43,38 @@ def flash_mla_with_kvcache(
     sinks=None,
     kv_cache_format="dsv4_fp8",
     kv_scale=1.0,
-    return_lse=False,
-    kv_cache_layout="row_major",
 ): ...
 
 
-@api(FP8_PAGED_MQA_LOGITS)
+@aklr_api(FP8_PAGED_MQA_LOGITS)
 def fp8_paged_mqa_logits(
     q,
     kv_cache,
     weights,
     context_lens,
     block_tables,
-    logits,
-    *,
     page_size,
+    logits=None,
+    *,
     preshuffled=True,
 ): ...
 
 
-@api(FP8_PAGED_MQA_LOGITS_VERIFY)
+@aklr_api(FP8_PAGED_MQA_LOGITS_VERIFY)
 def fp8_paged_mqa_logits_verify(
     q,
     kv_cache,
     weights,
     context_lens,
     block_tables,
-    logits,
-    *,
     page_size,
+    logits=None,
+    *,
     preshuffled=True,
 ): ...
 
 
-@api(MLA_DECODE_FWD)
+@aklr_api(MLA_DECODE_FWD)
 def mla_decode_fwd(
     q,
     kv_buffer,
@@ -87,7 +88,7 @@ def mla_decode_fwd(
 ): ...
 
 
-@api(MLA_DECODE_FWD_CPRR)
+@aklr_api(MLA_DECODE_FWD_CPRR)
 def mla_decode_fwd_cprr(
     q,
     kv_buffer,

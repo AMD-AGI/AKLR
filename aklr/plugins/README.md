@@ -78,7 +78,7 @@ In CI, audit always runs, and bench needs the PR to carry the `ci:gpu` label (a 
 
 Unit tests:
 
-- The small inputs in `tests/plugins/sglang/cases.py` feed the shared tests in `tests/plugins/aiter`.
+- The small inputs in `tests/plugins/sglang/cases.py` feed the shared tests in `tests/`.
 - `tests/plugins/sglang/test_hook.py` covers hooking, version checks, fallback, and exiting the process when start-up fails, and automatically checks every route: its target exists, has the same parameters, and is not replaced by another route.
 
 ## Enabling the plugin and upgrading SGLang
