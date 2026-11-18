@@ -33,7 +33,8 @@ One FlyDSL kernel for `mhc_fused_post_pre@1.0`. The schema embeds it as `kernel.
 - Yardstick: `mhc_fused_post_pre_baseline` (`aklr/ops/mhc/baseline.py`), aiter's
   `mhc_fused_post_pre` (`aiter/ops/mhc.py`): on gfx950 its fused HIP kernel below 1024 tokens, `mhc_post` then
   `mhc_pre` from 1024 on (read from the source). This file is the only one of its schema name, in any language; the
-  hidden-7168 schema of the same contract has a HIP kernel for T 1–16 beside a FlyDSL definition with no kernel (S9).
+  hidden-7168 schema of the same contract has a HIP kernel for T 1–16, a FlyDSL definition with no kernel (S9) and
+  #202's FlyDSL kernel for T 1–128 (`a2a5a2db`, S10).
 
 ## Counter-signals
 
@@ -159,8 +160,8 @@ measurement is the one dispatch reads.
 ## Rollback
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
-`AKLR_DISABLE=mhc_fused_post_pre@1.0` drops this kernel and the hidden-7168 schema's HIP kernel, which serves the
-same contract (S9). A
+`AKLR_DISABLE=mhc_fused_post_pre@1.0` drops this kernel and the hidden-7168 schema's HIP and FlyDSL kernels, which
+serve the same contract (S9, S10). A
 Point CI measures below 1.05 stops being served without a rollback. Roll back for a wrong result CI does not catch,
 such as NaN from residual streams that cancel (Counter-signals), a model whose scalars differ from the captured ones
 and are first seen inside a graph capture, a process that calls the kernel on two devices or two streams, or a FlyDSL
@@ -182,5 +183,5 @@ aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/282
 - S6 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json#kernel.py:788 `_kfin_epilogue`: sum of squares from the Gram at :796–803; rms from the Gram diagonal at :637
 - S7 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json#kernel.py:589 `_sinkhorn_el` with DPP row and column sums; fixed reduction tree in `_reduce_all` at :173
 - S8 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json#kernel.py:832 `ROLE`, `WSPLIT` at :835, `R32` at :836, `SKW` at :848, generic `k_fin` body from :1123; `_KFIN_W4_KW = 1` at :377
-- S9 aklr/ops/mhc/impls/hip/mhc_fused_post_pre_has_norm_weight_hidden_size7168/be760df4df24a189.json:4 `contract_id` `mhc_fused_post_pre@1.0`, a HIP kernel at :293, Points n_tokens 1, 2, 4, 7, 8, 16; aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size7168/138d8923d8bbd221.json:315 empty `sources`; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids
+- S9 aklr/ops/mhc/impls/hip/mhc_fused_post_pre_has_norm_weight_hidden_size7168/d89d285ad73a24cc.json:4 `contract_id` `mhc_fused_post_pre@1.0`, a HIP kernel at :298, Points n_tokens 1, 2, 4, 7, 8, 16; aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size7168/138d8923d8bbd221.json:315 empty `sources`; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids
 - S10 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size7168/a2a5a2db565a78df.json#kernel.py:314 `ssq` clamped at 0 (`arith.MaximumFOp`) before the same `_rsq` (:315), under the comment "the Gram quadratic form is >= 0 exactly but can round below 0 when the streams cancel" (:313); the form summed at :306-312
