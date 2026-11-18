@@ -29,7 +29,11 @@ def main() -> int:
                 else:
                     # `from pkg import name`: name is a module only if pkg/name.py exists
                     parts = module.split(".") if module else []
-                    roots = [path.parents[node.level - 1]] if node.level else [Path(), path.parent]
+                    # shortcut: looks under the repository root and beside the file only, a module on
+                    # another sys.path entry is not seen; upgrade if tests start importing that way
+                    roots = [Path(), path.parent]
+                    if node.level:  # a level above the repository resolves nowhere
+                        roots = [path.parents[node.level - 1]] if node.level <= len(path.parents) else []
                     modules += [
                         f"{module}.{alias.name}"
                         for alias in node.names
