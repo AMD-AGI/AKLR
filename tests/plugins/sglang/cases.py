@@ -900,14 +900,66 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="strided_beta",
     ),
+    # GLM-5.3's MoE layer reading the previous top-k shrunk, one rank, its fp8 weights shuffled as
+    # sglang holds them for aiter, its KV pool in E4M3; its heads and intermediates split over two
+    # ranks in whole 128-blocks (test_reference.py)
+    PointSpec(
+        contract_id="glm53_moe_layer@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_slots": 16,
+            "n_positions": 32,
+            "model_dim": 256,
+            "n_heads": 2,
+            "q_lora_rank": 128,
+            "kv_lora_rank": 128,
+            "qk_nope_dim": 64,
+            "v_head_dim": 128,
+            "index_topk": 8,
+            "n_routed": 16,
+            "inter_dim": 256,
+        },
+        dtypes={
+            "hidden_states": "bfloat16",
+            "positions": "int64",
+            "cache_locations": "int64",
+            "topk_indices": "int32",
+            "kv_cache": "float8_e4m3fn",
+            "cos_sin_cache": "float32",
+            "input_norm_weight": "bfloat16",
+            "qkv_a_weight": "float8_e4m3fn",
+            "qkv_a_scale": "float32",
+            "q_a_norm_weight": "bfloat16",
+            "kv_a_norm_weight": "bfloat16",
+            "q_b_weight": "float8_e4m3fn",
+            "q_b_scale": "float32",
+            "w_kc": "float8_e4m3fn",
+            "w_vc": "float8_e4m3fn",
+            "w_scale": "float32",
+            "o_weight": "float8_e4m3fn",
+            "o_scale": "float32",
+            "post_norm_weight": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "float32",
+            "w1": "float8_e4m3fn",
+            "w1_scale": "float32",
+            "w2": "float8_e4m3fn",
+            "w2_scale": "float32",
+            "out": "bfloat16",
+        },
+        attrs={"topk": 8, "tp_size": 1},
+        layout_variant_name="shuffled_16x16",
+    ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
-# tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
+# tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU; glm53_moe_layer has
+# no baseline yet
 BACKEND_POINTS: tuple[PointSpec, ...] = tuple(
     point.model_copy(update={"axes": {**point.axes, "latent_dim": 3584, "n_routed": 896, "inter_dim": 384}})
     if point.contract_id == "kimi_k3_latent_moe@1.0"
     else point
     for point in SMALL_POINTS
+    if point.contract_id != "glm53_moe_layer@1.0"
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
