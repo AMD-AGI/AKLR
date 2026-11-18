@@ -113,7 +113,9 @@ class DispatchTable:
                 keyed.setdefault(key, []).append(workload)
             for key, same in keyed.items():
                 failing = [w for w in same if not w.qualifies(min_speedup)]
-                if len(failing) < len(same) and all(w.accuracy != "failed" for w in same):
+                if len(failing) < len(same):  # then only a failed one keeps it unserved
+                    failing = [w for w in failing if w.accuracy == "failed"]
+                if not failing:
                     rank = min(map(schema.rank_key, same))
                     # strict: an equal rank shares a content hash, i.e.
                     if key not in best or rank > best[key][0]:
