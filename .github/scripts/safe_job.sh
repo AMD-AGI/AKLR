@@ -48,7 +48,9 @@ payload=$(jq -n --arg image "$IMAGE" --arg entry "$(base64 -w0 <<< "$entry")" --
     ttlSecondsAfterFinished: 3600,
     useWorkspaceStorage: true
   }')
-workload=$(api -X POST "$SAFE_API/api/v1/workloads" -d "$payload" | jq -er .workloadId)
+created=$(api -X POST "$SAFE_API/api/v1/workloads" -d "$payload") ||
+  { echo "::error::Primus-SaFE refused the workload: $created"; exit 1; }
+workload=$(jq -er .workloadId <<< "$created")
 echo "🚀 Primus-SaFE workload $workload in $IMAGE"
 
 phase=
