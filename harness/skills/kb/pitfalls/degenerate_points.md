@@ -17,8 +17,8 @@ sources:
 
 A kernel passes accuracy and CI stores a speedup at each of its Points, yet on the inputs serving sends it is
 several times slower than the baseline. #201's FlashMLA kernel for a bf16 KV cache, 8 query tokens and 96 heads
-(`f6f727be`) is stored at 1.25–2.56× over aiter's Gluon MLA decode at its 11 Points *(field, E2)*, and timed 1.6×
-faster than it on a Point's inputs, where every request holds 8 KV rows; at the same batch with 2.9K–7.3K KV rows
+(`f6f727be`) is stored at 1.25–2.56× over aiter's Gluon MLA decode at its 11 Points *(field, E2)*, and timed 1.4–1.6×
+faster than it on a Point's inputs at batch 4 and 8, where every request holds 8 KV rows; at the same batch with 2.9K–7.3K KV rows
 per request it was 4.6–8.7× slower, and both were within the contract's bounds *(field, E1)*.
 
 ## Root cause
@@ -60,7 +60,7 @@ per request it was 4.6–8.7× slower, and both were within the contract's bound
 
 ## Evidence
 
-- E1 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=?, the kernel and the contract's baseline (aiter's `mla_gluon`) alternating every round with the order swapped on odd rounds, a 1 GiB write before each call, CUDA-event time per call, median; both checked against the contract's reference under its bounds (output 1e-2, lse 1e-3)] f6f727be6a8dd6e8: at a Point's inputs (8 KV rows per request) kernel 9.6 µs, baseline 15.2; at the same batches with each request's length drawn uniformly from 512–8192 rows (2.9K–7.3K per request), kernel 1690–1711 µs, baseline 195–373; both passed in both arms (bf16 FlashMLA decode, 96 heads, 8 query tokens, page size 1)
+- E1 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=60 rounds per batch, the kernel and the contract's baseline (aiter's `mla_gluon`) alternating every round with the order swapped on odd rounds, a 1 GiB write before each call, CUDA-event time per call, median; both checked against the contract's reference under its bounds (output 1e-2, lse 1e-3)] f6f727be6a8dd6e8: at a Point's inputs (8 KV rows per request), batch 4 / 8: kernel 7.6 / 9.6 µs, baseline 10.3 / 15.2; at the same batches with each request's length drawn uniformly from 512–8192 rows (2.9K–7.3K per request), batch 4 / 8: kernel 1690.5 / 1710.5 µs, baseline 195.2 / 373.3; both passed in both arms (bf16 FlashMLA decode, 96 heads, 8 query tokens, page size 1)
 - E2 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI, stored speedup per Point] f6f727be6a8dd6e8 at batch 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14 (n_pages = table_width = 8 × batch): 2.556, 2.435, 1.250, 1.262, 1.248, 1.680, 1.666, 1.666, 1.651, 1.893, 1.860 (AMD-AGI/AKLR@e193b1d9, CI run 44081029964)
 - S1 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_causal_bf16_lse_has_block_table_has_cu_seqlens_k_kv_cache_bfloat16_query_length8_n_heads96_page_size1/f6f727be6a8dd6e8.json#kernel.py:114 `slow = (rt != b * CH) | (ln != fx.Int32(CH))`; the 8-row result stored first at :189; the serial 8-row chunks under `if slow:` at :190-198
 - S2 aklr/ops/mla/contract.py:268 `cu_seqlens_k` drawn by `CuSeqlensDistribution(min_seqlen="query_length", total="table_width")`; `n_pages` (:112) and `table_width` (:118) are var axes without `any_size`
