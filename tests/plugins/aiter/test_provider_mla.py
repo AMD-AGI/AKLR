@@ -563,6 +563,89 @@ def test_fp8_paged_mqa_logits_writes_aiters_out_logits(monkeypatch, aklr_serves)
     assert kwargs == {"page_size": 64, "preshuffled": True}
 
 
+DRAFT_TOKENS, REQUESTS = 5, 2
+VERIFY_ROWS = DRAFT_TOKENS * REQUESTS
+
+
+def _verify_call():
+    """fp8_paged_mqa_logits as sglang's indexer calls it for a target verify under DCP: DRAFT_TOKENS rows a
+    request, each passed its request's block table row."""
+    tables = torch.arange(REQUESTS * 2, dtype=I32).view(REQUESTS, 2).repeat_interleave(DRAFT_TOKENS, dim=0)
+    return _call(
+        "fp8_paged_mqa_logits",
+        q_fp8=torch.zeros(VERIFY_ROWS, 1, 4, 128, dtype=FP8),
+        weights=torch.zeros(VERIFY_ROWS, 4),
+        out_logits=torch.zeros(VERIFY_ROWS, 128),
+        context_lens=torch.ones(VERIFY_ROWS, 1, dtype=I32),
+        kv_indices=tables,
+    )
+
+
+@pytest.fixture
+def logits_ops(monkeypatch, aklr_serves):
+    """Both logits ops of AKLR faked, and no target verify noted."""
+    monkeypatch.setattr(mla, "_TARGET_VERIFY", [None])
+    ops = SimpleNamespace(rows=_Api(), verify=_Api())
+    monkeypatch.setattr(mla, "fp8_paged_mqa_logits", ops.rows)
+    monkeypatch.setattr(mla, "fp8_paged_mqa_logits_verify", ops.verify)
+    return ops
+
+
+def _run_logits(call):
+    _, run = _select("fp8_paged_mqa_logits", call)
+    return run(*_args("fp8_paged_mqa_logits", call))
+
+
+def test_a_noted_target_verify_is_scored_by_request_into_aiters_out_logits(logits_ops):
+    call = _verify_call()
+    mla.note_target_verify(VERIFY_ROWS, DRAFT_TOKENS)
+    assert _run_logits(call) is None
+    assert logits_ops.rows.calls == []
+    ((args, kwargs),) = logits_ops.verify.calls
+    assert args == ()
+    assert kwargs["q"].shape == (REQUESTS, DRAFT_TOKENS, 4, 128)
+    assert kwargs["q"].data_ptr() == call["q_fp8"].data_ptr()
+    assert kwargs["weights"].shape == (REQUESTS, DRAFT_TOKENS, 4)
+    assert kwargs["context_lens"].shape == (REQUESTS, DRAFT_TOKENS)
+    # aiter's out_logits, written through a view
+    assert kwargs["logits"].shape == (REQUESTS, DRAFT_TOKENS, 128)
+    assert kwargs["logits"].data_ptr() == call["out_logits"].data_ptr()
+    # each request's first row of the repeated table
+    assert kwargs["block_tables"].is_contiguous() and kwargs["block_tables"].tolist() == [[0, 1], [2, 3]]
+    assert kwargs["kv_cache"].dtype == torch.uint8
+    assert (kwargs["page_size"], kwargs["preshuffled"]) == (64, True)
+    # the note is taken: the next call, unnoted, is a row call
+    assert mla._TARGET_VERIFY[0] is None
+    _run_logits(call)
+    assert len(logits_ops.rows.calls) == 1 and len(logits_ops.verify.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "note",
+    [None, (VERIFY_ROWS + DRAFT_TOKENS, DRAFT_TOKENS), (VERIFY_ROWS, 3), (VERIFY_ROWS, 1)],
+    ids=["unnoted", "other_rows", "rows_not_whole_requests", "one_row_a_request"],
+)
+def test_rows_not_noted_as_this_verify_stay_on_the_row_op(logits_ops, note):
+    if note is not None:
+        mla.note_target_verify(*note)
+    _run_logits(_verify_call())
+    assert len(logits_ops.rows.calls) == 1 and logits_ops.verify.calls == []
+
+
+def test_a_verify_aklr_falls_back_on_stays_on_the_row_op(logits_ops):
+    logits_ops.verify.serving = lambda *a, **k: FallbackReason.NO_WORKLOAD
+    mla.note_target_verify(VERIFY_ROWS, DRAFT_TOKENS)
+    _run_logits(_verify_call())
+    assert len(logits_ops.rows.calls) == 1 and logits_ops.verify.calls == []
+
+
+def test_a_verify_with_strided_rows_stays_on_the_row_op(logits_ops):
+    weights = torch.zeros(4, VERIFY_ROWS).t()
+    mla.note_target_verify(VERIFY_ROWS, DRAFT_TOKENS)
+    _run_logits({**_verify_call(), "weights": weights})
+    assert len(logits_ops.rows.calls) == 1 and logits_ops.verify.calls == []
+
+
 @pytest.mark.parametrize("has_out", [True, False])
 def test_mla_sparse_prefill_v4_hands_aklr_its_tensors_in_order(monkeypatch, aklr_serves, has_out):
     output = torch.full((2, 16, 512), 2.0, dtype=BF16)

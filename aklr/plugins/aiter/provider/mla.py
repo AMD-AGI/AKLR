@@ -4,14 +4,22 @@
 """aiter's MLA decode ops, served by AKLR's ``aklr.ops.mla``: ``mla_decode_fwd`` (aiter's ASM decode)
 by ``mla_decode_fwd``, ``mla_paged_decode`` (the decode mode of aiter's ``mla_gluon``) by
 ``flash_mla_with_kvcache``'s dense pool, and ``fp8_paged_mqa_logits`` (aiter's
-``deepgemm_fp8_paged_mqa_logits``) by ``fp8_paged_mqa_logits``."""
+``deepgemm_fp8_paged_mqa_logits``) by ``fp8_paged_mqa_logits``, or, for the rows of a target verify a
+framework noted with :func:`note_target_verify`, by ``fp8_paged_mqa_logits_verify``."""
 
 from __future__ import annotations
 
 import torch
 
-from aklr.ops.mla.api import flash_mla_with_kvcache, fp8_paged_mqa_logits, mla_decode_fwd
+from aklr.ops.mla.api import (
+    flash_mla_with_kvcache,
+    fp8_paged_mqa_logits,
+    fp8_paged_mqa_logits_verify,
+    mla_decode_fwd,
+)
 from aklr.plugins.aiter.provider._base import offer, selector, served
+
+__all__ = ["note_target_verify"]
 
 _LATENT = 512  # the no-rope part of q and of a pool row: the values read
 _KV_CACHE_FORMATS = {torch.bfloat16: "bf16", torch.float8_e4m3fn: "fp8_e4m3"}
@@ -260,6 +268,90 @@ def _context_lens(context_lens):
     return context_lens if context_lens.dim() == 1 else None
 
 
+# (query rows, draft tokens a request) of the target verify whose logits the framework asks next. Under
+# decode context parallelism sglang's indexer hands a verify's rows to fp8_paged_mqa_logits as rows of
+# their own, each with its request's block table row, as a decode batch's rows come, so only the
+# framework's forward mode tells the two apart. Taken by the next call.
+_TARGET_VERIFY: list[tuple[int, int] | None] = [None]
+
+
+def note_target_verify(rows: int, draft_tokens: int) -> None:
+    """Note that the next fp8_paged_mqa_logits call, if over ``rows`` query rows, is a target verify's:
+    ``draft_tokens`` consecutive rows a request, each passed the request's block table row. AKLR then
+    scores each request's rows together with ``fp8_paged_mqa_logits_verify``. ``rows`` 0 clears it."""
+    _TARGET_VERIFY[0] = (rows, draft_tokens) if rows else None
+
+
+def _verify_call(q_fp8, kv_cache, weights, lens, kv_indices, out_logits, page_size, draft_tokens):
+    """fp8_paged_mqa_logits_verify's keywords but the block tables, and the rows of kv_indices they are,
+    for a call of ``draft_tokens`` rows a request; ``None`` when the rows cannot be regrouped by views."""
+    rows = q_fp8.shape[0]
+    if draft_tokens < 2 or rows == 0 or rows % draft_tokens:
+        return None
+    if not all(t.is_contiguous() for t in (q_fp8, weights, lens, out_logits)):
+        return None
+    batch = rows // draft_tokens
+    # each request's first row: its other rows repeat it, and table rows past the queries' are not read
+    return kv_indices[:rows:draft_tokens], {
+        "q": q_fp8.view(batch, draft_tokens, *q_fp8.shape[2:]),
+        "kv_cache": kv_cache.view(torch.uint8),
+        "weights": weights.view(batch, draft_tokens, -1),
+        "context_lens": lens.view(batch, draft_tokens),
+        "logits": out_logits.view(batch, draft_tokens, -1),
+        "page_size": page_size,
+        "preshuffled": True,
+    }
+
+
+def _select_target_verify(q_fp8, kv_cache, weights, lens, kv_indices, out_logits, page_size, note):
+    """The candidate for the rows of the target verify noted, else ``None``."""
+    if note is None or note[0] != q_fp8.shape[0]:
+        return None
+    call = _verify_call(q_fp8, kv_cache, weights, lens, kv_indices, out_logits, page_size, note[1])
+    if call is None:
+        return None
+    tables, kwargs = call
+    # asked with a contiguous stand-in: the rows are copied only for a call AKLR takes
+    stand_in = torch.empty(tables.shape, dtype=tables.dtype, device=tables.device)
+    return offer(fp8_paged_mqa_logits_verify.serving(block_tables=stand_in, **kwargs), _verify_run(note[1]))
+
+
+def _verify_run(draft_tokens):
+    """The run of a target verify's call, ``draft_tokens`` rows a request; aiter's parameters exactly."""
+
+    def run(
+        q_fp8,
+        kv_cache,
+        weights,
+        out_logits,
+        context_lens,
+        kv_indices,
+        max_model_len,
+        Preshuffle,
+        KVBlockSize,
+        ChunkK,
+        TotalCuCount,
+        WavePerEU,
+        VarCtxSchedule,
+        SplitKV,
+        PersistentSchedule,
+    ):
+        tables, kwargs = _verify_call(
+            q_fp8,
+            kv_cache,
+            weights,
+            _context_lens(context_lens),
+            kv_indices,
+            out_logits,
+            KVBlockSize,
+            draft_tokens,
+        )
+        # writes out_logits through its view, as aiter does
+        served(fp8_paged_mqa_logits_verify(block_tables=tables.contiguous(), **kwargs))
+
+    return run
+
+
 @selector("fp8_paged_mqa_logits")
 def _select_fp8_paged_mqa_logits(args, kwargs):
     (
@@ -279,6 +371,7 @@ def _select_fp8_paged_mqa_logits(args, kwargs):
         _SplitKV,
         PersistentSchedule,
     ) = args
+    note, _TARGET_VERIFY[0] = _TARGET_VERIFY[0], None
     lens = _context_lens(context_lens)
     # one query a request into whole pages of preshuffled keys, AKLR's logits as wide as the block
     # table and as the bound aiter stores within; a precomputed schedule carries lengths of its own.
@@ -297,6 +390,9 @@ def _select_fp8_paged_mqa_logits(args, kwargs):
         or max_model_len != out_logits.shape[1]
     ):
         return None
+    verify = _select_target_verify(q_fp8, kv_cache, weights, lens, kv_indices, out_logits, KVBlockSize, note)
+    if verify is not None:
+        return verify
     return offer(
         fp8_paged_mqa_logits.serving(
             q_fp8,
