@@ -1,8 +1,8 @@
 ---
 name: forge-loop-campaign
 description: >
-  Run an autonomous optimization campaign on a kernel-less AKLR schema with KernelForge on an MI355X
-  (gfx950) machine and deliver the kernel: prepare the task, run forge-loop, watch and steer it, stop or resume it, review
+  Run an autonomous optimization campaign on an AKLR schema, kernel-less or one whose kernel is to be
+  beaten, with KernelForge on an MI355X (gfx950) machine and deliver the kernel: prepare the task, run forge-loop, watch and steer it, stop or resume it, review
   and squash the kept rounds, publish the kernel into AKLR, and hand over the skill patch. Use when asked
   to optimize an AKLR op or schema with KernelForge or forge-loop, or to check on, resume, finish or
   deliver such a run.
@@ -34,12 +34,15 @@ rather than a person at a terminal.
   best one. forge_task reads a schema file at a path shaped like AKLR's, `<op>/impls/<language>/<name>/<file>.json`;
   keep each regime's file outside the AKLR clone, e.g. `~/aklr-regimes/gemm/impls/flydsl/<name>/small_m.json`. In
   the clone, `aklr export check` in step 6 rejects it: its name is not its content hash.
+- A schema that has a kernel is a re-optimization: `prepare --schema-file <its file>` starts from that kernel and
+  scores against it, so a score above 1.0 is faster than the kernel AKLR has, not than the baseline. A regime file of
+  such a schema keeps its `kernel`.
 - Pick one card nobody uses (`rocm-smi --showmeminfo vram`, `rocm-smi --showpids`) and use it in steps 1, 2
   and 5. Another process on the card makes every timing on it meaningless.
 
 ## Step 2: launch in the background
 
-Read `$RUN/baseline.json` first. AKLR's timer reads every dispatch at about 4.1 µs or more, because its bench runner
+Read `$RUN/baseline.json` first (a re-optimization writes none: read the schema's `microseconds` instead). AKLR's timer reads every dispatch at about 4.1 µs or more, because its bench runner
 forces queue profiling, which costs that much per dispatch. A workload whose baseline runs near that floor reads as
 parity in CI whatever the kernel does there (a 1.7 µs kernel against a 2.6 µs baseline read 4.09 against 4.10 µs).
 Tell the user which workloads those are before you launch: the campaign can win nothing AKLR will show there.

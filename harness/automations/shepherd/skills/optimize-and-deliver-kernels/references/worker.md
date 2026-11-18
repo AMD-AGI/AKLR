@@ -37,8 +37,7 @@ Follow `harness/skills/forge-loop-campaign/SKILL.md` for every command, as its "
 section says: no timers, no KernelForge GPU flags (the container's `HIP_VISIBLE_DEVICES` is the
 campaign's card), and the stress gate run in the validator (see [validation](validation.md)). Prepare
 with `--kernel-backend <the candidate's language>`, and a re-optimization with
-`--schema-file <its emptied schema> --starting-kernel <the incumbent's directory> --anchor start` too, so
-the loop starts from the incumbent and is scored against it.
+`--schema-file <the incumbent's schema file>` too: the loop starts from the incumbent and is scored against it.
 For a Triton or Gluon kernel, finalize without `--review-guide` and skip distill.
 
 Start long steps as remote background tasks and return their handle. KernelForge has no spending limit of

@@ -50,6 +50,11 @@ schema starts from torch; any other starts from its contract's AKLR baseline, co
 A contract without a baseline needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
 of several files: every `*.py` in the directory, `kernel.py` among them.
 
+To make a kernel AKLR already has faster, give its schema file: `--schema-file
+aklr/ops/<op>/impls/<language>/<name>/<file>.json`. The task starts from that schema's kernel and is scored against
+it, timed here by the driver, not against AKLR's baseline; no `baseline.json` is written. `--anchor baseline`
+scores it against the baseline instead.
+
 **2. Optimize.** Hours, and the agents cost money from here: in the Kimi-K3 runs, about $10 an hour on a GEMM
 and $17 on a MoE. Run it inside `tmux`:
 
@@ -131,14 +136,15 @@ $RUN/
 ├── forge_loop.sh          starts KernelForge's loop on this task; options given to it go to forge-loop
 ├── forge_loop_resume.sh   resumes it after a stop or a crash
 ├── schema.json            the schema, as read
-├── baseline.json          AKLR's baseline time per workload, the time to beat
+├── baseline.json          AKLR's baseline time per workload, the time to beat (not with `--anchor start`)
 ├── aklr_validate/         AKLR's report on each kernel the driver checked
 └── workspace/             KernelForge's git workspace: kernel.py, driver.py, program.md (the brief)
 ```
 
-Options: `--schema-file <file>` instead of `--schema <name>`; `--starting-kernel <kernel.py|dir>`; `--kernel-backend
-flydsl|triton|gluon` (default `flydsl`); `--anchor start` to score against the starting kernel instead of AKLR's
-baseline; `--run-dir` (default `./aklr-runs/<schema>-<time>`).
+Options: `--schema-file <file>` instead of `--schema <name>`, which finds only a kernel-less schema;
+`--starting-kernel <kernel.py|dir>`; `--kernel-backend flydsl|triton|gluon` (default `flydsl`); `--anchor
+baseline|start` to score against AKLR's baseline or the starting kernel (default: the starting kernel when it is
+the schema's own, else the baseline); `--run-dir` (default `./aklr-runs/<schema>-<time>`).
 
 ## How a candidate is judged
 
@@ -146,7 +152,8 @@ baseline; `--run-dir` (default `./aklr-runs/<schema>-<time>`).
   output on one workload rejects the candidate.
 - **Fast** by AKLR's graph timer on AKLR's timing inputs. A candidate is kept only when it beats the kernel kept so
   far by more than the measured noise.
-- The score is the baseline's time over the candidate's, per workload, averaged over the workloads.
+- The score is the anchor's time (the baseline's, or the starting kernel's) over the candidate's, per workload,
+  averaged over the workloads.
 - The agents cannot edit `driver.py`.
 
 ## When something goes wrong

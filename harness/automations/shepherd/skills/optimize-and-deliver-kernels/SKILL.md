@@ -183,9 +183,7 @@ Admit only in `run`, one campaign at a time, while all of these hold:
    cover the whole campaign.
 6. For a regime candidate, write its schema file holding only its workloads outside the clone, as
    forge-loop-campaign does. A roofline candidate is a re-optimization of the kernel main serves (the
-   incumbent): write its schema file outside the clone with `kernel.sources` emptied, keeping the
-   `<op>/impls/<language>/<name>/<uuid>.json` layout forge_task reads the op from, and the incumbent's
-   sources as files in a directory of their own.
+   incumbent): its schema file is the task's, as main holds it, and its regime's file keeps the `kernel`.
 7. Save phase `admitted`, `bounds.model_usd`, `bounds.deadline`, `pool`, `gpu` and the candidate's
    `contract_key` in one save. The pool is already started: it was saved with `bounds.node_hours` and
    its allocation intent before allocating, and with its `end` once it started.

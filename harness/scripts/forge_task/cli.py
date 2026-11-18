@@ -29,7 +29,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     which = prepare.add_mutually_exclusive_group(required=True)
     which.add_argument("--schema", help="name of a kernel-less schema in --aklr-root")
-    which.add_argument("--schema-file", type=Path, help="a kernel-less schema file")
+    which.add_argument(
+        "--schema-file",
+        type=Path,
+        help="a schema file; one that has a kernel starts from that kernel and is scored against it",
+    )
     prepare.add_argument(
         "--aklr-root",
         type=Path,
@@ -45,15 +49,15 @@ def _parser() -> argparse.ArgumentParser:
         "--starting-kernel",
         type=Path,
         help="kernel.py to start from, or a directory whose *.py files, kernel.py among them, are the kernel's "
-        "modules; gemm schemas default to torch",
+        "modules; default: the schema's own kernel, else torch for a gemm schema",
     )
     prepare.add_argument("--kernel-backend", choices=("flydsl", "triton", "gluon"), default="flydsl")
     prepare.add_argument("--gpu-target", default="gfx950")
     prepare.add_argument(
         "--anchor",
         choices=("baseline", "start"),
-        default="baseline",
-        help="score against AKLR's baseline (default) or the starting kernel",
+        help="score against AKLR's baseline or the starting kernel (default: the starting kernel when it is the "
+        "schema's own, else the baseline)",
     )
 
     publish = commands.add_parser("publish", help="write the task's kernel.py into the AKLR checkout")
@@ -65,11 +69,12 @@ def _prepare(args: argparse.Namespace) -> int:
     aklr_root = args.aklr_root.resolve()
     try:
         schema = load(args.schema_file or find(aklr_root, args.schema))
-        starting_kernel = (
-            workspace.read_starting_kernel(args.starting_kernel)
-            if args.starting_kernel
-            else workspace.builtin_starting_kernel(schema, aklr_root)
-        )
+        if args.starting_kernel:
+            starting_kernel = workspace.read_starting_kernel(args.starting_kernel)
+        else:
+            starting_kernel = schema.kernel_sources or workspace.builtin_starting_kernel(schema, aklr_root)
+        # A schema's own kernel is what the campaign has to beat: measured here, by the driver's ruler.
+        anchor = args.anchor or ("start" if starting_kernel is schema.kernel_sources else "baseline")
         stamp = time.strftime("%Y%m%d_%H%M%S")
         run = workspace.materialize(
             schema,
@@ -77,10 +82,10 @@ def _prepare(args: argparse.Namespace) -> int:
             aklr_root=aklr_root,
             language=args.kernel_backend,
             starting_kernel=starting_kernel,
-            anchor=args.anchor,
+            anchor=anchor,
         )
         workspace.check_starting_kernel(run)
-        anchored = args.anchor == "baseline"
+        anchored = anchor == "baseline"
         if anchored:
             workspace.write_baseline(run)
     except (

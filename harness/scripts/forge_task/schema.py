@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Read the fields a task needs out of one kernel-less AKLR schema: what it computes and the workloads it is scored on."""
+"""Read the fields a task needs out of one AKLR schema: what it computes, the workloads it is scored on and the
+kernel it has, if any."""
 
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ class Schema:
     outputs: dict[str, dict]
     compare: dict[str, object]
     workloads: tuple[Workload, ...]
+    kernel_sources: dict[str, str]  # the kernel's files by name; none in a kernel-less schema
 
     @property
     def constant_axes(self) -> dict[str, int]:
@@ -88,6 +90,7 @@ def load(path: Path) -> Schema:
             outputs=dict(data["outputs"]),
             compare=dict(data.get("compare", {})),
             workloads=tuple(Workload(axes=dict(w["axes"])) for w in data["workloads"]),
+            kernel_sources={s["path"]: s["content"] for s in data["kernel"].get("sources") or []},
         )
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise SchemaError(f"{path}: not an AKLR schema: {error}") from None

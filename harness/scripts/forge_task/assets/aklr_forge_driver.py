@@ -122,15 +122,18 @@ def _candidate_text() -> tuple[str, str]:
     return text, schema_uuid(raw["name"], op_contract.authored_parts(json.loads(text)))
 
 
-def _publish() -> Path:
-    """Write the candidate where AKLR keeps kernels; return its path relative to the checkout."""
+def _publish() -> tuple[Path, bytes | None]:
+    """Write the candidate where AKLR keeps kernels; return its path relative to the checkout, and what the file
+    held before: the schema's own kernel has the name of the file that serves it there."""
     _, _, schema_relative_path, _ = _aklr()
     text, uuid = _candidate_text()
     raw = json.loads(text)
     path = Path("aklr/ops", OP_DIR, schema_relative_path(raw["name"], LANGUAGE, uuid))
-    (AKLR_ROOT / path).parent.mkdir(parents=True, exist_ok=True)
-    (AKLR_ROOT / path).write_text(text, encoding="utf-8")
-    return path
+    file = AKLR_ROOT / path
+    committed = file.read_bytes() if file.is_file() else None
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(text, encoding="utf-8")
+    return path, committed
 
 
 def _platform_failed(report: dict) -> bool:
@@ -155,7 +158,7 @@ def _validate(out: Path) -> dict:
     report = out / "report.json"
     if report.is_file():
         return json.loads(report.read_text(encoding="utf-8"))
-    path = _publish()
+    path, committed = _publish()
     # `python -m` run from the checkout's root imports that checkout's aklr.
     command = [
         sys.executable,
@@ -179,7 +182,10 @@ def _validate(out: Path) -> dict:
         )
     finally:
         # Another kernel's file left in the checkout would be served beside the next one.
-        (AKLR_ROOT / path).unlink(missing_ok=True)
+        if committed is None:
+            (AKLR_ROOT / path).unlink(missing_ok=True)
+        else:
+            (AKLR_ROOT / path).write_bytes(committed)
     if not report.is_file():
         sys.stderr.write(completed.stdout[-3000:] + completed.stderr[-3000:])
         raise SystemExit(f"aklr validate wrote no report (exit {completed.returncode})")
@@ -579,7 +585,7 @@ def main() -> int:
     )
     args, _unknown = parser.parse_known_args()
     if args.publish:
-        print(_publish())
+        print(_publish()[0])
         return 0
     if args.profile_run:
         return _run_profile()

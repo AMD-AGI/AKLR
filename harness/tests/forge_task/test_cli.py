@@ -7,14 +7,19 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 from fake_aklr import SCHEMA_NAME, install_aklr, schema_payload, write_schema
-from forge_task import cli
+from forge_task import cli, workspace
 
 WRONG_KERNEL = '"""Wrong."""\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    pass\n'
+INCUMBENT = (
+    '"""Served."""\n\nimport torch\n\n\n'
+    "def run(*, a, b, trans_b, bias, out_dtype, out):\n    torch.matmul(a, b.t(), out=out)\n"
+)
 
 
 def _prepare(aklr_root: Path, tmp_path: Path, *extra: str) -> int:
@@ -108,6 +113,45 @@ def test_the_start_anchor_writes_no_baseline(aklr_root: Path, tmp_path: Path, ca
     assert "--baseline-json" not in _printed_command(capsys.readouterr().out)
     resume = _script_command(tmp_path / "run" / "forge_loop_resume.sh")
     assert "--baseline-json" not in resume
+
+
+def _prepare_served(aklr_root: Path, tmp_path: Path, *extra: str) -> int:
+    """Prepare from a schema that has a kernel, as main serves it."""
+    sources = [{"path": "kernel.py", "content": INCUMBENT}, {"path": "gemm.py", "content": "\n"}]
+    served = write_schema(aklr_root, schema_payload(sources=sources), uuid="fedcba9876543210")
+    argv = ["prepare", "--aklr-root", str(aklr_root), "--schema-file", str(served)]
+    return cli.main([*argv, "--run-dir", str(tmp_path / "run"), *extra])
+
+
+def test_a_schema_with_a_kernel_starts_from_it_and_is_scored_against_it(
+    aklr_root: Path, tmp_path: Path, capsys
+):
+    assert _prepare_served(aklr_root, tmp_path) == 0
+    workspace_dir = tmp_path / "run" / "workspace"
+    assert (workspace_dir / "kernel.py").read_text(encoding="utf-8") == INCUMBENT
+    assert (workspace_dir / "gemm.py").is_file()
+    assert not (tmp_path / "run" / "baseline.json").exists()
+    assert "--baseline-json" not in _printed_command(capsys.readouterr().out)
+    assert "not faster than AKLR's baseline" in (workspace_dir / "program.md").read_text(encoding="utf-8")
+
+
+def test_a_schema_with_a_kernel_is_scored_against_the_baseline_when_asked(aklr_root: Path, tmp_path: Path):
+    assert _prepare_served(aklr_root, tmp_path, "--anchor", "baseline") == 0
+    assert (tmp_path / "run" / "baseline.json").is_file()
+
+
+def test_checking_a_kernel_the_checkout_serves_leaves_its_file_as_committed(
+    aklr_root: Path, tmp_path: Path, capsys
+):
+    """A schema's own kernel is checked at the path of the file that serves it."""
+    assert _prepare(aklr_root, tmp_path) == 0
+    capsys.readouterr()
+    assert cli.main(["publish", str(tmp_path / "run")]) == 0
+    served = aklr_root / capsys.readouterr().out.split("published: ")[1].splitlines()[0]
+    served.write_text("as committed\n", encoding="utf-8")
+    shutil.rmtree(tmp_path / "run" / "aklr_validate")
+    assert "allclose: True" in workspace.run_driver(workspace.Run.at(tmp_path / "run")).stdout
+    assert served.read_text(encoding="utf-8") == "as committed\n"
 
 
 def _skill_dirs(command: list[str]) -> list[str]:
