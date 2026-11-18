@@ -2,6 +2,8 @@ name: AKLR-CI
 
 env:
   PYTHONDONTWRITEBYTECODE: '1'
+  # Execute GPU tests in Docker on the selected runner, without submitting to SaFE.
+  AKLR_GPU_RUNNER: aklr-gpu
   # The publish-measurement bot's rolling PR: sent and opened by the bot, from aklr-perf/main of
   # this repository. perf-guard.yaml spells the same expression.
   AKLR_BOT_PR: >-
@@ -170,7 +172,7 @@ jobs:
   aiter-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    runs-on: aklr-safe
+    runs-on: aklr-gpu
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema.
     # TIMEOUT_MINUTES limits the run on the GPU node; timeout-minutes also covers the wait for one.
     timeout-minutes: 480
@@ -188,7 +190,7 @@ jobs:
           persist-credentials: false
       - &gpu_tests
         name: Run unit tests (${{ env.TESTS }}) and validation on a GPU node
-        shell: bash .github/scripts/safe_job.sh {0}
+        shell: bash .github/scripts/gpu_job.sh {0}
         env:
           PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER PLUGINS
           VALIDATE: ${{ needs.code-lint.outputs.has_bench_paths }}
@@ -286,9 +288,9 @@ jobs:
             exit $((plugins ? plugins : ops))
           fi
       - &finish_gpu_tests
-        name: Delete the GPU workload
+        name: Delete the GPU workload or local container
         if: always()
-        run: bash .github/scripts/safe_job.sh delete
+        run: bash .github/scripts/gpu_job.sh delete
       - &upload_coverage
         name: Upload coverage (coverage-${{ github.job }})
         if: always()
@@ -331,7 +333,7 @@ jobs:
   sglang-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    runs-on: aklr-safe
+    runs-on: aklr-gpu
     timeout-minutes: 480
     env:
       TIMEOUT_MINUTES: 150
@@ -360,7 +362,7 @@ jobs:
   vllm-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    runs-on: aklr-safe
+    runs-on: aklr-gpu
     timeout-minutes: 480
     env:
       TIMEOUT_MINUTES: 60
