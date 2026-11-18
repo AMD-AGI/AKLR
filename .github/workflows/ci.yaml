@@ -2,8 +2,12 @@ name: AKLR-CI
 
 env:
   PYTHONDONTWRITEBYTECODE: '1'
-  # Execute GPU tests in Docker on the selected runner, without submitting to SaFE.
-  AKLR_GPU_RUNNER: aklr-gpu
+  # Select exactly one backend. SaFE remains the default; the direct PR label takes precedence.
+  AKLR_GPU_RUNNER: >-
+    ${{ inputs.gpu_runner ||
+        (github.event_name == 'pull_request' &&
+         contains(github.event.pull_request.labels.*.name, 'ci:gpu-direct') && 'aklr-gpu') ||
+        'aklr-safe' }}
   # The publish-measurement bot's rolling PR: sent and opened by the bot, from aklr-perf/main of
   # this repository. perf-guard.yaml spells the same expression.
   AKLR_BOT_PR: >-
@@ -23,6 +27,13 @@ env:
 on:
   workflow_dispatch:
     inputs:
+      gpu_runner:
+        description: GPU execution backend (choose one)
+        type: choice
+        options:
+          - aklr-safe
+          - aklr-gpu
+        default: aklr-safe
       full_lint:
         description: Check all files, including inherited formatting debt
         type: boolean
@@ -31,7 +42,7 @@ on:
     branches: [main]
 
   # Only PRs into main: a stacked PR's base branch is author-controlled.
-  # labeled/unlabeled let ci:gpu take effect; any label change restarts the run.
+  # labeled/unlabeled apply the GPU backend selection; any label change restarts the run.
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, labeled, unlabeled]
@@ -63,9 +74,11 @@ jobs:
       # Forks too: the repository's Actions settings hold an external contributor's run for approval.
       GPU_ENABLED: >-
         ${{ github.event_name != 'pull_request' ||
-            contains(github.event.pull_request.labels.*.name, 'ci:gpu') }}
+            contains(github.event.pull_request.labels.*.name, 'ci:gpu') ||
+            contains(github.event.pull_request.labels.*.name, 'ci:gpu-direct') }}
     outputs:
       gpu_enabled: ${{ env.GPU_ENABLED }}
+      gpu_runner: ${{ env.AKLR_GPU_RUNNER }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
       measured_by_bot: ${{ steps.lint.outputs.measured_by_bot }}
@@ -77,9 +90,9 @@ jobs:
       - name: Report whether GPU jobs run
         run: |
           if [[ $GPU_ENABLED == true ]]; then
-            echo '🟢 GPU jobs are eligible: aiter-test, sglang-test and vllm-test.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "🟢 GPU jobs use $AKLR_GPU_RUNNER: aiter-test, sglang-test and vllm-test." | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo '⏭️ PR GPU jobs require the ci:gpu label.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '⏭️ PR GPU jobs require ci:gpu (SaFE) or ci:gpu-direct (local Docker).' | tee -a "$GITHUB_STEP_SUMMARY"
           fi
       - name: Checkout source and lint history
         uses: actions/checkout@v4
@@ -172,7 +185,7 @@ jobs:
   aiter-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    runs-on: aklr-gpu
+    runs-on: ${{ needs.code-lint.outputs.gpu_runner }}
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema.
     # TIMEOUT_MINUTES limits the run on the GPU node; timeout-minutes also covers the wait for one.
     timeout-minutes: 480
@@ -333,7 +346,7 @@ jobs:
   sglang-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    runs-on: aklr-gpu
+    runs-on: ${{ needs.code-lint.outputs.gpu_runner }}
     timeout-minutes: 480
     env:
       TIMEOUT_MINUTES: 150
@@ -362,7 +375,7 @@ jobs:
   vllm-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    runs-on: aklr-gpu
+    runs-on: ${{ needs.code-lint.outputs.gpu_runner }}
     timeout-minutes: 480
     env:
       TIMEOUT_MINUTES: 60

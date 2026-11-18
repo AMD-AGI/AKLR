@@ -45,10 +45,21 @@ kernel against it.
 
 ## GPU CI runners
 
-PR GPU tests still require the `ci:gpu` label and a passing lint/audit job. The
-`aiter-test`, `sglang-test` and `vllm-test` jobs select the `aklr-gpu` runner label in
-`.github/workflows/ci.yaml` and execute the same tests in local Docker, without calling
-SaFE or requiring its API credentials. No repository Actions variable is needed.
+The `aiter-test`, `sglang-test` and `vllm-test` jobs use exactly one backend per workflow
+run, after the lint/audit job passes:
+
+| Trigger | Backend |
+| --- | --- |
+| PR with `ci:gpu` | `aklr-safe`: submit GPU workloads through the existing SaFE API |
+| PR with `ci:gpu-direct` | `aklr-gpu`: execute tests in Docker on the runner, without SaFE |
+| PR with both labels | `aklr-gpu` only; the direct label takes precedence |
+| PR with neither label | Skip GPU tests |
+| Push to `main` | `aklr-safe` (existing default) |
+| Manual run | Choose `aklr-safe` or `aklr-gpu` in the `gpu_runner` dropdown; defaults to SaFE |
+
+Selection is defined in `.github/workflows/ci.yaml`; no repository Actions variable is
+needed. Adding or removing a label restarts the PR workflow and cancels its previous run.
+To switch a direct PR run back to SaFE, remove `ci:gpu-direct` and keep `ci:gpu`.
 
 An `aklr-gpu` runner needs Linux, Docker access, ROCm GPU devices (`/dev/kfd` and `/dev/dri`),
 network access to the images in `stack.json`, and enough local disk for image pulls, source
@@ -59,7 +70,5 @@ The three test jobs may run in parallel when multiple runners are available.
 
 The local container receives only the test environment variables and a copy of the checkout.
 Its per-stage timeout is unchanged, failing tests still upload reports, and the final cleanup
-step removes the job's container. To switch back to SaFE, change the workflow's
-`AKLR_GPU_RUNNER` environment value and all three GPU jobs' `runs-on` values to `aklr-safe`.
-This does not change the separate AgentX workflow. There is no automatic fallback
-to SaFE when GPU runners are busy or offline.
+step removes the job's container. This does not change the separate AgentX workflow.
+There is no automatic fallback between backends when the selected runners are busy or offline.
