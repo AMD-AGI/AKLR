@@ -1,67 +1,81 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch import api
-from aklr.ops.gemm.contract import (
-    BMM,
-    GEMM,
-    GEMM_A4W4_MXFP4,
-    GEMM_A8W8,
-    GEMM_A8W8_BLOCKWISE_SCALED,
+import torch
+
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.ops.gemm.schema import (
+    BMM_BF16_NN_VARIANTS,
+    BMM_BF16_NT_VARIANTS,
+    GEMM_A8W8_NT_VARIANTS,
+    GEMM_BF16_NT_VARIANTS,
+    GEMM_FP8_NT_BLOCKSCALED_VARIANTS,
+    GEMM_MXFP4_NT_VARIANTS,
 )
 
 __all__ = [
-    "bmm",
-    "gemm",
-    "gemm_a4w4_mxfp4",
-    "gemm_a8w8",
-    "gemm_a8w8_blockwise_scaled",
+    "bmm_bf16_nn",
+    "bmm_bf16_nt",
+    "gemm_a8w8_nt",
+    "gemm_bf16_nt",
+    "gemm_fp8_nt_blockscaled",
+    "gemm_mxfp4_nt",
 ]
 
-
-@api(GEMM)
-def gemm(a, b, trans_b=True, bias=None, out_dtype=None, out=None): ...
+# Tensor parameters bind to schema inputs and outputs by name; the others pick the schema or out dtype.
 
 
-@api(GEMM_A8W8)
-def gemm_a8w8(a, b, a_scale, b_scale, trans_b=True, bias=None, out_dtype=None, out=None): ...
+@aklr_api(GEMM_BF16_NT_VARIANTS)
+def gemm_bf16_nt(a, b, bias=None, out=None, out_dtype=torch.bfloat16, use_shuffled_weight=False): ...
 
 
-@api(GEMM_A8W8_BLOCKWISE_SCALED)
-def gemm_a8w8_blockwise_scaled(
+@aklr_api(GEMM_A8W8_NT_VARIANTS)
+def gemm_a8w8_nt(
     a,
     b,
     a_scale,
     b_scale,
-    block_size=(128, 128),
-    scale_major_mode="K",
-    trans_b=True,
     bias=None,
-    out_dtype=None,
     out=None,
-    *,
-    operand_format="none:none",
+    out_dtype=torch.bfloat16,
+    use_shuffled_weight=False,
 ): ...
 
 
-@api(GEMM_A4W4_MXFP4)
-def gemm_a4w4_mxfp4(
+@aklr_api(GEMM_FP8_NT_BLOCKSCALED_VARIANTS)
+def gemm_fp8_nt_blockscaled(
     a,
     b,
     a_scale,
     b_scale,
-    alpha=1.0,
-    beta=0.0,
-    trans_b=True,
-    bias=None,
-    out_dtype=None,
+    scale_major_mode="MN",
     out=None,
-    *,
-    operand_format="none:preshuffled",
+    out_dtype=None,
+    use_shuffled_weight=False,
 ): ...
 
 
-@api(BMM)
-def bmm(a, b, trans_b=True, bias=None, out_dtype=None, out=None): ...
+@aklr_api(GEMM_MXFP4_NT_VARIANTS)
+def gemm_mxfp4_nt(
+    a,
+    b,
+    a_descale,
+    b_descale,
+    bias=None,
+    out=None,
+    out_dtype=torch.bfloat16,
+    use_shuffled_weight=False,
+): ...
+
+
+@aklr_api(BMM_BF16_NT_VARIANTS)
+def bmm_bf16_nt(A, B, out=None, out_dtype=torch.bfloat16, use_shuffled_weight=False): ...
+
+
+@aklr_api(BMM_BF16_NN_VARIANTS)
+def bmm_bf16_nn(A, B, out=None, out_dtype=torch.bfloat16, use_shuffled_weight=False): ...
