@@ -328,7 +328,7 @@ without `allow_flush_denorm` the 4 DSA 64-head kernels' code did not change; acc
    from aklr.core.contract import semantics
    from aklr.core.contract.registry import ContractRegistry
    from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
-   path = "aklr/ops/gemm/impls/triton/gemm_n6144_k2048/f806ad2b086d757d.json"
+   path = "aklr/ops/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json"
    registry = ContractRegistry.default()
    schema = registry.parse_schema(Path(path).read_bytes(), path)
    contract = registry.get(schema.contract_id)

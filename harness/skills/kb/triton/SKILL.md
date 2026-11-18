@@ -125,7 +125,7 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
 - E10 [2026-11, CPU only, Triton 3.8.0, N=2, compile-only for gfx950] 63 mismatch/control pairs, 24 warp builds per run (#89)
 - E11 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1–3, `aklr validate` (Kineto), 4 rounds per arm] router `c3889614985b700a` 1.000/1.033/1.260; DeepSeek-V2 `d3bbbce5c0bbc61e` split 4 → 2 1.004× (unresolved), 1.011× and 1.017× (resolved) (AKLR@43e112e)
 - E12 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=2, `bench_cudagraph` (Kineto)] 85 of 85 calls flushed; 1 GiB over a 4 GiB flush 0.992–1.000; flushed/hot 1.19–1.28× (64–192 MB), 1.00–1.01× (512–1024 MB); Gluon eager probe (4 runs) 1.10–1.22×, 0.99–1.01×; HBM reads not measured (AKLR@43e112e)
-- E13 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=4, in-process timing] BLOCK_K 128, 8 warps, KROT 0 over 256, 4, 1, hot: 1.08–1.13× (`f806ad2b086d757d`; AKLR@43e112e)
+- E13 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=4, in-process timing] BLOCK_K 128, 8 warps, KROT 0 over 256, 4, 1, hot: 1.08–1.13× (`8307d207feb8e734`; AKLR@43e112e)
 - E14 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, `aklr validate` twice per variant, one input set] router `c3889614985b700a`, GDN decode `fc261961f0ad572d`: 2 of 2 failed; gated attention scale relative L2 0.003233 → 0.003269 (AKLR@43e112e)
 - E15 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, 1 GiB bf16 Gluon stream, 12 timing blocks] paired 95% intervals 0.8665–0.8692, 0.7437–0.7452, 0.8539–0.8546; A/A within ±1% (#89)
 - E16 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, capture probes and `aklr validate`] a capture-compiling variant failed bench without `capture_unsafe`; a new autotune key re-timed 3 configs, 0 compiles (AKLR@43e112e)
