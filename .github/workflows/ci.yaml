@@ -49,7 +49,7 @@ defaults:
 
 jobs:
   # The audit gate rejects invalid schemas, audit violations and mixed changes
-  # before any GPU node is requested.
+  # before any GPU job starts.
   code-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -58,8 +58,7 @@ jobs:
       actions: read
       pull-requests: read
     env:
-      # Forks too: gpu-node.yaml holds a fork PR, or one whose author or sender lacks write access,
-      # for approval.
+      # Forks too: the repository's Actions settings hold an external contributor's run for approval.
       GPU_ENABLED: >-
         ${{ github.event_name != 'pull_request' ||
             contains(github.event.pull_request.labels.*.name, 'ci:gpu') }}
@@ -76,7 +75,7 @@ jobs:
       - name: Report whether GPU jobs run
         run: |
           if [[ $GPU_ENABLED == true ]]; then
-            echo '🟢 GPU jobs are eligible: aiter-test, then sglang-test, then vllm-test.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '🟢 GPU jobs are eligible: aiter-test, sglang-test and vllm-test.' | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo '⏭️ PR GPU jobs require the ci:gpu label.' | tee -a "$GITHUB_STEP_SUMMARY"
           fi
@@ -86,7 +85,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # The test jobs' images and the baseline AITER (ROCm/aiter at this commit, installed in
-      # aiter-test); container.image reads them from this job's outputs.
+      # aiter-test); the test jobs read them from this job's outputs.
       - name: Read stack.json
         id: stack
         run: |
@@ -166,33 +165,20 @@ jobs:
             exit "$code"
           fi
 
-  # The Spur host's jobs run from main, never from a PR's own workflow (gpu-node.yaml);
-  # a local ./ path would be the PR's copy.
-  prepare-gpu:
+  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; beside it sglang-test and
+  # vllm-test. No secrets and no actions/cache: they run the PR's code and kernels.
+  aiter-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@main
-    with:
-      operation: prepare
-
-  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; then sglang-test and
-  # vllm-test on the same node. No secrets and no actions/cache: they run the PR's code and kernels.
-  aiter-test:
-    needs: [code-lint, prepare-gpu]
-    # "Re-run failed jobs" reuses an earlier attempt's node, which release-gpu already freed.
-    if: needs.prepare-gpu.outputs.attempt == github.run_attempt
-    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
-    container:
-      image: ${{ needs.code-lint.outputs.aiter_image }}
-      options: &gpu_container_options >-
-        --device=/dev/kfd --device=/dev/dri --ipc=host
-        --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
+    runs-on: aklr-safe
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema.
-    # The three test jobs run within the node's lease (manage_spur_runner.sh, 8 hours unless
-    # AKLR_SPUR_TIME_LIMIT): their timeouts sum under it.
-    timeout-minutes: 180
+    # TIMEOUT_MINUTES limits the run on the GPU node; timeout-minutes also covers the wait for one.
+    timeout-minutes: 480
     env:
+      TIMEOUT_MINUTES: 180
+      IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
       TESTS: tests/core tests/ops tests/benchmarks
+      AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
     steps:
       - &checkout_source
         name: Checkout source
@@ -200,44 +186,43 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - &prepare_environment
-        name: Prepare caches and devices
-        run: | # zizmor: ignore[github-env] fixed local workspace paths are exported
-          # The host runner user owns the checkout, the container runs as root.
-          git config --global --add safe.directory '*'
-          # Under $RUNNER_TEMP, which the runner empties at the start of every job.
-          state=$RUNNER_TEMP/aklr-ci
-          cache=$state/cache
-          mkdir -p "$state/test-reports" "$cache"
-          # AITER JIT-builds for these archs.
-          gpu_archs=$(python3 -c 'import torch; assert torch.version.hip and torch.cuda.is_available(), "no ROCm GPU"; print(";".join(sorted({torch.cuda.get_device_properties(i).gcnArchName.split(":")[0] for i in range(torch.cuda.device_count())})))')
-          echo "🔧 GPU_ARCHS=$gpu_archs"
-          {
-            echo "AKLR_CI_STATE_DIR=$state"
-            echo "GPU_ARCHS=$gpu_archs"
-            echo "FLYDSL_RUNTIME_CACHE_DIR=$cache/flydsl-runtime"
-            echo "FLYDSL_AUTOTUNE_CACHE_DIR=$cache/flydsl-autotune"
-            echo "TRITON_CACHE_DIR=$cache/triton"
-            echo "XDG_CACHE_HOME=$cache/xdg"
-            echo "AKLR_KERNEL_CACHE_DIR=$cache/aklr-kernels"
-            # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
-            echo "TMPDIR=$state"
-          } >> "$GITHUB_ENV"
-      - name: Install the baseline AITER and AKLR
+      - &gpu_tests
+        name: Run unit tests (${{ env.TESTS }}) and validation on a GPU node
+        shell: bash .github/scripts/safe_job.sh {0}
         env:
-          AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
-        run: | # zizmor: ignore[github-env] a fixed local workspace path is exported
-          # Not aiter's default, its site-packages tree or, if that is read-only, ~/.aiter, which outlives the job.
-          export AITER_JIT_DIR=$AKLR_CI_STATE_DIR/cache/aiter-jit
-          echo "AITER_JIT_DIR=$AITER_JIT_DIR" >> "$GITHUB_ENV"
-          # Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins.
-          image_triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
-          AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
-          python3 -m pip install -e .
-          triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
-          [[ $triton == "$image_triton" ]] || { echo "::error::The image's Triton $image_triton became $triton"; exit 1; }
-          # The aiter Python imports is the one just installed, not the image's copy on sys.path.
-          python3 - <<'PY'
+          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER PLUGINS
+          VALIDATE: ${{ needs.code-lint.outputs.has_bench_paths }}
+          BASE: ${{ needs.code-lint.outputs.validation_base }}
+          MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
+        run: |
+          set -euo pipefail
+          state=$(mktemp -d)
+          reports=$REPORTS
+          cache=$state/cache
+          mkdir -p "$reports/test-reports" "$cache"
+
+          export PYTHONDONTWRITEBYTECODE=1
+          git config --global --add safe.directory '*'
+          # AITER JIT-builds for these archs.
+          GPU_ARCHS=$(python3 -c 'import torch; assert torch.version.hip and torch.cuda.is_available(), "no ROCm GPU"; print(";".join(sorted({torch.cuda.get_device_properties(i).gcnArchName.split(":")[0] for i in range(torch.cuda.device_count())})))')
+          echo "🔧 GPU_ARCHS=$GPU_ARCHS"
+          export GPU_ARCHS FLYDSL_RUNTIME_CACHE_DIR=$cache/flydsl-runtime FLYDSL_AUTOTUNE_CACHE_DIR=$cache/flydsl-autotune \
+            TRITON_CACHE_DIR=$cache/triton XDG_CACHE_HOME=$cache/xdg AKLR_KERNEL_CACHE_DIR=$cache/aklr-kernels
+          # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
+          export TMPDIR=$state
+
+          if [[ -n ${AKLR_BASELINE_AITER:-} ]]; then
+            echo '::group::Install the baseline AITER and AKLR'
+            # Not aiter's default, its site-packages tree.
+            export AITER_JIT_DIR=$cache/aiter-jit
+            # Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins.
+            image_triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
+            AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
+            python3 -m pip install -e .
+            triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
+            [[ $triton == "$image_triton" ]] || { echo "::error::The image's Triton $image_triton became $triton"; exit 1; }
+            # The aiter Python imports is the one just installed, not the image's copy on sys.path.
+            python3 - <<'PY'
           import json
           import os
           from importlib.metadata import distribution, version
@@ -251,42 +236,66 @@ jobs:
           assert commit == os.environ["AKLR_BASELINE_AITER"], commit
           print("amd-aiter", version("amd-aiter"), "at", installed)
           PY
-      - &enable_coverage
-        name: Enable coverage and test tools
-        id: coverage_setup
-        run: | # zizmor: ignore[github-env] fixed local workspace paths are exported
+          else
+            echo '::group::Install AKLR'
+            python3 -m pip install -e .
+          fi
+          echo '::endgroup::'
+
+          echo '::group::Enable coverage and test tools'
           # Install coverage over any copy the image ships, so pip never has to uninstall it.
           python3 -m pip install --ignore-installed 'coverage[toml]==7.16.0'
           python3 -m pip install 'pytest-timeout==2.4.0' 'expecttest==0.3.0'
           site_packages=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
           echo 'import coverage; coverage.process_startup()' > "$site_packages/coverage_subprocess.pth"
-          {
-            echo "COVERAGE_FILE=$AKLR_CI_STATE_DIR/.coverage"
-            echo "COVERAGE_PROCESS_START=$GITHUB_WORKSPACE/pyproject.toml"
-          } >> "$GITHUB_ENV"
-      - &unit_tests
-        name: Run unit tests (${{ env.TESTS }})
-        timeout-minutes: 30
-        run: |
+          export COVERAGE_FILE=$state/.coverage COVERAGE_PROCESS_START=$PWD/pyproject.toml
+          echo '::endgroup::'
+
+          echo "::group::Run unit tests ($TESTS)"
+          tests=0
           # shellcheck disable=SC2086 # TESTS is a list of paths
           timeout -k 60s 25m python3 -m coverage run -m pytest -v $TESTS \
             --timeout=600 --timeout-method=thread \
-            --junitxml="$AKLR_CI_STATE_DIR/test-reports/aklr.xml" \
-            2>&1 | tee "$AKLR_CI_STATE_DIR/test-reports/aklr.log"
-      - &combine_coverage
-        name: Combine and stage coverage data
-        if: always() && steps.coverage_setup.outcome == 'success'
-        run: |
+            --junitxml="$reports/test-reports/aklr.xml" \
+            2>&1 | tee "$reports/test-reports/aklr.log" || tests=$?
+          echo '::endgroup::'
+          # The coverage of failed tests is reported too. From here on its tracer would skew the measurements.
           unset COVERAGE_PROCESS_START
-          python3 -m coverage combine --append "$AKLR_CI_STATE_DIR"
-          cp "$COVERAGE_FILE" "$RUNNER_TEMP/coverage_data_$GITHUB_JOB"
+          python3 -m coverage combine --append "$state"
+          cp "$COVERAGE_FILE" "$reports/coverage_data_$GITHUB_JOB"
+          [[ $tests == 0 ]] || { echo "::error::Unit tests failed (exit $tests)"; exit "$tests"; }
+
+          [[ ${VALIDATE:-} == true ]] || exit 0
+          # The exit code is the conclusion; report.md's first line says which failure.
+          flags=(${BASE:+--base "$BASE"})
+          [[ ${MEASURED_BY_BOT:-} != true ]] || flags+=(--allow-measured-edits)
+          if [[ -n ${AKLR_BASELINE_AITER:-} ]]; then
+            echo '::group::Validate aklr/ops'
+            # FIXME: mega_moe's baseline JIT-builds mori's device bitcode, which misses TheRock's
+            # <libdrm/drm.h> (mori/jit/core.py::_collect_include_dirs, ROCm/mori 29e0c086); measure
+            # mega_moe again once the image ships a mori that finds it.
+            python3 -m aklr validate "${flags[@]}" --under aklr/ops --exclude aklr/ops/mega_moe \
+              --out "$reports/validation-report"
+          else
+            : "${PLUGINS:?}"
+            echo "::group::Validate plugins ($PLUGINS), check aklr/ops"
+            plugins=0 ops=0
+            # shellcheck disable=SC2086 # PLUGINS is a list of flags
+            python3 -m aklr validate "${flags[@]}" $PLUGINS --out "$reports/validation-report" || plugins=$?
+            python3 -m aklr validate "${flags[@]}" --under aklr/ops --no-timing --out "$reports/validation-check" || ops=$?
+            exit $((plugins ? plugins : ops))
+          fi
+      - &finish_gpu_tests
+        name: Delete the GPU workload
+        if: always()
+        run: bash .github/scripts/safe_job.sh delete
       - &upload_coverage
         name: Upload coverage (coverage-${{ github.job }})
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ github.job }}
-          path: ${{ runner.temp }}/coverage_data_${{ github.job }}
+          path: ${{ runner.temp }}/gpu-reports/coverage_data_${{ github.job }}
           if-no-files-found: warn
       - &upload_test_logs
         name: Upload test logs (unittest-${{ github.job }}-logs)
@@ -294,24 +303,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: unittest-${{ github.job }}-logs
-          path: ${{ runner.temp }}/aklr-ci/test-reports/
+          path: ${{ runner.temp }}/gpu-reports/test-reports/
           if-no-files-found: warn
-      # The exit code is the conclusion; report.md's first line says which failure.
-      - name: Validate aklr/ops
-        if: needs.code-lint.outputs.has_bench_paths == 'true'
-        env:
-          BASE: ${{ needs.code-lint.outputs.validation_base }}
-          MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
-          # Coverage's tracer would skew the measurements.
-          COVERAGE_PROCESS_START: ''
-        run: |
-          flags=(${BASE:+--base "$BASE"})
-          [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
-          # FIXME: mega_moe's baseline JIT-builds mori's device bitcode, which misses TheRock's
-          # <libdrm/drm.h> (mori/jit/core.py::_collect_include_dirs, ROCm/mori 29e0c086); measure
-          # mega_moe again once the image ships a mori that finds it.
-          python3 -m aklr validate "${flags[@]}" --under aklr/ops --exclude aklr/ops/mega_moe \
-            --out "$RUNNER_TEMP/validation-report"
       - &summarize
         # The PR head the reviewer signs; the checkout is the merge commit.
         name: Summarize
@@ -320,7 +313,7 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           [[ -z $PR_HEAD ]] || echo "PR head: \`$PR_HEAD\`" >> "$GITHUB_STEP_SUMMARY"
-          for report in "$RUNNER_TEMP"/validation-*/report.md; do
+          for report in "$RUNNER_TEMP"/gpu-reports/validation-*/report.md; do
             [[ ! -f $report ]] || cat "$report" >> "$GITHUB_STEP_SUMMARY"
           done
       - &upload_report
@@ -329,56 +322,28 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: validation-report-${{ github.job }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/validation-report/
+          path: ${{ runner.temp }}/gpu-reports/validation-report/
           retention-days: 90
-      # The container writes as root; the non-root runner must clean up before the next job on this node.
-      - &normalize_work_permissions
-        name: Normalize this job's work permissions
-        if: always()
-        working-directory: /
-        run: chmod -R a+rwX /__w
 
   # sglang-test: the sglang image as it ships, AKLR alone installed. Its plugins are timed against
   # sglang's own code; aklr/ops is built and checked only, its timing being aiter-test's.
   # aklr/plugins/vllm is vllm-test's.
   sglang-test:
-    needs: [code-lint, prepare-gpu, aiter-test]
-    # After aiter-test on the same node, whatever its result.
-    if: ${{ !cancelled() && needs.prepare-gpu.result == 'success' && needs.prepare-gpu.outputs.attempt == github.run_attempt }}
-    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
-    container:
-      image: ${{ needs.code-lint.outputs.sglang_image }}
-      options: *gpu_container_options
-    timeout-minutes: 150
+    needs: code-lint
+    if: needs.code-lint.outputs.gpu_enabled == 'true'
+    runs-on: aklr-safe
+    timeout-minutes: 480
     env:
+      TIMEOUT_MINUTES: 150
+      IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
       TESTS: tests/plugins/aiter tests/plugins/sglang
       PLUGINS: --under aklr/plugins --exclude aklr/plugins/vllm
     steps:
       - *checkout_source
-      - *prepare_environment
-      - &install_aklr
-        name: Install AKLR
-        run: python3 -m pip install -e .
-      - *enable_coverage
-      - *unit_tests
-      - *combine_coverage
+      - *gpu_tests
+      - *finish_gpu_tests
       - *upload_coverage
       - *upload_test_logs
-      - &validate_plugins
-        name: Validate plugins (${{ env.PLUGINS }}), check aklr/ops
-        if: needs.code-lint.outputs.has_bench_paths == 'true'
-        env:
-          BASE: ${{ needs.code-lint.outputs.validation_base }}
-          MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
-          COVERAGE_PROCESS_START: ''
-        run: |
-          flags=(${BASE:+--base "$BASE"})
-          [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
-          plugins=0 ops=0
-          # shellcheck disable=SC2086 # PLUGINS is a list of flags
-          python3 -m aklr validate "${flags[@]}" $PLUGINS --out "$RUNNER_TEMP/validation-report" || plugins=$?
-          python3 -m aklr validate "${flags[@]}" --under aklr/ops --no-timing --out "$RUNNER_TEMP/validation-check" || ops=$?
-          exit $((plugins ? plugins : ops))
       - *summarize
       - *upload_report
       - &upload_check
@@ -387,53 +352,33 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: validation-check-${{ github.job }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/validation-check/
+          path: ${{ runner.temp }}/gpu-reports/validation-check/
           retention-days: 90
-      - *normalize_work_permissions
 
   # vllm-test: the vllm image as it ships, AKLR alone installed. aklr/plugins/vllm is timed in it;
   # aklr/ops is built and checked only, as in sglang-test.
   vllm-test:
-    needs: [code-lint, prepare-gpu, sglang-test]
-    # After sglang-test on the same node, whatever its result.
-    if: ${{ !cancelled() && needs.prepare-gpu.result == 'success' && needs.prepare-gpu.outputs.attempt == github.run_attempt }}
-    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
-    container:
-      image: ${{ needs.code-lint.outputs.vllm_image }}
-      options: *gpu_container_options
-    timeout-minutes: 60
+    needs: code-lint
+    if: needs.code-lint.outputs.gpu_enabled == 'true'
+    runs-on: aklr-safe
+    timeout-minutes: 480
     env:
+      TIMEOUT_MINUTES: 60
+      IMAGE: ${{ needs.code-lint.outputs.vllm_image }}
       TESTS: tests/plugins/vllm
       PLUGINS: --under aklr/plugins/vllm
     steps:
       - *checkout_source
-      - *prepare_environment
-      - *install_aklr
-      - *enable_coverage
-      - *unit_tests
-      - *combine_coverage
+      - *gpu_tests
+      - *finish_gpu_tests
       - *upload_coverage
       - *upload_test_logs
-      - *validate_plugins
       - *summarize
       - *upload_report
       - *upload_check
-      - *normalize_work_permissions
-
-  # After the last GPU job, so the node is freed while coverage-report runs. Also after a
-  # failed or cancelled prepare-gpu: it may have submitted before failing.
-  release-gpu:
-    needs: [prepare-gpu, aiter-test, sglang-test, vllm-test]
-    if: always() && needs.prepare-gpu.result != 'skipped'
-    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@main
-    with:
-      operation: release
-      # The node of the attempt that allocated it, not necessarily the current attempt's.
-      runner_label: ${{ needs.prepare-gpu.outputs.runner_label }}
-      allocation_id: ${{ needs.prepare-gpu.outputs.allocation_id }}
 
   coverage-report:
-    needs: [code-lint, prepare-gpu, aiter-test, sglang-test, vllm-test]
+    needs: [code-lint, aiter-test, sglang-test, vllm-test]
     # The required check: always runs, since a skipped job would satisfy one on its own.
     if: always()
     runs-on: ubuntu-latest
@@ -518,13 +463,12 @@ jobs:
         env:
           LINT: ${{ needs.code-lint.result }}
           GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
-          GPU_RESULTS: ${{ needs.prepare-gpu.result }} ${{ needs.aiter-test.result }} ${{ needs.sglang-test.result }} ${{ needs.vllm-test.result }}
+          GPU_RESULTS: ${{ needs.aiter-test.result }} ${{ needs.sglang-test.result }} ${{ needs.vllm-test.result }}
         run: |
           [[ $LINT == success ]] || { echo '::error::code-lint did not succeed'; exit 1; }
           [[ $GPU_ENABLED == true ]] || exit 0
-          # The test jobs are skipped after "Re-run failed jobs", which reuses a released node.
-          [[ $GPU_RESULTS == 'success success success success' ]] ||
-            { echo "::error::prepare-gpu, aiter-test, sglang-test, vllm-test: $GPU_RESULTS; after Re-run failed jobs, use Re-run all jobs."; exit 1; }
+          [[ $GPU_RESULTS == 'success success success' ]] ||
+            { echo "::error::aiter-test, sglang-test, vllm-test: $GPU_RESULTS"; exit 1; }
 
   # Publishes a main push run's measurements through one rolling bot PR, aklr-perf/main
   # -> main; no GPU, never runs PR code. The artifact is untrusted: only measured-field
