@@ -3,12 +3,14 @@
 
 """Kernel benchmark sessions backed by AKLR's graph node attribution.
 
-One session owns the collector until finalized. Its tree contains explicit Python
-scopes and kernel leaves; CPU op tracing and a second GPU profiler are unnecessary.
+Sessions share the collector, one per thread at a time: each takes back the replays its
+scopes captured. Its tree contains explicit Python scopes and kernel leaves; CPU op tracing
+and a second GPU profiler are unnecessary.
 """
 
 from __future__ import annotations
 
+import itertools
 import json
 import threading
 from contextlib import contextmanager
@@ -18,6 +20,9 @@ from aklr.core.utils.testing import kernel_tracer
 
 
 class _Session:
+    _scope_ids = itertools.count(1)  # unique across the sessions sharing the collector
+    _current = threading.local()  # each thread's open session
+
     def __init__(self, name):
         self.name = name
         self.tracer = kernel_tracer()
@@ -40,7 +45,7 @@ class _Session:
         try:
             torch.cuda.synchronize()
         finally:
-            records = self.tracer.stop()
+            records = self.tracer.stop([scope_id for scope_id in self.nodes if scope_id])
         for scope_id, name, nanoseconds, exec_id, node_id, groups in records:
             self.nodes[scope_id]["children"].append(
                 {
@@ -52,34 +57,28 @@ class _Session:
         self.complete = True
 
 
-_session = None
-_lifecycle_lock = threading.RLock()
-
-
 def start(name, *, context="shadow", data="tree"):
-    with _lifecycle_lock:
-        global _session
-        if context != "shadow" or data != "tree":
-            raise ValueError("the kernel profiler supports context='shadow', data='tree' only")
-        if _session is not None:
-            raise RuntimeError("a kernel profiler session is already open")
-        session = _Session(name)
-        session.tracer.start()
-        session.active = True
-        _session = session
-        return session
+    if context != "shadow" or data != "tree":
+        raise ValueError("the kernel profiler supports context='shadow', data='tree' only")
+    if getattr(_Session._current, "session", None) is not None:
+        raise RuntimeError("a kernel profiler session is already open in this thread")
+    session = _Session(name)
+    session.tracer.start()
+    session.active = True
+    _Session._current.session = session
+    return session
 
 
 @contextmanager
 def scope(name):
-    session = _session
+    session = getattr(_Session._current, "session", None)
     if session is None or not session.active:
         raise RuntimeError("a kernel profiler scope requires an active session")
     stack = getattr(session.local, "stack", ())
     parent = stack[-1] if stack else 0
     key = parent, name
     if key not in session.scopes:
-        scope_id = len(session.nodes)
+        scope_id = next(_Session._scope_ids)
         session.scopes[key] = scope_id
         node = {"frame": {"name": name}, "children": []}
         session.nodes[scope_id] = node
@@ -99,12 +98,11 @@ def scope(name):
 
 
 def deactivate(session, *, flushing=True):
-    with _lifecycle_lock:
-        if session is not _session:
-            raise RuntimeError("the kernel profiler session is not open")
-        if not flushing:
-            raise ValueError("kernel timing requires flushing the session")
-        session.deactivate()
+    if session is not getattr(_Session._current, "session", None):
+        raise RuntimeError("the kernel profiler session is not open")
+    if not flushing:
+        raise ValueError("kernel timing requires flushing the session")
+    session.deactivate()
 
 
 def get_data(session):
@@ -114,15 +112,13 @@ def get_data(session):
 
 
 def finalize(session):
-    with _lifecycle_lock:
-        global _session
-        if session is not _session:
-            raise RuntimeError("the kernel profiler session is not open")
-        if session.open_scopes:
-            raise RuntimeError("cannot finalize a kernel profiler session inside a scope")
-        try:
-            session.deactivate()
-            if session.complete:
-                Path(f"{session.name}.hatchet").write_text(json.dumps(get_data(session)))
-        finally:
-            _session = None
+    if session is not getattr(_Session._current, "session", None):
+        raise RuntimeError("the kernel profiler session is not open")
+    if session.open_scopes:
+        raise RuntimeError("cannot finalize a kernel profiler session inside a scope")
+    try:
+        session.deactivate()
+        if session.complete:
+            Path(f"{session.name}.hatchet").write_text(json.dumps(get_data(session)))
+    finally:
+        _Session._current.session = None

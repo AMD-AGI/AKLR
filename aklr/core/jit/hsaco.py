@@ -55,7 +55,19 @@ class Kernel:
         index = None if device is None else torch.device(device).index
         if index is None:
             index = torch.cuda.current_device()
-        function = self._function(index)
+        function = self._functions.get(index)
+        if function is None:
+            loaded = _MODULES.get((index, self._digest))
+            if loaded is None:
+                module = ctypes.c_void_p()
+                with torch.cuda.device(index):
+                    status = _hip().hipModuleLoadData(ctypes.byref(module), self._code_object)
+                _check(status, "loading a code object")
+                loaded = _MODULES[(index, self._digest)] = (module, self._code_object)
+            function = ctypes.c_void_p()
+            status = _hip().hipModuleGetFunction(ctypes.byref(function), loaded[0], self._symbol.encode())
+            _check(status, f"finding {self._symbol} in its code object")
+            self._functions[index] = function
         grid_x, grid_y, grid_z = (*grid, 1, 1)[:3]
         block_x, block_y, block_z = (*block, 1, 1)[:3]
         buffer = ctypes.create_string_buffer(bytes(kernarg), len(kernarg))
@@ -68,27 +80,6 @@ class Kernel:
             function, grid_x, grid_y, grid_z, block_x, block_y, block_z, shared_memory, stream, None, extra
         )
         _check(status, f"launching {self._symbol}")
-
-    def _function(self, index: int) -> ctypes.c_void_p:
-        function = self._functions.get(index)
-        if function is None:
-            function = ctypes.c_void_p()
-            status = _hip().hipModuleGetFunction(
-                ctypes.byref(function), self._module(index), self._symbol.encode()
-            )
-            _check(status, f"finding {self._symbol} in its code object")
-            self._functions[index] = function
-        return function
-
-    def _module(self, index: int) -> ctypes.c_void_p:
-        loaded = _MODULES.get((index, self._digest))
-        if loaded is None:
-            module = ctypes.c_void_p()
-            with torch.cuda.device(index):
-                status = _hip().hipModuleLoadData(ctypes.byref(module), self._code_object)
-            _check(status, "loading a code object")
-            loaded = _MODULES[(index, self._digest)] = (module, self._code_object)
-        return loaded[0]
 
 
 @functools.cache
