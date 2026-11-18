@@ -266,6 +266,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Detached at this run's commit, so checkout leaves origin/main at main's tip for the check below.
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Check that this run measured a commit on main

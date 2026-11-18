@@ -163,6 +163,8 @@ def test_only_main_schedules_and_manual_runs_publish():
     assert job["environment"] == "bot"
     assert job["concurrency"] == {"group": "site-data", "cancel-in-progress": False}
     runs = [step.get("run", "") for step in job["steps"]]
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout"))
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
     check = runs.index('git merge-base --is-ancestor "$GITHUB_SHA" origin/main')
     assert check < next(i for i, run in enumerate(runs) if "commit_site_data.sh agentx" in run)
 
@@ -174,3 +176,6 @@ def test_the_site_workflow_deploys_only_after_main_runs():
     assert workflow("agentx-ci.yaml")["name"] == "AKLR-agentx-ci"
     assert site["jobs"]["deploy"]["permissions"]["pages"] == "write"
     assert "github.event.workflow_run.event" in site["jobs"]["deploy"]["if"]
+    data = next(step for step in site["jobs"]["deploy"]["steps"] if step.get("id") == "data")
+    assert "[[ $status == 2 ]]" in data["run"]
+    assert 'exit "$status"' in data["run"]
