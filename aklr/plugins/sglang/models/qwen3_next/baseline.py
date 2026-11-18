@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on ROCm between Qwen3GatedDeltaNet's input projections and
+"""What sglang 0.5.23 runs on ROCm between Qwen3GatedDeltaNet's input projections and
 out_proj: the grouped Q/K/V/Z and B/A unpack, the indexed convolution, the gated delta
 recurrence (packed decode, or chunked prefill), FusedRMSNormGated, then the AITER
 per-1x128 FP8 quantization that the block-FP8 out_proj applies to its BF16 input.
@@ -62,7 +62,7 @@ def qwen3_next_gdn_prefill_group_fp8_quant_baseline(
 ):
     import torch
     from sglang.kernels.ops.attention.fla.chunk import chunk_gated_delta_rule
-    from sglang.kernels.ops.attention.fla.fused_gdn_gating import fused_gdn_gating
+    from sglang.kernels.ops.attention.linear.fused_gdn_gating import fused_gdn_gating
     from sglang.kernels.ops.attention.triton_gdn_fused_proj import (
         fused_qkv_split_gdn_prefill,
         fused_qkvzba_split_reshape_cat,
@@ -208,14 +208,14 @@ def qwen3_next_gated_attention_decode_group_fp8_quant_baseline(
     and K, the rotary module's sgl_kernel rotary_embedding (BF16 arithmetic), the aiter
     backend's forward_decode (its fused FP8 KV write, then paged_attention_ragged over
     one-token pages at unit KV scales, its partitions sized for a max_context-token server),
-    sigmoid_gate_mul, then the per-1x128 AITER quantization the block-FP8 o_proj applies to
+    fused_sigmoid_mul, then the per-1x128 AITER quantization the block-FP8 o_proj applies to
     its BF16 input (row-major scales)."""
     import aiter
     import torch
     from sgl_kernel import rotary_embedding
+    from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
     from sglang.kernels.ops.kvcache.cache_ops import launch_reshape_and_cache_flash
     from sglang.kernels.ops.layernorm.minimax_m3_rmsnorm import gemma_rmsnorm
-    from sglang.kernels.ops.moe.triton_sigmoid_gate_mul import sigmoid_gate_mul
 
     rows, device = projected_qkv.shape[0], projected_qkv.device
     _, kv_heads, head_dim = key_cache.shape
@@ -264,7 +264,7 @@ def qwen3_next_gated_attention_decode_group_fp8_quant_baseline(
         None,
         _PARTITION_SIZE,
     )
-    gated = sigmoid_gate_mul(attended, gate)
+    gated = fused_sigmoid_mul(attended, gate)
     quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
     quantized, factors = quantize(gated, quant_dtype=aiter.dtypes.fp8)
     return quantized.view(rows, heads, head_dim), factors

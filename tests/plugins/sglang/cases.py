@@ -703,6 +703,14 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         layout_variant_name="row_major",
     ),
 )
+# test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
+# tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
+BACKEND_POINTS: tuple[PointSpec, ...] = tuple(
+    point.model_copy(update={"axes": {**point.axes, "latent_dim": 3584, "n_routed": 896, "inter_dim": 384}})
+    if point.contract_id == "kimi_k3_latent_moe@1.0"
+    else point
+    for point in SMALL_POINTS
+)
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
     {

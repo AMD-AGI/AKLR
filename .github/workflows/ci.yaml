@@ -238,13 +238,17 @@ jobs:
           [[ $triton == "$image_triton" ]] || { echo "::error::The image's Triton $image_triton became $triton"; exit 1; }
           # The aiter Python imports is the one just installed, not the image's copy on sys.path.
           python3 - <<'PY'
+          import json
           import os
           from importlib.metadata import distribution, version
           from pathlib import Path
           import aiter
-          installed = Path(distribution("amd-aiter").locate_file("aiter/__init__.py")).resolve()
+          dist = distribution("amd-aiter")
+          installed = Path(dist.locate_file("aiter/__init__.py")).resolve()
           assert Path(aiter.__file__).resolve() == installed, aiter.__file__
-          assert f"+g{os.environ['AKLR_BASELINE_AITER'][:7]}" in version("amd-aiter"), version("amd-aiter")
+          # pip's record of the commit it built: a release tag's version carries none
+          commit = json.loads(dist.read_text("direct_url.json"))["vcs_info"]["commit_id"]
+          assert commit == os.environ["AKLR_BASELINE_AITER"], commit
           print("amd-aiter", version("amd-aiter"), "at", installed)
           PY
       - &enable_coverage

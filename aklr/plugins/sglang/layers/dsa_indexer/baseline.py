@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on HIP (SGLANG_USE_AITER=1, aiter's preshuffled index-K pages) for
+"""What sglang 0.5.23 runs on HIP (SGLANG_USE_AITER=1, aiter's preshuffled index-K pages) for
 the indexer's preparation in Indexer.forward_cuda's standard path (_get_q_k_bf16, act_quant,
 _store_index_k_cache, _get_logits_head_gate) and in _forward_cuda_k_only (_get_k_bf16,
 _store_index_k_cache), call for call."""
@@ -131,7 +131,7 @@ def dsa_indexer_prepare_baseline(
 ):
     """forward_cuda's standard path up to the scores: (q_fp8, head_weights), the keys stored;
     act_quant is sglang's tilelang kernel on HIP."""
-    from sglang.kernels.ops.attention.dsa.tilelang_kernel import act_quant
+    from sglang.kernels.ops.quantization.act_quant_tilelang import act_quant
 
     _check_aiter_path()
     n_heads = weights_proj.shape[0]
