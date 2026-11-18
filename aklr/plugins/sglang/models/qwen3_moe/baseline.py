@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on aiter on gfx950 for Qwen3MoeSparseMoeBlock.forward_normal with
-fp8 experts: the gate as ReplicatedLinear runs it, TopK's softmax top-k with renormalize
+"""What sglang 0.5.22 and 0.5.23 run on aiter on gfx950 for Qwen3MoeSparseMoeBlock.forward_normal
+with fp8 experts: the gate as ReplicatedLinear runs it, TopK's softmax top-k with renormalize
 (select_experts' fused_topk, which calls aiter's fused_topk), then FusedMoE on aiter's runner:
 aiter's fused_moe at per_128x128 (which quantizes the activations per 1 x 128). The runner's
 gfx950 small-M kernel takes only top-10 or top-11 routing at hidden size 4096 (Qwen3.5), never

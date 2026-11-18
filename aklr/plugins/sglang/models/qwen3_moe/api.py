@@ -23,11 +23,13 @@ def qwen3_moe_fp8_moe(
 ): ...
 
 
-@sglang_route("sglang.srt.models.qwen3_moe.Qwen3MoeSparseMoeBlock.forward_normal", versions=("0.5.22",))
+@sglang_route(
+    "sglang.srt.models.qwen3_moe.Qwen3MoeSparseMoeBlock.forward_normal", versions=("0.5.22", "0.5.23")
+)
 def _moe_forward_normal(self, hidden_states):
     """The block's gate, top-k and experts on this rank as one op call; sglang's layer
     boundary sums the ranks' shares after it, as it does sglang's own."""
-    if moe_blocks.runtime_falls_back() or _block_falls_back(self):
+    if _masks_padded_rows() or moe_blocks.runtime_falls_back() or _block_falls_back(self):
         return FallbackReason.OUT_OF_CONTRACT
     experts = self.experts
     return qwen3_moe_fp8_moe(
@@ -39,6 +41,17 @@ def _moe_forward_normal(self, hidden_states):
         w2_scale=experts.w2_weight_scale_inv,
         topk=self.topk.topk_config.top_k,
     )
+
+
+def _masks_padded_rows() -> bool:
+    """Whether sglang's top-k masks padded rows here: since 0.5.23 it takes the bound from the
+    forward context (resolve_routing_inputs), and the op routes every row."""
+    from sglang.srt.model_executor.forward_context import get_forward_context, has_forward_context
+
+    if not has_forward_context():
+        return False
+    get_bound = get_forward_context().moe_num_token_non_padded
+    return get_bound is not None and get_bound() is not None
 
 
 def _block_falls_back(block) -> bool:
