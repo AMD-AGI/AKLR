@@ -92,6 +92,8 @@ def experts_fall_back(experts, formats) -> bool:
         or config.swiglu_limit not in (None, 0.0)
         or getattr(experts, "w13_weight_bias", None) is not None
         or getattr(experts, "w2_weight_bias", None) is not None
+        # sglang 0.5.23 quantizes the activations of DeepSeek-V4.1's FP4 experts to MXFP8
+        or getattr(experts, "fp8_activations", False)
     )
 
 

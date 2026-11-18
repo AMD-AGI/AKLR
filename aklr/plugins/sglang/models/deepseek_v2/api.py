@@ -50,7 +50,7 @@ def deepseek_v2_fp8_moe(
 ): ...
 
 
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
 def _moe_forward_normal(
     self,
     hidden_states,
@@ -58,14 +58,14 @@ def _moe_forward_normal(
     input_ids=None,
     input_ids_global=None,
     skip_shared_experts=False,
-    num_token_non_padded=None,
     use_vision_topk=False,
     return_moe_output=False,
+    leave_output_sum=False,
 ):
     """The MoE's router, top-k and experts, the shared one last, as one op call; then
     forward_normal's all-reduce unless a later step sums the ranks."""
     if _forward_normal_falls_back(
-        self, skip_shared_experts, num_token_non_padded, use_vision_topk, return_moe_output
+        self, skip_shared_experts, use_vision_topk, return_moe_output or leave_output_sum
     ):
         return FallbackReason.OUT_OF_CONTRACT
     op, arguments = _moe_call(self, hidden_states)
@@ -81,14 +81,11 @@ def _moe_forward_normal(
 _EXPERT_FORMATS = ("QuarkW4A4MXFp4MoE", "Fp8MoEMethod")
 
 
-def _forward_normal_falls_back(
-    mlp, skip_shared_experts, num_token_non_padded, use_vision_topk, return_moe_output
-) -> bool:
+def _forward_normal_falls_back(mlp, skip_shared_experts, use_vision_topk, return_moe_output) -> bool:
     # a rank's share of the experts (expert parallelism) or the routed ones alone (the shared
     # expert apart) are another shape than the op's w1, which holds the shared one last
     return (
         skip_shared_experts
-        or num_token_non_padded is not None
         or use_vision_topk
         or return_moe_output
         or moe_blocks.runtime_falls_back()

@@ -40,13 +40,15 @@ def gemm(monkeypatch):
 @pytest.fixture
 def sglang(monkeypatch):
     """sglang's helpers the lm_head routes ask: a head is quantized where it carries ``quantized``, uses AMX where it
-    carries ``amx``."""
+    carries ``amx``; the DSpark module, without 0.5.23's fp8 head flag."""
     logits = ModuleType("sglang.srt.layers.logits_processor")
     logits.should_apply_lm_head_quant_method = lambda head, method: getattr(head, "quantized", False)
     common = ModuleType("sglang.srt.utils.common")
     common.use_intel_amx_backend = lambda head: getattr(head, "amx", False)
-    monkeypatch.setitem(sys.modules, logits.__name__, logits)
-    monkeypatch.setitem(sys.modules, common.__name__, common)
+    dspark = ModuleType("sglang.srt.models.dspark")
+    for module in (logits, common, dspark):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    return dspark
 
 
 def head(**traits):
@@ -56,7 +58,8 @@ def head(**traits):
 
 
 def processor(**changed):
-    return SimpleNamespace(**({"use_fp32_lm_head": False, "rl_on_policy_target": None} | changed))
+    defaults = {"use_fp32_lm_head": False, "use_fp32_lm_head_output": False, "rl_on_policy_target": None}
+    return SimpleNamespace(**(defaults | changed))
 
 
 def hidden(dtype=torch.bfloat16):
@@ -70,10 +73,11 @@ def hidden(dtype=torch.bfloat16):
         (head(quantized=True), processor()),
         (SimpleNamespace(quant_method=None), processor()),
         (head(), processor(use_fp32_lm_head=True)),
+        (head(), processor(use_fp32_lm_head_output=True)),
         (head(amx=True), processor()),
         (head(), processor(rl_on_policy_target="policy")),
     ],
-    ids=["lora", "quantized", "weightless", "fp32_logits", "amx", "rl"],
+    ids=["lora", "quantized", "weightless", "fp32_logits", "fp32_logits_output", "amx", "rl"],
 )
 def test_an_lm_head_sglang_treats_specially_stays_on_sglang(sglang, gemm, lm_head, logits):
     assert lm_head_route._compute_lm_head(logits, hidden(), lm_head) is FallbackReason.OUT_OF_CONTRACT
@@ -102,6 +106,12 @@ def test_a_quantized_draft_head_stays_on_sglang(sglang, gemm):
         dspark_route._project_through_lm_head(hidden(), head(quantized=True))
         is FallbackReason.OUT_OF_CONTRACT
     )
+    assert gemm.calls == []
+
+
+def test_the_fp8_draft_head_stays_on_sglang(sglang, gemm):
+    sglang._DSPARK_FP8_LM_HEAD = True
+    assert dspark_route._project_through_lm_head(hidden(), head()) is FallbackReason.OUT_OF_CONTRACT
     assert gemm.calls == []
 
 

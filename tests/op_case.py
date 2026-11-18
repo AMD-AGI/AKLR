@@ -7,11 +7,12 @@ import base64
 import functools
 import subprocess
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
+import pytest
 import torch
 
 from aklr.core.contract import semantics
@@ -161,6 +162,16 @@ class OpCase:
         return tuple(cls(point) for point in _SMALL_POINTS)
 
     @classmethod
+    def params(cls, points: Iterable[PointSpec]) -> list[Any]:
+        """The cases of ``points`` in contract order as pytest params: the contract id, and ``gfx950``
+        where the backend runs the Point only there."""
+        cases = [cls(point) for point in sorted(points, key=lambda point: point.contract_id)]
+        return [
+            pytest.param(case, id=case.contract_id, marks=[pytest.mark.gfx950] if case.needs_gfx950 else [])
+            for case in cases
+        ]
+
+    @classmethod
     def of(cls, contract_id: str) -> OpCase:
         """The first case of ``contract_id``; ``KeyError`` for a contract without one."""
         case = next((c for c in cls.all() if c.contract_id == contract_id), None)
@@ -270,3 +281,30 @@ class OpCase:
             {o: t.cpu() for o, t in actual_outputs.items()},
             **compare_kwargs,
         )
+
+    def check_backend_matches_reference(self) -> None:
+        """The backend, an implementation independent of the reference, checks the reference: equal
+        integer outputs, floating ones at an SQNR, the contract's own min_sqnr_db where it
+        declares one. Other bounds are the kernels', per element; the backend is held to 20 dB."""
+        args = self.inputs()
+        call = self.call(args, "cuda")
+        outputs = self.contract.call_mutable_tensors(self.contract.baseline()(**call), call)
+        results = self.compare(outputs, args, baseline_outputs=outputs)
+        output_specs = semantics.mutable_tensor_declarations(self.request.schema_json)
+        integral = {
+            o
+            for o, spec in output_specs.items()
+            if semantics.DTYPE_TRAITS[spec["dtype"]["any_of"][0]].is_integral
+        }
+        assert {o: results[o].detail for o in integral if not results[o].is_passed} == {}
+        reference = self.reference_outputs(args)
+        for o in output_specs.keys() - integral:
+            bound = output_specs[o]["error_bounds"][0][1]
+            # shortcut: 20 dB uncalibrated (MI300X skips), set from the gfx950 SQNRs once measured
+            min_sqnr_db = bound["min_sqnr_db"] if bound["kind"] == "sqnr" else 20.0
+            error = (outputs[o].cpu().double() - reference[o]).norm()
+            assert error <= 10 ** (-min_sqnr_db / 20) * reference[o].norm(), (
+                o,
+                min_sqnr_db,
+                (20 * (reference[o].norm() / error).log10()).item(),
+            )

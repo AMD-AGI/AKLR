@@ -47,7 +47,7 @@ def flash_mla_with_kvcache_baseline(
     take its multi-token path. It writes into the caller's output and lse when it passes
     them."""
     if kv_cache_format == "dsv4_fp8":
-        from sglang.kernels.ops.attention.dsa.tilelang_kernel import (
+        from sglang.kernels.ops.attention.dsv4.tilelang_fp8_attention import (
             dpsk_v4_fp8_attention_fwd,
         )
 

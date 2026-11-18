@@ -145,13 +145,14 @@ def prefill_ops(monkeypatch):
     return fp8, bf16
 
 
-def forward(layer, mode=ForwardMode.DECODE):
-    # a prefill of two fresh sequences of ROWS // 2 tokens
+def forward(layer, mode=ForwardMode.DECODE, **logical):
+    # a prefill of two fresh sequences of ROWS // 2 tokens; sglang 0.5.23 adds logical_forward_mode
     batch = SimpleNamespace(
         forward_mode=mode,
         extend_seq_lens_cpu=[ROWS // 2] * 2,
         batch_size=2,
         extend_prefix_lens=torch.zeros(2, dtype=torch.int32),
+        **logical,
     )
     return api._gdn_forward(layer, torch.zeros(ROWS, 4096), batch)
 
@@ -174,6 +175,15 @@ def test_a_block_fp8_layer_decodes_on_the_fp8_op_first(sglang, ops, fp8_declines
     else:
         assert projected is fp8.result
     assert len(sglang.tracked) == 1
+
+
+def test_a_dp_relabeled_decode_decodes(sglang, ops):
+    """sglang 0.5.23 relabels a decode batch a one-token extend under DP attention; its linear
+    attention backend, and the route, read the decode behind the label."""
+    fp8, bf16 = ops
+    layer = Layer((UnquantizedLinearMethod(),) * 3)
+    assert forward(layer, ForwardMode.EXTEND, logical_forward_mode=ForwardMode.DECODE) == "out_proj output"
+    assert bf16.calls and not fp8.calls
 
 
 def test_an_unquantized_layer_decodes_on_the_bf16_op_alone(sglang, ops):

@@ -10,7 +10,7 @@ from aklr.plugins.vllm.models.muse_spark.contract import MUSE_SPARK_MOE
 
 __all__ = ["muse_spark_moe"]
 
-_VERSIONS = ("0.33.0rc1.dev910", "0.33.0")
+_VERSIONS = ("0.34.0",)
 _NORM_EXPERTS_GROUP = "muse_spark.norm_experts"
 # set on the pooled rows whose pre-expert norm the experts apply: (weight, eps, gain_center)
 _DEFERRED_NORM = "_aklr_muse_deferred_norm"
@@ -47,7 +47,7 @@ def muse_spark_moe(
 @vllm_route(
     "vllm.model_executor.layers.linear.ReplicatedLinear.forward",
     "vllm.models.muse_spark.amd.model.MuseSparkTorchLinearMethod.apply",
-    versions=_VERSIONS,
+    versions=("0.33.0rc1.dev910", "0.33.0", "0.34.0"),
 )
 def _torch_linear(self, layer, x, bias=None):
     """The MoE pooler and unpooler, which vLLM keeps off aiter's tuned GEMM (its split-K
@@ -56,14 +56,14 @@ def _torch_linear(self, layer, x, bias=None):
 
 
 @vllm_route(
-    "vllm.models.muse_spark.amd.model.MuseSpark1xMoE._pool",
+    "vllm.models.muse_spark.amd.model.MuseSparkMoE._pool",
     "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
     versions=_VERSIONS,
     group=_NORM_EXPERTS_GROUP,
 )
 def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):
     """The pooled rows as they are, for the experts (_experts_apply) to normalize as they
-    gather them; only MuseSpark1xMoE._pool calls it, for experts that take one row per route."""
+    gather them; only MuseSparkMoE._pool calls it, for experts that take one row per route."""
     import torch
 
     if weight is None or input_scale or x.dtype != torch.bfloat16 or x.shape[0] == 0:

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on aiter on gfx950 for MiniMaxM2MoE.forward_normal: the fp32 gate
+"""What sglang 0.5.23 runs on aiter on gfx950 for MiniMaxM2MoE.forward_normal: the fp32 gate
 through UnquantizedLinearMethod (aiter's tgemm.mm), TopK's sigmoid routing with the
 correction bias (select_experts' moe_fused_gate) and FusedMoE on aiter's fused_moe runner,
 with the expert mask sglang's dispatcher builds under expert parallelism."""

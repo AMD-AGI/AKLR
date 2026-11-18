@@ -189,16 +189,17 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
-    # Kimi-K3's latent MoE shrunk: 32 routed experts of latent size 256 in their
-    # gate-up-interleaved layout, as sglang holds them for aiter's a8w4 path
+    # Kimi-K3's latent MoE, its routed experts at full size in their gate-up-interleaved layout,
+    # as sglang holds them for aiter's a8w4 path: aiter runs only the expert shapes it has tuned
+    # (kimik3_a8w4_tuned_fmoe.csv), any other goes to a CK build that has no SiTU
     PointSpec(
         contract_id="kimi_k3_latent_moe@1.0",
         axes={
             "n_tokens": 4,
             "model_dim": 256,
-            "latent_dim": 256,
-            "n_routed": 32,
-            "inter_dim": 128,
+            "latent_dim": 3584,
+            "n_routed": 896,
+            "inter_dim": 384,
             "shared_inter_dim": 128,
         },
         dtypes={
