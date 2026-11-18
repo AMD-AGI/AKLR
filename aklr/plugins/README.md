@@ -98,7 +98,7 @@ A vLLM route declared for several names of one function (aiter's compatibility m
 
 A CUDA graph replay runs no Python and logs nothing: the graph replays the kernels its capture logged.
 
-Only official SGLang releases are supported. To upgrade:
+Only official SGLang releases are supported, and the development build a model's image ships (Kimi-K3.1-Pro's `0.5.24.dev809`): a route declared only for such builds is tested on that image, not on CI's release. To upgrade:
 
 1. Install the new release and run `test_hook.py`. It lists the routes whose parameters changed or that do not declare the new release yet.
 2. Adapt each route, and check it by running the model (step 7 of the plugin tutorial).

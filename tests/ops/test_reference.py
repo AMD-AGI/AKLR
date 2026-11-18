@@ -69,13 +69,14 @@ class TestReference:
             )
 
 
+@pytest.mark.parametrize("contract_id", ["fp8_paged_mqa_logits@1.0", "fp8_paged_mqa_logits_verify@1.0"])
 def test_mqa_logits_reference_is_the_same_in_chunks(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, contract_id: str
 ) -> None:
-    """One row a chunk gives fp8_paged_mqa_logits' reference bit for bit."""
+    """One row a chunk gives the paged MQA logits references bit for bit."""
     import aklr.ops.mla.reference as mla_reference
 
-    case = OpCase.of("fp8_paged_mqa_logits@1.0")
+    case = OpCase.of(contract_id)
     args = case.inputs()
     whole = case.reference_outputs(args)["logits"]
     monkeypatch.setattr(mla_reference, "_CHUNK_ELEMENTS", 1)
