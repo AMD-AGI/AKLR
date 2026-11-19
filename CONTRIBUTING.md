@@ -72,3 +72,10 @@ The local container receives only the test environment variables and a copy of t
 Its per-stage timeout is unchanged, failing tests still upload reports, and the final cleanup
 step removes the job's container. This does not change the separate AgentX workflow.
 There is no automatic fallback between backends when the selected runners are busy or offline.
+
+For PRs changing only kernel schemas under `aklr/ops` (optionally with Markdown case
+notes under `harness/skills/kb/cases/`), AITER's GPU baseline/reference comparison
+runs every small point for the affected contract IDs. A replacement includes the IDs
+from both versions. Unrecognized changes or a contract without a small point use the
+full comparison. The other unit tests and per-image kernel validation keep their usual
+coverage. Pushes and manual runs perform the full unit suite.
