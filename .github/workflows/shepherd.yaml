@@ -35,7 +35,7 @@ jobs:
        github.event.action == 'labeled' && github.event.label.name == 'shepherd' ||
        github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'shepherd'))
     # Exactly one runner may carry this label: the ledger lives on its disk, and its lease serializes rounds.
-    runs-on: ${{ vars.SHEPHERD_RUNNER || 'aklr-gpu' }}
+    runs-on: aklr-gpu
     # The App token lasts an hour; execution.round_hours must stay under this too.
     timeout-minutes: 55
     steps:

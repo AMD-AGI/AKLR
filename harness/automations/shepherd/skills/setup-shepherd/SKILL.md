@@ -95,8 +95,8 @@ Do not use undocumented integration endpoints.
 
 ### GitHub Actions host
 
-For `.github/workflows/shepherd.yaml`, the host is the one runner labeled `aklr-gpu` (or the label in the
-`SHEPHERD_RUNNER` variable), and the workflow replaces the Cursor automation. Instead of the automation
+For `.github/workflows/shepherd.yaml`, the host is the one runner labeled `aklr-gpu`, the machine of `ci:gpu-direct`,
+and the workflow replaces the Cursor automation. Instead of the automation
 and round needs above, check, as the runner's user on that host:
 
 - `claude` on the runner's `PATH`, with the model endpoint and key in that user's
