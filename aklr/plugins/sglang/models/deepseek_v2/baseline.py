@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang runs on aiter on gfx950 for DeepseekV2MoE.forward_normal (sglang 0.5.22)."""
+"""What sglang runs on aiter on gfx950 for DeepseekV2MoE.forward_normal (sglang 0.5.23)."""
 
 from __future__ import annotations
 

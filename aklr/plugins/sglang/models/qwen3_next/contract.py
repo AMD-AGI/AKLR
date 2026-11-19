@@ -209,8 +209,9 @@ QWEN3_NEXT_GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
             _FP32,
             mutable=True,
             # as qwen3_5's prefill: sglang's own prefill puts Q/K/V channels one BF16
-            # ulp from the reference and rounds again in its chunked recurrence
-            bound=ToleranceBound(absolute_tolerance=2e-2, relative_tolerance=1e-2),
+            # ulp from the reference and rounds again in its chunked recurrence, 3.1e-2
+            # off a 0.59 entry and 6.2e-2 off a 3.1 one on small Points
+            bound=ToleranceBound(absolute_tolerance=4e-2, relative_tolerance=1e-2),
         ),
         "cache_indices": _tensor(
             "Distinct state slots for the sequences.",
@@ -345,7 +346,7 @@ QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
             ("n_slots", "n_kv_heads", "head_dim"),
             _FP8,
             mutable=True,
-            # sglang 0.5.22 rotates Qwen3-Next's Q and K on HIP with sgl_kernel's
+            # sglang 0.5.23 rotates Qwen3-Next's Q and K on HIP with sgl_kernel's
             # rotary_embedding in BF16 arithmetic: cos and sin, each product and the sum
             # rounded to BF16. Where a rotated key nearly cancels, that is ~2**-8 of the
             # pair's magnitude off the reference's FP32 rotation, several FP8 steps at the

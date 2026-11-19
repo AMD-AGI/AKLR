@@ -16,7 +16,8 @@ def kimi_k3_mla_decode(q, kv_cache, kv_indptr, kv_indices, sm_scale=192**-0.5, o
 
 
 @sglang_route(
-    "sglang.srt.layers.attention.triton_backend.TritonAttnBackend.forward_decode", versions=("0.5.22",)
+    "sglang.srt.layers.attention.triton_backend.TritonAttnBackend.forward_decode",
+    versions=("0.5.22", "0.5.23"),
 )
 def _forward_decode(
     self, q, k, v, layer, forward_batch, save_kv_cache=True, sinks=None, score_mod=None, aux_tensors=None

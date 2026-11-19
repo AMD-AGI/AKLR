@@ -37,7 +37,6 @@ class FindingCode(StrEnum):
     BASELINE_FAILED = "baseline_failed"
     PLATFORM_FAILURE = "platform_failure"
     NO_MATCHING_DEVICE = "no_matching_device"
-    NO_MATCHING_TOOLCHAIN = "no_matching_toolchain"
 
     @property
     def is_platform_fault(self) -> bool:
@@ -48,7 +47,6 @@ _PLATFORM_FAULT_CODES: Final[frozenset[FindingCode]] = frozenset(
     {
         FindingCode.PLATFORM_FAILURE,
         FindingCode.NO_MATCHING_DEVICE,
-        FindingCode.NO_MATCHING_TOOLCHAIN,
     }
 )
 

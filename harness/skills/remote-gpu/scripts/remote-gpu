@@ -101,6 +101,12 @@ need_running() {
   ((left >= 0 && left < 900)) && warn "job=$C:$1 timeleft=${left}s hint=\"$LATE_HINT\""
   return 0
 }
+# cancel_job JOB [pending]: a failed cancel leaves a job that is still the user's and still billed.
+cancel_job() {
+  scheduler_cancel "$@" >/dev/null 2>&1 && return 0
+  warn "CANCEL_FAILED job=$C:$1 hint=\"it may still be queued or running under your account: remote-gpu release -j $C:$1\""
+  return 1
+}
 # Cancel only while pending; a job that starts during withdrawal is kept.
 withdraw() {
   local attempt
@@ -108,7 +114,7 @@ withdraw() {
     scheduler_cancel "$1" pending >/dev/null 2>&1; sleep 1; read_job "$1"
     case $JOB_STATE in RUNNING | CONFIGURING) return 0 ;; PENDING | '') ;; *) return 1 ;; esac
   done
-  scheduler_cancel "$1" >/dev/null 2>&1; return 1
+  cancel_job "$1"; return 1
 }
 # Node execution has the same transport contract for exec, health checks and bg confirmation.
 on_node() { local job=$1 node=$2; shift 2; scheduler_run "$job" "$node" batch "$@"; }
@@ -133,7 +139,7 @@ exec >>"$B/logs/$J.$H.log" 2>&1
 # Stop task process groups and containers together, allow ~20s for checkpoints, then mark
 # this node clean. Release waits for all holders before cancelling the scheduler allocation.
 cleanup() {
-  local reason=$1 containers task_file node pid process_groups=() attempt active docker_stop_pid=''
+  local reason=$1 containers task_file node pid process_groups=() attempt active docker_stop_pid='' survivors=() listed container
   [[ -e $D/cleaned.$H ]] && return
   for task_file in "$D"/tasks/*.pid; do
     [[ ! -e $task_file || -e ${task_file%.pid}.rc ]] && continue
@@ -149,9 +155,27 @@ cleanup() {
     sleep 1
   done
   for pid in "${process_groups[@]}"; do kill -KILL -- "-$pid" 2>/dev/null; done
+  wait "${process_groups[@]}" 2>/dev/null
   [[ -n $docker_stop_pid ]] && wait "$docker_stop_pid"
   [[ -n $containers ]] && docker rm -f $containers >/dev/null 2>&1
   echo "$(date +%T) $H cleanup ($reason): containers=[$(echo $containers)] tasks=${#process_groups[@]}"
+  # The marker tells release (and its callers' ledgers) that nothing of this job is left here.
+  # A --rm container is still listed for a moment after it stops, so look again for a while.
+  for attempt in $(seq 10); do
+    survivors=()
+    for pid in "${process_groups[@]}"; do kill -0 -- "-$pid" 2>/dev/null && survivors+=("task=$pid"); done
+    if command -v docker >/dev/null; then
+      if listed=$(docker ps -aq --filter "label=$C.job=$J" 2>/dev/null); then
+        for container in $listed; do survivors+=("container=$container"); done
+      # A user the daemon refuses started no container here.
+      elif [[ $(docker ps -aq 2>&1) != *"permission denied"* ]]; then
+        survivors+=("containers=unknown")
+      fi
+    fi
+    ((${#survivors[@]})) || break
+    sleep 1
+  done
+  if ((${#survivors[@]})); then echo "$(date +%T) $H cleanup incomplete: ${survivors[*]}"; return 1; fi
   touch "$D/cleaned.$H"
 }
 # A reused pid only delays reaping; it never removes a live container.
@@ -361,7 +385,7 @@ await_job() {
       PENDING)
         reason=$JOB_REASON start=$JOB_START
         if [[ $reason =~ $UNSCHEDULABLE ]]; then
-          scheduler_cancel "$job" >/dev/null 2>&1
+          cancel_job "$job"
           err UNSCHEDULABLE "job=$C:$job(cancelled) reason=\"$(q "$reason")\" hint=\"fix the request and alloc again\""
         fi
         if ((SECONDS >= deadline)); then
@@ -379,7 +403,7 @@ await_job() {
     esac
     if ((SECONDS >= deadline + 120)); then
       if [[ $on_timeout == keep ]]; then echo "PENDING job=$C:$job state=${JOB_STATE:-unknown}"; exit 205; fi
-      scheduler_cancel "$job" >/dev/null 2>&1
+      cancel_job "$job"
       err PENDING_TIMEOUT "job=$C:$job(cancelled) state=${JOB_STATE:-unknown}"
     fi
     sleep 5
@@ -411,7 +435,7 @@ check_nodes() {
     if ((${gpus:-0} < GPUS_PER_NODE || ${seen:-0} == 0)); then
       rm -rf "$tmp"
       [[ $(job_value "$J" STATE) == RUNNING ]] || err JOB_GONE "job=$C:$J state=$(job_value "$J" STATE) msg=\"ended during the health check\""
-      scheduler_cancel "$J" >/dev/null 2>&1
+      cancel_job "$J"
       err BAD_NODE "job=$C:$J(cancelled) node=$n gpus=${gpus:-0}/$GPUS_PER_NODE sees_workdir=${seen:-0} hint=\"retry: remote-gpu --cluster $C alloc ... -x $n\""
     fi
     ((${foreign:-0} > 0)) && warn "node=$n has $foreign pre-existing docker containers (not ours; GPUs may be busy)"
@@ -442,7 +466,7 @@ alloc_cleanup() {
   local job
   if [[ -n ${WD:-} ]]; then kill "$WD" 2>/dev/null; fi
   for job in "${submitted_jobs[@]}"; do
-    if [[ -n $job && $job != "$kept_job" ]]; then scheduler_cancel "$job" >/dev/null 2>&1; fi
+    if [[ -n $job && $job != "$kept_job" ]]; then cancel_job "$job"; fi
   done
 }
 trap alloc_cleanup EXIT
@@ -492,8 +516,7 @@ else
         break
       fi
       if [[ $JOB_STATE == PENDING && $JOB_REASON =~ $UNSCHEDULABLE ]]; then
-        scheduler_cancel "$job" >/dev/null 2>&1
-        submitted_jobs[index]=''
+        cancel_job "$job" && submitted_jobs[index]=''
       elif ! terminal_state "$JOB_STATE"; then
         live=$((live + 1))
       fi
@@ -513,8 +536,7 @@ else
   cancelled=()
   for candidate in "${submitted_jobs[@]}"; do
     if [[ -n $candidate && $candidate != "$job" ]]; then
-      scheduler_cancel "$candidate" >/dev/null 2>&1
-      cancelled+=("$candidate")
+      cancel_job "$candidate" && cancelled+=("$candidate")
     fi
   done
   echo "RACE kept=$C:$job (${candidates[winner]}) cancelled=\"${cancelled[*]}\"" >&2
@@ -560,15 +582,16 @@ read_job "$1"
 echo "OK job=$C:$1 timelimit=$JOB_TIME_LIMIT timeleft=$JOB_TIME_LEFT"' "$JOB" "$time_limit"
 }
 
-# Common option parser for exec/bg: fills JOB RUN_NODES DIR IMG TNAME UENV, leaves the command in CMD.
+# Common option parser for exec/bg: fills JOB RUN_NODES DIR IMG TNAME UENV MOUNTS, leaves the command in CMD.
 parse_run_opts() {
-  RUN_NODES='' DIR='' IMG='' TNAME='' UENV=() CMD=()
+  RUN_NODES='' DIR='' IMG='' TNAME='' UENV=() MOUNTS=() CMD=()
   while (($#)); do case $1 in
     -j | --job) need2 "$@"; JOB=$2; shift 2 ;;
     -w | --node) need2 "$@"; RUN_NODES=$2; shift 2 ;;
     --all) RUN_NODES=ALL; shift ;;
     -C | --dir) need2 "$@"; DIR=$2; shift 2 ;;
     --image) need2 "$@"; IMG=$2; shift 2 ;;
+    --mount) need2 "$@"; MOUNTS+=("$2"); shift 2 ;;
     --name) need2 "$@"; TNAME=$2; shift 2 ;;
     -e | --env) need2 "$@"; [[ $2 == *=* ]] || die "--env expects KEY=VAL"; UENV+=("$2"); shift 2 ;;
     --) shift; CMD=("$@"); break ;;
@@ -576,14 +599,17 @@ parse_run_opts() {
   esac; done
   need_job
   ((${#CMD[@]})) || die "missing command after --"
+  ((${#MOUNTS[@]} == 0)) || [[ -n $IMG ]] || die "--mount needs --image"
   [[ -z $RUN_NODES || $RUN_NODES == ALL || $RUN_NODES =~ ^[a-z0-9,-]+$ ]] || die "bad -w node list"
   return 0
 }
 
 # exec/bg remote prelude. Its envelope (sent only by run_remote): JOB NODE_SELECTION DIR IMAGE TAG
-# ENV_COUNT, that many environment entries, then command argv; no shell reparses these values.
+# ENV_COUNT, that many environment entries, MOUNT_COUNT, that many mounts, then command argv; no shell
+# reparses these values.
 read -r -d '' R_RUNPRE <<'EOF'
 J=$1 RUN_NODES=$2 DIR=$3 IMG=$4 TAG=$5 NE=$6; shift 6; UENV=("${@:1:NE}"); shift "$NE"
+NM=$1; shift; MOUNTS=("${@:1:NM}"); shift "$NM"
 need_running "$J"
 IFS=, read -ra NL <<<"$JOB_NODES"; N0=${NL[0]:-}; CSV=$JOB_NODES
 [[ -n $N0 ]] || err NODES_UNKNOWN "job=$C:$J msg=\"cannot resolve the job's nodes (controller busy?)\" hint=\"retry the same command\""
@@ -607,9 +633,34 @@ build_node_command() { # build_node_command RANK KIND CMD... -> CMD array to exe
     CMD=(bash -c 'exec docker run --label "$0.pid=$$" "$@"' "$C"
          --rm --init --name "$C-$J-$TAG-$i" --label "$C.job=$J" --label "$C.user=$USER" --label "$C.kind=$kind"
          --network host --ipc host
-         --device /dev/kfd --device /dev/dri --group-add video --cap-add SYS_PTRACE --security-opt seccomp=unconfined
-         "${DOCKER_X[@]}")
+         --device /dev/kfd --device /dev/dri --group-add video --cap-add SYS_PTRACE --security-opt seccomp=unconfined)
+    local roots=("$REL" "$HOME") root   # the host directories the container sees
+    if ((${#MOUNTS[@]})); then
+      roots=()
+      # --mount replaces the default work root and $HOME mounts; HOME is the first mount.
+      # Any extra flag (--privileged, --volumes-from, --pid host ...) can show the command more.
+      local m path home=''
+      [[ -z ${DOCKER_FLAGS// /} ]] ||
+        err USAGE "msg=\"--mount runs with only the given directories, but the manifest sets DOCKER_FLAGS\" hint=\"empty DOCKER_FLAGS in the manifest, or run without --mount\""
+      for m in "${MOUNTS[@]}"; do
+        path=${m%:ro}; [[ $path == /* ]] || path=$REL/$path
+        # docker -v would create a missing directory owned by root, which the user cannot write.
+        # shortcut: checked from the login node, so a node-local --mount is refused; check on the node when one is needed.
+        nfs_sync "${path%/*}"; roots+=("$path")
+        [[ -d $path ]] || err USAGE "msg=\"--mount $m: $path is not a directory\" hint=\"create it first (remote-gpu exec -- mkdir -p $path)\""
+        CMD+=(-v "$path:$path${m#"${m%:ro}"}"); home=${home:-$path}
+      done
+      CMD+=(-e "HOME=$home")
+    else
+      CMD+=("${DOCKER_X[@]}")
+    fi
     local e; for e in "${E[@]}"; do CMD+=(-e "$e"); done
+    # A -C outside every mount is the image's own (docker makes it inside the container).
+    for root in "${roots[@]}"; do
+      [[ $DIR/ == "$root"/* ]] || continue
+      nfs_sync "${DIR%/*}"
+      [[ -d $DIR ]] || err USAGE "msg=\"-C $DIR is not a directory\" hint=\"create it first; docker would create it owned by root\""
+    done
     CMD+=(-w "$DIR" "$IMG" "$@")
   else
     CMD=(env "${NODE_ENV[@]}" "${E[@]}"
@@ -644,7 +695,7 @@ EOF
 # All exec/bg remote arguments are constructed here, beside their receiver above.
 run_remote() {
   local body=$1 tag=$2
-  remote "$body" "$JOB" "$RUN_NODES" "$DIR" "$IMG" "$tag" "${#UENV[@]}" "${UENV[@]}" "${CMD[@]}"
+  remote "$body" "$JOB" "$RUN_NODES" "$DIR" "$IMG" "$tag" "${#UENV[@]}" "${UENV[@]}" "${#MOUNTS[@]}" "${MOUNTS[@]}" "${CMD[@]}"
 }
 cmd_exec() {
   parse_run_opts "$@"
@@ -655,6 +706,7 @@ $R_EXEC" "x$RANDOM$RANDOM-$$"
 
 read -r -d '' R_BG <<'EOF'
 TN=$TAG; [[ $TN =~ ^[A-Za-z0-9_-]+$ ]] || err USAGE "bad --name $TN (use [A-Za-z0-9_-])"
+build_node_command 0 bg "$@"   # refuse bad --mount, -C or DOCKER_FLAGS before the name is claimed
 TD=$B/jobs/$J/tasks; mkdir "$TD/$TN.claim" 2>/dev/null || err USAGE "task $TN already exists in job $C:$J"
 for n in "${TARGET_NODES[@]}"; do echo "$(rank_of "$n") $n"; done >"$TD/$TN.claim/ranks"   # the ranks the task must run on
 SP=$B/jobs/$J/spawn; mkdir -p "$SP"
@@ -1065,12 +1117,14 @@ remote-gpu — whole GPU nodes on the clusters under ~/.remote-gpu/clusters/, on
         Prints: OK cluster=... job=CLUSTER:ID nodes=... account=... qos=... workdir=...
   ready -j JOB [--wait 420]          wait for a queued job to start, health-check it, print the
                                      OK line (exit 205 = still pending, job kept)
-  exec -j JOB [-w node|--all] [-C dir] [--image IMG] [-e K=V]... -- CMD ARGS...
+  exec -j JOB [-w node|--all] [-C dir] [--image IMG [--mount DIR[:ro]]...] [-e K=V]... -- CMD ARGS...
         Run and wait; returns CMD's exit code. Default node = rank 0, dir = workdir (a relative
         -C is under the cluster's work root, see `push`). --all runs on every node
         in parallel with [node]-prefixed output. Env: REMOTE_GPU_NODE_RANK, REMOTE_GPU_NNODES,
         REMOTE_GPU_NODES, REMOTE_GPU_JOB, MASTER_ADDR, MASTER_PORT. --image runs CMD in
-        `docker run --rm` with GPUs, host net/ipc, the work root's filesystem and $HOME mounted.
+        `docker run --rm` with GPUs, host net/ipc, the work root's filesystem and $HOME mounted;
+        --mount mounts only the given directories instead (relative = under the work root) and sets
+        HOME to the first.
         If remote-gpu is killed (e.g. tool timeout), the remote command is killed too.
   bg   -j JOB [same options as exec] [--name TASK] -- CMD...   start a detached task
   wait -j JOB TASK [--timeout 540]   block until done; exit = task rc (205 = still running)

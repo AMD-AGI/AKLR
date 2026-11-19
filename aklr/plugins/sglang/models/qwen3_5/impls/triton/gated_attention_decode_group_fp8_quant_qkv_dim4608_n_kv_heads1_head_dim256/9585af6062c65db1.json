@@ -215,7 +215,8 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.258
+      "speedup": 1.263,
+      "microseconds": 98.4
     },
     {
       "axes": {
@@ -230,7 +231,8 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.088
+      "speedup": 1.149,
+      "microseconds": 547.0
     }
   ],
   "layout_variants": {

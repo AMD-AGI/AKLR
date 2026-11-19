@@ -70,6 +70,7 @@ scheduler_jobs() {
   done
 }
 scheduler_cancel() {
+  if [[ -n ${FAKE_CANCEL_FAILS:-} ]]; then return 1; fi
   mkdir -p "$HOME/scheduler/$C"
   echo "$C:$1 ${2:-all}" >>"$HOME/cancelled"
   touch "$HOME/scheduler/$C/$1.cancelled"
@@ -743,3 +744,127 @@ def test_git_seed_rejects_a_non_sha_without_invoking_git(env):
     )
     assert result.returncode == 1
     assert not (Path(env["HOME"]) / "clone_calls").exists()
+
+
+def test_mount_replaces_the_default_mounts(env):
+    home = env["HOME"]
+    keys = Path(home) / "keys"
+    (Path(home) / "work/run/worker").mkdir(parents=True)
+    keys.mkdir()
+    result = rg(
+        env,
+        "exec",
+        "-j",
+        "fake:1",
+        "--image",
+        "img",
+        "--mount",
+        "run/worker",
+        "--mount",
+        f"{keys}:ro",
+        "--",
+        "true",
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    call = (Path(home) / "docker_calls").read_text().split()
+    mounts = [call[i + 1] for i, arg in enumerate(call) if arg == "-v"]
+    assert mounts == [f"{home}/work/run/worker:{home}/work/run/worker", f"{keys}:{keys}:ro"]
+    assert f"HOME={home}/work/run/worker" in call
+    assert rg(env, "exec", "-j", "fake:1", "--mount", "x", "--", "true").returncode != 0
+
+
+def test_mount_refuses_a_directory_that_does_not_exist(env):
+    # docker -v would create it owned by root, and the user could no longer write it.
+    result = rg(
+        env, "exec", "-j", "fake:1", "--image", "img", "--mount", "run/missing", "--", "true", timeout=15
+    )
+    assert result.returncode != 0
+    assert "run/missing" in result.stderr
+    assert not (Path(env["HOME"]) / "docker_calls").exists()
+    result = rg(env, "exec", "-j", "fake:1", "--image", "img", "-C", "run/missing", "--", "true", timeout=15)
+    assert result.returncode != 0
+    assert not (Path(env["HOME"]) / "docker_calls").exists()
+
+
+def test_mount_refuses_any_docker_flags_from_the_manifest(env):
+    # --privileged or --volumes-from would show the command more than the given directories.
+    (Path(env["HOME"]) / "work/run/worker").mkdir(parents=True)
+    directory = configure(env)
+    env_file = directory / "cluster.env"
+    env_file.write_text(env_file.read_text().replace("DOCKER_FLAGS=''", "DOCKER_FLAGS='--privileged'"))
+    result = rg(
+        env, "exec", "-j", "fake:1", "--image", "img", "--mount", "run/worker", "--", "true", timeout=15
+    )
+    assert result.returncode != 0
+    assert "DOCKER_FLAGS" in result.stderr
+    assert not (Path(env["HOME"]) / "docker_calls").exists()
+
+
+def test_account_race_reports_a_loser_it_could_not_cancel(env):
+    configure(env, aggressive=True)
+    env["FAKE_CANCEL_FAILS"] = "1"
+    result = rg(env, "alloc", timeout=30)
+    assert 'cancelled=""' in result.stderr
+    assert re.search(r"CANCEL_FAILED job=fake:2\b", result.stderr), result.stderr
+
+
+def test_holder_leaves_no_clean_marker_while_a_container_survives(env):
+    home = Path(env["HOME"])
+    bindir = Path(env["PATH"].split(":")[0])
+    # Removal fails, so the job's container stays listed.
+    (bindir / "docker").write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$*" >>"$HOME/docker_calls"\n'
+        'case $1 in ps) [[ $* == *"label=fake.job=1"* ]] && echo c1 ;; stop | rm) exit 1 ;; esac\nexit 0\n'
+    )
+    directory = home / "work/fake/jobs/1"
+    directory.mkdir(parents=True)
+    (directory / "release").touch()
+    holder = start_holder(env)
+    try:
+        holder.wait(timeout=60)
+        assert not (directory / "cleaned.n0").exists()
+        assert "cleanup incomplete" in (home / "work/fake/logs/1.n0.log").read_text()
+    finally:
+        stop_holder(holder)
+
+
+@pytest.mark.parametrize(
+    "docker",
+    [
+        # A --rm container stays listed for a moment after it is stopped.
+        'case $1 in ps) [[ -e $HOME/gone ]] || echo c1 ;; rm) (sleep 2; touch "$HOME/gone") & ;; esac\n',
+        # This user may not ask the daemon, so no container here is theirs.
+        'case $1 in ps) echo "permission denied while trying to connect" >&2; exit 1 ;; esac\n',
+    ],
+)
+def test_holder_marks_the_node_clean_once_no_container_is_left(env, docker):
+    home = Path(env["HOME"])
+    (Path(env["PATH"].split(":")[0]) / "docker").write_text("#!/bin/bash\n" + docker)
+    directory = home / "work/fake/jobs/1"
+    directory.mkdir(parents=True)
+    (directory / "release").touch()
+    holder = start_holder(env)
+    try:
+        holder.wait(timeout=60)
+        assert (directory / "cleaned.n0").exists(), (home / "work/fake/logs/1.n0.log").read_text()
+    finally:
+        stop_holder(holder)
+
+
+def test_a_workdir_of_the_image_need_not_exist_on_the_host(env):
+    result = rg(env, "exec", "-j", "fake:1", "--image", "img", "-C", "/image/only", "--", "true", timeout=15)
+    assert result.returncode == 0, result.stderr
+
+
+def test_bg_refused_for_its_arguments_leaves_the_name_free(env):
+    holder = start_holder(env)
+    try:
+        args = ("bg", "-j", "fake:1", "--name", "t", "--image", "img", "--mount", "run/worker", "--", "true")
+        assert rg(env, *args, timeout=15).returncode != 0
+        (Path(env["HOME"]) / "work/run/worker").mkdir(parents=True)
+        result = rg(env, *args, timeout=60)
+        assert "already exists" not in result.stderr
+        assert result.returncode == 0, result.stderr
+    finally:
+        stop_holder(holder)
