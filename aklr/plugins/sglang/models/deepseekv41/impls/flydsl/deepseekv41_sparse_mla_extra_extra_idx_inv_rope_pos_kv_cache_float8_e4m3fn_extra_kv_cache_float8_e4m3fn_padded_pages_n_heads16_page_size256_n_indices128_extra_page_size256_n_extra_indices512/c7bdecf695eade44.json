@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "deepseekv41_sparse_mla_extra_extra_idx_inv_rope_pos_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_n_heads32_page_size256_n_indices128_extra_page_size256_n_extra_indices512",
+  "name": "deepseekv41_sparse_mla_extra_extra_idx_inv_rope_pos_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_n_heads16_page_size256_n_indices128_extra_page_size256_n_extra_indices512",
   "contract_id": "deepseekv41_sparse_mla@1.0",
   "description": "sglang's sparse MLA of a DeepSeek-V4.1 layer on gfx950 (aiter_sparse_decode_fwd): each head of each token attends the slots its indices name (-1: none) in the layer's KV pool and in the optional extra one, with scores q . row * sm_scale; sinks join the normalisation only; the output is the softmax-weighted sum of the rows, 0 for a token that reads no row. With rope_freqs, the last 64 values of every head are then rotated back in pairs (a, b) by the pair's (c, s) at the token's position: (a c + b s, b c - a s).",
   "op_type": "deepseekv41",
@@ -11,7 +11,7 @@
     },
     "n_heads": {
       "type": "const",
-      "value": 32,
+      "value": 16,
       "description": "Query heads on this rank."
     },
     "n_pages": {
@@ -179,8 +179,8 @@
     {
       "axes": {
         "n_tokens": 38,
-        "n_pages": 332,
-        "n_extra_pages": 96257,
+        "n_pages": 327,
+        "n_extra_pages": 223229,
         "n_positions": 1048576
       },
       "scalars": {
@@ -191,7 +191,7 @@
       "axes": {
         "n_tokens": 38,
         "n_pages": 341,
-        "n_extra_pages": 96128,
+        "n_extra_pages": 223027,
         "n_positions": 1048576
       },
       "scalars": {
@@ -201,8 +201,8 @@
     {
       "axes": {
         "n_tokens": 38,
-        "n_pages": 519,
-        "n_extra_pages": 93577,
+        "n_pages": 551,
+        "n_extra_pages": 220016,
         "n_positions": 1048576
       },
       "scalars": {
@@ -213,7 +213,7 @@
       "axes": {
         "n_tokens": 38,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -223,19 +223,8 @@
     {
       "axes": {
         "n_tokens": 38,
-        "n_pages": 1685,
-        "n_extra_pages": 146791,
-        "n_positions": 1048576
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 38,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -246,7 +235,18 @@
       "axes": {
         "n_tokens": 60,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -257,7 +257,18 @@
       "axes": {
         "n_tokens": 72,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 72,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -268,7 +279,18 @@
       "axes": {
         "n_tokens": 84,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 84,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -279,7 +301,40 @@
       "axes": {
         "n_tokens": 96,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 96,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 108,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -289,8 +344,8 @@
     {
       "axes": {
         "n_tokens": 128,
-        "n_pages": 332,
-        "n_extra_pages": 96257,
+        "n_pages": 327,
+        "n_extra_pages": 223229,
         "n_positions": 1048576
       },
       "scalars": {
@@ -301,7 +356,7 @@
       "axes": {
         "n_tokens": 128,
         "n_pages": 341,
-        "n_extra_pages": 96128,
+        "n_extra_pages": 223027,
         "n_positions": 1048576
       },
       "scalars": {
@@ -311,8 +366,8 @@
     {
       "axes": {
         "n_tokens": 128,
-        "n_pages": 519,
-        "n_extra_pages": 93577,
+        "n_pages": 551,
+        "n_extra_pages": 220016,
         "n_positions": 1048576
       },
       "scalars": {
@@ -323,7 +378,7 @@
       "axes": {
         "n_tokens": 128,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -333,8 +388,8 @@
     {
       "axes": {
         "n_tokens": 128,
-        "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -343,9 +398,20 @@
     },
     {
       "axes": {
-        "n_tokens": 128,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_tokens": 132,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 144,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -356,7 +422,7 @@
       "axes": {
         "n_tokens": 152,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -365,9 +431,20 @@
     },
     {
       "axes": {
-        "n_tokens": 155,
-        "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_tokens": 154,
+        "n_pages": 971,
+        "n_extra_pages": 213994,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 154,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -377,8 +454,8 @@
     {
       "axes": {
         "n_tokens": 156,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -387,9 +464,53 @@
     },
     {
       "axes": {
-        "n_tokens": 235,
-        "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_tokens": 168,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 192,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 233,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 234,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -400,7 +521,18 @@
       "axes": {
         "n_tokens": 256,
         "n_pages": 341,
-        "n_extra_pages": 96128,
+        "n_extra_pages": 223027,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_pages": 551,
+        "n_extra_pages": 220016,
         "n_positions": 1048576
       },
       "scalars": {
@@ -411,7 +543,7 @@
       "axes": {
         "n_tokens": 256,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -421,8 +553,8 @@
     {
       "axes": {
         "n_tokens": 256,
-        "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -431,9 +563,20 @@
     },
     {
       "axes": {
-        "n_tokens": 256,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_tokens": 302,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 384,
+        "n_pages": 551,
+        "n_extra_pages": 220016,
         "n_positions": 1048576
       },
       "scalars": {
@@ -444,7 +587,7 @@
       "axes": {
         "n_tokens": 384,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -454,8 +597,8 @@
     {
       "axes": {
         "n_tokens": 384,
-        "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -464,9 +607,9 @@
     },
     {
       "axes": {
-        "n_tokens": 384,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_tokens": 484,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -475,9 +618,9 @@
     },
     {
       "axes": {
-        "n_tokens": 401,
-        "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_tokens": 512,
+        "n_pages": 551,
+        "n_extra_pages": 220016,
         "n_positions": 1048576
       },
       "scalars": {
@@ -488,7 +631,7 @@
       "axes": {
         "n_tokens": 512,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -498,8 +641,8 @@
     {
       "axes": {
         "n_tokens": 512,
-        "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -508,9 +651,9 @@
     },
     {
       "axes": {
-        "n_tokens": 512,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_tokens": 541,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -519,31 +662,9 @@
     },
     {
       "axes": {
-        "n_tokens": 514,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
-        "n_positions": 1048576
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 548,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
-        "n_positions": 1048576
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 550,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_tokens": 613,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -554,7 +675,7 @@
       "axes": {
         "n_tokens": 640,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -564,8 +685,8 @@
     {
       "axes": {
         "n_tokens": 640,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -574,9 +695,20 @@
     },
     {
       "axes": {
-        "n_tokens": 687,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_tokens": 706,
+        "n_pages": 971,
+        "n_extra_pages": 213994,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 712,
+        "n_pages": 971,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -587,7 +719,7 @@
       "axes": {
         "n_tokens": 768,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 213994,
         "n_positions": 1048576
       },
       "scalars": {
@@ -597,19 +729,8 @@
     {
       "axes": {
         "n_tokens": 768,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
-        "n_positions": 1048576
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 835,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -619,30 +740,8 @@
     {
       "axes": {
         "n_tokens": 896,
-        "n_pages": 971,
-        "n_extra_pages": 87095,
-        "n_positions": 1048576
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 896,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
-        "n_positions": 1048576
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 961,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
@@ -652,8 +751,52 @@
     {
       "axes": {
         "n_tokens": 1024,
-        "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1152,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1224,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1280,
+        "n_pages": 971,
+        "n_extra_pages": 213994,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1280,
+        "n_pages": 1812,
+        "n_extra_pages": 201936,
         "n_positions": 1048576
       },
       "scalars": {
