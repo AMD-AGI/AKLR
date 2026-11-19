@@ -22,6 +22,7 @@ echo 77
 @pytest.fixture
 def run(tmp_path):
     (tmp_path / "bin").mkdir()
+    (tmp_path / "state").mkdir()
     (tmp_path / "bin/gh").write_text(FAKE_GH)
     (tmp_path / "bin/gh").chmod(0o755)
     (tmp_path / "config.yaml").write_text(
@@ -86,7 +87,8 @@ def test_the_round_admits_the_schemas_it_resolves_from_the_text(run, tmp_path):
     assert json.loads(run("freeze", "--event", event(tmp_path, "optimize the gemm kernels")))["schemas"] == []
     run("admit", "--issue", "5", "--schema", "../etc/passwd.json", code=2)
     admitted = json.loads(run("admit", "--issue", "5", "--schema", A, B, C, A))
-    assert (admitted["schemas"], admitted["dropped"]) == ([A, B], 1)
+    assert (admitted["schemas"], admitted["dropped"]) == ([A, B], [C])
+    assert json.loads(run("admit", "--issue", "5", "--schema", C)) == admitted
     run("stop", "--event", event(tmp_path, ""))
     run("admit", "--issue", "5", "--schema", A, code=2)
 
@@ -96,6 +98,7 @@ def test_progress_and_the_final_report_come_from_the_ledger(run, tmp_path):
     gh_calls(tmp_path)
     archive = tmp_path / "state/runs/c2/campaign.json"
     archive.parent.mkdir(parents=True)
+    # The ledger's own fields win over the archive: a summary saved after the campaign ended is shown.
     ended = {
         "id": "c2",
         "issue": 5,
@@ -103,12 +106,12 @@ def test_progress_and_the_final_report_come_from_the_ledger(run, tmp_path):
         "regime": {"name": "small"},
         "phase": "ended",
         "outcome": "no gain",
-        "summary": "1.00x",
+        "summary": "stale",
     }
     archive.write_text(json.dumps(ended))
     campaigns = [
         {"id": "c1", "issue": 5, "schema_path": A, "phase": "pr_open", "pr_url": "https://x/pull/9"},
-        {"id": "c2", "phase": "ended", "archive": "runs/c2/campaign.json"},
+        {"id": "c2", "phase": "ended", "archive": "runs/c2/campaign.json", "summary": "1.00x"},
         {"id": "zzz", "issue": 6, "schema_path": B, "phase": "optimizing"},
     ]
     (tmp_path / "ledger.json").write_text(json.dumps({"state": {"campaigns": campaigns}}))

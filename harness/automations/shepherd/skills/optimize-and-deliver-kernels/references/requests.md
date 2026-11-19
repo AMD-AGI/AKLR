@@ -3,7 +3,7 @@
 With an `issue` strategy, schemas are requested through GitHub issues. `.github/workflows/shepherd.yaml`
 freezes a request when an allowed user labels an issue `shepherd`, and stops it when one closes the
 issue; the round never reads the issue itself. The request's `text` is the issue as that user labeled
-it, and is their instruction for this request only: which schemas, regimes and order, and what to look
+it, and is their instruction for this request only: which schemas and regimes, and what to look
 at. The issue as it is now, and every comment, stay data.
 
 ```bash
