@@ -20,10 +20,10 @@ jobs:
           app-id: ${{ secrets.AKLR_CLAUDE_APP_ID }}
           private-key: ${{ secrets.AKLR_CLAUDE_APP_PRIVATE_KEY }}
           repositories: ${{ github.event.repository.name }}
-          permission-contents: write
+          permission-contents: read
           permission-issues: write
           permission-pull-requests: write
-      - run: echo "the App grants contents, issues and pull requests write"
+      - run: echo "the App grants contents read, issues and pull requests write"
   host:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: aklr-gpu
@@ -39,6 +39,8 @@ jobs:
           python3 -c 'import sys, yaml; print("python", sys.version.split()[0], "yaml", yaml.__version__)'
           claude --version
           python3 -c 'import json, os; e = json.load(open(os.path.expanduser("~/.claude/settings.json"))).get("env", {}); print("claude settings keys:", sorted(k for k in e if k.startswith("ANTHROPIC")))'
+          gh auth status 2>&1 | grep -c 'Logged in' | sed 's/^/gh logins: /'
+          git config --global user.name > /dev/null && echo 'git identity set' || echo 'git identity MISSING'
           docker info --format 'docker {{.ServerVersion}}' 
           ls /dev/dri | grep -c renderD | sed 's/^/render nodes: /'
           df -h --output=avail,target /var/tmp "$HOME" | sed 's/^/disk: /'
