@@ -179,7 +179,10 @@ class SchemaVerdict:
             detail = f"no workload passed accuracy and cleared Entry ({Threshold.ENTRY.bar})"
             deciding.append(
                 Finding(
-                    code=FindingCode.NO_QUALIFYING_WORKLOAD, schema_path=plan.path, workload=None, detail=detail
+                    code=FindingCode.NO_QUALIFYING_WORKLOAD,
+                    schema_path=plan.path,
+                    workload=None,
+                    detail=detail,
                 )
             )
         is_written = (
