@@ -1,5 +1,8 @@
 # Each cookbook match defines an e2e scenario, with optional model and launch overrides.
 # A run serves the first match of each model; --e2e-all-scenarios serves every match.
+# With --base, a run serves only the models the change reaches: a file inside a model directory
+# (aklr/plugins/<engine>/models/<name>/) reaches the models that list it in plugin_paths, and
+# none when no model lists it; any other code, schema or stack.json change reaches every model.
 cookbook:
   repo: sgl-project/sglang
   source: main  # branch, tag, SHA, or a local sglang checkout
@@ -40,6 +43,10 @@ gate:
 scenarios:
   - cookbook: zai-org/glm-5.2  # docs/src/snippets/configs/<this>.jsx
     model_path: amd/GLM-5.2-MXFP4
+    plugin_paths:
+      - aklr/plugins/sglang/models/deepseek_v2
+      - aklr/plugins/sglang/models/deepseek_common
+      - aklr/plugins/sglang/models/forward_mla_rocm
     env:
       AKLR_SGLANG_PLUGIN: "1"
     matches:

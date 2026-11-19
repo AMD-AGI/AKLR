@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,17 @@ class Scenario(FrozenModel):
     env: dict[str, dict[str, str]]  # by role
     features: dict[str, ScenarioFeatures]  # by role
     args: dict[str, dict[str, str | int | float | bool | None]]  # by role
+    plugin_paths: tuple[str, ...]  # the model directories of aklr/plugins that serve this model
+
+    def is_reached_by(self, path: str) -> bool:
+        """Whether a change of the repository file ``path`` can change what this model answers.
+
+        A file inside a model directory (``aklr/plugins/<engine>/models/<name>/``) reaches only
+        the scenarios that list it in ``plugin_paths``; any other file reaches every scenario.
+        """
+        if re.match(r"aklr/plugins/[^/]+/models/[^/]+/", path) is None:
+            return True
+        return any(path.startswith(listed.rstrip("/") + "/") for listed in self.plugin_paths)
 
 
 class _ScenarioEntry(FrozenModel):
@@ -46,6 +58,7 @@ class _ScenarioEntry(FrozenModel):
     display_name: str = ""
     cookbook: str = Field(min_length=1)
     model_path: str = Field(min_length=1)
+    plugin_paths: tuple[str, ...] = ()
     matches: tuple[dict[str, Any], ...] = Field(min_length=1)
     # a cell may leave it out (GLM-5.2's multi-2 cells): one count, or one per PD role
     nnodes: PositiveInt | dict[str, PositiveInt] | None = None
@@ -173,6 +186,7 @@ class E2eConfig(FrozenModel):
                         cookbook=entry.cookbook,
                         roles=roles,
                         model_path=entry.model_path,
+                        plugin_paths=entry.plugin_paths,
                         nnodes=nnodes,
                         env={
                             role: {k: str(v) for k, v in env.items()}
