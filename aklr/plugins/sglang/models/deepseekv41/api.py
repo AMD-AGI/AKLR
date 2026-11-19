@@ -12,8 +12,8 @@ from aklr.plugins.sglang.models.deepseekv41.contract import (
 
 __all__ = ["deepseekv41_mxfp8_linear", "deepseekv41_sparse_mla"]
 
-# The sglang these routes were read against: the InferenceX cookbook's image for DeepSeek-V4.1
-_SGLANG = ("0.5.23.dev20261111",)
+# The release, and the InferenceX cookbook's image for DeepSeek-V4.1: the targets are the same text in both
+_SGLANG = ("0.5.23", "0.5.23.dev20261111")
 # A slot of DeepSeek-V4's packed fp8 pool; the V4.1 compact pools take sglang's other kernel
 _SLOT_BYTES = 584
 
