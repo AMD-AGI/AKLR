@@ -770,6 +770,21 @@ SMALL_POINTS += (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # vLLM's preshuffled per-token fp8 weights, as aiter's gemm_a8w8_bpreshuffle reads them
+    PointSpec(
+        contract_id="gemm_a8w8@1.0",
+        axes={"m": 4, "n": 32, "k": 128},
+        dtypes={
+            "a": "float8_e4m3fn",
+            "b": "float8_e4m3fn",
+            "a_scale": "float32",
+            "b_scale": "float32",
+            "bias": None,
+            "out": "bfloat16",
+        },
+        attrs={"trans_b": True, "has_bias": False},
+        layout_variant_name="b_shuffled",
+    ),
 )
 
 GFX950_CONTRACT_IDS = frozenset(
@@ -787,5 +802,11 @@ GFX950_CONTRACT_IDS = frozenset(
         "per_group_quant_fp8@1.0",
         "per_group_quant_mxfp8@1.0",
         "sparse_prefill_mxfp8@1.0",
+    }
+)
+# layout variants whose backend runs only on gfx950, of contracts whose other Points run anywhere
+GFX950_LAYOUT_VARIANTS = frozenset(
+    {
+        ("gemm_a8w8@1.0", "b_shuffled"),  # aiter's gemm_a8w8_bpreshuffle reads e4m3fn bytes only on gfx950
     }
 )
