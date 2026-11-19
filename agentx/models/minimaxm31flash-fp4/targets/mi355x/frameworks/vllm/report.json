@@ -1,0 +1,39 @@
+{
+ "model": {
+  "id": "minimaxm31flash-fp4",
+  "display_name": "MiniMax-M3.1-Flash MXFP4",
+  "precision": "mxfp4"
+ },
+ "target": {
+  "id": "mi355x",
+  "runner_label": "agentx-mi355x"
+ },
+ "framework": {
+  "id": "vllm"
+ },
+ "axes": {
+  "x": "p90_full_response_intvty",
+  "y": "tput_per_gpu"
+ },
+ "frontiers": {
+  "arms": {},
+  "combined": []
+ },
+ "comparison": {
+  "status": "incomplete",
+  "reason": "no valid successful measurement points to compare",
+  "arms": {},
+  "notes": []
+ },
+ "history": null,
+ "aklr_comparison": {
+  "status": "unavailable",
+  "points": [],
+  "tput_geomean_ratio": null,
+  "reason": "AKLR modes have different or unverified execution identities."
+ },
+ "disabled_frontiers": {
+  "arms": {},
+  "combined": []
+ }
+}

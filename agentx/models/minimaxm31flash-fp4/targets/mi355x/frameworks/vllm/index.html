@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en" data-lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentX weekly · MiniMax-M3.1-Flash MXFP4 · mi355x · vllm</title><style>
+:root { color-scheme: light; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --bg:#f8fafc; }
+* { box-sizing: border-box; }
+body { margin:0; font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif; color:var(--fg); background:var(--bg); }
+html[data-lang="en"] .page:not([data-page="en"]), html[data-lang="zh"] .page:not([data-page="zh"]) { display:none; }
+header { background:#0f172a; color:#f8fafc; padding:24px 32px; }
+header .top { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
+header h1 { margin:0 0 4px; font-size:22px; font-weight:650; }
+header .meta { color:#cbd5e1; font-size:13px; }
+header a { color:#93c5fd; }
+.lang-switch { display:flex; flex:none; border:1px solid #475569; border-radius:6px; overflow:hidden; }
+.lang-switch button { background:transparent; color:#cbd5e1; border:0; padding:4px 12px; font:inherit; font-size:13px; cursor:pointer; }
+.lang-switch button[aria-pressed="true"] { background:#f8fafc; color:#0f172a; font-weight:600; }
+main { max-width:1320px; margin:0 auto; padding:24px 32px 48px; }
+h2 { font-size:17px; margin:28px 0 12px; }
+h3 { font-size:15px; margin:18px 0 8px; }
+.card { background:white; border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
+.chart { width:100%; height:auto; }
+.chart-title { font-size:14px; font-weight:600; fill:var(--fg); }
+.grid { stroke:#eef0f3; } .tick { font-size:11px; fill:var(--muted); }
+.axis { font-size:12px; fill:#374151; } .legend { font-size:12px; fill:#374151; }
+.chart [data-point-tooltip] { cursor:help; }
+.chart [data-point-tooltip]:focus { outline:2px solid #2563eb; outline-offset:3px; }
+.point-tooltip { position:fixed; z-index:10; max-width:min(420px,calc(100vw - 24px)); padding:10px 12px; border-radius:6px; background:#0f172a; color:#f8fafc; box-shadow:0 4px 14px #0003; font-size:12px; white-space:pre-line; overflow-wrap:anywhere; pointer-events:none; }
+table { border-collapse:collapse; width:100%; background:white; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+table.compact { width:auto; min-width:640px; } table.compact th, table.compact td { padding:6px 16px; }
+th, td { padding:6px 10px; border-bottom:1px solid var(--line); text-align:left; font-variant-numeric:tabular-nums; }
+th { background:#f1f5f9; font-weight:600; font-size:13px; }
+.muted { color:var(--muted); } .good { color:#15803d; font-weight:600; } .bad { color:#b91c1c; font-weight:600; }
+.badge { display:inline-block; font-size:12px; padding:1px 8px; border-radius:999px; vertical-align:middle; }
+.badge.comparable { background:#dcfce7; color:#166534; } .badge.new-segment { background:#fef3c7; color:#92400e; }
+.badge.new-arm { background:#e0e7ff; color:#3730a3; }
+.badge.no-baseline { background:#f1f5f9; color:#475569; }
+.badge.curve, .badge.curve-no-overlap { background:#e0e7ff; color:#3730a3; }
+.warn { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:8px 12px; }
+.warn li, .notes li { margin:2px 0; }
+code { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+dl { display:grid; grid-template-columns:fit-content(32%) 1fr; gap:4px 16px; margin:0; }
+dt { color:var(--muted); overflow-wrap:anywhere; } dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+</style>
+<script>
+(function () {
+  var root = document.documentElement, titles = {"en": "AgentX weekly · MiniMax-M3.1-Flash MXFP4 · mi355x · vllm", "zh": "AgentX 周报 · MiniMax-M3.1-Flash MXFP4 · mi355x · vllm"};
+  function syncButtons() {
+    document.querySelectorAll("[data-set-lang]").forEach(function (button) {
+      button.setAttribute("aria-pressed", String(button.dataset.setLang === root.dataset.lang));
+    });
+  }
+  function set(lang, save) {
+    hidePoint();
+    root.dataset.lang = lang;
+    root.lang = lang === "zh" ? "zh-CN" : "en";
+    document.title = titles[lang];
+    syncButtons();
+    if (save) {
+      try { localStorage.setItem("agentx-lang", lang); } catch (e) {}
+      try {
+        var url = new URL(location.href);
+        url.searchParams.set("lang", lang);
+        history.replaceState(null, "", url);
+      } catch (e) {}
+    }
+  }
+  var asked = new URLSearchParams(location.search).get("lang"), saved = null;
+  try { saved = localStorage.getItem("agentx-lang"); } catch (e) {}
+  function valid(lang) { return lang === "en" || lang === "zh"; }
+  set(valid(asked) ? asked : valid(saved) ? saved : "en", false);
+  document.addEventListener("DOMContentLoaded", syncButtons);
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-set-lang]");
+    if (button && valid(button.dataset.setLang)) { set(button.dataset.setLang, true); }
+  });
+  var activePoint = null;
+  function hidePoint() {
+    var tooltip = document.getElementById("point-tooltip");
+    if (tooltip) { tooltip.hidden = true; }
+    activePoint = null;
+  }
+  function showPoint(point, x, y) {
+    var tooltip = document.getElementById("point-tooltip");
+    activePoint = point;
+    tooltip.textContent = point.dataset.pointTooltip;
+    tooltip.hidden = false;
+    var box = tooltip.getBoundingClientRect();
+    tooltip.style.left = Math.max(12, Math.min(x + 14, innerWidth - box.width - 12)) + "px";
+    tooltip.style.top = Math.max(12, y + box.height + 26 > innerHeight ? y - box.height - 14 : y + 14) + "px";
+  }
+  document.addEventListener("pointerover", function (event) {
+    var point = event.target.closest("[data-point-tooltip]");
+    if (point) { showPoint(point, event.clientX, event.clientY); }
+  });
+  document.addEventListener("pointermove", function (event) {
+    if (activePoint && event.target === activePoint) {
+      showPoint(activePoint, event.clientX, event.clientY);
+    }
+  });
+  document.addEventListener("pointerout", function (event) {
+    if (event.target === activePoint) { hidePoint(); }
+  });
+  document.addEventListener("focusin", function (event) {
+    var point = event.target.closest("[data-point-tooltip]");
+    if (point) {
+      var box = point.getBoundingClientRect();
+      showPoint(point, box.right, box.bottom);
+    }
+  });
+  document.addEventListener("focusout", function (event) {
+    if (event.target === activePoint) { hidePoint(); }
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") { hidePoint(); }
+  });
+  window.addEventListener("scroll", hidePoint, true);
+  window.addEventListener("resize", hidePoint);
+})();
+</script></head>
+<body>
+<div class="page" data-page="en" lang="en">
+<header>
+<div class="top"><h1>AgentX weekly · MiniMax-M3.1-Flash MXFP4 · mi355x · vllm</h1>
+<div class="lang-switch" role="group" aria-label="Language"><button type="button" data-set-lang="en" aria-pressed="true">EN</button><button type="button" data-set-lang="zh" aria-pressed="false">中文</button></div></div>
+<div class="meta">run 44491219482 · 2026-11-19T15:15:19Z · host smci355-ccs-aus-m14-09 ·
+AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/8806c22a61f61b0fccb1322b4e44edf36d7895e1">8806c22a61</a> · client SemiAnalysisAI/InferenceX <a href="https://github.com/SemiAnalysisAI/InferenceX/commit/8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4">8f29d8dc12</a> · AKLR on 0/6 · off 0/6 · no previous run</div>
+</header>
+<main>
+<div class="warn">Incomplete measurement or failed points.</div>
+<div class="card"><p>Upstream Pareto frontier: 6 points selected; 0/6 succeeded. This validates the selected points, not the full grid.</p><p>Selection <code>96eea4b8b255</code> · the chart below connects every successful point of this run by its full-response interactivity.</p></div>
+<h2>Throughput vs interactivity</h2>
+<p class="muted">Throughput counts input + output tokens. P90 interactivity matches the InferenceX CSV: 1 / P90(full-response ITL), using the exported ITL in seconds. It excludes time to first token and includes the time from the final content chunk to HTTP completion.</p>
+<div class="card"><svg viewBox="0 0 1000 380" class="chart" role="img" aria-label="AKLR enabled vs disabled">
+<text x="64" y="22" class="chart-title">AKLR enabled vs disabled</text>
+<line x1="64.0" x2="64.0" y1="58" y2="328" class="grid"/>
+<text x="64.0" y="344" class="tick" text-anchor="middle">0</text>
+<line x1="248.0" x2="248.0" y1="58" y2="328" class="grid"/>
+<text x="248.0" y="344" class="tick" text-anchor="middle">0.25</text>
+<line x1="432.0" x2="432.0" y1="58" y2="328" class="grid"/>
+<text x="432.0" y="344" class="tick" text-anchor="middle">0.5</text>
+<line x1="616.0" x2="616.0" y1="58" y2="328" class="grid"/>
+<text x="616.0" y="344" class="tick" text-anchor="middle">0.75</text>
+<line x1="800.0" x2="800.0" y1="58" y2="328" class="grid"/>
+<text x="800.0" y="344" class="tick" text-anchor="middle">1</text>
+<line x1="984.0" x2="984.0" y1="58" y2="328" class="grid"/>
+<text x="984.0" y="344" class="tick" text-anchor="middle">1.25</text>
+<line x1="64" x2="984" y1="328.0" y2="328.0" class="grid"/>
+<text x="56" y="332.0" class="tick" text-anchor="end">0</text>
+<line x1="64" x2="984" y1="274.0" y2="274.0" class="grid"/>
+<text x="56" y="278.0" class="tick" text-anchor="end">0.25</text>
+<line x1="64" x2="984" y1="220.0" y2="220.0" class="grid"/>
+<text x="56" y="224.0" class="tick" text-anchor="end">0.5</text>
+<line x1="64" x2="984" y1="166.0" y2="166.0" class="grid"/>
+<text x="56" y="170.0" class="tick" text-anchor="end">0.75</text>
+<line x1="64" x2="984" y1="112.0" y2="112.0" class="grid"/>
+<text x="56" y="116.0" class="tick" text-anchor="end">1</text>
+<line x1="64" x2="984" y1="58.0" y2="58.0" class="grid"/>
+<text x="56" y="62.0" class="tick" text-anchor="end">1.25</text>
+<text x="524.0" y="368" class="axis" text-anchor="middle">P90 Interactivity (tok/s/user)</text>
+<text transform="translate(16 193.0) rotate(-90)" class="axis" text-anchor="middle">Throughput/Chip (tok/s)</text>
+<line x1="64.0" x2="82.0" y1="40" y2="40" stroke="#64748b" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="88.0" y="44" class="legend">AKLR disabled</text>
+<line x1="194.4" x2="212.4" y1="40" y2="40" stroke="#16a34a" stroke-width="2"/>
+<text x="218.4" y="44" class="legend">AKLR enabled</text>
+</svg></div>
+<h2>AKLR performance impact</h2>
+<p class="muted">Same run, image, hardware, weights and pinned trace dataset. Short runs can sample different requests. Disabled mode runs first. Higher and farther right is better. Deltas use only arm/concurrency pairs that succeeded in both modes with matching settings. They are not interpolated comparisons at equal interactivity; no statistical significance is implied.</p>
+<p class="notes">Paired comparison unavailable. Curves show available successful measurements. <span class="muted">AKLR modes have different or unverified execution identities.</span></p>
+<h2>Points</h2>
+<table><thead><tr><th>arm</th><th>conc</th><th>point</th><th>status</th><th title='Input + output throughput per GPU'>Total tok/s/GPU</th><th title='P90 interactivity (full response)'>P90 tok/s/user</th><th>serve spec</th><th></th></tr></thead><tbody></tbody></table>
+<h3>AKLR disabled points</h3><table><thead><tr><th>arm</th><th>conc</th><th>point</th><th>status</th><th title='Input + output throughput per GPU'>Total tok/s/GPU</th><th title='P90 interactivity (full response)'>P90 tok/s/user</th><th>serve spec</th><th></th></tr></thead><tbody></tbody></table>
+<h2>Provenance</h2>
+<div class="card"><dl>
+<dt>model id</dt><dd>minimaxm31flash-fp4</dd>
+<dt>target id</dt><dd>mi355x</dd>
+<dt>framework</dt><dd>vllm</dd>
+<dt>weights</dt><dd>amd/MiniMax-M3.1-Flash-Quark-MXFP4 @ bf06a0c566b430c620154497cc928c893af5e10c</dd>
+<dt>planned image</dt><dd><code>vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1</code></dd>
+<dt>verified image ID</dt><dd><code>sha256:9a5f9af8f20f129a8f0ccbe6c78499a1d0db8ddb17caaa848bb09f04f139d2b1</code></dd>
+<dt>recipe source</dt><dd>inferencex · <code>minimaxm31flash-fp4-mi355x-vllm-agentic-dspark</code></dd>
+<dt>client</dt><dd>SemiAnalysisAI/InferenceX <a href="https://github.com/SemiAnalysisAI/InferenceX/commit/8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4">8f29d8dc12</a></dd>
+<dt>tp4-ep1-dram-vllm-simple-spec-mtp</dt><dd>c32, c64 · <code>52854257658661bf</code></dd><dt>tp4-ep1-none-spec-mtp</dt><dd>c2, c4, c8, c16 · <code>47da7b3e61ab9520</code></dd>
+<dt>generated</dt><dd>2026-11-19T15:15:58Z</dd>
+</dl></div>
+</main>
+</div>
+
+<div class="page" data-page="zh" lang="zh-CN">
+<header>
+<div class="top"><h1>AgentX 周报 · MiniMax-M3.1-Flash MXFP4 · mi355x · vllm</h1>
+<div class="lang-switch" role="group" aria-label="语言"><button type="button" data-set-lang="en" aria-pressed="false">EN</button><button type="button" data-set-lang="zh" aria-pressed="true">中文</button></div></div>
+<div class="meta">运行 44491219482 · 2026-11-19T15:15:19Z · 主机 smci355-ccs-aus-m14-09 ·
+AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/8806c22a61f61b0fccb1322b4e44edf36d7895e1">8806c22a61</a> · 客户端 SemiAnalysisAI/InferenceX <a href="https://github.com/SemiAnalysisAI/InferenceX/commit/8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4">8f29d8dc12</a> · 开启 AKLR 0/6 · 关闭 AKLR 0/6 · 没有上次运行</div>
+</header>
+<main>
+<div class="warn">测量未完成或有失败点。</div>
+<div class="card"><p>上游 Pareto 前沿选点：选中 6 个，成功 0/6。本次只验证选中的点，不代表完整并发矩阵。</p><p>选点 <code>96eea4b8b255</code> · 下图按本次实测的完整响应交互速度，把每个成功的点连成曲线。</p></div>
+<h2>吞吐与交互速度</h2>
+<p class="muted">吞吐统计输入与输出 token 总量。P90 交互速度与 InferenceX CSV 口径一致：1 / P90（完整响应 ITL），使用导出的秒单位 ITL。不包含首 token 等待时间，包含最后内容块到 HTTP 响应结束的收尾时间。</p>
+<div class="card"><svg viewBox="0 0 1000 380" class="chart" role="img" aria-label="开启与关闭 AKLR">
+<text x="64" y="22" class="chart-title">开启与关闭 AKLR</text>
+<line x1="64.0" x2="64.0" y1="58" y2="328" class="grid"/>
+<text x="64.0" y="344" class="tick" text-anchor="middle">0</text>
+<line x1="248.0" x2="248.0" y1="58" y2="328" class="grid"/>
+<text x="248.0" y="344" class="tick" text-anchor="middle">0.25</text>
+<line x1="432.0" x2="432.0" y1="58" y2="328" class="grid"/>
+<text x="432.0" y="344" class="tick" text-anchor="middle">0.5</text>
+<line x1="616.0" x2="616.0" y1="58" y2="328" class="grid"/>
+<text x="616.0" y="344" class="tick" text-anchor="middle">0.75</text>
+<line x1="800.0" x2="800.0" y1="58" y2="328" class="grid"/>
+<text x="800.0" y="344" class="tick" text-anchor="middle">1</text>
+<line x1="984.0" x2="984.0" y1="58" y2="328" class="grid"/>
+<text x="984.0" y="344" class="tick" text-anchor="middle">1.25</text>
+<line x1="64" x2="984" y1="328.0" y2="328.0" class="grid"/>
+<text x="56" y="332.0" class="tick" text-anchor="end">0</text>
+<line x1="64" x2="984" y1="274.0" y2="274.0" class="grid"/>
+<text x="56" y="278.0" class="tick" text-anchor="end">0.25</text>
+<line x1="64" x2="984" y1="220.0" y2="220.0" class="grid"/>
+<text x="56" y="224.0" class="tick" text-anchor="end">0.5</text>
+<line x1="64" x2="984" y1="166.0" y2="166.0" class="grid"/>
+<text x="56" y="170.0" class="tick" text-anchor="end">0.75</text>
+<line x1="64" x2="984" y1="112.0" y2="112.0" class="grid"/>
+<text x="56" y="116.0" class="tick" text-anchor="end">1</text>
+<line x1="64" x2="984" y1="58.0" y2="58.0" class="grid"/>
+<text x="56" y="62.0" class="tick" text-anchor="end">1.25</text>
+<text x="524.0" y="368" class="axis" text-anchor="middle">P90 Interactivity (tok/s/user)</text>
+<text transform="translate(16 193.0) rotate(-90)" class="axis" text-anchor="middle">Throughput/Chip (tok/s)</text>
+<line x1="64.0" x2="82.0" y1="40" y2="40" stroke="#64748b" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="88.0" y="44" class="legend">关闭 AKLR</text>
+<line x1="164.0" x2="182.0" y1="40" y2="40" stroke="#16a34a" stroke-width="2"/>
+<text x="188.0" y="44" class="legend">开启 AKLR</text>
+</svg></div>
+<h2>AKLR 性能收益</h2>
+<p class="muted">同一次运行，使用相同镜像、硬件、权重和固定的请求轨迹数据集。短时运行可能覆盖不同请求。先关闭再开启 AKLR。曲线越靠右上越好。增幅只对两种模式均成功完成且配置一致的相同实验组和并发点计算，不代表相同交互速度下的插值对比，也不代表统计显著性。</p>
+<p class="notes">暂不计算成对增幅。曲线展示已获得的成功测量点。 <span class="muted">两种 AKLR 模式的执行身份不同或未经验证。</span></p>
+<h2>数据点</h2>
+<table><thead><tr><th>实验组</th><th>并发</th><th>数据点</th><th>状态</th><th title='单 GPU 输入+输出吞吐'>总 tok/s/GPU</th><th title='P90 完整响应交互速度'>P90 tok/s/user</th><th>服务配置</th><th></th></tr></thead><tbody></tbody></table>
+<h3>关闭 AKLR 数据点</h3><table><thead><tr><th>实验组</th><th>并发</th><th>数据点</th><th>状态</th><th title='单 GPU 输入+输出吞吐'>总 tok/s/GPU</th><th title='P90 完整响应交互速度'>P90 tok/s/user</th><th>服务配置</th><th></th></tr></thead><tbody></tbody></table>
+<h2>来源信息</h2>
+<div class="card"><dl>
+<dt>模型标识</dt><dd>minimaxm31flash-fp4</dd>
+<dt>测试目标标识</dt><dd>mi355x</dd>
+<dt>框架</dt><dd>vllm</dd>
+<dt>权重</dt><dd>amd/MiniMax-M3.1-Flash-Quark-MXFP4 @ bf06a0c566b430c620154497cc928c893af5e10c</dd>
+<dt>计划镜像</dt><dd><code>vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1</code></dd>
+<dt>已验证镜像 ID</dt><dd><code>sha256:9a5f9af8f20f129a8f0ccbe6c78499a1d0db8ddb17caaa848bb09f04f139d2b1</code></dd>
+<dt>recipe 来源</dt><dd>inferencex · <code>minimaxm31flash-fp4-mi355x-vllm-agentic-dspark</code></dd>
+<dt>客户端</dt><dd>SemiAnalysisAI/InferenceX <a href="https://github.com/SemiAnalysisAI/InferenceX/commit/8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4">8f29d8dc12</a></dd>
+<dt>tp4-ep1-dram-vllm-simple-spec-mtp</dt><dd>c32, c64 · <code>52854257658661bf</code></dd><dt>tp4-ep1-none-spec-mtp</dt><dd>c2, c4, c8, c16 · <code>47da7b3e61ab9520</code></dd>
+<dt>生成时间</dt><dd>2026-11-19T15:15:58Z</dd>
+</dl></div>
+</main>
+</div>
+
+<div id="point-tooltip" class="point-tooltip" role="tooltip" hidden></div>
+</body></html>

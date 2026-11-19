@@ -1,0 +1,25 @@
+{
+ "schema": 1,
+ "id": "agentx",
+ "title": {
+  "en": "AgentX end-to-end performance",
+  "zh": "AgentX 端到端性能"
+ },
+ "path": "index.html",
+ "updated_at": "2026-11-19T15:16:41Z",
+ "last_run": {
+  "run_id": "44491219482",
+  "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/44491219482",
+  "commit": "8806c22a61f61b0fccb1322b4e44edf36d7895e1",
+  "ref": "refs/heads/main",
+  "event": "workflow_dispatch"
+ },
+ "targets": 3,
+ "status_counts": {
+  "partial": 2,
+  "failed": 1
+ },
+ "commits": [
+  "8806c22a61f61b0fccb1322b4e44edf36d7895e1"
+ ]
+}

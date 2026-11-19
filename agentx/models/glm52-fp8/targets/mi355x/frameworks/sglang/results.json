@@ -1,0 +1,3197 @@
+{
+ "schema": 4,
+ "model": {
+  "id": "glm52-fp8",
+  "display_name": "GLM-5.2 FP8",
+  "precision": "fp8"
+ },
+ "target": {
+  "id": "mi355x",
+  "runner_label": "agentx-mi355x"
+ },
+ "framework": {
+  "id": "sglang"
+ },
+ "run": {
+  "mode": "live",
+  "started_at": "2026-11-19T15:04:46Z",
+  "finished_at": "2026-11-19T15:14:19Z",
+  "completed": true,
+  "serving_sha256": "ed488e1708edabcc5541fe1accc0e91bdfdd62a71602ab22407f45bd3cb2d164",
+  "image": {
+   "run": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5"
+  },
+  "expected_hardware": {
+   "gpu_name_pattern": "\\bMI355X\\b",
+   "gpu_arch": "gfx950",
+   "gpu_count": 8
+  },
+  "aklr_mode": "enabled",
+  "source": {
+   "kind": "inferencex",
+   "config_key": "glm5.2-fp8-mi355x-sglang-agentic-mtp"
+  },
+  "client": {
+   "repo": "SemiAnalysisAI/InferenceX",
+   "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4"
+  },
+  "weights": {
+   "repo": "zai-org/GLM-5.2-FP8",
+   "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+  },
+  "points_expected": 5,
+  "point_policy": "pareto",
+  "arms_requested": "all",
+  "points_requested": null,
+  "duration_override_s": 600,
+  "model_path_override": null,
+  "selection": {
+   "points": [
+    "tp8-ep1-dram-hicache-spec-mtp:16",
+    "tp8-ep1-none-spec-mtp:1",
+    "tp8-ep1-none-spec-mtp:2",
+    "tp8-ep1-none-spec-mtp:4",
+    "tp8-ep1-none-spec-mtp:10"
+   ],
+   "policy": "pareto",
+   "duration": 600,
+   "points_requested": null,
+   "serve_sha256": "4e0c3adb7795c82963ec53ef5f1a4da2daf25ce3ae41e997b3e73a7607cd0e1c",
+   "spec_sha256": "a50ac42daa420f9a4c663819e4c3d8fb88d95dad67d5894abd3eecbb6d4e9049",
+   "selection_sha256": "4043a012f7003525c96aa5226565fc4ab517d9af2ff189cacf26d9b7de9c5e08",
+   "manifest_sha256": "a8d765dc5d3a7e421553224b83465857a3665968da8456593ef1d3c2785460c4"
+  },
+  "id": "44491219482",
+  "attempt_id": "f0d5138a4ea545b5ab8e71d1db2d6dbe",
+  "aklr_sha": "8806c22a61f61b0fccb1322b4e44edf36d7895e1",
+  "source_dirty": false,
+  "host": "smci355-ccs-aus-m14-09",
+  "execution": {
+   "image_reference": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
+   "image_id": "sha256:11714c7927d09447d6ab32b2566f2a4ea71638ede255d06f97fb9435fee8e245",
+   "server_environment": {
+    "policy": "paired-aklr-image-env-v2",
+    "scope": "server",
+    "source": "docker-image-inspect.Config.Env",
+    "defaults_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+    "defaults": {
+     "AITER_COMMIT": "<redacted>",
+     "AITER_COMMIT_DEFAULT": "<redacted>",
+     "AITER_USE_SYSTEM_TRITON": "<redacted>",
+     "BUILD_AITER_ALL": "<redacted>",
+     "BUILD_LLVM": "<redacted>",
+     "BUILD_MOONCAKE": "<redacted>",
+     "BUILD_TRITON": "<redacted>",
+     "BUILD_VLLM": "<redacted>",
+     "CARGO_BUILD_JOBS": "<redacted>",
+     "CPATH": "<redacted>",
+     "DEBIAN_FRONTEND": "<redacted>",
+     "GPU_ARCH": "<redacted>",
+     "GPU_ARCH_LIST": "<redacted>",
+     "HIP_FORCE_DEV_KERNARG": "<redacted>",
+     "HSA_NO_SCRATCH_RECLAIM": "<redacted>",
+     "LD_LIBRARY_PATH": "<redacted>",
+     "LIBGL_ALWAYS_INDIRECT": "<redacted>",
+     "LIBRARY_PATH": "<redacted>",
+     "NCCL_MIN_NCHANNELS": "<redacted>",
+     "PATH": "<redacted>",
+     "PIP_CONSTRAINT": "<redacted>",
+     "PYTORCH_ROCM_ARCH": "<redacted>",
+     "ROCM_HOME": "<redacted>",
+     "ROCM_PATH": "<redacted>",
+     "ROCM_QUICK_REDUCE_QUANTIZATION": "<redacted>",
+     "SETUPTOOLS_SCM_PRETEND_VERSION": "<redacted>",
+     "SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN": "<redacted>",
+     "SGLANG_DISABLE_CUDNN_CHECK": "<redacted>",
+     "SGLANG_INT4_WEIGHT": "<redacted>",
+     "SGLANG_MOE_PADDING": "<redacted>",
+     "SGLANG_ROCM_DISABLE_LINEARQUANT": "<redacted>",
+     "SGLANG_ROCM_FUSED_DECODE_MLA": "<redacted>",
+     "SGLANG_SET_CPU_AFFINITY": "<redacted>",
+     "SGLANG_USE_AITER": "<redacted>",
+     "SGLANG_USE_ROCM700A": "<redacted>",
+     "TORCHINDUCTOR_MAX_AUTOTUNE": "<redacted>",
+     "TORCHINDUCTOR_MAX_AUTOTUNE_POINTWISE": "<redacted>",
+     "TRITON_COMMIT": "<redacted>",
+     "TRITON_REVERT_COMMITS": "<redacted>",
+     "VIRTUAL_ENV": "<redacted>"
+    }
+   }
+  },
+  "hardware": {
+   "devices": [
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    }
+   ],
+   "peer_access": [
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   ]
+  },
+  "client_packages": {
+   "cyclopts": "4.25.3",
+   "starlette-compress": "2.0.0",
+   "urllib3": "2.8.0",
+   "h11": "0.16.0",
+   "python-dotenv": "1.2.4",
+   "tzdata": "2026.6",
+   "fonttools": "4.68.0",
+   "nest-asyncio": "1.6.0",
+   "certifi": "2026.10.23",
+   "typing_extensions": "4.16.0",
+   "python-dateutil": "4.0.0",
+   "kaleido": "1.2.0",
+   "zstandard": "0.25.0",
+   "itsdangerous": "2.2.0",
+   "multidict": "6.9.1",
+   "pytz": "2026.6",
+   "click": "8.5.1",
+   "future": "1.0.0",
+   "numpy": "2.4.6",
+   "setuptools": "84.2.1",
+   "annotated-doc": "0.0.7",
+   "idna": "3.20",
+   "Mako": "1.4.3",
+   "optuna": "5.1.0",
+   "watchfiles": "1.3.0",
+   "brotli": "1.2.1",
+   "rich-rst": "2.2.0",
+   "pytest-timeout": "2.4.0",
+   "ffmpeg-python": "0.2.0",
+   "jmespath": "1.0.1",
+   "alembic": "1.20.1",
+   "sentencepiece": "0.2.3",
+   "pandas": "2.3.3",
+   "iniconfig": "2.3.1",
+   "seaborn": "0.13.2",
+   "yarl": "1.25.1",
+   "anyio": "4.16.0",
+   "pillow": "12.3.0",
+   "mdurl": "0.1.2",
+   "huggingface_hub": "1.33.0",
+   "xxhash": "4.1.0",
+   "aiohappyeyeballs": "2.7.1",
+   "matplotlib": "3.11.2",
+   "pydantic-settings": "2.16.3",
+   "SQLAlchemy": "2.1.9",
+   "pydantic_core": "2.50.5",
+   "retrying": "1.4.2",
+   "propcache": "0.5.4",
+   "markdown-it-py": "4.3.0",
+   "pyparsing": "3.3.3",
+   "charset-normalizer": "3.5.2",
+   "pydantic": "2.14.4",
+   "protobuf": "7.36.2",
+   "typer": "0.29.2",
+   "prometheus_client": "0.23.1",
+   "zipp": "4.1.2",
+   "packaging": "26.3",
+   "tqdm": "4.70.1",
+   "httptools": "0.9.0",
+   "linkify-it-py": "2.2.0",
+   "soundfile": "0.13.1",
+   "agentx-harness": "1.0.13",
+   "MarkupSafe": "3.0.4",
+   "simplejson": "4.3.0",
+   "msgspec": "0.22.0",
+   "pyarrow": "26.0.1",
+   "uvloop": "0.23.0",
+   "textual": "5.3.0",
+   "orjson": "3.11.9",
+   "annotated-types": "0.8.0",
+   "platformdirs": "4.14.7",
+   "frozenlist": "1.8.0",
+   "pluggy": "1.7.0",
+   "rich": "14.1.0",
+   "ruamel.yaml.clib": "0.2.15",
+   "transformers": "5.23.0",
+   "websockets": "17.4",
+   "blinker": "1.9.0",
+   "psutil": "7.0.0",
+   "kiwisolver": "1.5.1",
+   "nvidia-ml-py": "13.615.71",
+   "pyzmq": "26.4.0",
+   "filelock": "4.2.12",
+   "tokenizers": "0.23.3",
+   "tiktoken": "0.14.0",
+   "cffi": "2.1.1",
+   "datasets": "5.2.0",
+   "Flask": "3.1.3",
+   "shellingham": "1.5.4",
+   "dash": "3.1.1",
+   "fastapi": "0.165.0",
+   "setproctitle": "1.3.8",
+   "requests": "2.34.2",
+   "multiprocess": "0.70.19",
+   "Pygments": "2.21.0",
+   "fsspec": "2026.9.0",
+   "regex": "2026.11.19",
+   "safetensors": "0.8.0",
+   "cycler": "0.12.1",
+   "httpcore": "1.0.9",
+   "contourpy": "1.3.3",
+   "PyYAML": "6.0.3",
+   "choreographer": "1.4.0",
+   "scipy": "1.17.1",
+   "Jinja2": "3.1.6",
+   "lazy-importer": "0.1.0",
+   "attrs": "26.1.0",
+   "dill": "0.4.1",
+   "importlib_metadata": "10.2.0",
+   "aiofiles": "24.1.0",
+   "typing-inspection": "0.4.5",
+   "docstring_parser": "0.18.0",
+   "ruamel.yaml": "0.18.17",
+   "crick": "0.0.8",
+   "colorlog": "6.12.0",
+   "hf-xet": "1.8.0",
+   "plotly": "6.4.0",
+   "pytest": "9.2.0",
+   "opentelemetry-api": "1.45.2",
+   "starlette": "1.10.0",
+   "logistro": "2.0.1",
+   "dash-bootstrap-components": "2.0.4",
+   "pycparser": "3.12",
+   "httpx": "0.28.1",
+   "aiosignal": "1.4.0",
+   "Werkzeug": "3.1.9",
+   "aiohttp": "3.13.5",
+   "uvicorn": "0.54.0",
+   "narwhals": "2.29.0",
+   "mdit-py-plugins": "0.7.0"
+  },
+  "server_packages": {
+   "sglang": "0.5.23",
+   "torch": "2.11.0+rocm10.0.0",
+   "triton": "3.8.0+git4cff872c.rocm10.0.0",
+   "amd-aiter": "0.1.26.dev144+g285579b62.d20261030",
+   "flydsl": "0.4.0"
+  }
+ },
+ "serving": {
+  "grid_sha256": "51535654d0e23930411ec34c20c9a33c4f0b4c0233d2a4d1126a6ff0a4d89539",
+  "arms": {
+   "tp8-ep1-dram-hicache-spec-mtp": {
+    "concs": [
+     16
+    ],
+    "arm_serve_sha256": "8cd5ffe97a519353cae01534d00c6ed4998a4678ddf904ea36643b5cbc510dc5",
+    "arm_measurement_sha256": "b858e581d80d6cb778ecd5ee544197c8752e78fea59f7318c0b6d0d605c93bbe"
+   },
+   "tp8-ep1-none-spec-mtp": {
+    "concs": [
+     1,
+     2,
+     4,
+     10
+    ],
+    "arm_serve_sha256": "e9ff2454ecb22330c0a0e7f858324fa90aae89052f59d02c8b167d5c43613d40",
+    "arm_measurement_sha256": "4f3a6529d1a1c44b653e252f98a598a2ace820452884b001f774b73956533a55"
+   }
+  }
+ },
+ "points": [
+  {
+   "arm": "tp8-ep1-dram-hicache-spec-mtp",
+   "conc": 16,
+   "exp_name": "glm52-fp8-tp8-ep1-dram-hicache-spec-mtp-c16",
+   "serve_spec_sha256": "665c1d9bfc0342e1af5a9137f2bd847cb38f8b630dc09c22b9d50dc0670c96f5",
+   "status": "failed",
+   "error": "RuntimeError: server exited with code -9 before ready",
+   "started_at": "2026-11-19T15:04:46Z",
+   "elapsed_s": 175.4,
+   "measurement": {
+    "environment_policy": "paired-aklr-image-env-v2",
+    "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+    "weights": {
+     "repo": "zai-org/GLM-5.2-FP8",
+     "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+    },
+    "launch": {
+     "command": [
+      "python3",
+      "-m",
+      "sglang.launch_server",
+      "--model-path",
+      "${AGENTX_MODEL_PATH}",
+      "--served-model-name",
+      "zai-org/GLM-5.2-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "${AGENTX_PORT}",
+      "--chunked-prefill-size",
+      "32768",
+      "--cuda-graph-max-bs-decode",
+      "32",
+      "--dsa-decode-backend",
+      "tilelang",
+      "--dsa-prefill-backend",
+      "tilelang",
+      "--enable-hierarchical-cache",
+      "--enable-metrics",
+      "--expert-parallel-size",
+      "1",
+      "--hicache-io-backend",
+      "direct",
+      "--hicache-mem-layout",
+      "page_first_direct",
+      "--hicache-ratio",
+      "1.5",
+      "--hicache-write-policy",
+      "write_through_selective",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--max-running-requests",
+      "32",
+      "--mem-fraction-static",
+      "0.85",
+      "--reasoning-parser",
+      "glm45",
+      "--speculative-algorithm",
+      "EAGLE",
+      "--speculative-eagle-topk",
+      "1",
+      "--speculative-num-draft-tokens",
+      "6",
+      "--speculative-num-steps",
+      "5",
+      "--tensor-parallel-size",
+      "8",
+      "--tool-call-parser",
+      "glm47",
+      "--trust-remote-code",
+      "--watchdog-timeout",
+      "1800"
+     ],
+     "env": {
+      "HF_HUB_OFFLINE": "1",
+      "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+      "PYTHONNOUSERSITE": "1",
+      "SGLANG_OPT_USE_TOPK_V2": "false",
+      "SGLANG_SIMULATE_ACC_LEN": "3.61",
+      "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+      "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+      "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+      "AKLR_SGLANG_PLUGIN": "1",
+      "AKLR_DISABLE": "0"
+     }
+    },
+    "client_env": {
+     "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+     "AIPERF_EXPERIMENTAL_FAST": "0",
+     "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+     "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+     "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+     "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+     "CONC": "16",
+     "DCP_SIZE": "1",
+     "DP_ATTENTION": "false",
+     "DURATION": "600",
+     "ENABLE_AGENTX_POWER": "false",
+     "EP_SIZE": "1",
+     "EVAL_ONLY": "false",
+     "FRAMEWORK": "sglang",
+     "IS_AGENTIC": "1",
+     "IS_MULTINODE": "false",
+     "KV_OFFLOADING": "dram",
+     "KV_OFFLOAD_BACKEND": "hicache",
+     "KV_OFFLOAD_BACKEND_METADATA": "{\"name\": \"hicache\"}",
+     "MODEL": "zai-org/GLM-5.2-FP8",
+     "MODEL_PREFIX": "glm5.2",
+     "PCP_SIZE": "1",
+     "PP_SIZE": "1",
+     "PRECISION": "fp8",
+     "REQUIRE_POWER": "0",
+     "SPEC_ALGORITHM": "mtp",
+     "SPEC_DRAFT_MODEL": "native",
+     "TOTAL_CPU_DRAM_GB": "2399",
+     "TP": "8",
+     "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+    },
+    "runtime": {
+     "port": null,
+     "ready_timeout_s": 7200,
+     "poll_s": 10,
+     "point_timeout_s": 30000
+    },
+    "model_path_override": null,
+    "trace": {
+     "loader": "semianalysis_cc_traces_weka_062126",
+     "repo": "semianalysisai/cc-traces-weka-062126",
+     "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+    },
+    "trace_policy": "revision-isolated-v1"
+   },
+   "measurement_sha256": "c34145dd1d05b82d4a668e0c20e0cf1bfb6367335c751b84ce835a671dfff3ba"
+  },
+  {
+   "arm": "tp8-ep1-none-spec-mtp",
+   "conc": 1,
+   "exp_name": "glm52-fp8-tp8-ep1-none-spec-mtp-c1",
+   "serve_spec_sha256": "c760896e2b55c25d1e772df18c034f11bbf5f58598714810c75e4ba357bd9cde",
+   "status": "failed",
+   "error": "RuntimeError: server exited with code -9 before ready",
+   "started_at": "2026-11-19T15:07:42Z",
+   "elapsed_s": 95.3,
+   "measurement": {
+    "environment_policy": "paired-aklr-image-env-v2",
+    "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+    "weights": {
+     "repo": "zai-org/GLM-5.2-FP8",
+     "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+    },
+    "launch": {
+     "command": [
+      "python3",
+      "-m",
+      "sglang.launch_server",
+      "--model-path",
+      "${AGENTX_MODEL_PATH}",
+      "--served-model-name",
+      "zai-org/GLM-5.2-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "${AGENTX_PORT}",
+      "--chunked-prefill-size",
+      "32768",
+      "--cuda-graph-max-bs-decode",
+      "2",
+      "--dsa-decode-backend",
+      "tilelang",
+      "--dsa-prefill-backend",
+      "tilelang",
+      "--enable-metrics",
+      "--expert-parallel-size",
+      "1",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--max-running-requests",
+      "2",
+      "--mem-fraction-static",
+      "0.85",
+      "--reasoning-parser",
+      "glm45",
+      "--speculative-algorithm",
+      "EAGLE",
+      "--speculative-eagle-topk",
+      "1",
+      "--speculative-num-draft-tokens",
+      "6",
+      "--speculative-num-steps",
+      "5",
+      "--tensor-parallel-size",
+      "8",
+      "--tool-call-parser",
+      "glm47",
+      "--trust-remote-code",
+      "--watchdog-timeout",
+      "1800"
+     ],
+     "env": {
+      "HF_HUB_OFFLINE": "1",
+      "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+      "PYTHONNOUSERSITE": "1",
+      "SGLANG_OPT_USE_TOPK_V2": "false",
+      "SGLANG_SIMULATE_ACC_LEN": "3.61",
+      "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+      "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+      "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+      "AKLR_SGLANG_PLUGIN": "1",
+      "AKLR_DISABLE": "0"
+     }
+    },
+    "client_env": {
+     "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+     "AIPERF_EXPERIMENTAL_FAST": "0",
+     "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+     "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+     "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+     "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+     "CONC": "1",
+     "DCP_SIZE": "1",
+     "DP_ATTENTION": "false",
+     "DURATION": "600",
+     "ENABLE_AGENTX_POWER": "false",
+     "EP_SIZE": "1",
+     "EVAL_ONLY": "false",
+     "FRAMEWORK": "sglang",
+     "IS_AGENTIC": "1",
+     "IS_MULTINODE": "false",
+     "KV_OFFLOADING": "none",
+     "MODEL": "zai-org/GLM-5.2-FP8",
+     "MODEL_PREFIX": "glm5.2",
+     "PCP_SIZE": "1",
+     "PP_SIZE": "1",
+     "PRECISION": "fp8",
+     "REQUIRE_POWER": "0",
+     "SPEC_ALGORITHM": "mtp",
+     "SPEC_DRAFT_MODEL": "native",
+     "TOTAL_CPU_DRAM_GB": "0",
+     "TP": "8",
+     "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+    },
+    "runtime": {
+     "port": null,
+     "ready_timeout_s": 7200,
+     "poll_s": 10,
+     "point_timeout_s": 30000
+    },
+    "model_path_override": null,
+    "trace": {
+     "loader": "semianalysis_cc_traces_weka_062126",
+     "repo": "semianalysisai/cc-traces-weka-062126",
+     "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+    },
+    "trace_policy": "revision-isolated-v1"
+   },
+   "measurement_sha256": "b8b59cbdef316f6901513f550f3f104b92f9da2bdbc859f1c2c9d77babac5353"
+  },
+  {
+   "arm": "tp8-ep1-none-spec-mtp",
+   "conc": 2,
+   "exp_name": "glm52-fp8-tp8-ep1-none-spec-mtp-c2",
+   "serve_spec_sha256": "f3dae3980f11fe0812b1bf563e448c49e714d0fa747a67f464a6b6ee10c9029b",
+   "status": "failed",
+   "error": "RuntimeError: server exited with code -9 before ready",
+   "started_at": "2026-11-19T15:09:17Z",
+   "elapsed_s": 110.9,
+   "measurement": {
+    "environment_policy": "paired-aklr-image-env-v2",
+    "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+    "weights": {
+     "repo": "zai-org/GLM-5.2-FP8",
+     "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+    },
+    "launch": {
+     "command": [
+      "python3",
+      "-m",
+      "sglang.launch_server",
+      "--model-path",
+      "${AGENTX_MODEL_PATH}",
+      "--served-model-name",
+      "zai-org/GLM-5.2-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "${AGENTX_PORT}",
+      "--chunked-prefill-size",
+      "32768",
+      "--cuda-graph-max-bs-decode",
+      "4",
+      "--dsa-decode-backend",
+      "tilelang",
+      "--dsa-prefill-backend",
+      "tilelang",
+      "--enable-metrics",
+      "--expert-parallel-size",
+      "1",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--max-running-requests",
+      "4",
+      "--mem-fraction-static",
+      "0.85",
+      "--reasoning-parser",
+      "glm45",
+      "--speculative-algorithm",
+      "EAGLE",
+      "--speculative-eagle-topk",
+      "1",
+      "--speculative-num-draft-tokens",
+      "6",
+      "--speculative-num-steps",
+      "5",
+      "--tensor-parallel-size",
+      "8",
+      "--tool-call-parser",
+      "glm47",
+      "--trust-remote-code",
+      "--watchdog-timeout",
+      "1800"
+     ],
+     "env": {
+      "HF_HUB_OFFLINE": "1",
+      "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+      "PYTHONNOUSERSITE": "1",
+      "SGLANG_OPT_USE_TOPK_V2": "false",
+      "SGLANG_SIMULATE_ACC_LEN": "3.61",
+      "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+      "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+      "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+      "AKLR_SGLANG_PLUGIN": "1",
+      "AKLR_DISABLE": "0"
+     }
+    },
+    "client_env": {
+     "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+     "AIPERF_EXPERIMENTAL_FAST": "0",
+     "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+     "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+     "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+     "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+     "CONC": "2",
+     "DCP_SIZE": "1",
+     "DP_ATTENTION": "false",
+     "DURATION": "600",
+     "ENABLE_AGENTX_POWER": "false",
+     "EP_SIZE": "1",
+     "EVAL_ONLY": "false",
+     "FRAMEWORK": "sglang",
+     "IS_AGENTIC": "1",
+     "IS_MULTINODE": "false",
+     "KV_OFFLOADING": "none",
+     "MODEL": "zai-org/GLM-5.2-FP8",
+     "MODEL_PREFIX": "glm5.2",
+     "PCP_SIZE": "1",
+     "PP_SIZE": "1",
+     "PRECISION": "fp8",
+     "REQUIRE_POWER": "0",
+     "SPEC_ALGORITHM": "mtp",
+     "SPEC_DRAFT_MODEL": "native",
+     "TOTAL_CPU_DRAM_GB": "0",
+     "TP": "8",
+     "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+    },
+    "runtime": {
+     "port": null,
+     "ready_timeout_s": 7200,
+     "poll_s": 10,
+     "point_timeout_s": 30000
+    },
+    "model_path_override": null,
+    "trace": {
+     "loader": "semianalysis_cc_traces_weka_062126",
+     "repo": "semianalysisai/cc-traces-weka-062126",
+     "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+    },
+    "trace_policy": "revision-isolated-v1"
+   },
+   "measurement_sha256": "118cf18d8bc9d24916c69d5bf588161f4f65564feb0c42fd6af8df1e4bf66696"
+  },
+  {
+   "arm": "tp8-ep1-none-spec-mtp",
+   "conc": 4,
+   "exp_name": "glm52-fp8-tp8-ep1-none-spec-mtp-c4",
+   "serve_spec_sha256": "e645da98433efe42f12e19b1661866a25b9cc26391671db2ed4ae43f4fec65c0",
+   "status": "failed",
+   "error": "RuntimeError: server exited with code -9 before ready",
+   "started_at": "2026-11-19T15:11:08Z",
+   "elapsed_s": 90.2,
+   "measurement": {
+    "environment_policy": "paired-aklr-image-env-v2",
+    "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+    "weights": {
+     "repo": "zai-org/GLM-5.2-FP8",
+     "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+    },
+    "launch": {
+     "command": [
+      "python3",
+      "-m",
+      "sglang.launch_server",
+      "--model-path",
+      "${AGENTX_MODEL_PATH}",
+      "--served-model-name",
+      "zai-org/GLM-5.2-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "${AGENTX_PORT}",
+      "--chunked-prefill-size",
+      "32768",
+      "--cuda-graph-max-bs-decode",
+      "8",
+      "--dsa-decode-backend",
+      "tilelang",
+      "--dsa-prefill-backend",
+      "tilelang",
+      "--enable-metrics",
+      "--expert-parallel-size",
+      "1",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--max-running-requests",
+      "8",
+      "--mem-fraction-static",
+      "0.85",
+      "--reasoning-parser",
+      "glm45",
+      "--speculative-algorithm",
+      "EAGLE",
+      "--speculative-eagle-topk",
+      "1",
+      "--speculative-num-draft-tokens",
+      "6",
+      "--speculative-num-steps",
+      "5",
+      "--tensor-parallel-size",
+      "8",
+      "--tool-call-parser",
+      "glm47",
+      "--trust-remote-code",
+      "--watchdog-timeout",
+      "1800"
+     ],
+     "env": {
+      "HF_HUB_OFFLINE": "1",
+      "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+      "PYTHONNOUSERSITE": "1",
+      "SGLANG_OPT_USE_TOPK_V2": "false",
+      "SGLANG_SIMULATE_ACC_LEN": "3.61",
+      "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+      "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+      "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+      "AKLR_SGLANG_PLUGIN": "1",
+      "AKLR_DISABLE": "0"
+     }
+    },
+    "client_env": {
+     "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+     "AIPERF_EXPERIMENTAL_FAST": "0",
+     "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+     "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+     "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+     "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+     "CONC": "4",
+     "DCP_SIZE": "1",
+     "DP_ATTENTION": "false",
+     "DURATION": "600",
+     "ENABLE_AGENTX_POWER": "false",
+     "EP_SIZE": "1",
+     "EVAL_ONLY": "false",
+     "FRAMEWORK": "sglang",
+     "IS_AGENTIC": "1",
+     "IS_MULTINODE": "false",
+     "KV_OFFLOADING": "none",
+     "MODEL": "zai-org/GLM-5.2-FP8",
+     "MODEL_PREFIX": "glm5.2",
+     "PCP_SIZE": "1",
+     "PP_SIZE": "1",
+     "PRECISION": "fp8",
+     "REQUIRE_POWER": "0",
+     "SPEC_ALGORITHM": "mtp",
+     "SPEC_DRAFT_MODEL": "native",
+     "TOTAL_CPU_DRAM_GB": "0",
+     "TP": "8",
+     "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+    },
+    "runtime": {
+     "port": null,
+     "ready_timeout_s": 7200,
+     "poll_s": 10,
+     "point_timeout_s": 30000
+    },
+    "model_path_override": null,
+    "trace": {
+     "loader": "semianalysis_cc_traces_weka_062126",
+     "repo": "semianalysisai/cc-traces-weka-062126",
+     "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+    },
+    "trace_policy": "revision-isolated-v1"
+   },
+   "measurement_sha256": "032f304bf11b7ef0744b067ddf32eda72cc8e66da2f5f38375565e3c468a14a6"
+  },
+  {
+   "arm": "tp8-ep1-none-spec-mtp",
+   "conc": 10,
+   "exp_name": "glm52-fp8-tp8-ep1-none-spec-mtp-c10",
+   "serve_spec_sha256": "2c862b02416e3add0e4b22ebe303fea4441dccd07bdf8296cfcad66748d99059",
+   "status": "failed",
+   "error": "RuntimeError: server exited with code -9 before ready",
+   "started_at": "2026-11-19T15:12:38Z",
+   "elapsed_s": 100.9,
+   "measurement": {
+    "environment_policy": "paired-aklr-image-env-v2",
+    "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+    "weights": {
+     "repo": "zai-org/GLM-5.2-FP8",
+     "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+    },
+    "launch": {
+     "command": [
+      "python3",
+      "-m",
+      "sglang.launch_server",
+      "--model-path",
+      "${AGENTX_MODEL_PATH}",
+      "--served-model-name",
+      "zai-org/GLM-5.2-FP8",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "${AGENTX_PORT}",
+      "--chunked-prefill-size",
+      "32768",
+      "--cuda-graph-max-bs-decode",
+      "20",
+      "--dsa-decode-backend",
+      "tilelang",
+      "--dsa-prefill-backend",
+      "tilelang",
+      "--enable-metrics",
+      "--expert-parallel-size",
+      "1",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--max-running-requests",
+      "20",
+      "--mem-fraction-static",
+      "0.85",
+      "--reasoning-parser",
+      "glm45",
+      "--speculative-algorithm",
+      "EAGLE",
+      "--speculative-eagle-topk",
+      "1",
+      "--speculative-num-draft-tokens",
+      "6",
+      "--speculative-num-steps",
+      "5",
+      "--tensor-parallel-size",
+      "8",
+      "--tool-call-parser",
+      "glm47",
+      "--trust-remote-code",
+      "--watchdog-timeout",
+      "1800"
+     ],
+     "env": {
+      "HF_HUB_OFFLINE": "1",
+      "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+      "PYTHONNOUSERSITE": "1",
+      "SGLANG_OPT_USE_TOPK_V2": "false",
+      "SGLANG_SIMULATE_ACC_LEN": "3.61",
+      "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+      "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+      "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+      "AKLR_SGLANG_PLUGIN": "1",
+      "AKLR_DISABLE": "0"
+     }
+    },
+    "client_env": {
+     "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+     "AIPERF_EXPERIMENTAL_FAST": "0",
+     "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+     "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+     "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+     "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+     "CONC": "10",
+     "DCP_SIZE": "1",
+     "DP_ATTENTION": "false",
+     "DURATION": "600",
+     "ENABLE_AGENTX_POWER": "false",
+     "EP_SIZE": "1",
+     "EVAL_ONLY": "false",
+     "FRAMEWORK": "sglang",
+     "IS_AGENTIC": "1",
+     "IS_MULTINODE": "false",
+     "KV_OFFLOADING": "none",
+     "MODEL": "zai-org/GLM-5.2-FP8",
+     "MODEL_PREFIX": "glm5.2",
+     "PCP_SIZE": "1",
+     "PP_SIZE": "1",
+     "PRECISION": "fp8",
+     "REQUIRE_POWER": "0",
+     "SPEC_ALGORITHM": "mtp",
+     "SPEC_DRAFT_MODEL": "native",
+     "TOTAL_CPU_DRAM_GB": "0",
+     "TP": "8",
+     "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+    },
+    "runtime": {
+     "port": null,
+     "ready_timeout_s": 7200,
+     "poll_s": 10,
+     "point_timeout_s": 30000
+    },
+    "model_path_override": null,
+    "trace": {
+     "loader": "semianalysis_cc_traces_weka_062126",
+     "repo": "semianalysisai/cc-traces-weka-062126",
+     "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+    },
+    "trace_policy": "revision-isolated-v1"
+   },
+   "measurement_sha256": "bc6d720bc70b5d029efcc918dc1ee17e51f80d014e9b9b6e78a51e365cd430cd"
+  }
+ ],
+ "control": {
+  "schema": 4,
+  "model": {
+   "id": "glm52-fp8",
+   "display_name": "GLM-5.2 FP8",
+   "precision": "fp8"
+  },
+  "target": {
+   "id": "mi355x",
+   "runner_label": "agentx-mi355x"
+  },
+  "framework": {
+   "id": "sglang"
+  },
+  "run": {
+   "mode": "live",
+   "started_at": "2026-11-19T13:28:24Z",
+   "finished_at": "2026-11-19T15:04:46Z",
+   "completed": true,
+   "serving_sha256": "ed488e1708edabcc5541fe1accc0e91bdfdd62a71602ab22407f45bd3cb2d164",
+   "image": {
+    "run": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5"
+   },
+   "expected_hardware": {
+    "gpu_name_pattern": "\\bMI355X\\b",
+    "gpu_arch": "gfx950",
+    "gpu_count": 8
+   },
+   "aklr_mode": "disabled",
+   "source": {
+    "kind": "inferencex",
+    "config_key": "glm5.2-fp8-mi355x-sglang-agentic-mtp"
+   },
+   "client": {
+    "repo": "SemiAnalysisAI/InferenceX",
+    "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4"
+   },
+   "weights": {
+    "repo": "zai-org/GLM-5.2-FP8",
+    "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+   },
+   "points_expected": 5,
+   "point_policy": "pareto",
+   "arms_requested": "all",
+   "points_requested": null,
+   "duration_override_s": 600,
+   "model_path_override": null,
+   "selection": {
+    "points": [
+     "tp8-ep1-dram-hicache-spec-mtp:16",
+     "tp8-ep1-none-spec-mtp:1",
+     "tp8-ep1-none-spec-mtp:2",
+     "tp8-ep1-none-spec-mtp:4",
+     "tp8-ep1-none-spec-mtp:10"
+    ],
+    "policy": "pareto",
+    "duration": 600,
+    "points_requested": null,
+    "serve_sha256": "4e0c3adb7795c82963ec53ef5f1a4da2daf25ce3ae41e997b3e73a7607cd0e1c",
+    "spec_sha256": "a50ac42daa420f9a4c663819e4c3d8fb88d95dad67d5894abd3eecbb6d4e9049",
+    "selection_sha256": "4043a012f7003525c96aa5226565fc4ab517d9af2ff189cacf26d9b7de9c5e08",
+    "manifest_sha256": "a8d765dc5d3a7e421553224b83465857a3665968da8456593ef1d3c2785460c4"
+   },
+   "id": "44491219482",
+   "attempt_id": "f0d5138a4ea545b5ab8e71d1db2d6dbe",
+   "aklr_sha": "8806c22a61f61b0fccb1322b4e44edf36d7895e1",
+   "source_dirty": false,
+   "host": "smci355-ccs-aus-m14-09",
+   "execution": {
+    "image_reference": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
+    "image_id": "sha256:11714c7927d09447d6ab32b2566f2a4ea71638ede255d06f97fb9435fee8e245",
+    "server_environment": {
+     "policy": "paired-aklr-image-env-v2",
+     "scope": "server",
+     "source": "docker-image-inspect.Config.Env",
+     "defaults_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+     "defaults": {
+      "AITER_COMMIT": "<redacted>",
+      "AITER_COMMIT_DEFAULT": "<redacted>",
+      "AITER_USE_SYSTEM_TRITON": "<redacted>",
+      "BUILD_AITER_ALL": "<redacted>",
+      "BUILD_LLVM": "<redacted>",
+      "BUILD_MOONCAKE": "<redacted>",
+      "BUILD_TRITON": "<redacted>",
+      "BUILD_VLLM": "<redacted>",
+      "CARGO_BUILD_JOBS": "<redacted>",
+      "CPATH": "<redacted>",
+      "DEBIAN_FRONTEND": "<redacted>",
+      "GPU_ARCH": "<redacted>",
+      "GPU_ARCH_LIST": "<redacted>",
+      "HIP_FORCE_DEV_KERNARG": "<redacted>",
+      "HSA_NO_SCRATCH_RECLAIM": "<redacted>",
+      "LD_LIBRARY_PATH": "<redacted>",
+      "LIBGL_ALWAYS_INDIRECT": "<redacted>",
+      "LIBRARY_PATH": "<redacted>",
+      "NCCL_MIN_NCHANNELS": "<redacted>",
+      "PATH": "<redacted>",
+      "PIP_CONSTRAINT": "<redacted>",
+      "PYTORCH_ROCM_ARCH": "<redacted>",
+      "ROCM_HOME": "<redacted>",
+      "ROCM_PATH": "<redacted>",
+      "ROCM_QUICK_REDUCE_QUANTIZATION": "<redacted>",
+      "SETUPTOOLS_SCM_PRETEND_VERSION": "<redacted>",
+      "SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN": "<redacted>",
+      "SGLANG_DISABLE_CUDNN_CHECK": "<redacted>",
+      "SGLANG_INT4_WEIGHT": "<redacted>",
+      "SGLANG_MOE_PADDING": "<redacted>",
+      "SGLANG_ROCM_DISABLE_LINEARQUANT": "<redacted>",
+      "SGLANG_ROCM_FUSED_DECODE_MLA": "<redacted>",
+      "SGLANG_SET_CPU_AFFINITY": "<redacted>",
+      "SGLANG_USE_AITER": "<redacted>",
+      "SGLANG_USE_ROCM700A": "<redacted>",
+      "TORCHINDUCTOR_MAX_AUTOTUNE": "<redacted>",
+      "TORCHINDUCTOR_MAX_AUTOTUNE_POINTWISE": "<redacted>",
+      "TRITON_COMMIT": "<redacted>",
+      "TRITON_REVERT_COMMITS": "<redacted>",
+      "VIRTUAL_ENV": "<redacted>"
+     }
+    }
+   },
+   "hardware": {
+    "devices": [
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     }
+    ],
+    "peer_access": [
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ]
+    ]
+   },
+   "client_packages": {
+    "cyclopts": "4.25.3",
+    "starlette-compress": "2.0.0",
+    "urllib3": "2.8.0",
+    "h11": "0.16.0",
+    "python-dotenv": "1.2.4",
+    "tzdata": "2026.6",
+    "fonttools": "4.68.0",
+    "nest-asyncio": "1.6.0",
+    "certifi": "2026.10.23",
+    "typing_extensions": "4.16.0",
+    "python-dateutil": "4.0.0",
+    "kaleido": "1.2.0",
+    "zstandard": "0.25.0",
+    "itsdangerous": "2.2.0",
+    "multidict": "6.9.1",
+    "pytz": "2026.6",
+    "click": "8.5.1",
+    "future": "1.0.0",
+    "numpy": "2.4.6",
+    "setuptools": "84.2.1",
+    "annotated-doc": "0.0.7",
+    "idna": "3.20",
+    "Mako": "1.4.3",
+    "optuna": "5.1.0",
+    "watchfiles": "1.3.0",
+    "brotli": "1.2.1",
+    "rich-rst": "2.2.0",
+    "pytest-timeout": "2.4.0",
+    "ffmpeg-python": "0.2.0",
+    "jmespath": "1.0.1",
+    "alembic": "1.20.1",
+    "sentencepiece": "0.2.3",
+    "pandas": "2.3.3",
+    "iniconfig": "2.3.1",
+    "seaborn": "0.13.2",
+    "yarl": "1.25.1",
+    "anyio": "4.16.0",
+    "pillow": "12.3.0",
+    "mdurl": "0.1.2",
+    "huggingface_hub": "1.33.0",
+    "xxhash": "4.1.0",
+    "aiohappyeyeballs": "2.7.1",
+    "matplotlib": "3.11.2",
+    "pydantic-settings": "2.16.3",
+    "SQLAlchemy": "2.1.9",
+    "pydantic_core": "2.50.5",
+    "retrying": "1.4.2",
+    "propcache": "0.5.4",
+    "markdown-it-py": "4.3.0",
+    "pyparsing": "3.3.3",
+    "charset-normalizer": "3.5.2",
+    "pydantic": "2.14.4",
+    "protobuf": "7.36.2",
+    "typer": "0.29.2",
+    "prometheus_client": "0.23.1",
+    "zipp": "4.1.2",
+    "packaging": "26.3",
+    "tqdm": "4.70.1",
+    "httptools": "0.9.0",
+    "linkify-it-py": "2.2.0",
+    "soundfile": "0.13.1",
+    "agentx-harness": "1.0.13",
+    "MarkupSafe": "3.0.4",
+    "simplejson": "4.3.0",
+    "msgspec": "0.22.0",
+    "pyarrow": "26.0.1",
+    "uvloop": "0.23.0",
+    "textual": "5.3.0",
+    "orjson": "3.11.9",
+    "annotated-types": "0.8.0",
+    "platformdirs": "4.14.7",
+    "frozenlist": "1.8.0",
+    "pluggy": "1.7.0",
+    "rich": "14.1.0",
+    "ruamel.yaml.clib": "0.2.15",
+    "transformers": "5.23.0",
+    "websockets": "17.4",
+    "blinker": "1.9.0",
+    "psutil": "7.0.0",
+    "kiwisolver": "1.5.1",
+    "nvidia-ml-py": "13.615.71",
+    "pyzmq": "26.4.0",
+    "filelock": "4.2.12",
+    "tokenizers": "0.23.3",
+    "tiktoken": "0.14.0",
+    "cffi": "2.1.1",
+    "datasets": "5.2.0",
+    "Flask": "3.1.3",
+    "shellingham": "1.5.4",
+    "dash": "3.1.1",
+    "fastapi": "0.165.0",
+    "setproctitle": "1.3.8",
+    "requests": "2.34.2",
+    "multiprocess": "0.70.19",
+    "Pygments": "2.21.0",
+    "fsspec": "2026.9.0",
+    "regex": "2026.11.19",
+    "safetensors": "0.8.0",
+    "cycler": "0.12.1",
+    "httpcore": "1.0.9",
+    "contourpy": "1.3.3",
+    "PyYAML": "6.0.3",
+    "choreographer": "1.4.0",
+    "scipy": "1.17.1",
+    "Jinja2": "3.1.6",
+    "lazy-importer": "0.1.0",
+    "attrs": "26.1.0",
+    "dill": "0.4.1",
+    "importlib_metadata": "10.2.0",
+    "aiofiles": "24.1.0",
+    "typing-inspection": "0.4.5",
+    "docstring_parser": "0.18.0",
+    "ruamel.yaml": "0.18.17",
+    "crick": "0.0.8",
+    "colorlog": "6.12.0",
+    "hf-xet": "1.8.0",
+    "plotly": "6.4.0",
+    "pytest": "9.2.0",
+    "opentelemetry-api": "1.45.2",
+    "starlette": "1.10.0",
+    "logistro": "2.0.1",
+    "dash-bootstrap-components": "2.0.4",
+    "pycparser": "3.12",
+    "httpx": "0.28.1",
+    "aiosignal": "1.4.0",
+    "Werkzeug": "3.1.9",
+    "aiohttp": "3.13.5",
+    "uvicorn": "0.54.0",
+    "narwhals": "2.29.0",
+    "mdit-py-plugins": "0.7.0"
+   },
+   "server_packages": {
+    "sglang": "0.5.23",
+    "torch": "2.11.0+rocm10.0.0",
+    "triton": "3.8.0+git4cff872c.rocm10.0.0",
+    "amd-aiter": "0.1.26.dev144+g285579b62.d20261030",
+    "flydsl": "0.4.0"
+   }
+  },
+  "serving": {
+   "grid_sha256": "51535654d0e23930411ec34c20c9a33c4f0b4c0233d2a4d1126a6ff0a4d89539",
+   "arms": {
+    "tp8-ep1-dram-hicache-spec-mtp": {
+     "concs": [
+      16
+     ],
+     "arm_serve_sha256": "8cd5ffe97a519353cae01534d00c6ed4998a4678ddf904ea36643b5cbc510dc5",
+     "arm_measurement_sha256": "c00e7af9cc69e80f085f717bdd8e232020e9a7a87e0d21c89afd4120e329ea7e"
+    },
+    "tp8-ep1-none-spec-mtp": {
+     "concs": [
+      1,
+      2,
+      4,
+      10
+     ],
+     "arm_serve_sha256": "e9ff2454ecb22330c0a0e7f858324fa90aae89052f59d02c8b167d5c43613d40",
+     "arm_measurement_sha256": "a5ba318fb606b7dac4426a1a1bcfccc7ac11db0b4d15e9c2363438b4151c51bb"
+    }
+   }
+  },
+  "points": [
+   {
+    "arm": "tp8-ep1-dram-hicache-spec-mtp",
+    "conc": 16,
+    "exp_name": "glm52-fp8-tp8-ep1-dram-hicache-spec-mtp-c16",
+    "serve_spec_sha256": "665c1d9bfc0342e1af5a9137f2bd847cb38f8b630dc09c22b9d50dc0670c96f5",
+    "status": "ok",
+    "error": null,
+    "started_at": "2026-11-19T13:28:24Z",
+    "tput_per_gpu": 6950.07728,
+    "p90_full_response_intvty": 36.101083032490976,
+    "num_requests_successful": 323,
+    "raw_data": {
+     "hw": "",
+     "conc": 16,
+     "image": "",
+     "recipe_fingerprint": "",
+     "model": "zai-org/GLM-5.2-FP8",
+     "infmax_model_prefix": "glm5.2",
+     "framework": "sglang",
+     "precision": "fp8",
+     "spec_decoding": "none",
+     "disagg": false,
+     "scenario_type": "agentic-coding",
+     "is_multinode": false,
+     "num_gpus": 8,
+     "tp": 8,
+     "ep": 1,
+     "dp_attention": "false",
+     "kv_offloading": "dram",
+     "kv_offload_backend": {
+      "name": "hicache"
+     },
+     "allocated_cpu_dram_gb": 2399,
+     "num_requests_total": 500,
+     "num_requests_successful": 323,
+     "request_accounting": {
+      "records_total": 500,
+      "records_profiled": 323,
+      "records_dropped_total": 177,
+      "records_warmup_dropped": 177,
+      "records_error_dropped": 1,
+      "error_categories": {
+       "InvalidInferenceResultError": 1
+      }
+     },
+     "pp": 1,
+     "dcp_size": 1,
+     "pcp_size": 1,
+     "spec_algorithm": "mtp",
+     "spec_draft_model": "native",
+     "dataset": {
+      "source_type": "public_dataset",
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
+      "hf_split": "train",
+      "num_dataset_entries": 393
+     },
+     "request_metrics": {
+      "qps": {
+       "window_seconds": 1,
+       "samples": 621,
+       "mean": 0.51852,
+       "p50": 0.0,
+       "p75": 1,
+       "p90": 2,
+       "p95": 2,
+       "std": 0.82925
+      },
+      "latency": {
+       "ttft": {
+        "mean": 1.57683,
+        "p50": 0.49525,
+        "p75": 1.13988,
+        "p90": 3.25302,
+        "p95": 5.66337,
+        "std": 3.9772
+       },
+       "e2el": {
+        "mean": 13.54324,
+        "p50": 6.66937,
+        "p75": 12.61379,
+        "p90": 26.3006,
+        "p95": 51.98593,
+        "std": 25.2871
+       },
+       "itl": {
+        "mean": 0.02253,
+        "p50": 0.01479,
+        "p75": 0.02121,
+        "p90": 0.0277,
+        "p95": 0.03769,
+        "std": 0.08359
+       },
+       "tpot": {
+        "mean": 0.02253,
+        "p50": 0.01479,
+        "p75": 0.02121,
+        "p90": 0.0277,
+        "p95": 0.03769,
+        "std": 0.08359
+       },
+       "intvty": {
+        "mean": 44.38623,
+        "p50": 67.62645,
+        "p75": 47.13808,
+        "p90": 36.10032,
+        "p95": 26.53565,
+        "std": 1281.91747
+       },
+       "e2e_norm_intvty": {
+        "mean": 33.53351,
+        "p50": 53.41633,
+        "p75": 40.70209,
+        "p90": 29.029,
+        "p95": 18.35758,
+        "std": 45.0113
+       },
+       "full_response_itl": {
+        "mean": 0.02255,
+        "p50": 0.01479,
+        "p75": 0.0213,
+        "p90": 0.0277,
+        "p95": 0.03769,
+        "std": 0.08359
+       },
+       "full_response_intvty": {
+        "mean": 44.35513,
+        "p50": 67.62469,
+        "p75": 46.95863,
+        "p90": 36.09969,
+        "p95": 26.53532,
+        "std": 513.93649
+       }
+      },
+      "tokens": {
+       "input": {
+        "mean": 106721.09907,
+        "p50": 100552,
+        "p75": 116404,
+        "p90": 148832.2,
+        "p95": 181368.4,
+        "std": 76425.55685
+       },
+       "output_actual": {
+        "mean": 803.63467,
+        "p50": 344,
+        "p75": 552,
+        "p90": 1352.6,
+        "p95": 2928.4,
+        "std": 2174.00361
+       },
+       "output_expected": {
+        "mean": 2148.32593,
+        "p50": 736,
+        "p75": 2563.25,
+        "p90": 5440.9,
+        "p95": 9350.8,
+        "std": 4033.58434
+       }
+      },
+      "throughput": {
+       "input": {
+        "tokens_per_second": 55185.06189
+       },
+       "output": {
+        "tokens_per_second": 415.55634
+       },
+       "total": {
+        "tokens_per_second": 55600.61823
+       },
+       "duration_seconds": 624.64214,
+       "per_gpu": {
+        "total_tput_tps": 6950.07728,
+        "output_tput_tps": 51.94454,
+        "input_tput_tps": 6898.13274
+       }
+      },
+      "cache": {
+       "theoretical_cache_hit_rate": 0.94769
+      }
+     },
+     "server_metrics": {
+      "present": true,
+      "adapter": "sglang",
+      "metric_count": 95,
+      "cache": {
+       "gpu_cache_hit_rate": 0.88622,
+       "cpu_cache_hit_rate": 0.05093,
+       "external_cache_hit_rate": 0.05093,
+       "overall_cache_hit_rate": 0.93714,
+       "prefix_cache_hits": null,
+       "prefix_cache_queries": null,
+       "external_prefix_cache_hits": null,
+       "external_prefix_cache_queries": null,
+       "cached_tokens_by_source": {
+        "device": 62209792,
+        "host": 3574848
+       },
+       "frontend_cache_hit_rate": null,
+       "router_kv_hit_rate": null,
+       "router_shared_cache_hit_rate": null,
+       "frontend_cached_tokens": null,
+       "frontend_input_tokens": null
+      },
+      "kv_cache": {
+       "gpu_usage_pct": 0.89,
+       "gpu_total_tokens": 51256320,
+       "cpu_usage_pct": 1,
+       "cpu_used_tokens": 4805312,
+       "cpu_total_tokens": 4805312
+      },
+      "kv_offload": {
+       "bytes_gpu_to_cpu": null,
+       "bytes_cpu_to_gpu": null,
+       "time_gpu_to_cpu": null,
+       "time_cpu_to_gpu": null,
+       "bandwidth_gpu_to_cpu_bytes_per_second": null,
+       "bandwidth_cpu_to_gpu_bytes_per_second": null
+      },
+      "tokens": {
+       "prompt_total": 70196934,
+       "generation_total": 548222,
+       "requests_completed": 323,
+       "prompt_by_source": {
+        "gpu_cache_hit": 62209792,
+        "cpu_or_external_cache_hit": 3574848,
+        "computed": 4475910,
+        "raw": {
+         "device": 62209792,
+         "host": 3574848
+        }
+       }
+      },
+      "sources": []
+     },
+     "kv_cache_pool_tokens": 51256320
+    },
+    "elapsed_s": 2415.4,
+    "measurement": {
+     "environment_policy": "paired-aklr-image-env-v2",
+     "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+     "weights": {
+      "repo": "zai-org/GLM-5.2-FP8",
+      "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+     },
+     "launch": {
+      "command": [
+       "python3",
+       "-m",
+       "sglang.launch_server",
+       "--model-path",
+       "${AGENTX_MODEL_PATH}",
+       "--served-model-name",
+       "zai-org/GLM-5.2-FP8",
+       "--host",
+       "127.0.0.1",
+       "--port",
+       "${AGENTX_PORT}",
+       "--chunked-prefill-size",
+       "32768",
+       "--cuda-graph-max-bs-decode",
+       "32",
+       "--dsa-decode-backend",
+       "tilelang",
+       "--dsa-prefill-backend",
+       "tilelang",
+       "--enable-hierarchical-cache",
+       "--enable-metrics",
+       "--expert-parallel-size",
+       "1",
+       "--hicache-io-backend",
+       "direct",
+       "--hicache-mem-layout",
+       "page_first_direct",
+       "--hicache-ratio",
+       "1.5",
+       "--hicache-write-policy",
+       "write_through_selective",
+       "--kv-cache-dtype",
+       "fp8_e4m3",
+       "--max-running-requests",
+       "32",
+       "--mem-fraction-static",
+       "0.85",
+       "--reasoning-parser",
+       "glm45",
+       "--speculative-algorithm",
+       "EAGLE",
+       "--speculative-eagle-topk",
+       "1",
+       "--speculative-num-draft-tokens",
+       "6",
+       "--speculative-num-steps",
+       "5",
+       "--tensor-parallel-size",
+       "8",
+       "--tool-call-parser",
+       "glm47",
+       "--trust-remote-code",
+       "--watchdog-timeout",
+       "1800"
+      ],
+      "env": {
+       "HF_HUB_OFFLINE": "1",
+       "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+       "PYTHONNOUSERSITE": "1",
+       "SGLANG_OPT_USE_TOPK_V2": "false",
+       "SGLANG_SIMULATE_ACC_LEN": "3.61",
+       "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+       "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+       "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+       "AKLR_SGLANG_PLUGIN": "0",
+       "AKLR_DISABLE": "1"
+      }
+     },
+     "client_env": {
+      "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+      "AIPERF_EXPERIMENTAL_FAST": "0",
+      "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+      "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+      "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+      "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+      "CONC": "16",
+      "DCP_SIZE": "1",
+      "DP_ATTENTION": "false",
+      "DURATION": "600",
+      "ENABLE_AGENTX_POWER": "false",
+      "EP_SIZE": "1",
+      "EVAL_ONLY": "false",
+      "FRAMEWORK": "sglang",
+      "IS_AGENTIC": "1",
+      "IS_MULTINODE": "false",
+      "KV_OFFLOADING": "dram",
+      "KV_OFFLOAD_BACKEND": "hicache",
+      "KV_OFFLOAD_BACKEND_METADATA": "{\"name\": \"hicache\"}",
+      "MODEL": "zai-org/GLM-5.2-FP8",
+      "MODEL_PREFIX": "glm5.2",
+      "PCP_SIZE": "1",
+      "PP_SIZE": "1",
+      "PRECISION": "fp8",
+      "REQUIRE_POWER": "0",
+      "SPEC_ALGORITHM": "mtp",
+      "SPEC_DRAFT_MODEL": "native",
+      "TOTAL_CPU_DRAM_GB": "2399",
+      "TP": "8",
+      "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+     },
+     "runtime": {
+      "port": null,
+      "ready_timeout_s": 7200,
+      "poll_s": 10,
+      "point_timeout_s": 30000
+     },
+     "model_path_override": null,
+     "trace": {
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "repo": "semianalysisai/cc-traces-weka-062126",
+      "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+     },
+     "trace_policy": "revision-isolated-v1"
+    },
+    "measurement_sha256": "a008cfc029f7743751f39bc16957c8ae59c8bf2e4c1680fbee7e074cd69bc196"
+   },
+   {
+    "arm": "tp8-ep1-none-spec-mtp",
+    "conc": 1,
+    "exp_name": "glm52-fp8-tp8-ep1-none-spec-mtp-c1",
+    "serve_spec_sha256": "c760896e2b55c25d1e772df18c034f11bbf5f58598714810c75e4ba357bd9cde",
+    "status": "ok",
+    "error": null,
+    "started_at": "2026-11-19T14:08:39Z",
+    "tput_per_gpu": 3195.12316,
+    "p90_full_response_intvty": 216.91973969631235,
+    "num_requests_successful": 64,
+    "raw_data": {
+     "hw": "",
+     "conc": 1,
+     "image": "",
+     "recipe_fingerprint": "",
+     "model": "zai-org/GLM-5.2-FP8",
+     "infmax_model_prefix": "glm5.2",
+     "framework": "sglang",
+     "precision": "fp8",
+     "spec_decoding": "none",
+     "disagg": false,
+     "scenario_type": "agentic-coding",
+     "is_multinode": false,
+     "num_gpus": 8,
+     "tp": 8,
+     "ep": 1,
+     "dp_attention": "false",
+     "kv_offloading": "none",
+     "kv_offload_backend": null,
+     "allocated_cpu_dram_gb": 0,
+     "num_requests_total": 75,
+     "num_requests_successful": 64,
+     "request_accounting": {
+      "records_total": 75,
+      "records_profiled": 64,
+      "records_dropped_total": 11,
+      "records_warmup_dropped": 11,
+      "records_error_dropped": 0,
+      "error_categories": {}
+     },
+     "pp": 1,
+     "dcp_size": 1,
+     "pcp_size": 1,
+     "spec_algorithm": "mtp",
+     "spec_draft_model": "native",
+     "dataset": {
+      "source_type": "public_dataset",
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
+      "hf_split": "train",
+      "num_dataset_entries": 393
+     },
+     "request_metrics": {
+      "qps": {
+       "window_seconds": 1,
+       "samples": 598,
+       "mean": 0.10535,
+       "p50": 0.0,
+       "p75": 0.0,
+       "p90": 1,
+       "p95": 1,
+       "std": 0.30701
+      },
+      "latency": {
+       "ttft": {
+        "mean": 0.43745,
+        "p50": 0.28616,
+        "p75": 0.43378,
+        "p90": 0.95204,
+        "p95": 1.06934,
+        "std": 0.48454
+       },
+       "e2el": {
+        "mean": 3.94204,
+        "p50": 1.57292,
+        "p75": 3.95113,
+        "p90": 11.29225,
+        "p95": 17.42203,
+        "std": 5.35978
+       },
+       "itl": {
+        "mean": 0.00446,
+        "p50": 0.00442,
+        "p75": 0.00454,
+        "p90": 0.0046,
+        "p95": 0.00466,
+        "std": 0.00029
+       },
+       "tpot": {
+        "mean": 0.00446,
+        "p50": 0.00442,
+        "p75": 0.00454,
+        "p90": 0.0046,
+        "p95": 0.00466,
+        "std": 0.00029
+       },
+       "intvty": {
+        "mean": 224.17338,
+        "p50": 226.35325,
+        "p75": 220.06702,
+        "p90": 217.32078,
+        "p95": 214.78803,
+        "std": 12.66773
+       },
+       "e2e_norm_intvty": {
+        "mean": 70.84918,
+        "p50": 182.04769,
+        "p75": 144.17914,
+        "p90": 87.47287,
+        "p95": 37.0561,
+        "std": 56.08148
+       },
+       "full_response_itl": {
+        "mean": 0.00446,
+        "p50": 0.00442,
+        "p75": 0.00455,
+        "p90": 0.00461,
+        "p95": 0.00466,
+        "std": 0.00029
+       },
+       "full_response_intvty": {
+        "mean": 224.00903,
+        "p50": 226.27657,
+        "p75": 219.95647,
+        "p90": 217.10133,
+        "p95": 214.58958,
+        "std": 12.67509
+       }
+      },
+      "tokens": {
+       "input": {
+        "mean": 240963.46875,
+        "p50": 338733.5,
+        "p75": 371544,
+        "p90": 383062.9,
+        "p95": 390299.1,
+        "std": 141225.19343
+       },
+       "output_actual": {
+        "mean": 783.14062,
+        "p50": 250,
+        "p75": 790.25,
+        "p90": 2448.9,
+        "p95": 3742.45,
+        "std": 1180.85206
+       },
+       "output_expected": {
+        "mean": 783.20312,
+        "p50": 250,
+        "p75": 789.75,
+        "p90": 2447.5,
+        "p95": 3740.75,
+        "std": 1180.43968
+       }
+      },
+      "throughput": {
+       "input": {
+        "tokens_per_second": 25478.18021
+       },
+       "output": {
+        "tokens_per_second": 82.80507
+       },
+       "total": {
+        "tokens_per_second": 25560.98529
+       },
+       "duration_seconds": 605.28899,
+       "per_gpu": {
+        "total_tput_tps": 3195.12316,
+        "output_tput_tps": 10.35063,
+        "input_tput_tps": 3184.77253
+       }
+      },
+      "cache": {
+       "theoretical_cache_hit_rate": 0.98822
+      }
+     },
+     "server_metrics": {
+      "present": true,
+      "adapter": "sglang",
+      "metric_count": 83,
+      "cache": {
+       "gpu_cache_hit_rate": 0.98809,
+       "cpu_cache_hit_rate": null,
+       "external_cache_hit_rate": null,
+       "overall_cache_hit_rate": 0.98809,
+       "prefix_cache_hits": null,
+       "prefix_cache_queries": null,
+       "external_prefix_cache_hits": null,
+       "external_prefix_cache_queries": null,
+       "cached_tokens_by_source": {
+        "device": 30476032
+       },
+       "frontend_cache_hit_rate": null,
+       "router_kv_hit_rate": null,
+       "router_shared_cache_hit_rate": null,
+       "frontend_cached_tokens": null,
+       "frontend_input_tokens": null
+      },
+      "kv_cache": {
+       "gpu_usage_pct": 0.12,
+       "gpu_total_tokens": 51256320,
+       "cpu_usage_pct": null,
+       "cpu_used_tokens": null,
+       "cpu_total_tokens": null
+      },
+      "kv_offload": {
+       "bytes_gpu_to_cpu": null,
+       "bytes_cpu_to_gpu": null,
+       "time_gpu_to_cpu": null,
+       "time_cpu_to_gpu": null,
+       "bandwidth_gpu_to_cpu_bytes_per_second": null,
+       "bandwidth_cpu_to_gpu_bytes_per_second": null
+      },
+      "tokens": {
+       "prompt_total": 30843324,
+       "generation_total": 100148,
+       "requests_completed": 64,
+       "prompt_by_source": {
+        "gpu_cache_hit": 30476032,
+        "cpu_or_external_cache_hit": null,
+        "computed": 367292,
+        "raw": {
+         "device": 30476032
+        }
+       }
+      },
+      "sources": []
+     },
+     "kv_cache_pool_tokens": 51256320
+    },
+    "elapsed_s": 764.5,
+    "measurement": {
+     "environment_policy": "paired-aklr-image-env-v2",
+     "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+     "weights": {
+      "repo": "zai-org/GLM-5.2-FP8",
+      "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+     },
+     "launch": {
+      "command": [
+       "python3",
+       "-m",
+       "sglang.launch_server",
+       "--model-path",
+       "${AGENTX_MODEL_PATH}",
+       "--served-model-name",
+       "zai-org/GLM-5.2-FP8",
+       "--host",
+       "127.0.0.1",
+       "--port",
+       "${AGENTX_PORT}",
+       "--chunked-prefill-size",
+       "32768",
+       "--cuda-graph-max-bs-decode",
+       "2",
+       "--dsa-decode-backend",
+       "tilelang",
+       "--dsa-prefill-backend",
+       "tilelang",
+       "--enable-metrics",
+       "--expert-parallel-size",
+       "1",
+       "--kv-cache-dtype",
+       "fp8_e4m3",
+       "--max-running-requests",
+       "2",
+       "--mem-fraction-static",
+       "0.85",
+       "--reasoning-parser",
+       "glm45",
+       "--speculative-algorithm",
+       "EAGLE",
+       "--speculative-eagle-topk",
+       "1",
+       "--speculative-num-draft-tokens",
+       "6",
+       "--speculative-num-steps",
+       "5",
+       "--tensor-parallel-size",
+       "8",
+       "--tool-call-parser",
+       "glm47",
+       "--trust-remote-code",
+       "--watchdog-timeout",
+       "1800"
+      ],
+      "env": {
+       "HF_HUB_OFFLINE": "1",
+       "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+       "PYTHONNOUSERSITE": "1",
+       "SGLANG_OPT_USE_TOPK_V2": "false",
+       "SGLANG_SIMULATE_ACC_LEN": "3.61",
+       "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+       "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+       "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+       "AKLR_SGLANG_PLUGIN": "0",
+       "AKLR_DISABLE": "1"
+      }
+     },
+     "client_env": {
+      "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+      "AIPERF_EXPERIMENTAL_FAST": "0",
+      "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+      "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+      "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+      "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+      "CONC": "1",
+      "DCP_SIZE": "1",
+      "DP_ATTENTION": "false",
+      "DURATION": "600",
+      "ENABLE_AGENTX_POWER": "false",
+      "EP_SIZE": "1",
+      "EVAL_ONLY": "false",
+      "FRAMEWORK": "sglang",
+      "IS_AGENTIC": "1",
+      "IS_MULTINODE": "false",
+      "KV_OFFLOADING": "none",
+      "MODEL": "zai-org/GLM-5.2-FP8",
+      "MODEL_PREFIX": "glm5.2",
+      "PCP_SIZE": "1",
+      "PP_SIZE": "1",
+      "PRECISION": "fp8",
+      "REQUIRE_POWER": "0",
+      "SPEC_ALGORITHM": "mtp",
+      "SPEC_DRAFT_MODEL": "native",
+      "TOTAL_CPU_DRAM_GB": "0",
+      "TP": "8",
+      "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+     },
+     "runtime": {
+      "port": null,
+      "ready_timeout_s": 7200,
+      "poll_s": 10,
+      "point_timeout_s": 30000
+     },
+     "model_path_override": null,
+     "trace": {
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "repo": "semianalysisai/cc-traces-weka-062126",
+      "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+     },
+     "trace_policy": "revision-isolated-v1"
+    },
+    "measurement_sha256": "ea45d0bd0d3be0a83b8b72c453af03ea25c73727df7260d9e228943a620831b5"
+   },
+   {
+    "arm": "tp8-ep1-none-spec-mtp",
+    "conc": 2,
+    "exp_name": "glm52-fp8-tp8-ep1-none-spec-mtp-c2",
+    "serve_spec_sha256": "f3dae3980f11fe0812b1bf563e448c49e714d0fa747a67f464a6b6ee10c9029b",
+    "status": "ok",
+    "error": null,
+    "started_at": "2026-11-19T14:21:24Z",
+    "tput_per_gpu": 2408.5208,
+    "p90_full_response_intvty": 200.0,
+    "num_requests_successful": 71,
+    "raw_data": {
+     "hw": "",
+     "conc": 2,
+     "image": "",
+     "recipe_fingerprint": "",
+     "model": "zai-org/GLM-5.2-FP8",
+     "infmax_model_prefix": "glm5.2",
+     "framework": "sglang",
+     "precision": "fp8",
+     "spec_decoding": "none",
+     "disagg": false,
+     "scenario_type": "agentic-coding",
+     "is_multinode": false,
+     "num_gpus": 8,
+     "tp": 8,
+     "ep": 1,
+     "dp_attention": "false",
+     "kv_offloading": "none",
+     "kv_offload_backend": null,
+     "allocated_cpu_dram_gb": 0,
+     "num_requests_total": 93,
+     "num_requests_successful": 71,
+     "request_accounting": {
+      "records_total": 93,
+      "records_profiled": 71,
+      "records_dropped_total": 22,
+      "records_warmup_dropped": 22,
+      "records_error_dropped": 0,
+      "error_categories": {}
+     },
+     "pp": 1,
+     "dcp_size": 1,
+     "pcp_size": 1,
+     "spec_algorithm": "mtp",
+     "spec_draft_model": "native",
+     "dataset": {
+      "source_type": "public_dataset",
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
+      "hf_split": "train",
+      "num_dataset_entries": 393
+     },
+     "request_metrics": {
+      "qps": {
+       "window_seconds": 1,
+       "samples": 608,
+       "mean": 0.11513,
+       "p50": 0.0,
+       "p75": 0.0,
+       "p90": 1,
+       "p95": 1,
+       "std": 0.31918
+      },
+      "latency": {
+       "ttft": {
+        "mean": 0.63048,
+        "p50": 0.28534,
+        "p75": 0.48985,
+        "p90": 1.27904,
+        "p95": 2.08276,
+        "std": 0.96239
+       },
+       "e2el": {
+        "mean": 5.1947,
+        "p50": 3.1562,
+        "p75": 6.84992,
+        "p90": 13.77209,
+        "p95": 17.34408,
+        "std": 5.46537
+       },
+       "itl": {
+        "mean": 0.00454,
+        "p50": 0.0044,
+        "p75": 0.00455,
+        "p90": 0.005,
+        "p95": 0.00578,
+        "std": 0.00064
+       },
+       "tpot": {
+        "mean": 0.00454,
+        "p50": 0.0044,
+        "p75": 0.00455,
+        "p90": 0.005,
+        "p95": 0.00578,
+        "std": 0.00064
+       },
+       "intvty": {
+        "mean": 220.50665,
+        "p50": 227.25623,
+        "p75": 219.54532,
+        "p90": 200.11074,
+        "p95": 173.15126,
+        "std": 41.429
+       },
+       "e2e_norm_intvty": {
+        "mean": 138.19264,
+        "p50": 185.9164,
+        "p75": 148.88728,
+        "p90": 106.65707,
+        "p95": 48.495,
+        "std": 51.16794
+       },
+       "full_response_itl": {
+        "mean": 0.00454,
+        "p50": 0.0044,
+        "p75": 0.00457,
+        "p90": 0.005,
+        "p95": 0.00578,
+        "std": 0.00064
+       },
+       "full_response_intvty": {
+        "mean": 220.35009,
+        "p50": 227.1881,
+        "p75": 218.87595,
+        "p90": 200.03127,
+        "p95": 173.11442,
+        "std": 41.06985
+       }
+      },
+      "tokens": {
+       "input": {
+        "mean": 164464.66197,
+        "p50": 120394,
+        "p75": 168566,
+        "p90": 343199,
+        "p95": 352935,
+        "std": 103498.07851
+       },
+       "output_actual": {
+        "mean": 984.38028,
+        "p50": 583,
+        "p75": 1364,
+        "p90": 2672,
+        "p95": 3157.5,
+        "std": 1044.72113
+       },
+       "output_expected": {
+        "mean": 842.60563,
+        "p50": 480,
+        "p75": 1242,
+        "p90": 2419,
+        "p95": 2894,
+        "std": 960.94606
+       }
+      },
+      "throughput": {
+       "input": {
+        "tokens_per_second": 19153.52563
+       },
+       "output": {
+        "tokens_per_second": 114.64075
+       },
+       "total": {
+        "tokens_per_second": 19268.16638
+       },
+       "duration_seconds": 609.6523,
+       "per_gpu": {
+        "total_tput_tps": 2408.5208,
+        "output_tput_tps": 14.33009,
+        "input_tput_tps": 2394.1907
+       }
+      },
+      "cache": {
+       "theoretical_cache_hit_rate": 0.95535
+      }
+     },
+     "server_metrics": {
+      "present": true,
+      "adapter": "sglang",
+      "metric_count": 83,
+      "cache": {
+       "gpu_cache_hit_rate": 0.95519,
+       "cpu_cache_hit_rate": null,
+       "external_cache_hit_rate": null,
+       "overall_cache_hit_rate": 0.95519,
+       "prefix_cache_hits": null,
+       "prefix_cache_queries": null,
+       "external_prefix_cache_hits": null,
+       "external_prefix_cache_queries": null,
+       "cached_tokens_by_source": {
+        "device": 22307584
+       },
+       "frontend_cache_hit_rate": null,
+       "router_kv_hit_rate": null,
+       "router_shared_cache_hit_rate": null,
+       "frontend_cached_tokens": null,
+       "frontend_input_tokens": null
+      },
+      "kv_cache": {
+       "gpu_usage_pct": 0.16,
+       "gpu_total_tokens": 51256320,
+       "cpu_usage_pct": null,
+       "cpu_used_tokens": null,
+       "cpu_total_tokens": null
+      },
+      "kv_offload": {
+       "bytes_gpu_to_cpu": null,
+       "bytes_cpu_to_gpu": null,
+       "time_gpu_to_cpu": null,
+       "time_cpu_to_gpu": null,
+       "bandwidth_gpu_to_cpu_bytes_per_second": null,
+       "bandwidth_cpu_to_gpu_bytes_per_second": null
+      },
+      "tokens": {
+       "prompt_total": 23353982,
+       "generation_total": 139682,
+       "requests_completed": 71,
+       "prompt_by_source": {
+        "gpu_cache_hit": 22307584,
+        "cpu_or_external_cache_hit": null,
+        "computed": 1046398,
+        "raw": {
+         "device": 22307584
+        }
+       }
+      },
+      "sources": []
+     },
+     "kv_cache_pool_tokens": 51256320
+    },
+    "elapsed_s": 780.3,
+    "measurement": {
+     "environment_policy": "paired-aklr-image-env-v2",
+     "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+     "weights": {
+      "repo": "zai-org/GLM-5.2-FP8",
+      "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+     },
+     "launch": {
+      "command": [
+       "python3",
+       "-m",
+       "sglang.launch_server",
+       "--model-path",
+       "${AGENTX_MODEL_PATH}",
+       "--served-model-name",
+       "zai-org/GLM-5.2-FP8",
+       "--host",
+       "127.0.0.1",
+       "--port",
+       "${AGENTX_PORT}",
+       "--chunked-prefill-size",
+       "32768",
+       "--cuda-graph-max-bs-decode",
+       "4",
+       "--dsa-decode-backend",
+       "tilelang",
+       "--dsa-prefill-backend",
+       "tilelang",
+       "--enable-metrics",
+       "--expert-parallel-size",
+       "1",
+       "--kv-cache-dtype",
+       "fp8_e4m3",
+       "--max-running-requests",
+       "4",
+       "--mem-fraction-static",
+       "0.85",
+       "--reasoning-parser",
+       "glm45",
+       "--speculative-algorithm",
+       "EAGLE",
+       "--speculative-eagle-topk",
+       "1",
+       "--speculative-num-draft-tokens",
+       "6",
+       "--speculative-num-steps",
+       "5",
+       "--tensor-parallel-size",
+       "8",
+       "--tool-call-parser",
+       "glm47",
+       "--trust-remote-code",
+       "--watchdog-timeout",
+       "1800"
+      ],
+      "env": {
+       "HF_HUB_OFFLINE": "1",
+       "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+       "PYTHONNOUSERSITE": "1",
+       "SGLANG_OPT_USE_TOPK_V2": "false",
+       "SGLANG_SIMULATE_ACC_LEN": "3.61",
+       "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+       "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+       "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+       "AKLR_SGLANG_PLUGIN": "0",
+       "AKLR_DISABLE": "1"
+      }
+     },
+     "client_env": {
+      "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+      "AIPERF_EXPERIMENTAL_FAST": "0",
+      "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+      "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+      "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+      "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+      "CONC": "2",
+      "DCP_SIZE": "1",
+      "DP_ATTENTION": "false",
+      "DURATION": "600",
+      "ENABLE_AGENTX_POWER": "false",
+      "EP_SIZE": "1",
+      "EVAL_ONLY": "false",
+      "FRAMEWORK": "sglang",
+      "IS_AGENTIC": "1",
+      "IS_MULTINODE": "false",
+      "KV_OFFLOADING": "none",
+      "MODEL": "zai-org/GLM-5.2-FP8",
+      "MODEL_PREFIX": "glm5.2",
+      "PCP_SIZE": "1",
+      "PP_SIZE": "1",
+      "PRECISION": "fp8",
+      "REQUIRE_POWER": "0",
+      "SPEC_ALGORITHM": "mtp",
+      "SPEC_DRAFT_MODEL": "native",
+      "TOTAL_CPU_DRAM_GB": "0",
+      "TP": "8",
+      "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+     },
+     "runtime": {
+      "port": null,
+      "ready_timeout_s": 7200,
+      "poll_s": 10,
+      "point_timeout_s": 30000
+     },
+     "model_path_override": null,
+     "trace": {
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "repo": "semianalysisai/cc-traces-weka-062126",
+      "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+     },
+     "trace_policy": "revision-isolated-v1"
+    },
+    "measurement_sha256": "53f831a1aab64dfb1647142abe2142536482990ec5a64cd8633999320503d8fe"
+   },
+   {
+    "arm": "tp8-ep1-none-spec-mtp",
+    "conc": 4,
+    "exp_name": "glm52-fp8-tp8-ep1-none-spec-mtp-c4",
+    "serve_spec_sha256": "e645da98433efe42f12e19b1661866a25b9cc26391671db2ed4ae43f4fec65c0",
+    "status": "ok",
+    "error": null,
+    "started_at": "2026-11-19T14:34:24Z",
+    "tput_per_gpu": 2389.17935,
+    "p90_full_response_intvty": 168.91891891891893,
+    "num_requests_successful": 111,
+    "raw_data": {
+     "hw": "",
+     "conc": 4,
+     "image": "",
+     "recipe_fingerprint": "",
+     "model": "zai-org/GLM-5.2-FP8",
+     "infmax_model_prefix": "glm5.2",
+     "framework": "sglang",
+     "precision": "fp8",
+     "spec_decoding": "none",
+     "disagg": false,
+     "scenario_type": "agentic-coding",
+     "is_multinode": false,
+     "num_gpus": 8,
+     "tp": 8,
+     "ep": 1,
+     "dp_attention": "false",
+     "kv_offloading": "none",
+     "kv_offload_backend": null,
+     "allocated_cpu_dram_gb": 0,
+     "num_requests_total": 155,
+     "num_requests_successful": 111,
+     "request_accounting": {
+      "records_total": 155,
+      "records_profiled": 111,
+      "records_dropped_total": 44,
+      "records_warmup_dropped": 44,
+      "records_error_dropped": 0,
+      "error_categories": {}
+     },
+     "pp": 1,
+     "dcp_size": 1,
+     "pcp_size": 1,
+     "spec_algorithm": "mtp",
+     "spec_draft_model": "native",
+     "dataset": {
+      "source_type": "public_dataset",
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
+      "hf_split": "train",
+      "num_dataset_entries": 393
+     },
+     "request_metrics": {
+      "qps": {
+       "window_seconds": 1,
+       "samples": 586,
+       "mean": 0.18771,
+       "p50": 0.0,
+       "p75": 0.0,
+       "p90": 1,
+       "p95": 1,
+       "std": 0.43591
+      },
+      "latency": {
+       "ttft": {
+        "mean": 0.41428,
+        "p50": 0.23265,
+        "p75": 0.4125,
+        "p90": 0.64045,
+        "p95": 0.9091,
+        "std": 0.6286
+       },
+       "e2el": {
+        "mean": 4.32822,
+        "p50": 1.04436,
+        "p75": 3.45688,
+        "p90": 14.32257,
+        "p95": 19.86014,
+        "std": 7.53968
+       },
+       "itl": {
+        "mean": 0.00528,
+        "p50": 0.00449,
+        "p75": 0.00498,
+        "p90": 0.00592,
+        "p95": 0.00695,
+        "std": 0.00484
+       },
+       "tpot": {
+        "mean": 0.00528,
+        "p50": 0.00449,
+        "p75": 0.00498,
+        "p90": 0.00592,
+        "p95": 0.00695,
+        "std": 0.00484
+       },
+       "intvty": {
+        "mean": 189.44665,
+        "p50": 222.8186,
+        "p75": 200.96853,
+        "p90": 169.01592,
+        "p95": 143.78529,
+        "std": 34.12986
+       },
+       "e2e_norm_intvty": {
+        "mean": 128.9198,
+        "p50": 165.70057,
+        "p75": 141.98708,
+        "p90": 102.32109,
+        "p95": 79.46255,
+        "std": 43.20605
+       },
+       "full_response_itl": {
+        "mean": 0.00528,
+        "p50": 0.00449,
+        "p75": 0.00498,
+        "p90": 0.00592,
+        "p95": 0.00696,
+        "std": 0.00484
+       },
+       "full_response_intvty": {
+        "mean": 189.36289,
+        "p50": 222.73144,
+        "p75": 200.9034,
+        "p90": 168.84821,
+        "p95": 143.7376,
+        "std": 34.0923
+       }
+      },
+      "tokens": {
+       "input": {
+        "mean": 102236.37838,
+        "p50": 61384,
+        "p75": 96548,
+        "p90": 336131,
+        "p95": 472321,
+        "std": 129338.13371
+       },
+       "output_actual": {
+        "mean": 817.18919,
+        "p50": 132,
+        "p75": 575,
+        "p90": 3061,
+        "p95": 4253,
+        "std": 1542.52688
+       },
+       "output_expected": {
+        "mean": 1995.98198,
+        "p50": 1135,
+        "p75": 3213,
+        "p90": 4848,
+        "p95": 6339,
+        "std": 2020.56835
+       }
+      },
+      "throughput": {
+       "input": {
+        "tokens_per_second": 18961.86998
+       },
+       "output": {
+        "tokens_per_second": 151.56479
+       },
+       "total": {
+        "tokens_per_second": 19113.43477
+       },
+       "duration_seconds": 598.47673,
+       "per_gpu": {
+        "total_tput_tps": 2389.17935,
+        "output_tput_tps": 18.9456,
+        "input_tput_tps": 2370.23375
+       }
+      },
+      "cache": {
+       "theoretical_cache_hit_rate": 0.9721
+      }
+     },
+     "server_metrics": {
+      "present": true,
+      "adapter": "sglang",
+      "metric_count": 83,
+      "cache": {
+       "gpu_cache_hit_rate": 0.96993,
+       "cpu_cache_hit_rate": null,
+       "external_cache_hit_rate": null,
+       "overall_cache_hit_rate": 0.96993,
+       "prefix_cache_hits": null,
+       "prefix_cache_queries": null,
+       "external_prefix_cache_hits": null,
+       "external_prefix_cache_queries": null,
+       "cached_tokens_by_source": {
+        "device": 22014080
+       },
+       "frontend_cache_hit_rate": null,
+       "router_kv_hit_rate": null,
+       "router_shared_cache_hit_rate": null,
+       "frontend_cached_tokens": null,
+       "frontend_input_tokens": null
+      },
+      "kv_cache": {
+       "gpu_usage_pct": 0.28,
+       "gpu_total_tokens": 51256320,
+       "cpu_usage_pct": null,
+       "cpu_used_tokens": null,
+       "cpu_total_tokens": null
+      },
+      "kv_offload": {
+       "bytes_gpu_to_cpu": null,
+       "bytes_cpu_to_gpu": null,
+       "time_gpu_to_cpu": null,
+       "time_cpu_to_gpu": null,
+       "bandwidth_gpu_to_cpu_bytes_per_second": null,
+       "bandwidth_cpu_to_gpu_bytes_per_second": null
+      },
+      "tokens": {
+       "prompt_total": 22696476,
+       "generation_total": 181212,
+       "requests_completed": 111,
+       "prompt_by_source": {
+        "gpu_cache_hit": 22014080,
+        "cpu_or_external_cache_hit": null,
+        "computed": 682396,
+        "raw": {
+         "device": 22014080
+        }
+       }
+      },
+      "sources": []
+     },
+     "kv_cache_pool_tokens": 51256320
+    },
+    "elapsed_s": 825.2,
+    "measurement": {
+     "environment_policy": "paired-aklr-image-env-v2",
+     "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+     "weights": {
+      "repo": "zai-org/GLM-5.2-FP8",
+      "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+     },
+     "launch": {
+      "command": [
+       "python3",
+       "-m",
+       "sglang.launch_server",
+       "--model-path",
+       "${AGENTX_MODEL_PATH}",
+       "--served-model-name",
+       "zai-org/GLM-5.2-FP8",
+       "--host",
+       "127.0.0.1",
+       "--port",
+       "${AGENTX_PORT}",
+       "--chunked-prefill-size",
+       "32768",
+       "--cuda-graph-max-bs-decode",
+       "8",
+       "--dsa-decode-backend",
+       "tilelang",
+       "--dsa-prefill-backend",
+       "tilelang",
+       "--enable-metrics",
+       "--expert-parallel-size",
+       "1",
+       "--kv-cache-dtype",
+       "fp8_e4m3",
+       "--max-running-requests",
+       "8",
+       "--mem-fraction-static",
+       "0.85",
+       "--reasoning-parser",
+       "glm45",
+       "--speculative-algorithm",
+       "EAGLE",
+       "--speculative-eagle-topk",
+       "1",
+       "--speculative-num-draft-tokens",
+       "6",
+       "--speculative-num-steps",
+       "5",
+       "--tensor-parallel-size",
+       "8",
+       "--tool-call-parser",
+       "glm47",
+       "--trust-remote-code",
+       "--watchdog-timeout",
+       "1800"
+      ],
+      "env": {
+       "HF_HUB_OFFLINE": "1",
+       "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+       "PYTHONNOUSERSITE": "1",
+       "SGLANG_OPT_USE_TOPK_V2": "false",
+       "SGLANG_SIMULATE_ACC_LEN": "3.61",
+       "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+       "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+       "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+       "AKLR_SGLANG_PLUGIN": "0",
+       "AKLR_DISABLE": "1"
+      }
+     },
+     "client_env": {
+      "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+      "AIPERF_EXPERIMENTAL_FAST": "0",
+      "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+      "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+      "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+      "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+      "CONC": "4",
+      "DCP_SIZE": "1",
+      "DP_ATTENTION": "false",
+      "DURATION": "600",
+      "ENABLE_AGENTX_POWER": "false",
+      "EP_SIZE": "1",
+      "EVAL_ONLY": "false",
+      "FRAMEWORK": "sglang",
+      "IS_AGENTIC": "1",
+      "IS_MULTINODE": "false",
+      "KV_OFFLOADING": "none",
+      "MODEL": "zai-org/GLM-5.2-FP8",
+      "MODEL_PREFIX": "glm5.2",
+      "PCP_SIZE": "1",
+      "PP_SIZE": "1",
+      "PRECISION": "fp8",
+      "REQUIRE_POWER": "0",
+      "SPEC_ALGORITHM": "mtp",
+      "SPEC_DRAFT_MODEL": "native",
+      "TOTAL_CPU_DRAM_GB": "0",
+      "TP": "8",
+      "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+     },
+     "runtime": {
+      "port": null,
+      "ready_timeout_s": 7200,
+      "poll_s": 10,
+      "point_timeout_s": 30000
+     },
+     "model_path_override": null,
+     "trace": {
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "repo": "semianalysisai/cc-traces-weka-062126",
+      "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+     },
+     "trace_policy": "revision-isolated-v1"
+    },
+    "measurement_sha256": "0f1f8f5060ff4424a820d1a0c3d24f4ac65df7073c952ce615238316d6562deb"
+   },
+   {
+    "arm": "tp8-ep1-none-spec-mtp",
+    "conc": 10,
+    "exp_name": "glm52-fp8-tp8-ep1-none-spec-mtp-c10",
+    "serve_spec_sha256": "2c862b02416e3add0e4b22ebe303fea4441dccd07bdf8296cfcad66748d99059",
+    "status": "ok",
+    "error": null,
+    "started_at": "2026-11-19T14:48:09Z",
+    "tput_per_gpu": 7624.40051,
+    "p90_full_response_intvty": 92.25092250922509,
+    "num_requests_successful": 414,
+    "raw_data": {
+     "hw": "",
+     "conc": 10,
+     "image": "",
+     "recipe_fingerprint": "",
+     "model": "zai-org/GLM-5.2-FP8",
+     "infmax_model_prefix": "glm5.2",
+     "framework": "sglang",
+     "precision": "fp8",
+     "spec_decoding": "none",
+     "disagg": false,
+     "scenario_type": "agentic-coding",
+     "is_multinode": false,
+     "num_gpus": 8,
+     "tp": 8,
+     "ep": 1,
+     "dp_attention": "false",
+     "kv_offloading": "none",
+     "kv_offload_backend": null,
+     "allocated_cpu_dram_gb": 0,
+     "num_requests_total": 523,
+     "num_requests_successful": 414,
+     "request_accounting": {
+      "records_total": 523,
+      "records_profiled": 414,
+      "records_dropped_total": 109,
+      "records_warmup_dropped": 109,
+      "records_error_dropped": 1,
+      "error_categories": {
+       "InvalidInferenceResultError": 1
+      }
+     },
+     "pp": 1,
+     "dcp_size": 1,
+     "pcp_size": 1,
+     "spec_algorithm": "mtp",
+     "spec_draft_model": "native",
+     "dataset": {
+      "source_type": "public_dataset",
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
+      "hf_split": "train",
+      "num_dataset_entries": 393
+     },
+     "request_metrics": {
+      "qps": {
+       "window_seconds": 1,
+       "samples": 614,
+       "mean": 0.67264,
+       "p50": 1,
+       "p75": 1,
+       "p90": 2,
+       "p95": 2,
+       "std": 0.81236
+      },
+      "latency": {
+       "ttft": {
+        "mean": 0.50063,
+        "p50": 0.27012,
+        "p75": 0.44828,
+        "p90": 0.9481,
+        "p95": 1.71965,
+        "std": 0.6834
+       },
+       "e2el": {
+        "mean": 6.01234,
+        "p50": 2.95278,
+        "p75": 6.66535,
+        "p90": 14.13302,
+        "p95": 21.44928,
+        "std": 8.52354
+       },
+       "itl": {
+        "mean": 0.00813,
+        "p50": 0.00714,
+        "p75": 0.0085,
+        "p90": 0.01084,
+        "p95": 0.01407,
+        "std": 0.00406
+       },
+       "tpot": {
+        "mean": 0.00813,
+        "p50": 0.00714,
+        "p75": 0.0085,
+        "p90": 0.01084,
+        "p95": 0.01407,
+        "std": 0.00406
+       },
+       "intvty": {
+        "mean": 123.02165,
+        "p50": 140.15361,
+        "p75": 117.66969,
+        "p90": 92.21987,
+        "p95": 71.06124,
+        "std": 902.78151
+       },
+       "e2e_norm_intvty": {
+        "mean": 90.78396,
+        "p50": 119.6721,
+        "p75": 95.92231,
+        "p90": 64.72056,
+        "p95": 48.80563,
+        "std": 33.83013
+       },
+       "full_response_itl": {
+        "mean": 0.00813,
+        "p50": 0.00714,
+        "p75": 0.0085,
+        "p90": 0.01084,
+        "p95": 0.01408,
+        "std": 0.00406
+       },
+       "full_response_intvty": {
+        "mean": 122.98898,
+        "p50": 140.13863,
+        "p75": 117.65906,
+        "p90": 92.21328,
+        "p95": 70.99931,
+        "std": 367.58726
+       }
+      },
+      "tokens": {
+       "input": {
+        "mean": 91163.11836,
+        "p50": 82763.5,
+        "p75": 109774.25,
+        "p90": 127586.5,
+        "p95": 142950.4,
+        "std": 66760.49005
+       },
+       "output_actual": {
+        "mean": 700.93961,
+        "p50": 294,
+        "p75": 737,
+        "p90": 1489.1,
+        "p95": 3084.45,
+        "std": 1096.50281
+       },
+       "output_expected": {
+        "mean": 2020.47892,
+        "p50": 828,
+        "p75": 2974.5,
+        "p90": 5898.2,
+        "p95": 8225,
+        "std": 2435.56857
+       }
+      },
+      "throughput": {
+       "input": {
+        "tokens_per_second": 60529.79948
+       },
+       "output": {
+        "tokens_per_second": 465.4046
+       },
+       "total": {
+        "tokens_per_second": 60995.20408
+       },
+       "duration_seconds": 623.51984,
+       "per_gpu": {
+        "total_tput_tps": 7624.40051,
+        "output_tput_tps": 58.17557,
+        "input_tput_tps": 7566.22494
+       }
+      },
+      "cache": {
+       "theoretical_cache_hit_rate": 0.96232
+      }
+     },
+     "server_metrics": {
+      "present": true,
+      "adapter": "sglang",
+      "metric_count": 86,
+      "cache": {
+       "gpu_cache_hit_rate": 0.95588,
+       "cpu_cache_hit_rate": null,
+       "external_cache_hit_rate": null,
+       "overall_cache_hit_rate": 0.95588,
+       "prefix_cache_hits": null,
+       "prefix_cache_queries": null,
+       "external_prefix_cache_hits": null,
+       "external_prefix_cache_queries": null,
+       "cached_tokens_by_source": {
+        "device": 72295296
+       },
+       "frontend_cache_hit_rate": null,
+       "router_kv_hit_rate": null,
+       "router_shared_cache_hit_rate": null,
+       "frontend_cached_tokens": null,
+       "frontend_input_tokens": null
+      },
+      "kv_cache": {
+       "gpu_usage_pct": 0.48,
+       "gpu_total_tokens": 51256320,
+       "cpu_usage_pct": null,
+       "cpu_used_tokens": null,
+       "cpu_total_tokens": null
+      },
+      "kv_offload": {
+       "bytes_gpu_to_cpu": null,
+       "bytes_cpu_to_gpu": null,
+       "time_gpu_to_cpu": null,
+       "time_cpu_to_gpu": null,
+       "bandwidth_gpu_to_cpu_bytes_per_second": null,
+       "bandwidth_cpu_to_gpu_bytes_per_second": null
+      },
+      "tokens": {
+       "prompt_total": 75631970,
+       "generation_total": 586034,
+       "requests_completed": 414,
+       "prompt_by_source": {
+        "gpu_cache_hit": 72295296,
+        "cpu_or_external_cache_hit": null,
+        "computed": 3339022,
+        "raw": {
+         "device": 72295296
+        }
+       }
+      },
+      "sources": []
+     },
+     "kv_cache_pool_tokens": 51256320
+    },
+    "elapsed_s": 997.0,
+    "measurement": {
+     "environment_policy": "paired-aklr-image-env-v2",
+     "server_image_env_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+     "weights": {
+      "repo": "zai-org/GLM-5.2-FP8",
+      "revision": "f33c6dc501ee5a2c7e35155653b1b1abbc320951"
+     },
+     "launch": {
+      "command": [
+       "python3",
+       "-m",
+       "sglang.launch_server",
+       "--model-path",
+       "${AGENTX_MODEL_PATH}",
+       "--served-model-name",
+       "zai-org/GLM-5.2-FP8",
+       "--host",
+       "127.0.0.1",
+       "--port",
+       "${AGENTX_PORT}",
+       "--chunked-prefill-size",
+       "32768",
+       "--cuda-graph-max-bs-decode",
+       "20",
+       "--dsa-decode-backend",
+       "tilelang",
+       "--dsa-prefill-backend",
+       "tilelang",
+       "--enable-metrics",
+       "--expert-parallel-size",
+       "1",
+       "--kv-cache-dtype",
+       "fp8_e4m3",
+       "--max-running-requests",
+       "20",
+       "--mem-fraction-static",
+       "0.85",
+       "--reasoning-parser",
+       "glm45",
+       "--speculative-algorithm",
+       "EAGLE",
+       "--speculative-eagle-topk",
+       "1",
+       "--speculative-num-draft-tokens",
+       "6",
+       "--speculative-num-steps",
+       "5",
+       "--tensor-parallel-size",
+       "8",
+       "--tool-call-parser",
+       "glm47",
+       "--trust-remote-code",
+       "--watchdog-timeout",
+       "1800"
+      ],
+      "env": {
+       "HF_HUB_OFFLINE": "1",
+       "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+       "PYTHONNOUSERSITE": "1",
+       "SGLANG_OPT_USE_TOPK_V2": "false",
+       "SGLANG_SIMULATE_ACC_LEN": "3.61",
+       "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+       "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token",
+       "SGLANG_TIMEOUT_KEEP_ALIVE": "900",
+       "AKLR_SGLANG_PLUGIN": "0",
+       "AKLR_DISABLE": "1"
+      }
+     },
+     "client_env": {
+      "AIPERF_DYNAMO_SESSION_TIMEOUT_SECONDS": "3600",
+      "AIPERF_EXPERIMENTAL_FAST": "0",
+      "AIPERF_HTTP_TCP_USER_TIMEOUT": "900000",
+      "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID": "false",
+      "AIPERF_REQUIRED_SERVER_METRIC_PREFIX": "sglang:",
+      "AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING": "1",
+      "CONC": "10",
+      "DCP_SIZE": "1",
+      "DP_ATTENTION": "false",
+      "DURATION": "600",
+      "ENABLE_AGENTX_POWER": "false",
+      "EP_SIZE": "1",
+      "EVAL_ONLY": "false",
+      "FRAMEWORK": "sglang",
+      "IS_AGENTIC": "1",
+      "IS_MULTINODE": "false",
+      "KV_OFFLOADING": "none",
+      "MODEL": "zai-org/GLM-5.2-FP8",
+      "MODEL_PREFIX": "glm5.2",
+      "PCP_SIZE": "1",
+      "PP_SIZE": "1",
+      "PRECISION": "fp8",
+      "REQUIRE_POWER": "0",
+      "SPEC_ALGORITHM": "mtp",
+      "SPEC_DRAFT_MODEL": "native",
+      "TOTAL_CPU_DRAM_GB": "0",
+      "TP": "8",
+      "WEKA_LOADER_OVERRIDE": "semianalysis_cc_traces_weka_062126"
+     },
+     "runtime": {
+      "port": null,
+      "ready_timeout_s": 7200,
+      "poll_s": 10,
+      "point_timeout_s": 30000
+     },
+     "model_path_override": null,
+     "trace": {
+      "loader": "semianalysis_cc_traces_weka_062126",
+      "repo": "semianalysisai/cc-traces-weka-062126",
+      "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+     },
+     "trace_policy": "revision-isolated-v1"
+    },
+    "measurement_sha256": "dc0dcb4aadb96f494d8647d55f04d58781affdda7cef203b0360d369663358a5"
+   }
+  ]
+ }
+}

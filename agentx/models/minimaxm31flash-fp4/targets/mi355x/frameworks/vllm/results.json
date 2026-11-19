@@ -1,0 +1,529 @@
+{
+ "schema": 4,
+ "model": {
+  "id": "minimaxm31flash-fp4",
+  "display_name": "MiniMax-M3.1-Flash MXFP4",
+  "precision": "mxfp4"
+ },
+ "target": {
+  "id": "mi355x",
+  "runner_label": "agentx-mi355x"
+ },
+ "framework": {
+  "id": "vllm"
+ },
+ "run": {
+  "mode": "live",
+  "started_at": "2026-11-19T15:15:16Z",
+  "finished_at": "2026-11-19T15:15:19Z",
+  "completed": false,
+  "serving_sha256": "2297de3a9de0ecbe981fa55b6417c621e99956426442bf739aa0228579b12f9f",
+  "image": {
+   "run": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1"
+  },
+  "expected_hardware": {
+   "gpu_name_pattern": "\\bMI355X\\b",
+   "gpu_arch": "gfx950",
+   "gpu_count": 8
+  },
+  "aklr_mode": "enabled",
+  "source": {
+   "kind": "inferencex",
+   "config_key": "minimaxm31flash-fp4-mi355x-vllm-agentic-dspark"
+  },
+  "client": {
+   "repo": "SemiAnalysisAI/InferenceX",
+   "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4"
+  },
+  "weights": {
+   "repo": "amd/MiniMax-M3.1-Flash-Quark-MXFP4",
+   "revision": "bf06a0c566b430c620154497cc928c893af5e10c"
+  },
+  "points_expected": 6,
+  "point_policy": "pareto",
+  "arms_requested": "all",
+  "points_requested": null,
+  "duration_override_s": 600,
+  "model_path_override": null,
+  "selection": {
+   "points": [
+    "tp4-ep1-dram-vllm-simple-spec-mtp:32",
+    "tp4-ep1-dram-vllm-simple-spec-mtp:64",
+    "tp4-ep1-none-spec-mtp:2",
+    "tp4-ep1-none-spec-mtp:4",
+    "tp4-ep1-none-spec-mtp:8",
+    "tp4-ep1-none-spec-mtp:16"
+   ],
+   "policy": "pareto",
+   "duration": 600,
+   "points_requested": null,
+   "serve_sha256": "aee7888eafbd5d79d76f55eeb060675a5be24ad28b7f8c92e706f337637bd47d",
+   "spec_sha256": "63b8c76403f460074aa103c75afa93fdff6a0942adcbc80e0be36d5627826c6b",
+   "selection_sha256": "96eea4b8b2553f325e7fbacd6f12caed1be4aa417e73bcf1d010e3efbd429c60",
+   "manifest_sha256": "b5b68b01242b2efd93d06db0b40e398065d5794ae830aede3c24dce511c209a1"
+  },
+  "id": "44491219482",
+  "attempt_id": "92764869563e494caf30c32d8eadbfbd",
+  "aklr_sha": "8806c22a61f61b0fccb1322b4e44edf36d7895e1",
+  "source_dirty": false,
+  "host": "smci355-ccs-aus-m14-09",
+  "execution": {
+   "image_reference": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1",
+   "image_id": "sha256:9a5f9af8f20f129a8f0ccbe6c78499a1d0db8ddb17caaa848bb09f04f139d2b1",
+   "server_environment": {
+    "policy": "paired-aklr-image-env-v2",
+    "scope": "server",
+    "source": "docker-image-inspect.Config.Env",
+    "defaults_sha256": "4f1bc4c24bbc635835532c3cd449e034238454780e54d70ac4592adb8ee9f459",
+    "defaults": {
+     "AITER_ROCM_ARCH": "<redacted>",
+     "CCACHE_COMPILERCHECK": "<redacted>",
+     "CCACHE_DIR": "<redacted>",
+     "DEBIAN_FRONTEND": "<redacted>",
+     "HIP_CLANG_PATH": "<redacted>",
+     "HIP_DEVICE_LIB_PATH": "<redacted>",
+     "HIP_FORCE_DEV_KERNARG": "<redacted>",
+     "HIP_PATH": "<redacted>",
+     "HSA_ENABLE_IPC_MODE_LEGACY": "<redacted>",
+     "HSA_NO_SCRATCH_RECLAIM": "<redacted>",
+     "KINETO_CONFIG": "<redacted>",
+     "LD_LIBRARY_PATH": "<redacted>",
+     "MIOPEN_DEBUG_CONV_DIRECT": "<redacted>",
+     "MIOPEN_DEBUG_CONV_GEMM": "<redacted>",
+     "PATH": "<redacted>",
+     "PYTHONPATH": "<redacted>",
+     "PYTHON_VERSION": "<redacted>",
+     "PYTORCH_NVML_BASED_CUDA_CHECK": "<redacted>",
+     "PYTORCH_ROCM_ARCH": "<redacted>",
+     "ROCM_HOME": "<redacted>",
+     "ROCM_PATH": "<redacted>",
+     "ROCPROFILER_QUEUE_INTERPOSITION": "<redacted>",
+     "ROCSHMEM_DIR": "<redacted>",
+     "SAFETENSORS_FAST_GPU": "<redacted>",
+     "SDK_CORE": "<redacted>",
+     "SDK_DEV": "<redacted>",
+     "SITE_PACKAGES": "<redacted>",
+     "TOKENIZERS_PARALLELISM": "<redacted>",
+     "UCX_ROCM_COPY_SIGPOOL_MAX_ELEMS": "<redacted>",
+     "UCX_ROCM_IPC_SIGPOOL_MAX_ELEMS": "<redacted>",
+     "UV_HTTP_TIMEOUT": "<redacted>",
+     "UV_INDEX_STRATEGY": "<redacted>",
+     "UV_LINK_MODE": "<redacted>"
+    }
+   }
+  },
+  "hardware": {
+   "devices": [
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    }
+   ],
+   "peer_access": [
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   ]
+  },
+  "error": "/home/ruibzhan/agentx-ci/hf/hub/models--amd--MiniMax-M3.1-Flash-Quark-MXFP4/refs/main is missing; prepare refs/main at the pinned bf06a0c566b430c620154497cc928c893af5e10c for the AgentX client's offline tokenizer"
+ },
+ "serving": {
+  "grid_sha256": "b848bf6fa00e0d32c74d9dba41cb796ee45e03cebc4a5d6fe8a7f0b984703ed6",
+  "arms": {
+   "tp4-ep1-dram-vllm-simple-spec-mtp": {
+    "concs": [
+     32,
+     64
+    ],
+    "arm_serve_sha256": "52854257658661bff6bfd288618f5238a219f61793473cc1a8ca42aed3b01831"
+   },
+   "tp4-ep1-none-spec-mtp": {
+    "concs": [
+     2,
+     4,
+     8,
+     16
+    ],
+    "arm_serve_sha256": "47da7b3e61ab9520847b1cc6a057146d2e1cefa1d7619d0aa8c852b1d4a560d8"
+   }
+  }
+ },
+ "points": [],
+ "control": {
+  "schema": 4,
+  "model": {
+   "id": "minimaxm31flash-fp4",
+   "display_name": "MiniMax-M3.1-Flash MXFP4",
+   "precision": "mxfp4"
+  },
+  "target": {
+   "id": "mi355x",
+   "runner_label": "agentx-mi355x"
+  },
+  "framework": {
+   "id": "vllm"
+  },
+  "run": {
+   "mode": "live",
+   "started_at": "2026-11-19T15:15:16Z",
+   "finished_at": "2026-11-19T15:15:16Z",
+   "completed": false,
+   "serving_sha256": "2297de3a9de0ecbe981fa55b6417c621e99956426442bf739aa0228579b12f9f",
+   "image": {
+    "run": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1"
+   },
+   "expected_hardware": {
+    "gpu_name_pattern": "\\bMI355X\\b",
+    "gpu_arch": "gfx950",
+    "gpu_count": 8
+   },
+   "aklr_mode": "disabled",
+   "source": {
+    "kind": "inferencex",
+    "config_key": "minimaxm31flash-fp4-mi355x-vllm-agentic-dspark"
+   },
+   "client": {
+    "repo": "SemiAnalysisAI/InferenceX",
+    "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4"
+   },
+   "weights": {
+    "repo": "amd/MiniMax-M3.1-Flash-Quark-MXFP4",
+    "revision": "bf06a0c566b430c620154497cc928c893af5e10c"
+   },
+   "points_expected": 6,
+   "point_policy": "pareto",
+   "arms_requested": "all",
+   "points_requested": null,
+   "duration_override_s": 600,
+   "model_path_override": null,
+   "selection": {
+    "points": [
+     "tp4-ep1-dram-vllm-simple-spec-mtp:32",
+     "tp4-ep1-dram-vllm-simple-spec-mtp:64",
+     "tp4-ep1-none-spec-mtp:2",
+     "tp4-ep1-none-spec-mtp:4",
+     "tp4-ep1-none-spec-mtp:8",
+     "tp4-ep1-none-spec-mtp:16"
+    ],
+    "policy": "pareto",
+    "duration": 600,
+    "points_requested": null,
+    "serve_sha256": "aee7888eafbd5d79d76f55eeb060675a5be24ad28b7f8c92e706f337637bd47d",
+    "spec_sha256": "63b8c76403f460074aa103c75afa93fdff6a0942adcbc80e0be36d5627826c6b",
+    "selection_sha256": "96eea4b8b2553f325e7fbacd6f12caed1be4aa417e73bcf1d010e3efbd429c60",
+    "manifest_sha256": "b5b68b01242b2efd93d06db0b40e398065d5794ae830aede3c24dce511c209a1"
+   },
+   "id": "44491219482",
+   "attempt_id": "92764869563e494caf30c32d8eadbfbd",
+   "aklr_sha": "8806c22a61f61b0fccb1322b4e44edf36d7895e1",
+   "source_dirty": false,
+   "host": "smci355-ccs-aus-m14-09",
+   "execution": {
+    "image_reference": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1",
+    "image_id": "sha256:9a5f9af8f20f129a8f0ccbe6c78499a1d0db8ddb17caaa848bb09f04f139d2b1",
+    "server_environment": {
+     "policy": "paired-aklr-image-env-v2",
+     "scope": "server",
+     "source": "docker-image-inspect.Config.Env",
+     "defaults_sha256": "4f1bc4c24bbc635835532c3cd449e034238454780e54d70ac4592adb8ee9f459",
+     "defaults": {
+      "AITER_ROCM_ARCH": "<redacted>",
+      "CCACHE_COMPILERCHECK": "<redacted>",
+      "CCACHE_DIR": "<redacted>",
+      "DEBIAN_FRONTEND": "<redacted>",
+      "HIP_CLANG_PATH": "<redacted>",
+      "HIP_DEVICE_LIB_PATH": "<redacted>",
+      "HIP_FORCE_DEV_KERNARG": "<redacted>",
+      "HIP_PATH": "<redacted>",
+      "HSA_ENABLE_IPC_MODE_LEGACY": "<redacted>",
+      "HSA_NO_SCRATCH_RECLAIM": "<redacted>",
+      "KINETO_CONFIG": "<redacted>",
+      "LD_LIBRARY_PATH": "<redacted>",
+      "MIOPEN_DEBUG_CONV_DIRECT": "<redacted>",
+      "MIOPEN_DEBUG_CONV_GEMM": "<redacted>",
+      "PATH": "<redacted>",
+      "PYTHONPATH": "<redacted>",
+      "PYTHON_VERSION": "<redacted>",
+      "PYTORCH_NVML_BASED_CUDA_CHECK": "<redacted>",
+      "PYTORCH_ROCM_ARCH": "<redacted>",
+      "ROCM_HOME": "<redacted>",
+      "ROCM_PATH": "<redacted>",
+      "ROCPROFILER_QUEUE_INTERPOSITION": "<redacted>",
+      "ROCSHMEM_DIR": "<redacted>",
+      "SAFETENSORS_FAST_GPU": "<redacted>",
+      "SDK_CORE": "<redacted>",
+      "SDK_DEV": "<redacted>",
+      "SITE_PACKAGES": "<redacted>",
+      "TOKENIZERS_PARALLELISM": "<redacted>",
+      "UCX_ROCM_COPY_SIGPOOL_MAX_ELEMS": "<redacted>",
+      "UCX_ROCM_IPC_SIGPOOL_MAX_ELEMS": "<redacted>",
+      "UV_HTTP_TIMEOUT": "<redacted>",
+      "UV_INDEX_STRATEGY": "<redacted>",
+      "UV_LINK_MODE": "<redacted>"
+     }
+    }
+   },
+   "hardware": {
+    "devices": [
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     },
+     {
+      "name": "AMD Instinct MI355X",
+      "arch": "gfx950",
+      "total_memory": 309220868096
+     }
+    ],
+    "peer_access": [
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ],
+     [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+     ]
+    ]
+   }
+  },
+  "serving": {
+   "grid_sha256": "b848bf6fa00e0d32c74d9dba41cb796ee45e03cebc4a5d6fe8a7f0b984703ed6",
+   "arms": {
+    "tp4-ep1-dram-vllm-simple-spec-mtp": {
+     "concs": [
+      32,
+      64
+     ],
+     "arm_serve_sha256": "52854257658661bff6bfd288618f5238a219f61793473cc1a8ca42aed3b01831"
+    },
+    "tp4-ep1-none-spec-mtp": {
+     "concs": [
+      2,
+      4,
+      8,
+      16
+     ],
+     "arm_serve_sha256": "47da7b3e61ab9520847b1cc6a057146d2e1cefa1d7619d0aa8c852b1d4a560d8"
+    }
+   }
+  },
+  "points": []
+ }
+}
