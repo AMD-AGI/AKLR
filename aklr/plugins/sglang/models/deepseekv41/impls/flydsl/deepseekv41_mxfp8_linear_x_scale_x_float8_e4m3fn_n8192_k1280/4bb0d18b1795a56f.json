@@ -1,0 +1,1372 @@
+{
+  "schema_version": 5,
+  "name": "deepseekv41_mxfp8_linear_x_scale_x_float8_e4m3fn_n8192_k1280",
+  "contract_id": "deepseekv41_mxfp8_linear@1.0",
+  "description": "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear), before any bias: x @ weight.T, weight fp8 e4m3 at an e8m0 scale per 32 x 32 block. A bf16 x is first rounded to fp8 e4m3 at an e8m0 scale per 32 values of a row, the scale 2**ceil(log2(amax / 448)) of the block's largest magnitude, never below 1e-30; an fp8 x comes with those scales.",
+  "op_type": "deepseekv41",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Rows of x."
+    },
+    "n": {
+      "type": "const",
+      "value": 8192,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 1280,
+      "description": "Reduction length."
+    },
+    "scale_rows": {
+      "type": "const",
+      "value": 256,
+      "description": "Weight-scale rows."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 40,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "has_x_scale": true
+  },
+  "inputs": {
+    "x": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations: bf16, or the fp8 values x_scale scales."
+    },
+    "weight": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights."
+    },
+    "weight_scale": {
+      "shape": [
+        "scale_rows",
+        "scale_columns"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -10,
+        "log2_hi": -4
+      },
+      "description": "Per 32 x 32 block of weight."
+    },
+    "x_scale": {
+      "shape": [
+        "m",
+        "scale_columns"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -8,
+        "log2_hi": 0
+      },
+      "description": "Per 32 values of a row of an fp8 x."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "x @ weight.T, dequantized."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 38
+      }
+    },
+    {
+      "axes": {
+        "m": 60
+      }
+    },
+    {
+      "axes": {
+        "m": 72
+      }
+    },
+    {
+      "axes": {
+        "m": 84
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "m": 108
+      }
+    },
+    {
+      "axes": {
+        "m": 120
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    },
+    {
+      "axes": {
+        "m": 132
+      }
+    },
+    {
+      "axes": {
+        "m": 144
+      }
+    },
+    {
+      "axes": {
+        "m": 148
+      }
+    },
+    {
+      "axes": {
+        "m": 152
+      }
+    },
+    {
+      "axes": {
+        "m": 153
+      }
+    },
+    {
+      "axes": {
+        "m": 154
+      }
+    },
+    {
+      "axes": {
+        "m": 156
+      }
+    },
+    {
+      "axes": {
+        "m": 157
+      }
+    },
+    {
+      "axes": {
+        "m": 160
+      }
+    },
+    {
+      "axes": {
+        "m": 165
+      }
+    },
+    {
+      "axes": {
+        "m": 168
+      }
+    },
+    {
+      "axes": {
+        "m": 175
+      }
+    },
+    {
+      "axes": {
+        "m": 176
+      }
+    },
+    {
+      "axes": {
+        "m": 178
+      }
+    },
+    {
+      "axes": {
+        "m": 180
+      }
+    },
+    {
+      "axes": {
+        "m": 184
+      }
+    },
+    {
+      "axes": {
+        "m": 192
+      }
+    },
+    {
+      "axes": {
+        "m": 199
+      }
+    },
+    {
+      "axes": {
+        "m": 215
+      }
+    },
+    {
+      "axes": {
+        "m": 219
+      }
+    },
+    {
+      "axes": {
+        "m": 220
+      }
+    },
+    {
+      "axes": {
+        "m": 233
+      }
+    },
+    {
+      "axes": {
+        "m": 235
+      }
+    },
+    {
+      "axes": {
+        "m": 237
+      }
+    },
+    {
+      "axes": {
+        "m": 251
+      }
+    },
+    {
+      "axes": {
+        "m": 256
+      }
+    },
+    {
+      "axes": {
+        "m": 259
+      }
+    },
+    {
+      "axes": {
+        "m": 271
+      }
+    },
+    {
+      "axes": {
+        "m": 280
+      }
+    },
+    {
+      "axes": {
+        "m": 285
+      }
+    },
+    {
+      "axes": {
+        "m": 288
+      }
+    },
+    {
+      "axes": {
+        "m": 291
+      }
+    },
+    {
+      "axes": {
+        "m": 298
+      }
+    },
+    {
+      "axes": {
+        "m": 299
+      }
+    },
+    {
+      "axes": {
+        "m": 300
+      }
+    },
+    {
+      "axes": {
+        "m": 301
+      }
+    },
+    {
+      "axes": {
+        "m": 303
+      }
+    },
+    {
+      "axes": {
+        "m": 307
+      }
+    },
+    {
+      "axes": {
+        "m": 308
+      }
+    },
+    {
+      "axes": {
+        "m": 309
+      }
+    },
+    {
+      "axes": {
+        "m": 314
+      }
+    },
+    {
+      "axes": {
+        "m": 324
+      }
+    },
+    {
+      "axes": {
+        "m": 330
+      }
+    },
+    {
+      "axes": {
+        "m": 332
+      }
+    },
+    {
+      "axes": {
+        "m": 335
+      }
+    },
+    {
+      "axes": {
+        "m": 336
+      }
+    },
+    {
+      "axes": {
+        "m": 338
+      }
+    },
+    {
+      "axes": {
+        "m": 339
+      }
+    },
+    {
+      "axes": {
+        "m": 346
+      }
+    },
+    {
+      "axes": {
+        "m": 350
+      }
+    },
+    {
+      "axes": {
+        "m": 352
+      }
+    },
+    {
+      "axes": {
+        "m": 353
+      }
+    },
+    {
+      "axes": {
+        "m": 361
+      }
+    },
+    {
+      "axes": {
+        "m": 368
+      }
+    },
+    {
+      "axes": {
+        "m": 369
+      }
+    },
+    {
+      "axes": {
+        "m": 381
+      }
+    },
+    {
+      "axes": {
+        "m": 383
+      }
+    },
+    {
+      "axes": {
+        "m": 384
+      }
+    },
+    {
+      "axes": {
+        "m": 385
+      }
+    },
+    {
+      "axes": {
+        "m": 389
+      }
+    },
+    {
+      "axes": {
+        "m": 392
+      }
+    },
+    {
+      "axes": {
+        "m": 399
+      }
+    },
+    {
+      "axes": {
+        "m": 403
+      }
+    },
+    {
+      "axes": {
+        "m": 408
+      }
+    },
+    {
+      "axes": {
+        "m": 409
+      }
+    },
+    {
+      "axes": {
+        "m": 413
+      }
+    },
+    {
+      "axes": {
+        "m": 418
+      }
+    },
+    {
+      "axes": {
+        "m": 423
+      }
+    },
+    {
+      "axes": {
+        "m": 424
+      }
+    },
+    {
+      "axes": {
+        "m": 433
+      }
+    },
+    {
+      "axes": {
+        "m": 440
+      }
+    },
+    {
+      "axes": {
+        "m": 445
+      }
+    },
+    {
+      "axes": {
+        "m": 448
+      }
+    },
+    {
+      "axes": {
+        "m": 451
+      }
+    },
+    {
+      "axes": {
+        "m": 458
+      }
+    },
+    {
+      "axes": {
+        "m": 459
+      }
+    },
+    {
+      "axes": {
+        "m": 460
+      }
+    },
+    {
+      "axes": {
+        "m": 470
+      }
+    },
+    {
+      "axes": {
+        "m": 487
+      }
+    },
+    {
+      "axes": {
+        "m": 490
+      }
+    },
+    {
+      "axes": {
+        "m": 493
+      }
+    },
+    {
+      "axes": {
+        "m": 495
+      }
+    },
+    {
+      "axes": {
+        "m": 500
+      }
+    },
+    {
+      "axes": {
+        "m": 501
+      }
+    },
+    {
+      "axes": {
+        "m": 505
+      }
+    },
+    {
+      "axes": {
+        "m": 512
+      }
+    },
+    {
+      "axes": {
+        "m": 524
+      }
+    },
+    {
+      "axes": {
+        "m": 537
+      }
+    },
+    {
+      "axes": {
+        "m": 541
+      }
+    },
+    {
+      "axes": {
+        "m": 546
+      }
+    },
+    {
+      "axes": {
+        "m": 551
+      }
+    },
+    {
+      "axes": {
+        "m": 556
+      }
+    },
+    {
+      "axes": {
+        "m": 560
+      }
+    },
+    {
+      "axes": {
+        "m": 563
+      }
+    },
+    {
+      "axes": {
+        "m": 570
+      }
+    },
+    {
+      "axes": {
+        "m": 571
+      }
+    },
+    {
+      "axes": {
+        "m": 572
+      }
+    },
+    {
+      "axes": {
+        "m": 575
+      }
+    },
+    {
+      "axes": {
+        "m": 577
+      }
+    },
+    {
+      "axes": {
+        "m": 590
+      }
+    },
+    {
+      "axes": {
+        "m": 595
+      }
+    },
+    {
+      "axes": {
+        "m": 597
+      }
+    },
+    {
+      "axes": {
+        "m": 609
+      }
+    },
+    {
+      "axes": {
+        "m": 613
+      }
+    },
+    {
+      "axes": {
+        "m": 622
+      }
+    },
+    {
+      "axes": {
+        "m": 623
+      }
+    },
+    {
+      "axes": {
+        "m": 624
+      }
+    },
+    {
+      "axes": {
+        "m": 628
+      }
+    },
+    {
+      "axes": {
+        "m": 633
+      }
+    },
+    {
+      "axes": {
+        "m": 636
+      }
+    },
+    {
+      "axes": {
+        "m": 640
+      }
+    },
+    {
+      "axes": {
+        "m": 646
+      }
+    },
+    {
+      "axes": {
+        "m": 647
+      }
+    },
+    {
+      "axes": {
+        "m": 660
+      }
+    },
+    {
+      "axes": {
+        "m": 667
+      }
+    },
+    {
+      "axes": {
+        "m": 671
+      }
+    },
+    {
+      "axes": {
+        "m": 676
+      }
+    },
+    {
+      "axes": {
+        "m": 678
+      }
+    },
+    {
+      "axes": {
+        "m": 680
+      }
+    },
+    {
+      "axes": {
+        "m": 683
+      }
+    },
+    {
+      "axes": {
+        "m": 706
+      }
+    },
+    {
+      "axes": {
+        "m": 719
+      }
+    },
+    {
+      "axes": {
+        "m": 729
+      }
+    },
+    {
+      "axes": {
+        "m": 736
+      }
+    },
+    {
+      "axes": {
+        "m": 739
+      }
+    },
+    {
+      "axes": {
+        "m": 752
+      }
+    },
+    {
+      "axes": {
+        "m": 756
+      }
+    },
+    {
+      "axes": {
+        "m": 768
+      }
+    },
+    {
+      "axes": {
+        "m": 776
+      }
+    },
+    {
+      "axes": {
+        "m": 789
+      }
+    },
+    {
+      "axes": {
+        "m": 795
+      }
+    },
+    {
+      "axes": {
+        "m": 806
+      }
+    },
+    {
+      "axes": {
+        "m": 817
+      }
+    },
+    {
+      "axes": {
+        "m": 842
+      }
+    },
+    {
+      "axes": {
+        "m": 858
+      }
+    },
+    {
+      "axes": {
+        "m": 866
+      }
+    },
+    {
+      "axes": {
+        "m": 872
+      }
+    },
+    {
+      "axes": {
+        "m": 884
+      }
+    },
+    {
+      "axes": {
+        "m": 894
+      }
+    },
+    {
+      "axes": {
+        "m": 896
+      }
+    },
+    {
+      "axes": {
+        "m": 928
+      }
+    },
+    {
+      "axes": {
+        "m": 932
+      }
+    },
+    {
+      "axes": {
+        "m": 940
+      }
+    },
+    {
+      "axes": {
+        "m": 949
+      }
+    },
+    {
+      "axes": {
+        "m": 966
+      }
+    },
+    {
+      "axes": {
+        "m": 973
+      }
+    },
+    {
+      "axes": {
+        "m": 996
+      }
+    },
+    {
+      "axes": {
+        "m": 1000
+      }
+    },
+    {
+      "axes": {
+        "m": 1002
+      }
+    },
+    {
+      "axes": {
+        "m": 1003
+      }
+    },
+    {
+      "axes": {
+        "m": 1013
+      }
+    },
+    {
+      "axes": {
+        "m": 1024
+      }
+    },
+    {
+      "axes": {
+        "m": 1046
+      }
+    },
+    {
+      "axes": {
+        "m": 1049
+      }
+    },
+    {
+      "axes": {
+        "m": 1058
+      }
+    },
+    {
+      "axes": {
+        "m": 1059
+      }
+    },
+    {
+      "axes": {
+        "m": 1077
+      }
+    },
+    {
+      "axes": {
+        "m": 1127
+      }
+    },
+    {
+      "axes": {
+        "m": 1131
+      }
+    },
+    {
+      "axes": {
+        "m": 1132
+      }
+    },
+    {
+      "axes": {
+        "m": 1147
+      }
+    },
+    {
+      "axes": {
+        "m": 1151
+      }
+    },
+    {
+      "axes": {
+        "m": 1152
+      }
+    },
+    {
+      "axes": {
+        "m": 1155
+      }
+    },
+    {
+      "axes": {
+        "m": 1189
+      }
+    },
+    {
+      "axes": {
+        "m": 1192
+      }
+    },
+    {
+      "axes": {
+        "m": 1201
+      }
+    },
+    {
+      "axes": {
+        "m": 1227
+      }
+    },
+    {
+      "axes": {
+        "m": 1234
+      }
+    },
+    {
+      "axes": {
+        "m": 1251
+      }
+    },
+    {
+      "axes": {
+        "m": 1263
+      }
+    },
+    {
+      "axes": {
+        "m": 1280
+      }
+    },
+    {
+      "axes": {
+        "m": 1311
+      }
+    },
+    {
+      "axes": {
+        "m": 1317
+      }
+    },
+    {
+      "axes": {
+        "m": 1351
+      }
+    },
+    {
+      "axes": {
+        "m": 1361
+      }
+    },
+    {
+      "axes": {
+        "m": 1384
+      }
+    },
+    {
+      "axes": {
+        "m": 1402
+      }
+    },
+    {
+      "axes": {
+        "m": 1412
+      }
+    },
+    {
+      "axes": {
+        "m": 1466
+      }
+    },
+    {
+      "axes": {
+        "m": 1471
+      }
+    },
+    {
+      "axes": {
+        "m": 1478
+      }
+    },
+    {
+      "axes": {
+        "m": 1480
+      }
+    },
+    {
+      "axes": {
+        "m": 1481
+      }
+    },
+    {
+      "axes": {
+        "m": 1516
+      }
+    },
+    {
+      "axes": {
+        "m": 1528
+      }
+    },
+    {
+      "axes": {
+        "m": 1538
+      }
+    },
+    {
+      "axes": {
+        "m": 1552
+      }
+    },
+    {
+      "axes": {
+        "m": 1567
+      }
+    },
+    {
+      "axes": {
+        "m": 1569
+      }
+    },
+    {
+      "axes": {
+        "m": 1572
+      }
+    },
+    {
+      "axes": {
+        "m": 1573
+      }
+    },
+    {
+      "axes": {
+        "m": 1580
+      }
+    },
+    {
+      "axes": {
+        "m": 1588
+      }
+    },
+    {
+      "axes": {
+        "m": 1590
+      }
+    },
+    {
+      "axes": {
+        "m": 1593
+      }
+    },
+    {
+      "axes": {
+        "m": 1600
+      }
+    },
+    {
+      "axes": {
+        "m": 1603
+      }
+    },
+    {
+      "axes": {
+        "m": 1608
+      }
+    },
+    {
+      "axes": {
+        "m": 1629
+      }
+    },
+    {
+      "axes": {
+        "m": 1648
+      }
+    },
+    {
+      "axes": {
+        "m": 1654
+      }
+    },
+    {
+      "axes": {
+        "m": 1655
+      }
+    },
+    {
+      "axes": {
+        "m": 1662
+      }
+    },
+    {
+      "axes": {
+        "m": 1663
+      }
+    },
+    {
+      "axes": {
+        "m": 1684
+      }
+    },
+    {
+      "axes": {
+        "m": 1693
+      }
+    },
+    {
+      "axes": {
+        "m": 1703
+      }
+    },
+    {
+      "axes": {
+        "m": 1704
+      }
+    },
+    {
+      "axes": {
+        "m": 1716
+      }
+    },
+    {
+      "axes": {
+        "m": 1720
+      }
+    },
+    {
+      "axes": {
+        "m": 1725
+      }
+    },
+    {
+      "axes": {
+        "m": 1726
+      }
+    },
+    {
+      "axes": {
+        "m": 1736
+      }
+    },
+    {
+      "axes": {
+        "m": 1737
+      }
+    },
+    {
+      "axes": {
+        "m": 1739
+      }
+    },
+    {
+      "axes": {
+        "m": 1749
+      }
+    },
+    {
+      "axes": {
+        "m": 1752
+      }
+    },
+    {
+      "axes": {
+        "m": 1760
+      }
+    },
+    {
+      "axes": {
+        "m": 1768
+      }
+    },
+    {
+      "axes": {
+        "m": 1775
+      }
+    },
+    {
+      "axes": {
+        "m": 1790
+      }
+    },
+    {
+      "axes": {
+        "m": 1796
+      }
+    },
+    {
+      "axes": {
+        "m": 1806
+      }
+    },
+    {
+      "axes": {
+        "m": 1823
+      }
+    },
+    {
+      "axes": {
+        "m": 1830
+      }
+    },
+    {
+      "axes": {
+        "m": 1831
+      }
+    },
+    {
+      "axes": {
+        "m": 1854
+      }
+    },
+    {
+      "axes": {
+        "m": 1860
+      }
+    },
+    {
+      "axes": {
+        "m": 1908
+      }
+    },
+    {
+      "axes": {
+        "m": 1959
+      }
+    },
+    {
+      "axes": {
+        "m": 1960
+      }
+    },
+    {
+      "axes": {
+        "m": 1966
+      }
+    },
+    {
+      "axes": {
+        "m": 1970
+      }
+    },
+    {
+      "axes": {
+        "m": 1996
+      }
+    },
+    {
+      "axes": {
+        "m": 2015
+      }
+    },
+    {
+      "axes": {
+        "m": 2017
+      }
+    },
+    {
+      "axes": {
+        "m": 2021
+      }
+    },
+    {
+      "axes": {
+        "m": 2031
+      }
+    },
+    {
+      "axes": {
+        "m": 2032
+      }
+    },
+    {
+      "axes": {
+        "m": 2039
+      }
+    },
+    {
+      "axes": {
+        "m": 2045
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}

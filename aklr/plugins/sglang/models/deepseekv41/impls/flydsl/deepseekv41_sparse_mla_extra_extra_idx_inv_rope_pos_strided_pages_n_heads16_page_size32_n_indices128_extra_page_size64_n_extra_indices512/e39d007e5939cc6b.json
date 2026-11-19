@@ -1,0 +1,1603 @@
+{
+  "schema_version": 5,
+  "name": "deepseekv41_sparse_mla_extra_extra_idx_inv_rope_pos_strided_pages_n_heads16_page_size32_n_indices128_extra_page_size64_n_extra_indices512",
+  "contract_id": "deepseekv41_sparse_mla@1.0",
+  "description": "sglang's sparse MLA of a DeepSeek-V4.1 layer on gfx950 (aiter_sparse_decode_fwd): each head of each token attends the slots its indices name (-1: none) in the layer's KV pool and in the optional extra one, with scores q . row * sm_scale; sinks join the normalisation only; the output is the softmax-weighted sum of the rows, 0 for a token that reads no row. With rope_freqs, the last 64 values of every head are then rotated back in pairs (a, b) by the pair's (c, s) at the token's position: (a c + b s, b c - a s).",
+  "op_type": "deepseekv41",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the KV pool."
+    },
+    "page_size": {
+      "type": "const",
+      "value": 32,
+      "description": "Slots per page of the KV pool."
+    },
+    "n_indices": {
+      "type": "const",
+      "value": 128,
+      "description": "Indices per token into the KV pool."
+    },
+    "n_extra_pages": {
+      "type": "var",
+      "description": "Pages of the extra KV pool."
+    },
+    "extra_page_size": {
+      "type": "const",
+      "value": 64,
+      "description": "Slots per page of the extra KV pool."
+    },
+    "n_extra_indices": {
+      "type": "const",
+      "value": 512,
+      "description": "Indices per token into the extra KV pool."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the RoPE table."
+    }
+  },
+  "attrs": {
+    "has_extra_kv_cache": true,
+    "has_extra_indices": true,
+    "has_rope_freqs": true,
+    "has_positions": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head, the RoPE part last."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        1,
+        584
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "deepseekv4_fp8_kv_cache"
+      },
+      "description": "The layer's KV pool: DeepSeek-V4's packed fp8 slots."
+    },
+    "indices": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_pages * page_size - 1",
+        "distinct": false
+      },
+      "description": "Slots of the KV pool each token reads; negative: skipped."
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head logit added to the normalisation only."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    },
+    "extra_kv_cache": {
+      "shape": [
+        "n_extra_pages",
+        "extra_page_size",
+        1,
+        584
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "deepseekv4_fp8_kv_cache"
+      },
+      "description": "The extra KV pool, the same packed slots."
+    },
+    "extra_indices": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_extra_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_extra_pages * extra_page_size - 1",
+        "distinct": false
+      },
+      "description": "Slots of the extra KV pool each token reads; negative: skipped."
+    },
+    "rope_freqs": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The RoPE table: a (c, s) per pair of each position."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's row of the RoPE table."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's attended values, the RoPE part rotated back with rope_freqs."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_pages": 594280,
+        "n_extra_pages": 594280,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_pages": 596834,
+        "n_extra_pages": 596834,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_pages": 594280,
+        "n_extra_pages": 594280,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_pages": 596834,
+        "n_extra_pages": 596834,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_pages": 594280,
+        "n_extra_pages": 594280,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_pages": 596834,
+        "n_extra_pages": 596834,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7,
+        "n_pages": 594280,
+        "n_extra_pages": 594280,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7,
+        "n_pages": 596834,
+        "n_extra_pages": 596834,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_pages": 594280,
+        "n_extra_pages": 594280,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_pages": 596834,
+        "n_extra_pages": 596834,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_pages": 594280,
+        "n_extra_pages": 594280,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_pages": 596834,
+        "n_extra_pages": 596834,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 38,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 131,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 147,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 156,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 160,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 161,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 165,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 166,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 174,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 220,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 232,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 246,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 305,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 314,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 375,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 394,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 398,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 399,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 415,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 435,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 445,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 498,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 559,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 566,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 577,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 654,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 679,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 685,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 693,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 720,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 727,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 738,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 802,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 806,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 851,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 859,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1120,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1121,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1128,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1134,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1148,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1175,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1228,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1418,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1491,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1555,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1575,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1600,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1633,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1706,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1707,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1762,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1772,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1793,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1856,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1869,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1948,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1949,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1979,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2063,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2064,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2090,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2114,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2146,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2149,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2150,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2166,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2222,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2281,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2324,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2427,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2479,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2496,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2527,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2593,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2599,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2635,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2684,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2759,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3086,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3096,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3097,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3105,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3298,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3299,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3334,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3355,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3385,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3651,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3718,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3843,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3847,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4279,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4537,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4649,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5908,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5909,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5949,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6628,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6898,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6991,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7219,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7355,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7591,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10535,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 11967,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16158,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 19915,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 19916,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 20324,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 21767,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 31395,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32367,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32768,
+        "n_pages": 584237,
+        "n_extra_pages": 584237,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "strided_pages": {
+        "layouts": {
+          "kv_cache": {
+            "kind": "strided_pages"
+          },
+          "extra_kv_cache": {
+            "kind": "strided_pages"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "kv_cache_layout",
+            "expected_value": "strided_pages"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}
