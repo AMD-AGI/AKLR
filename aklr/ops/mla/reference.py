@@ -219,7 +219,6 @@ def mla_decode_fwd_reference(
 def mla_decode_fwd_cprr_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """Query i of a request of G global tokens attends over the rows of its shard here whose global
     position, local row j * cp_world_size + cp_rank, is at most G - query_length + i."""
@@ -227,8 +226,9 @@ def mla_decode_fwd_cprr_reference(
 
     args, dtypes = row_major_args, point.dtypes
     world, rank = point.attrs["cp_world_size"], args["cp_rank"]
-    q = decode(args["q"], dtypes["q"]) * decode(args["q_scale"], dtypes["q_scale"]).reshape(())
-    kv_scale = decode(args["kv_scale"], dtypes["kv_scale"]).reshape(())
+    q_scale = to_float32(args["q_scale"], dtypes["q_scale"]).reshape(())
+    q = to_float32(args["q"], dtypes["q"]) * q_scale
+    kv_scale = to_float32(args["kv_scale"], dtypes["kv_scale"]).reshape(())
     query_length = q.shape[1]
     pool = args["kv_buffer"].flatten(0, 2)
     offsets = args["kv_indptr"].long()
@@ -251,7 +251,7 @@ def mla_decode_fwd_cprr_reference(
     n_requests = max(1, _CHUNK_ELEMENTS // (positions.numel() * q.shape[-1]))
     for start in range(0, q.shape[0], n_requests):
         requests = slice(start, start + n_requests)
-        keys = decode(pool[rows[requests]], dtypes["kv_buffer"]) * kv_scale
+        keys = to_float32(pool[rows[requests]], dtypes["kv_buffer"]) * kv_scale
         seen = visible[requests][:, :, None]
         logits = torch.einsum("rqhd,rkd->rqhk", q[requests], keys) * args["sm_scale"]
         logits = logits.masked_fill(~seen, -torch.inf)
