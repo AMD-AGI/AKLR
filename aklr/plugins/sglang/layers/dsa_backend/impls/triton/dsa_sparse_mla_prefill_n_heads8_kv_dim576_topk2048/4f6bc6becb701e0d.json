@@ -99,8 +99,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.864,
-      "microseconds": 191.0
+      "speedup": 1.843,
+      "microseconds": 193.0
     },
     {
       "axes": {
@@ -111,8 +111,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.751,
-      "microseconds": 272.0
+      "speedup": 1.703,
+      "microseconds": 281.0
     }
   ],
   "layout_variants": {
