@@ -1,0 +1,276 @@
+{
+  "schema_version": 5,
+  "name": "fp8_paged_mqa_logits_page_size64_n_heads32",
+  "contract_id": "fp8_paged_mqa_logits@1.0",
+  "description": "DeepSeek-V4 indexer logits: for each request and each cached token t, sum over heads h of weights[h] * relu(q[h] . k_t) * scale_t, over a paged pool of fp8 keys with an fp32 scale per token.",
+  "op_type": "mla",
+  "axes": {
+    "batch": {
+      "type": "var",
+      "description": "Requests, one decode query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Indexer heads."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the key pool."
+    },
+    "max_blocks": {
+      "type": "var",
+      "description": "Pages per request in the block table."
+    },
+    "max_seq_len": {
+      "type": "var",
+      "description": "Logits per request: every token of its block table row."
+    }
+  },
+  "attrs": {
+    "page_size": 64,
+    "preshuffled": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        1,
+        "n_heads",
+        128
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The decode query of each request."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        64,
+        1,
+        132
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 63,
+        "distinct": false
+      },
+      "description": "The key pool, a page a row: page_size x 128 fp8 keys in 16 x 16 tiles, then page_size fp32 scales."
+    },
+    "weights": {
+      "shape": [
+        "batch",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head weight of each request."
+    },
+    "context_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": "max_seq_len",
+        "hi": "max_seq_len",
+        "distinct": false
+      },
+      "description": "Cached tokens of each request."
+    },
+    "block_tables": {
+      "shape": [
+        "batch",
+        "max_blocks"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_pages - 1",
+        "distinct": false
+      },
+      "description": "The pages of each request, in context order."
+    }
+  },
+  "outputs": {
+    "logits": {
+      "shape": [
+        "batch",
+        "max_seq_len"
+      ],
+      "dtype": "float32",
+      "description": "The logits of each request's cached tokens."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 24,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 36,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 42,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 48,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 60,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 72,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 84,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 108,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 120,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 132,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 144,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 156,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 168,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 180,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 192,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.4.0"
+    },
+    "author": "RuibinCheung",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL fp8 paged MQA logits (DeepSeek-V4 indexer) for gfx950: for the tabled batches a prepass\nbucket-sorts each block table by page band, then each workgroup scores one band's pages page-major,\nloading a page's keys once for every request of its group and summing the heads with a bf16 MFMA.  Other\nbatches, and pools too large for the prepass's band histogram, run the direct kernel: a workgroup walks a\nslice of one request's block table.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as _arith\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl._mlir.dialects import math as _math\nfrom flydsl._mlir.dialects import rocdl as _rocdl\nfrom flydsl._mlir.dialects import vector as _vector\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl.expr import range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n_PAGE = 64\n_HEADS = 32\n_HGROUPS = _HEADS // 16\n_DIM = 128\n_KEY_BYTES = _PAGE * _DIM\n_PAGE_BYTES = _KEY_BYTES + _PAGE * 4\n_Q_BYTES = _HEADS * _DIM\n_WAVES = 4\n_THREADS = _WAVES * 64\n_XCDS = 8\n_CPOL_NT = 2\n_DROP_OFFSET = 1 << 30\n# E8M0 scale exponents: 2^0, and the 2^-shift that pre-scales the fp8 MFMA so its clamp is relu.\n_E8M0_ONE = 127\n_RELU_SHIFT = 13\n# The contract's max_seq_len == max_blocks * page_size <= 2^20 + 4096.\n_MAX_BLOCKS = (2**20 + 4096) // _PAGE\n# Page-major (bands, request groups) by batch, whole dispatch rounds; other batches run the direct kernel.\n_PM_TABLE = {\n    **dict.fromkeys((24, 36, 42, 48, 60), (128, 2)),\n    **dict.fromkeys((72, 84, 96, 108, 120), (64, 4)),\n    **dict.fromkeys((132, 144, 156, 168, 180, 192), (128, 6)),\n}\n_PM_THREADS = 1024\n_PM_CAP = 3072\n# A band is at most _PM_THREADS pages (one histogram bin a thread); the bands of a larger pool grow in\n# number up to _PM_SPLIT_MAX (the prepass's LDS histogram), past which the direct kernel runs.\n_PM_SPLIT_MAX = 2048\n# Sorted table word: position << _RBITS | page within its band.\n_RBITS = 10\n# Direct kernel: workgroups per request at most, table entries per workgroup at least.\n_DK_SPLIT = 256\n_DK_MIN = 16\n\n\ndef _swap_pair(a, b, bit):\n    \"\"\"gfx950 permlane swap of the 16- or 32-lane halves of two f32 values.\"\"\"\n    i32 = ir.IntegerType.get_signless(32)\n    ai = _arith.BitcastOp(i32, fx.as_ir_value(a)).result\n    bi = _arith.BitcastOp(i32, fx.as_ir_value(b)).result\n    op = _rocdl.permlane16_swap if bit == 4 else _rocdl.permlane32_swap\n    pair = op(ir.Type.parse(\"!llvm.struct<(i32, i32)>\"), ai, bi, False, True)\n    parts = [_llvm.ExtractValueOp(i32, pair, [i]).result for i in range(2)]\n    return [fx.Float32(_arith.BitcastOp(ir.F32Type.get(), v).result) for v in parts]\n\n\ndef _uniform(value):\n    \"\"\"``v_readfirstlane_b32`` of a wave-uniform value.\"\"\"\n    i32 = ir.IntegerType.get_signless(32)\n    return fx.Int32(_rocdl.readfirstlane(i32, fx.as_ir_value(value)))\n\n\ndef _rsrc(ptr, offset, nbytes):\n    \"\"\"Buffer descriptor over ``nbytes`` bytes from the 64-bit byte ``offset``.\"\"\"\n    return rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(ptr + offset, num_records_bytes=nbytes))\n\n\ndef _fma4(a, b, c):\n    \"\"\"``a * b + c`` on a vector<4xf32> as one ``math.fma``.\"\"\"\n    return fx.Vector(_math.FmaOp(fx.as_ir_value(a), fx.as_ir_value(b), fx.as_ir_value(c)).result)\n\n\ndef _lds_atomic_add(array, index, value):\n    \"\"\"``atomicAdd`` on one LDS word; returns the value it held before.\"\"\"\n    return fx.Int32(\n        _llvm.AtomicRMWOp(\n            _llvm.AtomicBinOp.add,\n            fx.as_ir_value((array.ptr + index).llvm_ptr),\n            fx.as_ir_value(value),\n            _llvm.AtomicOrdering.monotonic,\n        ).result\n    )\n\n\ndef _issue_page(kv, lane, r, g, zero_i32, pbase):\n    \"\"\"Issue one page's scale load and the key loads of its four tiles of sixteen tokens; in aiter's\n    preshuffled page, lane (r, g) reads the two adjacent sixteen-byte rows holding dims [32g, 32g + 32)\n    of token r, the contiguous k run its fp8 MFMA operand wants.  ``pbase`` is the page's byte offset\n    in ``kv``.\"\"\"\n    page_scale = fx.Float32(rocdl.raw_ptr_buffer_load(T.f32, kv, pbase + (_KEY_BYTES + lane * 4), zero_i32))\n    kfrags = []\n    for j in range_constexpr(4):\n        koff = pbase + (j * 2048 + g * 512 + r * 16)\n        klo = fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, kv, koff, zero_i32))\n        khi = fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, kv, koff + 256, zero_i32))\n        kfrags.append(klo.shuffle(khi, [0, 1, 2, 3, 4, 5, 6, 7]))\n    return kfrags, page_scale\n\n\ndef _page_compute(ctx, kfrags, page_scale, pos):\n    \"\"\"Consume one page's fragments: the MFMAs, head and lane reduction, store.\"\"\"\n    (\n        _kv, out, qfrag, wfrag, lane, _r, g, context,\n        max_seq, b, zero_i32, unity, zero4,\n    ) = ctx  # fmt: skip\n    tiles = []\n    for j in range_constexpr(4):\n        kfrag = kfrags[j]\n        total = None\n        for hg in range_constexpr(_HGROUPS):\n            acc = fx.Vector(\n                rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                    T.f32x4,\n                    [qfrag[hg], kfrag, zero4, 0, 0, 0, unity, 0, unity],\n                )\n            )\n            relu = fx.Vector(acc.maximumf(zero4))\n            total = relu * wfrag[hg] if total is None else _fma4(relu, wfrag[hg], total)\n        tiles.append(total.reduce(\"add\"))\n    # Transpose-reduce over the lane groups: lane group g ends up holding the head sum of tile g.\n    a0, b0 = _swap_pair(tiles[0], tiles[2], 5)\n    a1, b1 = _swap_pair(tiles[1], tiles[3], 5)\n    a2, b2 = _swap_pair(a0 + b0, a1 + b1, 4)\n    value = a2 + b2\n    value = value * page_scale\n    token = pos * _PAGE + lane\n    value = (token < context).select(value, fx.Float32(float(\"-inf\")))\n    out_rs = _rsrc(out, (fx.Int64(b) * max_seq + fx.Int64(_uniform(pos)) * _PAGE) * 4, _PAGE * 4)\n    rocdl.raw_ptr_buffer_store(\n        fx.as_ir_value(value),\n        out_rs,\n        fx.as_ir_value(lane * 4),\n        fx.as_ir_value(zero_i32),\n        aux=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), _CPOL_NT),\n    )\n\n\ndef _relu_pack(accs, lead, tail):\n    \"\"\"Clamp-convert one tile's pre-scaled accumulators to bf16 pairs, which is relu.  The asm hides the\n    MFMA-to-VALU and VALU-to-MFMA wait states from the hazard recognizer, so ``lead`` and ``tail`` are\n    the nops that complete them.\"\"\"\n    i32 = ir.IntegerType.get_signless(32)\n    ins = [\n        _vector.ExtractOp(fx.as_ir_value(accs[hg]), [], [i]).result\n        for hg in range_constexpr(_HGROUPS)\n        for i in range_constexpr(4)\n    ]\n    body = \"\\n\".join(f\"v_cvt_pk_bf16_f32 ${k}, ${4 + 2 * k}, ${5 + 2 * k} clamp\" for k in range(4))\n    res = _llvm.inline_asm(\n        ir.Type.parse(\"!llvm.struct<(i32, i32, i32, i32)>\"),\n        ins,\n        lead + body + tail,\n        \"=&v,=&v,=&v,=&v,v,v,v,v,v,v,v,v\",\n        has_side_effects=True,\n    )\n    return [_llvm.ExtractValueOp(i32, res, [k]).result for k in range(4)]\n\n\ndef _pm_compute(ctx, kfrags, page_scale, pos, nvalid):\n    \"\"\"Score one (page, request) entry; ``nvalid`` is the request's number of live tokens on the page.\"\"\"\n    out, qfrag, wfrag, lane, g, max_seq, b, zero_i32, unity, zero4 = ctx\n    bf8 = ir.VectorType.get([8], ir.BF16Type.get())\n    i32x4 = ir.VectorType.get([4], ir.IntegerType.get_signless(32))\n    # All fp8 MFMAs issue before the relu packs, whose side-effecting asm keeps tile order; the MFMAs and\n    # LDS reads between a tile's last MFMA and its pack, plus the lead nop, cover the XDL wait states.\n    accs = [\n        [\n            fx.Vector(\n                rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                    T.f32x4,\n                    [qfrag[hg], kfrags[j], zero4, 0, 0, 0, unity, 0, unity],\n                )\n            )\n            for hg in range_constexpr(_HGROUPS)\n        ]\n        for j in range_constexpr(4)\n    ]\n    rocdl.sched_barrier(0)\n    packed = [\n        _relu_pack(accs[j], \"s_nop 4\\n\" if j == 0 else \"\", \"\\ns_nop 1\" if j == 3 else \"\")\n        for j in range_constexpr(4)\n    ]\n    rocdl.sched_barrier(0)\n    # The packed tile is the B operand (a token per column) of a bf16 MFMA whose every A row holds the\n    # weights in the same k order, so every row of D is the tile's head sum.\n    sums = []\n    for j in range_constexpr(4):\n        w4 = _vector.FromElementsOp(i32x4, packed[j]).result\n        d = rocdl.mfma_f32_16x16x32_bf16(T.f32x4, [wfrag, _vector.BitCastOp(bf8, w4).result, zero4, 0, 0, 0])\n        sums.append(fx.Float32(_vector.ExtractOp(fx.as_ir_value(d), [], [0]).result))\n    g1 = (g & 1) != 0\n    g2 = (g & 2) != 0\n    lo_s = g1.select(sums[1], sums[0])\n    hi_s = g1.select(sums[3], sums[2])\n    value = g2.select(hi_s, lo_s)\n    # The pre-scale comes back on the fp32 result, so no finite weight overflows its bf16 operand.\n    value = value * page_scale * float(1 << (2 * _RELU_SHIFT))\n    # The descriptor ends at the last live token; sort_kernel wrote the -inf past it.\n    out_rs = _rsrc(out, (fx.Int64(b) * max_seq + fx.Int64(pos) * _PAGE) * 4, nvalid * 4)\n    rocdl.raw_ptr_buffer_store(\n        fx.as_ir_value(value),\n        out_rs,\n        fx.as_ir_value(lane * 4),\n        fx.as_ir_value(zero_i32),\n        aux=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), _CPOL_NT),\n    )\n\n\ndef _load_qw(q_rs, w_rs, b, r, g, zero_i32):\n    qfrag = []\n    wfrag = []\n    for hg in range_constexpr(_HGROUPS):\n        base = (b * _HEADS + hg * 16 + r) * _DIM + g * 32\n        qlo = fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, q_rs, fx.Int32(base), zero_i32))\n        qhi = fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, q_rs, fx.Int32(base + 16), zero_i32))\n        qfrag.append(qlo.shuffle(qhi, [0, 1, 2, 3, 4, 5, 6, 7]))\n        woff = (b * _HEADS + hg * 16 + g * 4) * 4\n        wfrag.append(fx.Vector(rocdl.raw_ptr_buffer_load(T.f32x4, w_rs, fx.Int32(woff), zero_i32)))\n    return qfrag, wfrag\n\n\n@functools.cache\ndef _build(batch, max_blocks, max_seq, n_pages, page_size, preshuffled, device):\n    \"\"\"Compile the kernels for one set of axes; cached by them.\"\"\"\n    if int(page_size) != _PAGE or not preshuffled:\n        raise ValueError(\"kernel needs page_size 64 and preshuffled keys\")\n    batch = int(batch)\n    max_blocks = int(max_blocks)\n    max_seq = int(max_seq)\n    n_pages = int(n_pages)\n    if not 1 <= max_blocks <= _MAX_BLOCKS or max_seq != max_blocks * _PAGE:\n        raise ValueError(\"block table outside the contract\")\n    pm_nb, ngroups = _PM_TABLE.get(batch, (0, 1))\n    # Bands of a fixed _BW pages; a pool too large for pm_nb bands of _PM_THREADS pages gets more bands.\n    split = max(pm_nb, -(-n_pages // (_PM_THREADS * _XCDS)) * _XCDS)\n    _BW = -(-n_pages // split)\n    use_pm = 0 < pm_nb and split <= _PM_SPLIT_MAX\n    G = -(-batch // ngroups)\n    assert split % _XCDS == 0 and _BW <= _PM_THREADS == 1 << _RBITS\n\n    _HPAD = max(_THREADS, -(-split // _THREADS) * _THREADS)\n    _NSTEP = (_HPAD - 1).bit_length()\n    _HCH = _HPAD // _THREADS\n    _NIT = -(-max_blocks // _THREADS)\n    row_bytes = max_blocks * 4\n    ord_bytes = -(-batch * row_bytes // 256) * 256 if use_pm else 0\n    off_bytes = batch * (split + 1) * 4 if use_pm else 0\n    q_bytes = batch * _Q_BYTES\n    w_bytes = batch * _HEADS * 4\n    bt_bytes = batch * row_bytes\n    cl_bytes = batch * 4\n    # Direct kernel: request b's table entries [sp * _DCH, (sp + 1) * _DCH) in workgroup b * _DSPLIT + sp.\n    _DSPLIT = max(1, min(_DK_SPLIT, max_blocks // _DK_MIN, (1 << 31) // (_THREADS * batch)))\n    _DCH = -(-max_blocks // _DSPLIT)\n\n    @flyc.kernel(known_block_size=[_THREADS, 1, 1])\n    def direct_kernel(\n        Q: fx.Pointer,\n        KV: fx.Pointer,\n        WT: fx.Pointer,\n        CL: fx.Pointer,\n        OUT: fx.Pointer,\n        BT: fx.Pointer,\n    ):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        r = lane % 16\n        g = lane // 16\n        L = fx.block_idx.x\n        b = L // _DSPLIT\n        sp = L % _DSPLIT\n\n        q_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(Q, num_records_bytes=q_bytes))\n        w_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(WT, num_records_bytes=w_bytes))\n        cl_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(CL, num_records_bytes=cl_bytes))\n        bt_rs = _rsrc(BT, fx.Int64(b) * row_bytes, row_bytes)\n\n        zero_i32 = fx.Int32(0)\n        unity = fx.Int32(_E8M0_ONE)\n        zero4 = fx.Vector.filled(4, 0.0, fx.Float32)\n\n        context = _uniform(rocdl.raw_ptr_buffer_load(T.i32, cl_rs, fx.Int32(b * 4), zero_i32))\n        qfrag, wfrag = _load_qw(q_rs, w_rs, b, r, g, zero_i32)\n        ctx = (\n            None, OUT, qfrag, wfrag, lane, r, g, context,\n            max_seq, b, zero_i32, unity, zero4,\n        )  # fmt: skip\n\n        # The request's live pages, at most its table row: a page past them is never scored.\n        npages = (context + (_PAGE - 1)) // _PAGE\n        npages = (npages < max_blocks).select(npages, fx.Int32(max_blocks))\n        lo = sp * _DCH\n        hi = lo + _DCH\n        hi = (hi < npages).select(hi, npages)\n        begin = lo + wave\n        w0 = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, bt_rs, begin * 4, zero_i32))\n        for j, jstate in range(begin, hi, _WAVES, init=[w0]):\n            pid = _uniform(jstate[0])\n            nxt = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, bt_rs, (fx.Int32(j) + _WAVES) * 4, zero_i32))\n            rocdl.sched_barrier(0)\n            # A descriptor a page: the pool may pass the 32-bit buffer offsets.\n            page = _rsrc(KV, fx.Int64(pid) * _PAGE_BYTES, _PAGE_BYTES)\n            kfrags, page_scale = _issue_page(page, lane, r, g, zero_i32, zero_i32)\n            _page_compute(ctx, kfrags, page_scale, fx.Int32(j))\n            yield [nxt]\n\n    _GP = -(-G // 4) * 4\n    _PMW = _PM_THREADS // 64\n    _QCH = _GP * (_Q_BYTES // 16) // _PM_THREADS\n    # List entry: live tokens << _VSH | request in group << _ESH | position.\n    _ESH = (_MAX_BLOCKS - 1).bit_length()\n    _VSH = _ESH + 6\n    assert _VSH + 7 <= 31 and _RBITS + _ESH <= 31\n    assert not use_pm or (G <= 64 and _GP * _HEADS <= _PM_THREADS)\n\n    @flyc.kernel(known_block_size=[_PM_THREADS, 1, 1])\n    def pm_kernel(\n        Q: fx.Pointer,\n        KV: fx.Pointer,\n        WT: fx.Pointer,\n        CL: fx.Pointer,\n        OUT: fx.Pointer,\n        ORD: fx.Pointer,\n        OFF: fx.Pointer,\n    ):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        r = lane % 16\n        g = lane // 16\n        L = fx.block_idx.x\n        xcd = L % _XCDS\n        k = L // _XCDS\n        grp = k % ngroups\n        sp = (k // ngroups) * _XCDS + xcd\n        b0 = grp * G\n\n        q_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(Q, num_records_bytes=q_bytes))\n        w_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(WT, num_records_bytes=w_bytes))\n        cl_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(CL, num_records_bytes=cl_bytes))\n        ord_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(ORD, num_records_bytes=ord_bytes))\n        off_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(OFF, num_records_bytes=off_bytes))\n        zero_i32 = fx.Int32(0)\n        one_i32 = fx.Int32(1)\n        unity = fx.Int32(_E8M0_ONE - _RELU_SHIFT)\n        zero4 = fx.Vector.filled(4, 0.0, fx.Float32)\n\n        sm = (\n            fx.SharedAllocator()\n            .allocate(\n                fx.Struct[\n                    \"q\" : fx.Array[fx.Int32, _GP * (_Q_BYTES // 4)],\n                    \"w\" : fx.Array[fx.Int32, _PM_THREADS],\n                    \"h\" : fx.Array[fx.Int32, _PM_THREADS],\n                    \"c\" : fx.Array[fx.Int32, _PM_THREADS],\n                    \"lst\" : fx.Array[fx.Int32, _PM_CAP],\n                    \"n\" : fx.Array[fx.Int32, 64],\n                    \"pre\" : fx.Array[fx.Int32, 64],\n                    \"lo\" : fx.Array[fx.Int32, 64],\n                    \"cl\" : fx.Array[fx.Int32, 64],\n                    \"wt\" : fx.Array[fx.Int32, _PMW + 64],\n                ]\n            )\n            .peek()\n        )\n        i32 = ir.IntegerType.get_signless(32)\n        v4i32 = ir.VectorType.get([4], i32)\n        bf8x8 = ir.VectorType.get([8], ir.BF16Type.get())\n\n        # Stage q in MFMA fragment order: chunk (j, hg, half, lane) of sixteen bytes.\n        for it in range_constexpr(_QCH):\n            c = tid + it * _PM_THREADS\n            jq = c // (_Q_BYTES // 16)\n            wi = c % (_Q_BYTES // 16)\n            h = wi // 8\n            c16 = wi % 8\n            val = rocdl.raw_ptr_buffer_load(T.i32x4, q_rs, fx.Int32(b0 * _Q_BYTES + c * 16), zero_i32)\n            dst = jq * (_Q_BYTES // 4) + (((h // 16) * 2 + c16 % 2) * 64 + (c16 // 2) * 16 + h % 16) * 4\n            _llvm.StoreOp(fx.as_ir_value(val), fx.as_ir_value((sm.q.ptr + dst).llvm_ptr), alignment=16)\n        # Weights as bf16 pairs in the head-sum MFMA's k order: word (j, kk) holds k = 2kk, 2kk + 1 of\n        # request j, where k = 8g + u is head 4g + u of the first head group or 4g + u - 4 of the second.\n        wj = tid // 16\n        wkk = tid % 16\n        wg = wkk // 4\n        wu = (wkk % 4) * 2\n        whead = (wu < 4).select(wg * 4 + wu, wg * 4 + wu + 12)\n        woff = ((b0 + wj) * _HEADS + whead) * 4\n        w2 = rocdl.raw_ptr_buffer_load(T.f32x2, w_rs, fx.Int32(woff), zero_i32)\n        w2b = _arith.TruncFOp(ir.VectorType.get([2], ir.BF16Type.get()), fx.as_ir_value(w2)).result\n        w1 = _vector.BitCastOp(ir.VectorType.get([1], ir.IntegerType.get_signless(32)), w2b).result\n        sm.w[tid] = fx.Int32(_vector.ExtractOp(w1, [], [0]).result)\n        jj = lane\n        bj = b0 + jj\n        okj = (jj < G) & (bj < batch)\n        bsafe = okj.select(bj, zero_i32)\n        obase = bsafe * (split + 1) + sp\n        lo = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, off_rs, obase * 4, zero_i32))\n        hi = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, off_rs, (obase + 1) * 4, zero_i32))\n        clj = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, cl_rs, bsafe * 4, zero_i32))\n        sm.n[jj] = okj.select(hi - lo, zero_i32)\n        sm.lo[jj] = lo\n        sm.cl[jj] = clj\n        fx.barrier()\n        acc_pre = zero_i32\n        for kk in range_constexpr(G):\n            acc_pre = acc_pre + (fx.Int32(kk) < jj).select(sm.n[kk], zero_i32)\n        sm.pre[jj] = acc_pre\n        fx.barrier()\n        total = _uniform(sm.pre[G - 1] + sm.n[G - 1])\n        # Band sp is pages [sp * _BW, sp * _BW + width); a band past the pool holds no table entry, so\n        # total is 0 and it walks no page.\n        first = sp * _BW\n        width = n_pages - first\n        width = (width < _BW).select(width, fx.Int32(_BW))\n        width = _uniform((width > 0).select(width, zero_i32))\n        # The band's own descriptor: the pool may pass the 32-bit buffer offsets.\n        keys = _rsrc(KV, fx.Int64(first) * _PAGE_BYTES, width * _PAGE_BYTES)\n\n        def _locate(e):\n            jl = zero_i32\n            for kk in range_constexpr(1, G):\n                jl = jl + (sm.pre[kk] <= e).select(one_i32, zero_i32)\n            rel = e - sm.pre[jl] + sm.lo[jl]\n            word = fx.Int32(\n                rocdl.raw_ptr_buffer_load(T.i32, ord_rs, ((b0 + jl) * max_blocks + rel) * 4, zero_i32)\n            )\n            return jl, word\n\n        wlast = width - 1\n\n        def _header(p):\n            pc = (p < wlast).select(p, wlast)\n            hen = _uniform(sm.h[pc])\n            hst = _uniform((pc > 0).select(sm.h[(pc > 0).select(pc - 1, zero_i32)], zero_i32))\n            return hen, hst\n\n        for c0, _cs in range(0, total, _PM_CAP, init=[zero_i32]):\n            c0i = fx.Int32(c0)\n            ce = c0i + _PM_CAP\n            ce = (ce < total).select(ce, total)\n            fx.barrier()\n            sm.h[tid] = zero_i32\n            # Page claim counter for this chunk, past the page each wave starts on.\n            sm.n[63] = fx.Int32(_PMW * 64)\n            fx.barrier()\n            for e, _s1 in range(c0i + tid, ce, _PM_THREADS, init=[zero_i32]):\n                _, word = _locate(fx.Int32(e))\n                _lds_atomic_add(sm.h, word & (_PM_THREADS - 1), one_i32)\n                yield [zero_i32]\n            fx.barrier()\n            # Inclusive scan: ds_bpermute within a wave, then the totals the earlier waves' last lanes publish.\n            cnt = sm.h[tid]\n            x = cnt\n            for d in range_constexpr(6):\n                step = 1 << d\n                up = fx.Int32(_rocdl.ds_bpermute(i32, fx.as_ir_value((lane - step) * 4), fx.as_ir_value(x)))\n                x = x + (lane >= step).select(up, zero_i32)\n            sm.wt[(lane == 63).select(wave, lane + _PMW)] = x\n            fx.barrier()\n            woff = zero_i32\n            for kk in range_constexpr(_PMW - 1):\n                woff = woff + (fx.Int32(kk) < wave).select(sm.wt[kk], zero_i32)\n            incl = x + woff\n            sm.h[tid] = incl\n            sm.c[tid] = incl - cnt\n            fx.barrier()\n            for e, _s2 in range(c0i + tid, ce, _PM_THREADS, init=[zero_i32]):\n                jl, word = _locate(fx.Int32(e))\n                slot = _lds_atomic_add(sm.c, word & (_PM_THREADS - 1), one_i32)\n                epos = word >> _RBITS\n                nv = sm.cl[jl] - epos * _PAGE\n                nv = (nv < _PAGE).select(nv, fx.Int32(_PAGE))\n                nv = (nv > 0).select(nv, zero_i32)\n                sm.lst[slot] = (nv << _VSH) | (jl << _ESH) | epos\n                yield [zero_i32]\n            fx.barrier()\n            # Waves claim pages in increasing order from an LDS counter so they finish together; the next\n            # page's claim and list header are read as the current one starts, ahead of its key loads.\n            pg = wave\n            en, st = _header(pg)\n            while pg < width:\n                # A page no request of the group holds reads past the descriptor: zeros, never scored.\n                pid = (en > st).select(pg, width)\n                kfrags, page_scale = _issue_page(keys, lane, r, g, zero_i32, pid * _PAGE_BYTES)\n                rocdl.sched_barrier(0)\n                # A uniform add folds into one wave-wide ds_add_rtn, so the counter runs in units of a wave.\n                pclaim = _lds_atomic_add(sm.n, 63, one_i32)\n                npg = _uniform(pclaim) >> 6\n                nen, nst = _header(npg)\n                ent0 = sm.lst[st]\n                for ee, _s4 in range(st, en, 1, init=[ent0]):\n                    ent = _uniform(_s4[0])\n                    e1 = fx.Int32(ee) + 1\n                    ent_next = sm.lst[(e1 < en).select(e1, st)]\n                    ejl = (ent >> _ESH) & ((1 << (_VSH - _ESH)) - 1)\n                    pos = ent & ((1 << _ESH) - 1)\n                    nvalid = ent >> _VSH\n                    wfrag = _vector.BitCastOp(\n                        bf8x8,\n                        _llvm.LoadOp(\n                            v4i32,\n                            fx.as_ir_value((sm.w.ptr + (ejl * 16 + g * 4)).llvm_ptr),\n                            alignment=16,\n                        ).result,\n                    ).result\n                    qfrag = []\n                    for hg in range_constexpr(_HGROUPS):\n                        qa = ejl * (_Q_BYTES // 4) + (hg * 2 * 64 + lane) * 4\n                        qlo = fx.Vector(\n                            _llvm.LoadOp(v4i32, fx.as_ir_value((sm.q.ptr + qa).llvm_ptr), alignment=16).result\n                        )\n                        qhi = fx.Vector(\n                            _llvm.LoadOp(\n                                v4i32, fx.as_ir_value((sm.q.ptr + (qa + 256)).llvm_ptr), alignment=16\n                            ).result\n                        )\n                        qfrag.append(qlo.shuffle(qhi, [0, 1, 2, 3, 4, 5, 6, 7]))\n                    ctx = (OUT, qfrag, wfrag, lane, g, max_seq, b0 + ejl, zero_i32, unity, zero4)\n                    _pm_compute(ctx, kfrags, page_scale, pos, nvalid)\n                    yield [ent_next]\n                pg = npg\n                en = nen\n                st = nst\n            yield [zero_i32]\n\n    @flyc.kernel(known_block_size=[_THREADS, 1, 1])\n    def sort_kernel(\n        CL: fx.Pointer,\n        BT: fx.Pointer,\n        ORD: fx.Pointer,\n        OFF: fx.Pointer,\n        OUT: fx.Pointer,\n    ):\n        \"\"\"Bucket-sort one request's block table by band id; write the -inf tail of its last page.\"\"\"\n        tid = fx.thread_idx.x\n        b = fx.block_idx.x\n        cl_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(CL, num_records_bytes=cl_bytes))\n        bt_rs = _rsrc(BT, fx.Int64(b) * row_bytes, row_bytes)\n        ord_rs = _rsrc(ORD, fx.Int64(b) * row_bytes, row_bytes)\n        off_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(OFF, num_records_bytes=off_bytes))\n        zero_i32 = fx.Int32(0)\n        one_i32 = fx.Int32(1)\n\n        context = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, cl_rs, fx.Int32(b * 4), zero_i32))\n        npages = (context + (_PAGE - 1)) // _PAGE\n        npages = (npages < max_blocks).select(npages, fx.Int32(max_blocks))\n        # The row's descriptor drops any position past max_seq, and lanes with nothing to write drop theirs.\n        tail_rs = _rsrc(OUT, fx.Int64(b) * (max_seq * 4), max_seq * 4)\n        rem = context % _PAGE\n        tidi = fx.Int32(tid)\n        tpos = (context // _PAGE) * _PAGE + tidi\n        tw = (rem != 0) & (tidi >= rem) & (tidi < _PAGE)\n        rocdl.raw_ptr_buffer_store(\n            fx.as_ir_value(fx.Float32(float(\"-inf\"))),\n            tail_rs,\n            fx.as_ir_value(tw.select(tpos * 4, fx.Int32(_DROP_OFFSET))),\n            fx.as_ir_value(zero_i32),\n        )\n        hist = (\n            fx.SharedAllocator()\n            .allocate(\n                fx.Struct[\n                    \"h\" : fx.Array[fx.Int32, _HPAD],\n                    \"c\" : fx.Array[fx.Int32, _HPAD],\n                ]\n            )\n            .peek()\n        )\n        for ch in range_constexpr(_HCH):\n            hist.h[tid + ch * _THREADS] = zero_i32\n        fx.barrier()\n\n        # Every thread issues all its table loads before the first wait and keeps the page ids for the\n        # scatter; lanes past the request's pages add nothing and drop their store.\n        pids = []\n        oks = []\n        bands = []\n        for it in range_constexpr(_NIT):\n            ii = fx.Int32(tid + it * _THREADS)\n            pids.append(fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, bt_rs, ii * 4, zero_i32)))\n        for it in range_constexpr(_NIT):\n            ok = fx.Int32(tid + it * _THREADS) < npages\n            band = ok.select(pids[it] // _BW, zero_i32)\n            oks.append(ok)\n            bands.append(band)\n            _lds_atomic_add(hist.h, band, ok.select(one_i32, zero_i32))\n        fx.barrier()\n\n        for ch in range_constexpr(_HCH):\n            hist.c[tid + ch * _THREADS] = hist.h[tid + ch * _THREADS]\n        fx.barrier()\n        for d in range_constexpr(_NSTEP):\n            step = 1 << d\n            vals = []\n            for ch in range_constexpr(_HCH):\n                i = tid + ch * _THREADS\n                back = i - step\n                prev = (back >= 0).select(hist.h[(back >= 0).select(back, zero_i32)], zero_i32)\n                vals.append(hist.h[i] + prev)\n            fx.barrier()\n            for ch in range_constexpr(_HCH):\n                hist.h[tid + ch * _THREADS] = vals[ch]\n            fx.barrier()\n\n        obase = fx.Int32(b * (split + 1))\n        rocdl.raw_ptr_buffer_store(\n            fx.as_ir_value(zero_i32),\n            off_rs,\n            fx.as_ir_value(obase * 4),\n            fx.as_ir_value(zero_i32),\n        )\n        for ch in range_constexpr(_HCH):\n            i = tid + ch * _THREADS\n            inc = hist.h[i]\n            dst = (i < split).select(obase + 1 + i, fx.Int32(batch * (split + 1)))\n            rocdl.raw_ptr_buffer_store(\n                fx.as_ir_value(inc),\n                off_rs,\n                fx.as_ir_value(dst * 4),\n                fx.as_ir_value(zero_i32),\n            )\n            hist.h[i] = inc - hist.c[i]\n        fx.barrier()\n\n        for it in range_constexpr(_NIT):\n            ii = fx.Int32(tid + it * _THREADS)\n            ok = oks[it]\n            slot = _lds_atomic_add(hist.h, bands[it], ok.select(one_i32, zero_i32))\n            rocdl.raw_ptr_buffer_store(\n                fx.as_ir_value((ii << _RBITS) | (pids[it] - bands[it] * _BW)),\n                ord_rs,\n                fx.as_ir_value(ok.select(slot * 4, fx.Int32(_DROP_OFFSET))),\n                fx.as_ir_value(zero_i32),\n            )\n\n    order = torch.empty(ord_bytes, dtype=torch.uint8, device=device)\n    offsets = torch.empty(off_bytes, dtype=torch.uint8, device=device)\n\n    @flyc.jit\n    def launch_pm(\n        Q: fx.Pointer,\n        KV: fx.Pointer,\n        WT: fx.Pointer,\n        CL: fx.Pointer,\n        BT: fx.Pointer,\n        OUT: fx.Pointer,\n        ORD: fx.Pointer,\n        OFF: fx.Pointer,\n        stream: fx.Stream,\n    ):\n        sort_kernel(CL, BT, ORD, OFF, OUT).launch(grid=(batch, 1, 1), block=(_THREADS, 1, 1), stream=stream)\n        pm_kernel(Q, KV, WT, CL, OUT, ORD, OFF).launch(\n            grid=(ngroups * split, 1, 1), block=(_PM_THREADS, 1, 1), stream=stream\n        )\n\n    @flyc.jit\n    def launch_direct(\n        Q: fx.Pointer,\n        KV: fx.Pointer,\n        WT: fx.Pointer,\n        CL: fx.Pointer,\n        BT: fx.Pointer,\n        OUT: fx.Pointer,\n        ORD: fx.Pointer,\n        OFF: fx.Pointer,\n        stream: fx.Stream,\n    ):\n        direct_kernel(Q, KV, WT, CL, OUT, BT).launch(\n            grid=(batch * _DSPLIT, 1, 1), block=(_THREADS, 1, 1), stream=stream\n        )\n\n    launch = launch_pm if use_pm else launch_direct\n\n    # Pre-compile with zeroed context lengths: the warm-up walks no page.\n    scratch = torch.zeros(max(q_bytes, w_bytes, cl_bytes, bt_bytes), dtype=torch.uint8, device=device)\n    warm = from_c_void_p(fx.Int8, scratch.data_ptr(), assumed_align=16)\n    null = from_c_void_p(fx.Int8, 0, assumed_align=16)\n    args = [\n        warm, null, warm, warm, warm, null,\n        from_c_void_p(fx.Int8, order.data_ptr(), assumed_align=16),\n        from_c_void_p(fx.Int8, offsets.data_ptr(), assumed_align=16),\n    ]  # fmt: skip\n    with torch.cuda.device(device):\n        compiled = flyc.compile(launch, *args, fx.Stream(torch.cuda.current_stream()))\n    return compiled, ord_bytes, ord_bytes + off_bytes, (order, offsets, scratch)\n\n\ndef run(*, q, kv_cache, weights, context_lens, block_tables, logits, page_size, preshuffled):\n    \"\"\"Write each request's weighted relu logits over its paged fp8 keys.\"\"\"\n    device = kv_cache.device\n    launch, ord_bytes, scratch_bytes, _keep = _build(\n        q.shape[0],\n        block_tables.shape[1],\n        logits.shape[1],\n        kv_cache.shape[0],\n        page_size,\n        preshuffled,\n        device,\n    )\n    # Per-call prepass scratch (bucketed table words, band bounds): the sort rewrites every entry the\n    # main kernel reads, so it starts undefined and concurrent calls never share it.\n    scratch = torch.empty(scratch_bytes, dtype=torch.uint8, device=device)\n    base = scratch.data_ptr()\n    launch(\n        q.data_ptr(),\n        kv_cache.data_ptr(),\n        weights.data_ptr(),\n        context_lens.data_ptr(),\n        block_tables.data_ptr(),\n        logits.data_ptr(),\n        base,\n        base + ord_bytes,\n        torch.cuda.current_stream(device).cuda_stream,\n    )\n"
+      }
+    ]
+  }
+}
