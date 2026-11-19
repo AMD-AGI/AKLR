@@ -5,6 +5,6 @@
 vLLM runs without torch.compile (``@ignore_torch_compile``) runs its Python at every eager
 call and CUDA graph capture, so a route can replace any function of it."""
 
-from aklr.plugins.vllm.models import kimi_k3, muse_spark
+from aklr.plugins.vllm.models import deepseekv41, kimi_k3, muse_spark
 
-__all__ = ["kimi_k3", "muse_spark"]
+__all__ = ["deepseekv41", "kimi_k3", "muse_spark"]

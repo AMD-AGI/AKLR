@@ -31,6 +31,7 @@ aklr/plugins/
 │   ├── stack.py              runs each vLLM step from a CPython frame chunk of its own
 │   ├── layers/               routes from vLLM's layers to aiter's functions, mirrors vLLM's model_executor/layers/
 │   └── models/               routes from the model files vLLM runs uncompiled, mirrors vLLM's models/
+│       ├── deepseekv41/      DeepSeek-V4.1 on ROCm (vLLM's models/deepseek_v41/amd), routes to the sglang plugin's ops
 │       └── muse_spark/       Muse Spark on ROCm (vLLM's models/muse_spark/amd)
 └── aiter/                    AKLR on aiter's side (aiter/README.md)
     └── provider/             AKLR as a kernel plugin of aiter: its ops, one package per op family
