@@ -14,10 +14,10 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "1.025–2.611; 12 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
   - {metric: "speedup over aiter, CI, per Point", value: "0.993–2.266; 12 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/4467e3563375999a.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096/2a594c89391dd125.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256/d419d9567953cf07.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512/a1e198eaa32afdef.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/60f3beefa33cd2dc.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096/5058691429d5d73f.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256/f0a080275657f17c.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512/efb75b73d8941990.json
 ---
 
 # fp8 block-scaled GEMM with a row-major a_scale and shuffled B
@@ -142,7 +142,7 @@ these runs used FlyDSL 0.3.2, not the CI image's 0.3.4.1 (not checked in the run
 On an MI355X, in a checkout of main (its files carry later CI numbers than the table), one schema at a time:
 
 ```
-python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/4467e3563375999a.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/60f3beefa33cd2dc.json
 ```
 
 and the same for the other three paths under `sources`. Each runs the audit and bench stages and writes
@@ -171,7 +171,7 @@ re-measure all four files before trusting their m ≥ 2 margins.
 - E7 [2026-11, gfx950 (MI355X), aiter dbd8bf5, N=5, AKLR `bench_cudagraph`, median per-call kernel time] aiter's timed baseline copying the row-major a_scale inside the call / given scales copied beforehand, N 4096 × K 256 (default CK): m 2 8.456 / 4.392 µs, m 16 8.528 / 4.406 µs (aiter `gemm_a8w8_blockscale_bpreshuffle` through `aklr/plugins/aiter/provider/gemm/baseline.py`)
 - S1 aklr/plugins/aiter/provider/gemm/baseline.py:58 for an a_scale marked `is_row_major` with a shuffled b (the `b_shuffled_row_major_a_scale` variant) the timed baseline gets `a_scale.T.contiguous().T` (:59); the docstring at :46 gives the reason
 - S2 aklr/plugins/aiter/provider/gemm/contract.py:298 the `b_shuffled_row_major_a_scale` layout variant; compare `bounded` at :281
-- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/4467e3563375999a.json#kernel.py:344 cross-workgroup fixup: per-thread counter (`raw_ptr_buffer_atomic_fadd`, :376), partials summed in split order (:384), counters zeroed once (:595); split factors in `KS_MAP` at :546
-- S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096/2a594c89391dd125.json#kernel.py:1212 `_select_decode`; plane sum in plane order at :915; counters zeroed once at :1286
-- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512/a1e198eaa32afdef.json#kernel.py:162 the register body's `mfma_f32_16x16x32_fp8_fp8`; configuration per m at :820
-- S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256/d419d9567953cf07.json#kernel.py:73 `_cfg_for_m`
+- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/60f3beefa33cd2dc.json#kernel.py:344 cross-workgroup fixup: per-thread counter (`raw_ptr_buffer_atomic_fadd`, :376), partials summed in split order (:384), counters zeroed once (:595); split factors in `KS_MAP` at :546
+- S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096/5058691429d5d73f.json#kernel.py:1212 `_select_decode`; plane sum in plane order at :915; counters zeroed once at :1286
+- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512/efb75b73d8941990.json#kernel.py:162 the register body's `mfma_f32_16x16x32_fp8_fp8`; configuration per m at :820
+- S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256/f0a080275657f17c.json#kernel.py:73 `_cfg_for_m`
