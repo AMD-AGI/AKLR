@@ -337,6 +337,221 @@ def gdn_decode_baseline(
     )
 
 
+def _verify_core(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    inter_indices,
+    inter_ssm,
+    inter_conv,
+    conv_weight,
+    a_log,
+    dt_bias,
+    scale,
+    draft_tokens,
+):
+    """SGLang 0.5.23's ROCm chain verify up to its gated norm: unpack, the indexed conv update
+    writing the deduplicated window through its overlapping view, and the recurrence writing
+    each draft token's state (gdn_backend.forward_extend, TritonGDNKernel.target_verify), without
+    the index comparison select_verify_intermediate_state_indices launches for nothing. Returns
+    the core and Z."""
+    from sglang.kernels.ops.attention.linear.fused_sigmoid_gating_recurrent import (
+        fused_sigmoid_gating_delta_rule_update,
+    )
+    from sglang.kernels.ops.attention.triton_gdn_fused_proj import (
+        fused_qkvzba_split_reshape_cat_contiguous,
+    )
+    from sglang.kernels.ops.mamba.causal_conv1d_triton import causal_conv1d_update
+
+    _slots, heads, value_dim, key_dim = delta_state.shape
+    key_heads = (conv_state.shape[1] - heads * value_dim) // (2 * key_dim)
+    rows, sequences = projected_qkvz.shape[0], cache_indices.shape[0]
+    mixed, z, b, a = fused_qkvzba_split_reshape_cat_contiguous(
+        projected_qkvz, projected_ba, key_heads, heads, key_dim, value_dim
+    )
+    window_rows, channels, width = inter_conv.shape
+    window = inter_conv.as_strided(
+        (window_rows, draft_tokens, channels, width - draft_tokens + 1), (channels * width, 1, width, 1)
+    )
+    mixed = causal_conv1d_update(
+        mixed.view(sequences, draft_tokens, -1).transpose(1, 2),
+        conv_state,
+        conv_weight,
+        None,
+        "silu",
+        conv_state_indices=cache_indices,
+        intermediate_conv_window=window,
+        intermediate_state_indices=inter_indices,
+    )
+    mixed = mixed.transpose(1, 2).reshape(rows, -1)
+    q, k, v = mixed.split([key_heads * key_dim, key_heads * key_dim, heads * value_dim], dim=-1)
+    # sglang's backend sizes padding requests (-1) at zero tokens; this one runs them on a zero state
+    core = fused_sigmoid_gating_delta_rule_update(
+        A_log=a_log,
+        a=a,
+        dt_bias=dt_bias,
+        softplus_beta=1.0,
+        softplus_threshold=20.0,
+        q=q.view(1, rows, key_heads, key_dim),
+        k=k.view(1, rows, key_heads, key_dim),
+        v=v.view(1, rows, heads, value_dim),
+        b=b,
+        initial_state_source=delta_state,
+        initial_state_indices=cache_indices,
+        scale=scale,
+        use_qk_l2norm_in_kernel=True,
+        cu_seqlens=_verify_starts(sequences, draft_tokens, projected_qkvz.device),
+        disable_state_update=True,
+        intermediate_states_buffer=inter_ssm,
+        intermediate_state_indices=inter_indices,
+        cache_steps=draft_tokens,
+    )
+    return core.reshape(-1, value_dim), z.reshape(-1, value_dim)
+
+
+@functools.cache
+def _verify_starts(sequences, draft_tokens, device):
+    """The backend's query_start_loc: draft_tokens rows a request."""
+    import torch
+
+    return torch.arange(0, (sequences + 1) * draft_tokens, draft_tokens, dtype=torch.int32, device=device)
+
+
+def _verify_normalized(norm_weight, eps, core, z, rows, **quant):
+    from sglang.kernels.ops.attention.fla.layernorm_gated import _layer_norm_fwd
+
+    normed, _, _ = _layer_norm_fwd(
+        core, norm_weight, None, eps, z=z, is_rms_norm=True, activation="swish", **quant
+    )
+    return normed if quant else normed.reshape(rows, -1, core.shape[-1])
+
+
+def gdn_verify_group_fp8_quant_baseline(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    inter_indices,
+    inter_ssm,
+    inter_conv,
+    conv_weight,
+    a_log,
+    dt_bias,
+    norm_weight,
+    scale=128**-0.5,
+    eps=1e-6,
+    draft_tokens=4,
+    projection_storage="row_major",
+    values=None,
+    scales=None,
+):
+    """The verify above, gated RMSNorm (RMSNormGated), then the per-1x128 AITER quantization
+    that SGLang's block FP8 output projection applies to its BF16 input."""
+    import aiter
+
+    core, z = _verify_core(
+        projected_qkvz,
+        projected_ba,
+        conv_state,
+        delta_state,
+        cache_indices,
+        inter_indices,
+        inter_ssm,
+        inter_conv,
+        conv_weight,
+        a_log,
+        dt_bias,
+        scale,
+        draft_tokens,
+    )
+    rows = projected_qkvz.shape[0]
+    normed = _verify_normalized(norm_weight, eps, core, z, rows)
+    quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
+    return quantize(normed.reshape(rows, -1), quant_dtype=aiter.dtypes.fp8)
+
+
+def gdn_verify_token_fp8_quant_baseline(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    inter_indices,
+    inter_ssm,
+    inter_conv,
+    conv_weight,
+    a_log,
+    dt_bias,
+    norm_weight,
+    scale=128**-0.5,
+    eps=1e-6,
+    draft_tokens=4,
+    projection_storage="row_major",
+    values=None,
+    scales=None,
+):
+    """The verify above, then the gated RMSNorm that quantizes each row to FP8 for a Quark
+    per-token FP8 out_proj (Qwen3_5GatedDeltaNet.forward's quant_heads path)."""
+    core, z = _verify_core(
+        projected_qkvz,
+        projected_ba,
+        conv_state,
+        delta_state,
+        cache_indices,
+        inter_indices,
+        inter_ssm,
+        inter_conv,
+        conv_weight,
+        a_log,
+        dt_bias,
+        scale,
+        draft_tokens,
+    )
+    heads = delta_state.shape[1]
+    return _verify_normalized(norm_weight, eps, core, z, projected_qkvz.shape[0], quant_heads=heads)
+
+
+def gdn_verify_baseline(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    inter_indices,
+    inter_ssm,
+    inter_conv,
+    conv_weight,
+    a_log,
+    dt_bias,
+    norm_weight,
+    scale=128**-0.5,
+    eps=1e-6,
+    draft_tokens=4,
+    projection_storage="row_major",
+    normalized=None,
+):
+    """The verify above up to the BF16 input of its output projection."""
+    core, z = _verify_core(
+        projected_qkvz,
+        projected_ba,
+        conv_state,
+        delta_state,
+        cache_indices,
+        inter_indices,
+        inter_ssm,
+        inter_conv,
+        conv_weight,
+        a_log,
+        dt_bias,
+        scale,
+        draft_tokens,
+    )
+    return _verify_normalized(norm_weight, eps, core, z, projected_qkvz.shape[0])
+
+
 @functools.cache
 def _unit_scale(device):
     """The aiter backend's KV scale tensor, 1.0, which an FP8 checkpoint's own unit

@@ -214,6 +214,124 @@ def gdn_prefill_group_fp8_quant_reference(point, row_major_args, decode):
     )
 
 
+def reference_verify(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    inter_indices,
+    inter_ssm,
+    inter_conv,
+    conv_weight,
+    a_log,
+    dt_bias,
+    norm_weight,
+    *,
+    scale,
+    eps=1e-6,
+    draft_tokens=4,
+):
+    """A draft chain per request, in float64 between the BF16 and FP8 rounding points.
+
+    Rounding points as decode's, but beta is not rounded and the state stays unrounded
+    along the chain (sglang's verify kernel keeps it in FP32): only its copy after each
+    draft token rounds, to inter_ssm's dtype. A request with cache index -1 is padding:
+    its core output is zero and no state or buffer row changes.
+    """
+    slots, heads, value_dim, key_dim = delta_state.shape
+    channels = conv_state.shape[1]
+    key_heads = (channels - heads * value_dim) // (2 * key_dim)
+    if heads % key_heads or norm_weight.numel() != value_dim:
+        raise ValueError("unsupported head dimensions")
+    if conv_state.shape[2] != conv_weight.shape[1] - 1 or inter_conv.shape[2] != draft_tokens + 2:
+        raise ValueError("convolution history and taps disagree")
+    rows = projected_qkvz.shape[0]
+    indices, buffer_rows = cache_indices.tolist(), inter_indices.tolist()
+    live = [i for i in indices if i != -1]
+    if (
+        rows != draft_tokens * len(indices)
+        or len(set(live)) != len(live)
+        or any(i < -1 or i >= slots for i in indices)
+        or len(set(buffer_rows)) != len(buffer_rows)
+        or inter_ssm.shape[1] < draft_tokens
+    ):
+        raise ValueError("invalid state-slot metadata")
+    conv_result, ssm_result, window_result = conv_state.clone(), inter_ssm.clone(), inter_conv.clone()
+    core = torch.zeros((rows, heads, value_dim), dtype=torch.float64, device=projected_qkvz.device)
+    ratio, width = heads // key_heads, key_heads * key_dim
+    for request, (slot, buffer_row) in enumerate(zip(indices, buffer_rows, strict=True)):
+        if slot == -1:
+            continue
+        first = request * draft_tokens
+        window = torch.cat((conv_state[slot], projected_qkvz[first : first + draft_tokens, :channels].T), 1)
+        window_result[buffer_row] = window[:, 1:]
+        conv_result[slot] = window[:, -3:]
+        state = delta_state[slot].double()
+        for step in range(draft_tokens):
+            row = first + step
+            # each tap's product rounds to BF16; FP32 sums them, the oldest tap first
+            taps = (window[:, step : step + 4].float() * conv_weight.float()).to(torch.bfloat16).float()
+            conv = ((taps[:, 0] + taps[:, 1]) + taps[:, 2]) + taps[:, 3]
+            activated = F.silu(conv.double()).to(torch.bfloat16).double()
+            q = activated[:width].reshape(key_heads, key_dim)
+            k = activated[width : 2 * width].reshape(key_heads, key_dim)
+            q = q * torch.rsqrt(q.square().sum(-1, keepdim=True) + 1e-6) * scale
+            k = k * torch.rsqrt(k.square().sum(-1, keepdim=True) + 1e-6)
+            q, k = q.repeat_interleave(ratio, 0), k.repeat_interleave(ratio, 0)
+            v = activated[2 * width :].reshape(heads, value_dim)
+            b, a = projected_ba[row].double().split(heads)
+            decay = torch.exp(-torch.exp(a_log.double()) * F.softplus(a + dt_bias.double()))
+            state = state * decay[:, None, None]
+            update = (v - (state * k[:, None, :]).sum(dim=-1)) * b.sigmoid()[:, None]
+            state = state + update[:, :, None] * k[:, None, :]
+            core[row] = (state * q[:, None, :]).sum(dim=-1).to(torch.bfloat16).double()
+            ssm_result[buffer_row, step] = state.to(inter_ssm.dtype)
+    gate = projected_qkvz[:, channels:].reshape(rows, heads, value_dim).double()
+    normalized = core * torch.rsqrt(core.square().mean(-1, keepdim=True) + eps)
+    normalized = (normalized * norm_weight.double() * F.silu(gate)).to(torch.bfloat16)
+    return normalized, conv_result, ssm_result, window_result
+
+
+def _fp8_rows(normalized, groups):
+    """E4M3FN values and FP32 scales of BF16 ``normalized`` [rows, heads, dim], one scale per
+    ``groups`` of each row (per head: heads; per row: 1)."""
+    rows = normalized.shape[0]
+    grouped = normalized.double().reshape(rows, groups, -1)
+    scales = grouped.abs().amax(dim=-1).clamp_min(1e-10) / 448.0
+    values = (grouped / scales[..., None]).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
+    return values.reshape(rows, -1), scales
+
+
+def _verify_reference(point, row_major_args, decode, outputs):
+    names = inspect.signature(reference_verify).parameters
+    normalized, conv, ssm, window = reference_verify(
+        **{k: v for k, v in row_major_args.items() if k in names}
+    )
+    results = {"normalized": normalized, "conv_state": conv, "inter_ssm": ssm, "inter_conv": window}
+    if outputs != ("normalized",):
+        groups = normalized.shape[1] if point.contract_id.startswith("gdn_verify_group") else 1
+        results["values"], results["scales"] = _fp8_rows(normalized, groups)
+    return tuple(
+        decode(results[n], point.dtypes[n]) for n in (*outputs, "conv_state", "inter_ssm", "inter_conv")
+    )
+
+
+def gdn_verify_group_fp8_quant_reference(point, row_major_args, decode):
+    """Independent verify; the per-head FP8 outputs, then the changed state and buffers."""
+    return _verify_reference(point, row_major_args, decode, ("values", "scales"))
+
+
+def gdn_verify_token_fp8_quant_reference(point, row_major_args, decode):
+    """Independent verify; the per-row FP8 outputs, then the changed state and buffers."""
+    return _verify_reference(point, row_major_args, decode, ("values", "scales"))
+
+
+def gdn_verify_reference(point, row_major_args, decode):
+    """Independent verify; the BF16 output, then the changed state and buffers."""
+    return _verify_reference(point, row_major_args, decode, ("normalized",))
+
+
 def _rounded(x, dtype):
     """``x`` rounded to ``dtype``, kept in its own float dtype."""
     return x.to(dtype).to(x.dtype)

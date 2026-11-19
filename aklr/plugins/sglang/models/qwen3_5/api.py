@@ -14,9 +14,15 @@ from aklr.plugins.sglang.models.qwen3_5.contract import (
     GDN_DECODE_GROUP_FP8_QUANT,
     GDN_PREFILL,
     GDN_PREFILL_GROUP_FP8_QUANT,
+    GDN_VERIFY,
+    GDN_VERIFY_GROUP_FP8_QUANT,
+    GDN_VERIFY_TOKEN_FP8_QUANT,
     MROPE_SECTION,
     ROTARY_DIM,
 )
+
+# sglang's EAGLE draft chain the verify ops serve: 3 steps, one top token each
+_DRAFT_TOKENS = 4
 
 __all__ = [
     "gated_attention_decode",
@@ -27,6 +33,9 @@ __all__ = [
     "gdn_decode_group_fp8_quant",
     "gdn_prefill",
     "gdn_prefill_group_fp8_quant",
+    "gdn_verify",
+    "gdn_verify_group_fp8_quant",
+    "gdn_verify_token_fp8_quant",
 ]
 
 
@@ -99,6 +108,69 @@ def gdn_decode(
     norm_weight,
     scale=128**-0.5,
     eps=1e-6,
+): ...
+
+
+@api(GDN_VERIFY_GROUP_FP8_QUANT)
+def gdn_verify_group_fp8_quant(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    inter_indices,
+    inter_ssm,
+    inter_conv,
+    conv_weight,
+    a_log,
+    dt_bias,
+    norm_weight,
+    scale=128**-0.5,
+    eps=1e-6,
+    draft_tokens=4,
+    projection_storage="row_major",
+): ...
+
+
+@api(GDN_VERIFY_TOKEN_FP8_QUANT)
+def gdn_verify_token_fp8_quant(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    inter_indices,
+    inter_ssm,
+    inter_conv,
+    conv_weight,
+    a_log,
+    dt_bias,
+    norm_weight,
+    scale=128**-0.5,
+    eps=1e-6,
+    draft_tokens=4,
+    projection_storage="row_major",
+): ...
+
+
+@api(GDN_VERIFY)
+def gdn_verify(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    inter_indices,
+    inter_ssm,
+    inter_conv,
+    conv_weight,
+    a_log,
+    dt_bias,
+    norm_weight,
+    scale=128**-0.5,
+    eps=1e-6,
+    draft_tokens=4,
+    projection_storage="row_major",
 ): ...
 
 
@@ -186,10 +258,16 @@ def _gdn_forward(self, hidden_states, forward_batch):
         run = _decode
     elif forward_batch.forward_mode == ForwardMode.EXTEND:
         run = _prefill
+    elif forward_batch.forward_mode == ForwardMode.TARGET_VERIFY:
+        run = _verify
     else:
         return FallbackReason.OUT_OF_CONTRACT
     if _layer_falls_back(self):
         return FallbackReason.OUT_OF_CONTRACT
+    if run is _verify:
+        # the verify op follows what out_proj takes, BF16 rows included
+        hidden = hidden_states[0] if isinstance(hidden_states, tuple) else hidden_states
+        return _verify(self, hidden_states, hidden, forward_batch, get_attn_backend().linear_attn_backend)
     if not _takes_fp8_groups(self.out_proj):
         # BF16 projections (an MXFP4 checkpoint keeps its GDN layers unquantized): the BF16 ops,
         # whose output out_proj takes as sglang's own forward hands it
@@ -331,6 +409,106 @@ def _decode(layer, hidden_states, hidden, forward_batch, backend, *, fp8_groups=
     if op is gdn_decode:
         result = result.reshape(hidden.shape[0], -1)
     return layer.out_proj(result)[0]
+
+
+def _verify(layer, hidden_states, hidden, forward_batch, backend):
+    """A draft chain's verify, graph capture too: sglang's projections, then the op whose output
+    out_proj takes (FP8 groups on block FP8, a per-row FP8 pair where sglang hands Quark's
+    per-token FP8 out_proj one, else BF16 rows). sglang's commit after the forward reads the
+    intermediate buffers the op writes, as it reads its own kernels'."""
+    from sglang.srt.layers.attention.linear.utils import pp_spec_stable_rows_enabled
+    from sglang.srt.models.qwen3_5 import _fp8_tuple_input
+
+    rows, metadata = hidden.shape[0], backend.forward_metadata
+    spec = forward_batch.spec_info
+    if (
+        getattr(spec, "draft_token_num", None) != _DRAFT_TOKENS
+        or rows % _DRAFT_TOKENS
+        # tree drafts, ragged chains and multi-item scoring take other kernels
+        or getattr(spec, "ragged_verify_layout", None) is not None
+        or getattr(metadata, "retrieve_parent_token", None) is not None
+        or backend.mis_metadata is not None
+        # the requests' own buffer rows (pipeline parallelism)
+        or pp_spec_stable_rows_enabled()
+        # a verify kernel the user chose
+        or type(backend.kernel_dispatcher.verify_kernel).__name__ != "TritonGDNKernel"
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    layer_id = layer.attn.layer_id
+    cache = backend.req_to_token_pool.mamba2_layer_cache(layer_id)
+    # ReplaySSM keeps no per-draft states
+    if cache.intermediate_ssm is None or any(
+        getattr(cache, n, None) is not None for n in ("replayssm_d", "replayssm_rawv")
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    window = _conv_window_buffer(backend, cache, layer_id)
+    if window is None:
+        return FallbackReason.OUT_OF_CONTRACT
+    out_proj = layer.out_proj
+    if _takes_fp8_groups(out_proj):
+        op = gdn_verify_group_fp8_quant
+    elif _per_token_fp8(out_proj) or _unquantized_projections(layer):
+        op = gdn_verify_token_fp8_quant if _fp8_tuple_input(out_proj, rows) else gdn_verify
+    else:
+        return FallbackReason.OUT_OF_CONTRACT
+    sequences = rows // _DRAFT_TOKENS
+    arguments = _layer_inputs(layer, cache) | {
+        "cache_indices": metadata.mamba_cache_indices[:sequences],
+        "inter_indices": backend.verify_intermediate_state_indices[:sequences],
+        "inter_ssm": cache.intermediate_ssm,
+        "inter_conv": window,
+        "draft_tokens": _DRAFT_TOKENS,
+        "projection_storage": "strided_rows" if _packed_projections(layer, rows) else "row_major",
+    }
+    reason = op.fallback_reason(**_projection_stand_ins(arguments, hidden), **arguments)
+    if reason is not None:
+        return reason
+    qkvz, ba = layer._forward_input_proj(hidden_states)
+    result = op(projected_qkvz=qkvz, projected_ba=ba, **arguments)
+    if isinstance(result, FallbackReason):
+        return result
+    if op is gdn_verify:
+        result = result.reshape(rows, -1)
+    return out_proj(result)[0]
+
+
+def _conv_window_buffer(backend, cache, layer_id):
+    """The layer's deduplicated conv window, [rows, conv_dim, draft tokens + 2]: the buffer
+    under sglang's overlapping per-step view, which the commit reads; None when sglang keeps
+    another layout."""
+    pool = backend.req_to_token_pool
+    buffers = getattr(pool.mamba_pool, "_intermediate_conv_window_phys", None)
+    if not buffers or len(cache.intermediate_conv_window) != 1:
+        return None
+    window, view = buffers[0][pool.mamba2_layer_index(layer_id)], cache.intermediate_conv_window[0]
+    rows, channels, width = window.shape
+    if (
+        width != _DRAFT_TOKENS + 2
+        or channels != cache.conv[0].shape[1]
+        or not window.is_contiguous()
+        or view.data_ptr() != window.data_ptr()
+        or view.shape != (rows, _DRAFT_TOKENS, channels, 3)
+        or view.stride() != (channels * width, 1, width, 1)
+    ):
+        return None
+    return window
+
+
+def _packed_projections(layer, rows) -> bool:
+    """Whether sglang may hand the input projections as column slices of one packed GEMM's
+    output: a layer with the packed weight, up to 64 rows (Qwen3_5GatedDeltaNet._forward_input_proj)."""
+    return getattr(layer, "_fused_in_proj_weight", None) is not None and 0 < rows <= 64
+
+
+def _per_token_fp8(linear) -> bool:
+    """Whether ``linear`` is Quark's FP8 with per-token activations and per-channel weights,
+    which quantizes BF16 rows itself or takes a per-row FP8 pair."""
+    scheme = getattr(linear, "scheme", None)
+    return (
+        type(scheme).__name__ == "QuarkW8A8Fp8"
+        and scheme.per_token
+        and scheme.weight_qscheme == "per_channel"
+    )
 
 
 def _layer_inputs(layer, cache):
