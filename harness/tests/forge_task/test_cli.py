@@ -62,8 +62,8 @@ def test_prepare_writes_the_task_and_prints_kernelforges_command(aklr_root: Path
     assert command[command.index("--driver") + 1] == str(workspace_dir / "driver.py")
     assert command[command.index("--baseline-json") + 1] == str(run_dir.resolve() / "baseline.json")
     assert _skill_dirs(command) == [
-        str(aklr_root / "harness" / "skills" / "aklr-kb"),
-        str(aklr_root / "harness" / "skills" / "aklr-kb" / "flydsl"),
+        str(aklr_root / "harness" / "skills" / "kb"),
+        str(aklr_root / "harness" / "skills" / "kb" / "flydsl"),
     ]
     assert {"--paired-keep", "--early-stop"} <= set(command)
 
@@ -124,8 +124,8 @@ def test_the_agents_read_the_wiki_and_the_skill_of_the_language(
     assert _prepare(aklr_root, tmp_path, "--kernel-backend", backend) == 0
     command = _printed_command(capsys.readouterr().out)
     assert _skill_dirs(command) == [
-        str(aklr_root / "harness" / "skills" / "aklr-kb"),
-        str(aklr_root / "harness" / "skills" / "aklr-kb" / skill),
+        str(aklr_root / "harness" / "skills" / "kb"),
+        str(aklr_root / "harness" / "skills" / "kb" / skill),
     ]
 
 
@@ -160,10 +160,10 @@ def test_a_starting_kernel_aklr_fails_exits_two_before_the_first_commit(
     assert not (tmp_path / "run" / "workspace" / ".git").exists()
 
 
-def test_an_op_without_a_built_in_start_needs_one_given(tmp_path: Path, capsys):
+def test_an_op_without_a_baseline_needs_a_start_given(tmp_path: Path, capsys):
     root = install_aklr(tmp_path / "aklr")
-    write_schema(root, schema_payload("mla_demo", op_type="mla"))
-    argv = ["prepare", "--aklr-root", str(root), "--schema", "mla_demo"]
+    write_schema(root, schema_payload("topk_demo", op_type="topk"))
+    argv = ["prepare", "--aklr-root", str(root), "--schema", "topk_demo"]
     assert cli.main([*argv, "--run-dir", str(tmp_path / "run")]) == 2
     assert "pass --starting-kernel" in capsys.readouterr().err
 

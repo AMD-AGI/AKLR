@@ -28,6 +28,28 @@ def test_toolchain_version_of_no_module_is_none() -> None:
     assert toolchain.toolchain_version("no_such_toolchain") is None
 
 
+@pytest.mark.parametrize(("library", "distribution"), [("aiter", "amd-aiter"), ("mori", "amd_mori")])
+@pytest.mark.parametrize(
+    ("installed", "version"), [(True, "1.2.4"), (False, None)], ids=["installed", "missing"]
+)
+def test_a_library_is_its_distribution_not_imported(
+    monkeypatch: pytest.MonkeyPatch, library: str, distribution: str, installed: bool, version: str | None
+) -> None:
+    """A library's version comes from its distribution's metadata: importing aiter loads its JIT
+    modules, importing mori sizes its heap."""
+    import importlib.metadata
+
+    def metadata_version(name: str) -> str:
+        assert name == distribution
+        if not installed:
+            raise importlib.metadata.PackageNotFoundError(name)
+        return "1.2.4"
+
+    monkeypatch.setattr(importlib.metadata, "version", metadata_version)
+    monkeypatch.setattr(toolchain.importlib, "import_module", lambda name: pytest.fail(f"imported {name}"))
+    assert toolchain.toolchain_version(library) == version
+
+
 @pytest.mark.parametrize(
     ("torch_hip", "version"),
     [("7.15.26333", "7.15.26333"), ("7.15.26333-dd7f95766", "7.15.26333"), (None, None)],

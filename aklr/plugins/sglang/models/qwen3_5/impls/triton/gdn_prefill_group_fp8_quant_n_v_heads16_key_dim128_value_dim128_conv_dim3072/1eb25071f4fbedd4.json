@@ -250,7 +250,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.466
+      "speedup": 1.466,
+      "microseconds": 496.0
     }
   ],
   "layout_variants": {

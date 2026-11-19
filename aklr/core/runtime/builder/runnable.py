@@ -38,6 +38,11 @@ class RunnableMetadata(BaseModel):
     misc: dict[str, Any] = Field(default_factory=dict)
     """Builder-specific extras: ``module_name``, ``entry_symbol``."""
 
+    @property
+    def kernel_ref(self) -> str:
+        """``<language>:<schema name>:<hash prefix>``, the kernel as traces and aiter's plugin name it."""
+        return f"{self.build_type}:{self.schema_name}:{self.content_hash[:12]}"
+
 
 class Runnable:
     """A schema's imported kernel, called with one call's api params (``api_params`` names) as keywords; it fills the outputs."""

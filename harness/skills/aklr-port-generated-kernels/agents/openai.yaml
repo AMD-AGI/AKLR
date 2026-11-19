@@ -1,4 +1,0 @@
-interface:
-  display_name: "Port Generated Kernels"
-  short_description: "Port generated GPU kernels into AKLR safely"
-  default_prompt: "Use $aklr-port-generated-kernels to port a generated kernel into AKLR."

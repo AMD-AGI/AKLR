@@ -9,10 +9,11 @@
 ```mermaid
 flowchart TD
     T["手动、PR 标签或定时触发"] --> P["plan：校验 recipe 并补充运行层字段"]
-    X["InferenceX / cookbook"] -.->|"recipe 模块，PR 审核"| L["recipes/#lt;family#gt;/#lt;target#gt;/#lt;framework#gt;/serving.#lt;model#gt;.json"] --> P
+    X["InferenceX / cookbook"] -.->|"PR 审核"| L["serving.#lt;model#gt;.json"] --> P
     P --> S["sweep：准备环境，逐模型逐点测试并保存结果"]
-    S --> R["report：校验结果，生成报告与基线，汇总测量结果"]
-    R -->|"满足发布条件"| D["pages：部署已上传的 Pages artifact"]
+    S --> R["report：校验结果，汇总测量结果"]
+    R -->|"main 且满足发布条件"| D["publish：在 site-data/agentx 中替换本次运行的 target"]
+    D -.->|"workflow_run"| W["site.yaml：把 site-data 部署到 Pages"]
     P -.->|"上传"| A["agentx-plan artifact"]
     A -.->|"读取 serving.json"| S
     A -.->|"读取 manifest.json"| R
@@ -22,19 +23,19 @@ flowchart TD
 
 ### 1.1 使用 Github runner 触发
 
-打开 [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml)，点击 **Run workflow**，选择 AKLR 分支、填写下面的参数，再点击表单中的 **Run workflow**。runner 的注册与准备见第 4 节。
+打开 [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml)，点击 **Run workflow**，只有 `main` 上 `allowlist.yaml` 中的 reviewer 可以手动运行或 re-run，且只能选择 `main`；重跑请用 **Re-run all jobs**，沿用旧 plan 的重跑会跳过 sweep。填写下面的参数，再点击表单中的 **Run workflow**。runner 的注册与准备见第 4 节。
 
 表单共有 **6 个 workflow 输入项**，另有 GitHub 提供的 **Branch / Use workflow from** 选择器，合计 7 项设置；6 个输入项均可保留默认值。
 
 | 页面设置 / 输入名 | 默认值 | 含义 |
 | --- | --- | --- |
-| Branch / Use workflow from | 默认分支，通常为 `main` | 选择本次使用的 **AKLR** workflow、源码、配置和 recipe 版本 |
+| Branch / Use workflow from | 默认分支 `main` | 必须为 `main`；选择其他分支时 plan 报错 |
 | `models` | `all` | 选择已启用的模型 ID；多个用英文逗号分隔，例如 `glm52-fp4`；`all` 选择全部已启用模型 |
 | `targets` | `all` | 在所选模型中选择已启用的 target ID，例如 `mi355x`；多个用英文逗号分隔，所选运行按计划顺序串行执行 |
 | `frameworks` | `all` | 在所选 target 中选择已启用的服务框架：`sglang`、`vllm`，多个用英文逗号分隔 |
 | `points` | 留空 | 单点冒烟：从 recipe 的点中选择 `ARM:CONC`，例如 `tp8-ep1-none-spec-mtp:1`；多个用英文逗号分隔；要求只选中一个模型/target/框架运行；留空跑 recipe 中的全部 Pareto 点 |
 | `duration_s` | 留空 | 覆盖每个点的测量时长，单位秒，必须为正整数，例如 `60`；留空继承 recipe 中的时长，当前 AgentX 默认 `3600` 秒 |
-| `publish` | `false`，不勾选 | 勾选后将报告部署到 GitHub Pages；不勾选仍会上传已生成的结果与报告 artifacts |
+| `publish` | `false`，不勾选 | 勾选后用本次测量的 target 替换站点上的对应内容（见 1.4 节） |
 
 ### 1.2 通过 PR 标签触发
 
@@ -42,15 +43,13 @@ flowchart TD
 
 | 触发方式 | 模型 / target 范围 | 测量点 | AKLR off/on 每次测量时长 | 发布 Pages |
 | --- | --- | --- | --- | --- |
-| PR 标签 `ci:agentx-mi355x` | PR 描述 `AgentX:` 行所列模型中，绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 600 秒 | 否 |
+| PR 标签 `ci:agentx-mi355x` | 白名单 reviewer 的 `/agentx-mi355x` 评论所列模型中，绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 600 秒 | 否 |
 
 注意：
 - PR 创建、更新提交、重新打开时，如果保留该标签，就会触发运行。添加标签时，只有新增的标签正是 `ci:agentx-mi355x` 才会启动 AgentX 测试。
 - 保留标签后推送新提交会触发新的 run，该 PR 正在运行或排队的 AgentX run 会被自动取消。
-- `ci:agentx-mi355x` 是 **GitHub Actions runner 标签**。PR 运行只选择 target 配置为 `runner_label: agentx-mi355x` 的已启用模型、target 和框架。
-- PR 描述中的 `AgentX:` 行（见 PR 模板）用 `agentx.yaml` 中的模型 id（不区分大小写，已经支持的模型见 agentx.yaml） 列出改动可能影响的模型，以逗号或空格分隔，例如 `AgentX: glm52-fp4, minimaxm31flash-fp4`，只写 `AgentX: all`（`all` 是唯一的名字）则运行全部已启用模型。
-- 未列出的模型会被跳过。没有这一行，或只保留模板注释时，跳过本次运行。不是已启用模型 id 的名字也会被跳过。
-- plan job 在运行时读取 PR 描述。修改 `AgentX:` 行后，需要 re-run workflow 或推送新提交才会生效；仅编辑描述不会触发运行。
+- 由 `allowlist.yaml` 中的 reviewer 在 PR 下发评论授权并指定模型：评论第一行以 `/agentx-mi355x` 开头，后面跟 `agentx.yaml` 中的模型 id（不区分大小写），以逗号或空格分隔，例如 `/agentx-mi355x glm52-fp4, minimaxm31flash-fp4`；只写 `/agentx-mi355x all`（`all` 是唯一的名字）则运行全部已启用模型。
+- 评论本身不会触发运行。reviewer 评论后，需要 Re-run all jobs 或推送新提交。授权以 `main` 上的 `allowlist.yaml` 为准，PR 中对名单的修改合入后才生效。授权跟随 PR，之后的提交沿用同一请求，直到 reviewer 再次评论。
 
 ### 1.3 定时运行
 
@@ -59,6 +58,10 @@ flowchart TD
 | 触发方式 | 模型 / target 范围 | 测量点 | AKLR off/on 每次测量时长 | 发布 Pages |
 | --- | --- | --- | --- | --- |
 | 定时 | 全部绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 3600 秒 | 是 |
+
+### 1.4 发布到站点
+
+站点上的所有结果都来自 `main`。各个 CI 只写 `site-data` 分支中属于自己的目录。整个仓库只有 [site.yaml](../../.github/workflows/site.yaml) 有 `pages: write` 权限，由它把这个分支部署到 GitHub Pages。**site.yaml** 在 `main` 上的每次 `AKLR-agentx-ci` 运行结束后触发，也可以手动运行。它部署最新的 `site-data`：所有带 `section.json` 的目录，以及根据这些文件生成的首页。
 
 ## 2. CLI 命令介绍
 
@@ -79,6 +82,7 @@ python3 -m agentx_bench pipeline --help
 | `plan` | 读取一个或多个模型/target/框架运行的 recipe 文件，生成可供 report 校验的 manifest |
 | `sweep` | 在 Docker 中安装当前 checkout，为 SGLang 预先装好 Rust 工具链并编译 TreeCore，然后执行 serving 计划。每个点启动服务前，等到 `amd-smi` 显示所有 GPU 的显存利用率都为 0%；超过 300 秒则中止 sweep |
 | `report` | 渲染单个结果；加 `--plan` 时校验计划、生成站点并管理基线 |
+| `publish` | 把 `report --plan` 生成的站点按模型/target/框架运行合并进 `site-data` checkout 的 `agentx/`（见 1.4 节） |
 
 ### 2.2 使用 pipeline 一键测试
 
@@ -241,7 +245,7 @@ report:
 | `...frameworks.<framework>.advisory_env` | 框架级补充环境，覆盖以上各级同名值。不要在这里设置 AKLR plugin 开关，执行器会按模式设置。冲突规则相同 |
 | `report.repo_url` | 报告中 AKLR commit 链接所用的仓库 URL（历史链接暂时隐藏）；不是 Pages 站点地址 |
 
-`weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像由 plan 从 `.github/workflows/ci.yaml` 读取对应框架的 CI 镜像，见 3.2 节。
+`weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像由 plan 从 [`stack.json`](../../stack.json) 读取对应框架的 CI 镜像，见 3.2 节。
 
 ### 3.2 新增模型
 
@@ -333,17 +337,16 @@ unset RUNNER_TOKEN
 
 ### 4.2 设置仓库变量并验证
 
-在 **Settings → Secrets and variables → Actions → Variables** 设置：
+1. 在 **Settings → Secrets and variables → Actions → Variables** 设置：
 
 | 仓库变量 | 是否需要 | 值与用途 |
 | --- | --- | --- |
 | `AGENTX_HF_HUB_DIR` | 必填 | runner 上权重 hub 的绝对路径，例如 `/data/hf/hub` |
 | `AGENTX_SCHEDULE_ENABLED` | 启用定时时填写 | 字符串 `true`；只控制定时触发，不影响手动或 PR 标签触发 |
-| `AGENTX_PAGES_URL` | 自定义站点地址时填写 | 读取历史站点和基线的根 URL；默认 `https://<owner>.github.io/<repo>` |
 
 所选 target 在 `agentx.yaml` 中的 `runner_label` 必须与注册时的 `--label` 一致；本例均为 `agentx-mi355x`。
 
-需要发布报告时，在 **Settings → Pages** 将构建与部署来源设为 **GitHub Actions**，并确认 `github-pages` environment 的部署规则允许目标分支。
+2. 需要发布报告时，在 **Settings → Pages** 将构建与部署来源设为 **GitHub Actions**；`github-pages` environment 要允许 `main`。publish job 会从 `bot` environment 读取 `AKLR_BOT_APP_ID` 和 `AKLR_BOT_PRIVATE_KEY`（这个 environment 的部署分支只允许 `main`），并读取变量 `AKLR_BOT_LOGIN`。App 需要 `contents: write` 权限。
 
 确认 runner 在 GitHub 页面显示 Online / Idle，并在主机检查服务：
 

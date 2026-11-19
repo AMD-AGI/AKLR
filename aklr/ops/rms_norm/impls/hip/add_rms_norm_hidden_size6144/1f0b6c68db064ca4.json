@@ -84,7 +84,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.027
+      "speedup": 1.021,
+      "microseconds": 4.43
     },
     {
       "axes": {
@@ -94,7 +95,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.025
+      "speedup": 1.022,
+      "microseconds": 4.42
     },
     {
       "axes": {
@@ -104,7 +106,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.028
+      "speedup": 1.026,
+      "microseconds": 4.42
     },
     {
       "axes": {
@@ -114,7 +117,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.042
+      "speedup": 1.042,
+      "microseconds": 4.43
     },
     {
       "axes": {
@@ -124,7 +128,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.059
+      "speedup": 1.056,
+      "microseconds": 4.47
     },
     {
       "axes": {
@@ -134,7 +139,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.08
+      "speedup": 1.074,
+      "microseconds": 4.57
     },
     {
       "axes": {
@@ -144,7 +150,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.092
+      "speedup": 1.014,
+      "microseconds": 5.91
     },
     {
       "axes": {
@@ -154,7 +161,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.062
+      "speedup": 1.062,
+      "microseconds": 16.8
     },
     {
       "axes": {
@@ -164,7 +172,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.065
+      "speedup": 1.066,
+      "microseconds": 30.1
     },
     {
       "axes": {
@@ -174,7 +183,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.06
+      "speedup": 1.051,
+      "microseconds": 56.9
     }
   ],
   "layout_variants": {

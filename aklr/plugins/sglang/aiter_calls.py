@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import torch
 
+from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins import aiter as aklr_aiter
 from aklr.plugins.sglang.hook import sglang_route
 
 __all__: list[str] = []
 
 
-@sglang_route("aiter.fused_moe.fused_moe", versions=("0.5.22",))
+@sglang_route("aiter.fused_moe.fused_moe", versions=("0.5.22", "0.5.23"))
 def _fused_moe(
     hidden_states,
     w1,
@@ -64,6 +65,8 @@ def _fused_moe(
     quant_type_a=None,
     quant_dtype_a=None,
     quant_dtype_a2=None,
+    # FHMoE's: aiter takes it only with shared_w1, which aklr_aiter declines
+    clamp_shared=True,
 ):
     return aklr_aiter.fused_moe(
         hidden_states,
@@ -101,7 +104,7 @@ def _fused_moe(
     )
 
 
-@sglang_route("aiter.tuned_gemm.tgemm.mm", versions=("0.5.22",))
+@sglang_route("aiter.tuned_gemm.tgemm.mm", versions=("0.5.22", "0.5.23"))
 def _tgemm_mm(inp, weights, bias=None, otype=None, scale_a=None, scale_b=None, scale_c=None):
     return aklr_aiter.mm(
         inp, weights, bias=bias, otype=otype, scale_a=scale_a, scale_b=scale_b, scale_c=scale_c
@@ -110,7 +113,7 @@ def _tgemm_mm(inp, weights, bias=None, otype=None, scale_a=None, scale_b=None, s
 
 # aiter.ops.triton.gemm_a16w16 is a backward-compatible path whose module is a second copy; the
 # unquantized linear layers' name for the function is the defining module's
-@sglang_route("aiter.ops.triton.gemm.basic.gemm_a16w16.gemm_a16w16", versions=("0.5.22",))
+@sglang_route("aiter.ops.triton.gemm.basic.gemm_a16w16.gemm_a16w16", versions=("0.5.22", "0.5.23"))
 def _triton_gemm_a16w16(
     x,
     w,
@@ -131,7 +134,7 @@ def _triton_gemm_a16w16(
 
 
 # the MLA decode under decode context parallelism (aiter_backend's DCP decode and DSpark verify)
-@sglang_route("aiter.mla.mla_decode_fwd", versions=("0.5.22",))
+@sglang_route("aiter.mla.mla_decode_fwd", versions=("0.5.22", "0.5.23"))
 def _mla_decode_fwd(
     q,
     kv_buffer,
@@ -162,7 +165,19 @@ def _mla_decode_fwd(
     cp_world_size=1,
     cp_rank=0,
     causal=True,
+    kv_layout="token_major",
+    seq_lens=None,
+    page_table=None,
+    kv_csr_layout="page",
 ):
+    # aiter's other KV layouts and its paged CSR metadata are not the contract's pool
+    if (
+        kv_layout != "token_major"
+        or kv_csr_layout != "page"
+        or seq_lens is not None
+        or page_table is not None
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
     return aklr_aiter.mla_decode_fwd(
         q,
         kv_buffer,

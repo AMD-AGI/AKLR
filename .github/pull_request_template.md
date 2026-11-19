@@ -1,5 +1,5 @@
 <!-- A one-minute briefing for a reviewer who has the diff. Drop a section with nothing to say.
-What each kind of change needs (the review-tier check finds the kinds from the diff):
+What each kind of change needs (the kinds come from the files the diff touches):
 - contract (schema, empty kernel.sources): Why, Scope, Verification (export), Risk. No GPU run.
 - kernel (schema with kernel.sources): every section. GPU validation (ci:gpu).
 - code, aklr/core above all: every section. CI validation of every schema and a code owner's approval.
@@ -83,8 +83,8 @@ What docs/acceptance_criteria.md asks: the model, GPUs and workload; this PR's o
 ### Code
 
 <!-- Required when the PR changes code (any file but a schema or a document); delete otherwise.
-Required: tests run and their result, new tests added; and the CI run whose `validation` job
-passed on this head (it validates every schema). -->
+Required: tests run and their result, new tests added; and the CI run whose `aiter-test`,
+`sglang-test` and `vllm-test` jobs passed on this head (they validate every schema). -->
 
 <!-- Required when aklr/core changes, delete otherwise: does a schema or measurement version change? Which kernels changed result
 against main (fell below the baseline, now fail the audit or accuracy)? "None" is an answer. -->
@@ -99,7 +99,7 @@ need ran on this head. -->
 <!-- Required for every kind but documents. -->
 Affects: <!-- models, ops, shapes; for code, which kernels or stages (often: every kernel) -->
 AgentX: <!-- model ids from benchmarks/agentx/agentx.yaml this PR can change, comma-separated (e.g. glm52-fp4), or only all.
-The ci:agentx-mi355x run measures only these; without a valid id it skips AgentX. -->
+An AgentX reviewer authorizes the ci:agentx-mi355x run by commenting `/agentx-mi355x <model ids>`; it measures those. -->
 If wrong: <!-- wrong output, a crash, slower than the baseline, a CI failure -->
 Undo: <!-- `AKLR_DISABLE=<contract id>` turns one op off; otherwise `git revert`, and what that
 does not undo (a schema or measurement version, published measurements) -->

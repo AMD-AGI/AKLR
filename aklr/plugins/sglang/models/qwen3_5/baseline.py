@@ -1,5 +1,5 @@
 # Created by OpenAI
-"""SGLang 0.5.22 Triton prefill and native block-128 FP8 activation quantization.
+"""SGLang 0.5.23 Triton prefill and native block-128 FP8 activation quantization.
 
 Projection GEMMs and the output projection are outside this op on both paths; the BF16
 prefill op ends at the unquantized output projection's BF16 input.
@@ -7,7 +7,7 @@ Fresh recurrent slots are initialized here to implement the contract independent
 of SGLang's allocator. The host maximum gives the convolution its native launch
 geometry without a timed device-to-host read.
 
-Decode replays SGLang 0.5.22's ROCm decode kernels between the projections; the
+Decode replays SGLang 0.5.23's ROCm decode kernels between the projections; the
 FP8 decode op adds the AITER quantization its output projection would run.
 
 The gated attention decode replays what Qwen3_5AttentionDecoderLayer.self_attention runs
@@ -44,11 +44,11 @@ def _prefill_normalized(
     scale,
     eps,
 ):
-    """SGLang 0.5.22's Triton prefill up to the BF16 input of its output projection."""
+    """SGLang 0.5.23's Triton prefill up to the BF16 input of its output projection."""
     import torch
     from sglang.kernels.ops.attention.fla.chunk import chunk_gated_delta_rule
-    from sglang.kernels.ops.attention.fla.fused_gdn_gating import fused_gdn_gating
     from sglang.kernels.ops.attention.fla.layernorm_gated import _layer_norm_fwd
+    from sglang.kernels.ops.attention.linear.fused_gdn_gating import fused_gdn_gating
     from sglang.kernels.ops.attention.triton_gdn_fused_proj import (
         fused_qkv_split_gdn_prefill,
         fused_qkvzba_split_reshape_cat_contiguous,
@@ -216,7 +216,7 @@ def _decode_normalized(
     scale,
     eps,
 ):
-    """SGLang 0.5.22's ROCm decode: unpack, indexed Conv1D update, packed recurrence
+    """SGLang 0.5.23's ROCm decode: unpack, indexed Conv1D update, packed recurrence
     and gated RMSNorm; padding rows (-1) keep their state and give a zero core."""
     from sglang.kernels.ops.attention.fla.fused_recurrent import (
         fused_recurrent_gated_delta_rule_packed_decode,
@@ -321,7 +321,7 @@ def gdn_decode_baseline(
     eps=1e-6,
     normalized=None,
 ):
-    """SGLang 0.5.22's ROCm decode up to the BF16 input of its output projection."""
+    """SGLang 0.5.23's ROCm decode up to the BF16 input of its output projection."""
     return _decode_normalized(
         projected_qkvz,
         projected_ba,

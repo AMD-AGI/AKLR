@@ -20,9 +20,9 @@ flowchart TD
     R --> V["3. Local validation<br/>validate --base origin/main --stages audit,bench"]
     V -->|"no_qualifying_workload: fail"| D
     V -->|"demoted (performance or correctness fails): delete those workloads"| R
-    V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → unittest-aklr → GPU validate"]
+    V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → aiter-test → sglang-test → vllm-test"]
     P -->|"merged into main"| M["4. main's push CI remeasures<br/>publish-measurement bot updates the aklr-perf/main PR"]
-    M -->|"bot PR merged"| N["4. workloads carry accuracy / speedup"]
+    M -->|"bot PR merged"| N["4. workloads carry accuracy / speedup / microseconds"]
 ```
 
 | Step | Key actions | Output |
@@ -37,7 +37,7 @@ flowchart TD
 
 ### 1. A contract does not exist: create the contract
 
-Following `harness/skills/aklr-port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
+Following `harness/skills/port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
 
 1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`.
 2. `reference.py`: a float64 `<contract>_reference(point, row_major_args, to_float64)`.
@@ -86,7 +86,7 @@ When developing the kernel, change only three fields in the kernel section: `ker
 - `sources`: for flydsl/triton the entry is `kernel.py::run`, and other files may only be imported relatively; hip uses `.hip`/`.h`, with the entry `kernel.hip::run`. The entry file must start with a docstring describing the kernel (a leading comment for hip). Writing it out with `narrow(..., kernel=...)` + `schema_text()` is recommended. Path rules:
   - flydsl/triton: a Python kernel is a flat package, so a path may not contain `/`, and there may be no `__init__.py`;
   - hip: nested directories are allowed, e.g. `include/utils.h`;
-- `requires`: toolchain version constraints, required. Name at least the kernel's own language, with the version you developed on as the lower bound: `{"flydsl": ">=0.3.2"}`, `{"triton": ">=3.8"}`, or `{"hip": ">=7.15"}` (the HIP version torch reports, not the ROCm release: ROCm 10.0 ships HIP 7.15). `python -m aklr export check` rejects a kernel without it; at runtime a kernel whose `requires` the installed toolchain misses is skipped.
+- `requires`: toolchain version constraints, required. Name at least the kernel's own language, with the version you developed on as the lower bound: `{"flydsl": ">=0.3.2"}`, `{"triton": ">=3.8"}`, or `{"hip": ">=7.15"}` (the HIP version torch reports, not the ROCm release: ROCm 10.0 ships HIP 7.15). `python -m aklr export check` rejects a kernel without it; at runtime a kernel whose `requires` the installed toolchain misses is skipped. Also name every library the kernel imports beyond torch, such as `{"mori": ">=1.2.4"}`; `export check` rejects a kernel that imports one without it.
 - `author`: the author's name.
 
 Once every source field is filled in, rerun the 1.B script (replace `"sources": []` with `[SourceFile(path=..., content=...), ...]`, importing `SourceFile` from `aklr.core.contract.spec`; see the step 1 script in the example), which writes a schema file with a new uuid.
@@ -109,13 +109,13 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 ## 4. PR and CI
 
 **PR rules**:
-- Write the body following `.github/pull_request_template.md`. Add `ci:gpu` to both kernel and code PRs (on a fork PR, or one whose author lacks write access, the GPU jobs wait for a maintainer to approve them); a kernel PR pastes the results from 3.;
+- Write the body following `.github/pull_request_template.md`. Add `ci:gpu` to both kernel and code PRs (an external contributor's CI run waits for a maintainer to approve it); a kernel PR pastes the results from 3.;
 - The code for a new op (`contract.py` and the rest, which counts as code) goes in its own PR; the kernel-less schema (called contract in the template) and the schema with the kernel each fill in their own section of the template.
-- Do not write `accuracy`/`speedup` in a submitted PR (writing them by hand reports `perf_edited`). After merge, main's push CI remeasures and `publish-measurement` updates the `aklr-perf/main` bot PR; only after that bot PR is squash-merged under its own title do the workloads carry `accuracy`/`speedup`.
+- Do not write `accuracy`/`speedup`/`microseconds` in a submitted PR (writing them by hand reports `perf_edited`). After merge, main's push CI remeasures and `publish-measurement` updates the `aklr-perf/main` bot PR; only after that bot PR is squash-merged under its own title do the workloads carry `accuracy`/`speedup`/`microseconds`.
 
 **CI rules**:
-- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → unittest-aklr (GPU: all of pytest) → validation (GPU: `validate --base <merge base> --stages audit,bench`, run only when there are schemas to bench).
-- Only non-`.md` changes under `aklr/core/` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
+- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → aiter-test (GPU, `aiter_image`, for now the sglang image, with the baseline aiter installed over its own: `tests/core`, `tests/ops`, `tests/benchmarks`, then `validate --base <merge base> --under aklr/ops --exclude aklr/ops/mega_moe`, mega_moe's baseline needing a mori fix) → sglang-test (`sglang_image` as it ships: `tests/plugins/aiter`, `tests/plugins/sglang`, then `validate --under aklr/plugins --exclude aklr/plugins/vllm` and `--under aklr/ops --no-timing`) → vllm-test (`vllm_image` as it ships: `tests/plugins/vllm`, then `validate --under aklr/plugins/vllm` and `--under aklr/ops --no-timing`). Validation runs only when there are schemas to bench.
+- Only non-`.md` changes under `aklr/core/` and `stack.json` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
 
 ## 5. Runtime dispatch
 

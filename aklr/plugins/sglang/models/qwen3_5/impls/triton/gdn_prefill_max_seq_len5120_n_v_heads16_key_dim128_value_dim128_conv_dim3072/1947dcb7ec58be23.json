@@ -234,7 +234,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.565
+      "speedup": 1.578,
+      "microseconds": 241.0
     },
     {
       "axes": {
@@ -248,7 +249,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.151
+      "speedup": 1.153,
+      "microseconds": 448.0
     },
     {
       "axes": {
@@ -262,7 +264,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.129
+      "speedup": 1.134,
+      "microseconds": 506.0
     },
     {
       "axes": {
@@ -276,7 +279,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.096
+      "speedup": 1.097,
+      "microseconds": 655.0
     }
   ],
   "layout_variants": {

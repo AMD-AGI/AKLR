@@ -2,7 +2,7 @@
  "$schema": "https://json-schema.org/draft/2020-12/schema",
  "$id": "https://github.com/AMD-AGI/AKLR/benchmarks/agentx/recipes/serving.schema.json",
  "title": "AgentX recipe serving.json (schema 4)",
- "description": "Written by the recipe module to recipes/<family>/<target-id>/<framework>/serving.<model-id>.json and reviewed in a PR. model, target, framework, weights and hardware come from agentx.yaml, and every point's client_env.FRAMEWORK must equal that framework; plan pins the framework's CI image from .github/workflows/ci.yaml (AKLR_CI_IMAGE for sglang, AKLR_VLLM_CI_IMAGE for vllm) as image.run; client and trace are fixed in $defs below and updated by maintainers; plan adds them, arms, advisory env, devices, per-point trace, hashes and the sealed selection. None of those fields may appear here.",
+ "description": "Written by the recipe module to recipes/<family>/<target-id>/<framework>/serving.<model-id>.json and reviewed in a PR. model, target, framework, weights and hardware come from agentx.yaml, and every point's client_env.FRAMEWORK must equal that framework; plan pins the framework's CI image from stack.json (sglang_image for sglang, vllm_image for vllm) as image.run; client and trace are fixed in $defs below and updated by maintainers; plan adds them, arms, advisory env, devices, per-point trace, hashes and the sealed selection. None of those fields may appear here.",
  "$defs": {
   "client": {
    "description": "InferenceX checkout providing the AgentX client and trace loaders (inferencex-e2e), shared by every recipe. Maintainers bump it; plan copies it into every run.",
