@@ -9,6 +9,9 @@ on:
     types: [labeled, closed]
   schedule:
     - cron: '7,37 * * * *'
+  # TEMPORARY, remove before merge: registers the workflow so this branch can be dispatched.
+  pull_request:
+    paths: [.github/workflows/shepherd.yaml]
   workflow_dispatch:
     inputs:
       issue:
@@ -39,7 +42,7 @@ jobs:
       contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.triggering_actor) &&
       (github.event_name != 'issues' ||
        contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.event.issue.user.login)) &&
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' ||
        github.event.action == 'labeled' && github.event.label.name == 'shepherd' ||
        github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'shepherd'))
     # Exactly one runner may carry this label: the ledger lives on its disk, and its lease serializes rounds.
