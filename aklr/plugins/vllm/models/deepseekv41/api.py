@@ -23,7 +23,7 @@ from aklr.plugins.vllm.hook import vllm_route
 __all__: list[str] = []
 
 # The InferenceX cookbook's nightly (4fab5a07) reports this release
-_VLLM = ("0.34.0",)
+_VLLM = ("0.33.0rc1.dev910", "0.34.0")
 # An fp8_ds_mla record: 576 data bytes, 8 scale bytes
 _RECORD = 584
 _ATTENTION = "vllm.models.deepseek_v41.amd.rocm.DeepseekV41ROCMAiterMLAAttention"
