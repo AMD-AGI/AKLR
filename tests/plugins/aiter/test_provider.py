@@ -42,6 +42,7 @@ AITER_CONTRACTS = {
     ),
     "gemm_a8w8_blockscale": (1, ("XQ", "WQ", "x_scale", "w_scale", "dtype", "isBpreshuffled", "split_k")),
     "gemm_a8w8_blockscale_bpreshuffle": (1, ("XQ", "WQ", "x_scale", "w_scale", "dtype", "out")),
+    "gemm_a8w8_bpreshuffle": (1, ("XQ", "WQ", "x_scale", "w_scale", "bias", "dtype", "check")),
     "per_group_quant": (
         1,
         (
