@@ -16,7 +16,8 @@ import torch
 
 def _assert_milliseconds(value):
     assert isinstance(value, float)
-    assert math.isfinite(value) and value > 0
+    assert math.isfinite(value)
+    assert value > 0
 
 
 def _per_stream_state(bench_cudagraph):
@@ -93,12 +94,14 @@ def _return_modes_and_quantiles(bench_cudagraph):
     for mode in ("min", "max", "mean", "median"):
         _assert_milliseconds(bench_cudagraph(subject, rep=1, return_mode=mode))
     samples = bench_cudagraph(subject, rep=1, return_mode="all")
-    assert isinstance(samples, list) and samples
+    assert isinstance(samples, list)
+    assert samples
     for value in samples:
         _assert_milliseconds(value)
     _assert_milliseconds(bench_cudagraph(subject, rep=1, quantiles=[0.5]))
     quantiles = bench_cudagraph(subject, rep=1, quantiles=[0, 0.5, 1])
-    assert isinstance(quantiles, list) and len(quantiles) == 3
+    assert isinstance(quantiles, list)
+    assert len(quantiles) == 3
     assert quantiles == sorted(quantiles)
     for value in quantiles:
         _assert_milliseconds(value)

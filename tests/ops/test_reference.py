@@ -8,9 +8,6 @@ import pytest
 import torch
 
 from aklr.core.contract import semantics
-from aklr.core.validation.stages._bench._evaluation._comparison import (
-    is_reference_comparable,
-)
 from tests.op_case import OpCase
 from tests.ops import cases as ops_cases
 
@@ -32,11 +29,12 @@ class TestReference:
     def test_rounded_reference_passes_compare(self, op_case: OpCase) -> None:
         """The reference rounded to each output's dtype passes ``op_case.compare``."""
         args = op_case.inputs()
-        assert is_reference_comparable(
-            op_case.point.dtypes,
-            op_case.reference_outputs(args),
-            lambda rounded: op_case.compare(rounded, args, baseline_outputs=rounded),
-        )
+        reference = op_case.reference_outputs(args)
+        dtypes = op_case.point.dtypes
+        rounded = {o: r.to(semantics.torch_dtypes(dtypes[o])[0]) for o, r in reference.items()}
+        assert all((rounded[o].double().isfinite() | ~r.isfinite()).all() for o, r in reference.items())
+        compared = op_case.compare(rounded, args, baseline_outputs=rounded)
+        assert all(r.is_passed for r in compared.values())
 
     @pytest.mark.gpu
     @pytest.mark.parametrize("op_case", OpCase.params(ops_cases.SMALL_POINTS))

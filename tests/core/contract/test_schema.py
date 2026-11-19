@@ -301,7 +301,7 @@ class TestMutableInput:
         actual = {r: t.to(semantics.torch_dtypes(case.point.dtypes[r])[0]) for r, t in reference.items()}
 
         def compare() -> dict[str, semantics.CompareResult]:
-            return semantics.compare_outputs(case.request.schema_json, actual, reference)
+            return semantics.compare_outputs(case.contract_workload.schema_json, actual, reference)
 
         assert all(r.is_passed for r in compare().values())
         flat = actual["delta_state"].view(-1)

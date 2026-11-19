@@ -444,7 +444,7 @@ class OpContract(FrozenModel):
     ) -> dict[str, Any]:
         """The reference of ``rank``'s call, its inputs read through ``decode``, by name in
         ``mutable_tensors``; ``group_args`` holds every rank's row-major args in rank order,
-        each on its rank's device. A contract with ``ranks`` has a reference of ``(point,
+        all on the calling rank's device. A contract with ``ranks`` has a reference of ``(point,
         group_args, rank, decode)``, any other one of ``(point, row_major_args, decode)``."""
         reference_fn = getattr(op_module(self.op_package, "reference"), self.reference_name)
         if self.ranks is None:
@@ -546,17 +546,6 @@ class OpContract(FrozenModel):
     def reference_name(self) -> str:
         """The reference function's name in the op's ``reference.py``."""
         return f"{contract_name(self.contract_id)}_reference"
-
-    @property
-    def group_init_name(self) -> str:
-        """The group set-up function's name in the op's ``group.py``."""
-        return f"{contract_name(self.contract_id)}_group_init"
-
-    def group_init(self) -> Callable | None:
-        """The op's ``group.py`` function ``group_init_name``, if it has one: each rank
-        of a ``ranks`` group calls it once, its torch.distributed group up, to set up
-        what the op's calls take for granted (as an engine does before the first)."""
-        return self._optional_function("group", self.group_init_name)
 
     @property
     def baseline_name(self) -> str:

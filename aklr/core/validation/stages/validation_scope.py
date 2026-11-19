@@ -15,11 +15,11 @@ from typing import Final, Literal
 from aklr.core.contract import locate, spec
 from aklr.core.contract.locate import committed_schema_paths
 
-__all__ = ["PathKind", "ValidationScope"]
+__all__ = ["SCHEMA_PATH_PATTERN", "PathKind", "ValidationScope"]
 
 PathKind = Literal["schema_data", "core", "other"]
 
-_SCHEMA_PATH_PATTERN: Final = re.compile(locate.REPOSITORY_SCHEMA_PATH_PATTERN)
+SCHEMA_PATH_PATTERN: Final = re.compile(locate.REPOSITORY_SCHEMA_PATH_PATTERN)
 
 
 @dataclass(frozen=True)
@@ -134,7 +134,7 @@ class ValidationScope:
     @staticmethod
     def path_kind(path: str) -> PathKind:
         """aklr/core's code and stack.json are the only changes that re-bench every schema."""
-        match = _SCHEMA_PATH_PATTERN.fullmatch(path)
+        match = SCHEMA_PATH_PATTERN.fullmatch(path)
         is_schema_json = match is not None and match["language"] in spec.LANGUAGES
         if is_schema_json:
             return "schema_data"
