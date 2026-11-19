@@ -24,7 +24,9 @@ env:
   PYTHONDONTWRITEBYTECODE: '1'
   SCRIPTS: harness/automations/shepherd/skills/optimize-and-deliver-kernels/scripts
   CONFIG: .shepherd/configuration.yaml
-  EVENT: ${{ github.event_path }}
+  # The model endpoint of the agents; the key is passed to their steps only.
+  ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
+  ANTHROPIC_MODEL: ${{ vars.CLAUDE_MODEL }}
 
 defaults:
   run:
@@ -65,6 +67,36 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Install what the host lacks
+        # Nobody logs in to this host: the tools go to the runner user's own directories, once.
+        run: |
+          bin="$HOME/.local/bin"; venv="$HOME/.shepherd/venv"
+          mkdir -p "$bin" && export PATH="$venv/bin:$bin:$PATH"
+          command -v jq > /dev/null ||
+            { curl -fsSL -o "$bin/jq" https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 && chmod +x "$bin/jq"; }
+          command -v gh > /dev/null ||
+            curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz |
+              tar -xz -C "$bin" --strip-components=2 gh_2.63.2_linux_amd64/bin/gh
+          command -v claude > /dev/null || curl -fsSL https://claude.ai/install.sh | bash
+          # The helpers run `python3 -I`, which skips the user site: PyYAML goes to a venv first on PATH.
+          python3 -I -c 'import yaml' 2> /dev/null || { python3 -m venv "$venv" && "$venv/bin/pip" install -q pyyaml; }
+          { echo "$venv/bin"; echo "$bin"; } >> "$GITHUB_PATH"
+      - name: TEMPORARY probe of the host (remove before merge)
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set +e
+          echo "user $(id -un) home $HOME"; df -h "$HOME" /var/tmp | tail -2
+          for tool in claude gh jq docker python3 node curl git; do echo "$tool: $(command -v $tool || echo MISSING)"; done
+          python3 -I -c 'import yaml, sys; print("yaml", yaml.__version__, sys.version.split()[0])'
+          claude --version; gh --version | head -1
+          docker ps --format '{{.Names}}' | head -20; echo "docker exit $?"
+          ls /dev/dri | tr '\n' ' '; echo; ls /dev/kfd
+          python3 -c 'import json, os; p = os.path.expanduser("~/.claude/settings.json"); print("claude settings env keys:", sorted(json.load(open(p)).get("env", {})) if os.path.exists(p) else "no file")'
+          echo "base url: $ANTHROPIC_BASE_URL model: $ANTHROPIC_MODEL key set: ${ANTHROPIC_API_KEY:+yes}"
+          for url in "$ANTHROPIC_BASE_URL" https://api.anthropic.com https://claude.ai; do echo "$url -> $(curl -s -o /dev/null -m 8 -w '%{http_code}' "$url")"; done
+          timeout 120 claude -p 'Reply with the single word: ok' < /dev/null; echo "claude exit $?"
       - name: Link the host's configuration
         # Uncommitted and outside the workspace, which checkout cleans; setup writes it through the link.
         run: |
@@ -85,11 +117,15 @@ jobs:
           jq --arg sender "$GITHUB_TRIGGERING_ACTOR" --arg repository "$GITHUB_REPOSITORY" \
             '{issue: ., sender: {login: $sender}, repository: {full_name: $repository}}' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/event.json"
           echo "EVENT=$RUNNER_TEMP/event.json" >> "$GITHUB_ENV"
+      - name: Take the event's issue
+        if: inputs.issue == ''
+        run: echo "EVENT=$GITHUB_EVENT_PATH" >> "$GITHUB_ENV"
       - name: Set up shepherd on this host
         # The text is the event's own copy of the issue, as the allowed user labeled it.
         if: github.event.action == 'labeled' || inputs.issue != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ISSUE: ${{ github.event.issue.number || inputs.issue }}
         run: |
           claude -p "$(cat harness/automations/shepherd/templates/actions-setup-prompt.md)
@@ -125,6 +161,7 @@ jobs:
         if: steps.begin.outputs.begun != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BEGUN: ${{ steps.begin.outputs.begun }}
           # Pushes use the App token through gh, without writing a credential to disk.
           GIT_CONFIG_COUNT: '1'
