@@ -449,6 +449,20 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         )
         for has_extra, has_peers in ((True, False), (False, False), (True, True))
     ),
+    # a group of DeepSeek-V4.1's wo_a projection shrunk: quantized rows, the weight in aiter's 16 x 16 tiles
+    PointSpec(
+        contract_id="deepseekv41_mxfp8_linear@1.0",
+        axes={"m": 4, "n": 64, "k": 128},
+        dtypes={
+            "x": "float8_e4m3fn",
+            "weight": "float8_e4m3fn",
+            "weight_scale": "float8_e8m0",
+            "x_scale": "float8_e8m0",
+            "output": "bfloat16",
+        },
+        attrs={"has_x_scale": True},
+        layout_variant_name="shuffled_16x16",
+    ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
     *(
@@ -976,6 +990,9 @@ _BACKEND_AXES = {
 BACKEND_POINTS: tuple[PointSpec, ...] = tuple(
     point.model_copy(update={"axes": {**point.axes, **_BACKEND_AXES.get(point.contract_id, {})}})
     for point in SMALL_POINTS
+    # shortcut: the shuffled linear's baseline is the BMM of the nightly's aiter, which sglang-test's 0.5.23 image
+    # does not ship; check it here once stack.json's sglang image is a build that runs wo_a on it
+    if (point.contract_id, point.layout_variant_name) != ("deepseekv41_mxfp8_linear@1.0", "shuffled_16x16")
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(

@@ -15,10 +15,24 @@ __all__ = [
 ]
 
 
-def deepseekv41_mxfp8_linear_baseline(x, weight, weight_scale, x_scale=None, output=None):
+def deepseekv41_mxfp8_linear_baseline(
+    x, weight, weight_scale, x_scale=None, weight_layout="row_major", output=None
+):
     """aiter_mxfp8_blockscaled_linear as Fp8LinearMethod calls it: sglang's quantization of a
-    bf16 x, then aiter's blockscale GEMM at the kernel its tuned tables pick."""
+    bf16 x, then aiter's blockscale GEMM at the kernel its tuned tables pick. On a shuffled
+    weight, aiter's BMM as the wo_a projection calls it, at one group."""
     import torch
+
+    if weight_layout == "shuffled_16x16":
+        from aiter.ops.batched_gemm_op_a8w8 import batched_gemm_a8w8_mxscale_bpreshuffle
+
+        return batched_gemm_a8w8_mxscale_bpreshuffle(
+            x[:, None],
+            weight[None],
+            x_scale.view(torch.uint8)[:, None],
+            weight_scale.view(torch.uint8)[None],
+            dtype=torch.bfloat16,
+        )[:, 0]
     from sglang.kernels.ops.gemm.mxfp8_aiter_gfx95 import aiter_mxfp8_blockscaled_linear
 
     return aiter_mxfp8_blockscaled_linear(
