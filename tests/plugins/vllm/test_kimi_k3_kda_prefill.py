@@ -14,6 +14,16 @@ from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.vllm.models.kimi_k3.kda_prefill import api as kda_api
 from aklr.plugins.vllm.models.kimi_k3.kda_prefill.reference import kimi_k3_kda_prefill_reference
 
+
+def logical_dtypes(args):
+    """Each tensor operand's dtype as the contract names it (as torch does)."""
+    return {
+        name: str(value.dtype).removeprefix("torch.")
+        for name, value in args.items()
+        if isinstance(value, torch.Tensor)
+    }
+
+
 HEADS, DIM, SLOTS, CONV = 2, 128, 3, 96
 SEQLENS = (5, 3)
 
@@ -153,8 +163,8 @@ def op_runs_reference(monkeypatch):
             scale=scale,
             lower_bound=lower_bound,
         )
-        point = SimpleNamespace(axes={"n_heads": HEADS, "head_dim": DIM}, dtypes=dict.fromkeys(args, None))
-        o, states = kimi_k3_kda_prefill_reference(point, args, lambda x, _: x.float())
+        point = SimpleNamespace(axes={"n_heads": HEADS, "head_dim": DIM}, dtypes=logical_dtypes(args))
+        o, states = kimi_k3_kda_prefill_reference(point, args)
         state_cache.copy_(states)
         if out is None:
             return o.to(q.dtype)
@@ -312,8 +322,8 @@ def checkpoint_op_runs_reference(monkeypatch):
                     state_cache=state_cache, state_indices=state_indices, has_initial_state=has_initial_state,
                     cu_seqlens=cu_seqlens, checkpoint_chunks=checkpoint_chunks, checkpoint_state=checkpoint_state,
                     scale=scale, lower_bound=lower_bound)  # fmt: skip
-        point = SimpleNamespace(axes={"n_heads": HEADS, "head_dim": DIM}, dtypes=dict.fromkeys(args, None))
-        o, states, snaps = kimi_k3_kda_prefill_checkpoint_reference(point, args, lambda x, _: x.float())
+        point = SimpleNamespace(axes={"n_heads": HEADS, "head_dim": DIM}, dtypes=logical_dtypes(args))
+        o, states, snaps = kimi_k3_kda_prefill_checkpoint_reference(point, args)
         state_cache.copy_(states)
         checkpoint_state.copy_(snaps)
         return out.copy_(o)

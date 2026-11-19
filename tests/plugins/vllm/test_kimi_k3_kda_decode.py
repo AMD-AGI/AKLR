@@ -25,6 +25,16 @@ from aklr.plugins.vllm.models.kimi_k3.kda_decode.reference import (
     kimi_k3_kda_decode_spec_reference,
 )
 
+
+def logical_dtypes(args):
+    """Each tensor operand's dtype as the contract names it (as torch does)."""
+    return {
+        name: str(value.dtype).removeprefix("torch.")
+        for name, value in args.items()
+        if isinstance(value, torch.Tensor)
+    }
+
+
 HEADS, DIM, SLOTS, CONV = 2, 128, 7, 96
 N = 5
 # K3's row of the fused projection on a rank of 12 heads: q, k, v, g (4 * 12 * 128), f_a (128), beta (12), padding (4)
@@ -113,7 +123,7 @@ def reference_args(call, scale=None):
         scale=DIM**-0.5 if scale is None else scale,
         lower_bound=call["lower_bound"],
     )
-    point = SimpleNamespace(axes={"n_heads": heads, "head_dim": DIM}, dtypes=dict.fromkeys(args))
+    point = SimpleNamespace(axes={"n_heads": heads, "head_dim": DIM}, dtypes=logical_dtypes(args))
     return args, point
 
 
@@ -125,17 +135,18 @@ def test_the_reference_is_vllms_kernel_bit_for_bit(scale):
     call, _ = vllm_call()
     want_out, want_state = triton_packed_decode(call, scale)
     args, point = reference_args(call, scale)
-    out, state_cache = kimi_k3_kda_decode_reference(point, args, lambda x, _: x.float())
+    out, state_cache = kimi_k3_kda_decode_reference(point, args)
     assert torch.equal(out, want_out)
     assert torch.equal(state_cache.view(SLOTS, HEADS, DIM, DIM), want_state)
     assert torch.equal(out[1], torch.zeros(HEADS, DIM)) and torch.equal(out[4], torch.zeros(HEADS, DIM))
 
 
-def test_the_reference_in_float64_is_the_recurrence():
-    """In float64 against the delta rule written as matrices: S = S diag(exp g), S += beta (v - S k) k^T, out = S q."""
+def test_the_reference_is_the_recurrence():
+    """Against the delta rule written as matrices in float64, to float32's rounding: S = S diag(exp g),
+    S += beta (v - S k) k^T, out = S q."""
     call, _ = vllm_call()
     args, point = reference_args(call)
-    out, state_cache = kimi_k3_kda_decode_reference(point, args, lambda x, _: x.double())
+    out, state_cache = kimi_k3_kda_decode_reference(point, args)
     states = call["initial_state"].double().clone()
     for t, slot in enumerate(call["state_indices"].tolist()):
         if slot <= 0:
@@ -150,9 +161,9 @@ def test_the_reference_in_float64_is_the_recurrence():
         beta = torch.sigmoid(args["raw_beta"][t, :, 0].double())
         S = states[slot] @ torch.diag_embed(g.exp())
         S = S + beta[:, None, None] * (v - (S @ k[..., None])[..., 0])[..., None] @ k[:, None, :]
-        torch.testing.assert_close(out[t], (S @ q[..., None])[..., 0], rtol=1e-6, atol=1e-8)
+        torch.testing.assert_close(out[t].double(), (S @ q[..., None])[..., 0], rtol=1e-5, atol=1e-6)
         states[slot] = S
-    torch.testing.assert_close(state_cache.view_as(states), states, rtol=1e-6, atol=1e-8)
+    torch.testing.assert_close(state_cache.view_as(states).double(), states, rtol=1e-5, atol=1e-6)
 
 
 class _Op:
@@ -180,8 +191,8 @@ def _reference_op(qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indice
     heads = raw_g.shape[1]
     args = dict(qkv=qkv, raw_g=raw_g, raw_beta=raw_beta, a_log=a_log, g_bias=g_bias, state_cache=state_cache,
                 state_indices=state_indices, scale=scale, lower_bound=lower_bound)  # fmt: skip
-    point = SimpleNamespace(axes={"n_heads": heads, "head_dim": DIM}, dtypes=dict.fromkeys(args))
-    o, states = kimi_k3_kda_decode_reference(point, args, lambda x, _: x.float())
+    point = SimpleNamespace(axes={"n_heads": heads, "head_dim": DIM}, dtypes=logical_dtypes(args))
+    o, states = kimi_k3_kda_decode_reference(point, args)
     state_cache.copy_(states)
     return out.copy_(o)
 
@@ -466,7 +477,7 @@ def spec_reference_args(call):
         scale=DIM**-0.5,
         lower_bound=call["lower_bound"],
     )
-    return args, SimpleNamespace(axes={"n_heads": heads, "head_dim": DIM}, dtypes=dict.fromkeys(args))
+    return args, SimpleNamespace(axes={"n_heads": heads, "head_dim": DIM}, dtypes=logical_dtypes(args))
 
 
 @pytest.mark.parametrize("accepted", [(2, 1), (3, 3), (1, 2)], ids=["mid", "last", "first"])
@@ -476,7 +487,7 @@ def test_the_speculative_reference_is_vllms_kernel_bit_for_bit(accepted):
     call, _ = vllm_spec_call(accepted=accepted)
     want_out, want_state = triton_spec_decode(call)
     args, point = spec_reference_args(call)
-    out, state_cache = kimi_k3_kda_decode_spec_reference(point, args, lambda x, _: x.float())
+    out, state_cache = kimi_k3_kda_decode_spec_reference(point, args)
     assert torch.equal(out, want_out)
     assert torch.equal(state_cache.view(SPEC_SLOTS, HEADS, DIM, DIM), want_state)
 
@@ -487,7 +498,7 @@ def test_a_padding_window_gives_zeros_and_writes_no_slot():
     call, _ = vllm_spec_call(padding=True)
     want_out, want_state = triton_spec_decode(call)
     args, point = spec_reference_args(call)
-    out, state_cache = kimi_k3_kda_decode_spec_reference(point, args, lambda x, _: x.float())
+    out, state_cache = kimi_k3_kda_decode_spec_reference(point, args)
     assert not out[3:].any() and torch.equal(out[3], want_out[3]) and want_out[4:].isnan().all()
     assert torch.equal(out[:3], want_out[:3])
     assert torch.equal(state_cache.view(SPEC_SLOTS, HEADS, DIM, DIM), want_state)
@@ -499,8 +510,8 @@ def _spec_reference_op(qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_i
     args = dict(qkv=qkv, raw_g=raw_g, raw_beta=raw_beta, a_log=a_log, g_bias=g_bias, state_cache=state_cache,
                 state_indices=state_indices, num_accepted_tokens=num_accepted_tokens, scale=scale,
                 lower_bound=lower_bound)  # fmt: skip
-    point = SimpleNamespace(axes={"n_heads": raw_g.shape[1], "head_dim": DIM}, dtypes=dict.fromkeys(args))
-    o, states = kimi_k3_kda_decode_spec_reference(point, args, lambda x, _: x.float())
+    point = SimpleNamespace(axes={"n_heads": raw_g.shape[1], "head_dim": DIM}, dtypes=logical_dtypes(args))
+    o, states = kimi_k3_kda_decode_spec_reference(point, args)
     state_cache.copy_(states)
     return out.copy_(o)
 
