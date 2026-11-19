@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import shutil
 import time
 from collections.abc import Sequence
@@ -225,3 +226,48 @@ class PipelineReport(FrozenModel):
                         encoding="utf-8",
                     )
                     break
+
+    def write_baselines(self, scope: ValidationScope, directory: Path) -> None:
+        shutil.rmtree(directory, ignore_errors=True)
+        bench = next((s for s in self.stages if isinstance(s, BenchReport)), None)
+        if bench is None:
+            return
+        registry = ContractRegistry.default()
+        schemas = {
+            path: registry.parse_schema((scope.root / path).read_bytes(), path) for path in self.bench_paths
+        }
+        groups = {}
+        for record in bench.workload_records:
+            if not any(t.versus == "baseline" for t in record.timings):
+                continue
+            schema = schemas[record.schema_path]
+            key = axes_text(record.axes)
+            workload = next(
+                w for w in schema.model_dump(mode="json")["workloads"] if axes_text(w["axes"]) == key
+            )
+            baseline = type(schema.baseline)
+            groups.setdefault((schema.op_type, schema.name, baseline), {})[key] = workload
+        for (op_type, name, baseline), workloads in groups.items():
+            data = {
+                "name": f"{name}__baseline",
+                "definition": name,
+                "author": "baseline",
+                "spec": {
+                    "language": "python",
+                    "target": [str(DeviceTarget.from_names(self.platform.arch, self.platform.hardware))],
+                    "entry_point": "main.py::run",
+                    "destination_passing_style": False,
+                },
+                "sources": [
+                    {
+                        "path": "main.py",
+                        "content": f"from {baseline.__module__} import {baseline.__name__}\n\n"
+                        f"run = {baseline.__name__}().baseline\n",
+                    }
+                ],
+                "description": f"The baseline of {name}: {baseline.__module__}.{baseline.__name__}.",
+                "workloads": list(workloads.values()),
+            }
+            out = directory / op_type / name / f"{name}__baseline.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

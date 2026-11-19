@@ -58,3 +58,28 @@ scenarios:
         # Applied after cell lookup. Omitted switches inherit the cell; args take precedence.
         parsers:
           reasoning: true  # Use the reasoning parser declared by the cookbook.
+  - cookbook: moonshotai/kimi-k3
+    model_path: moonshotai/Kimi-K3
+    plugin_paths:
+      - aklr/plugins/sglang/models/kimi_k3
+      - aklr/plugins/sglang/models/deepseek_common
+      - aklr/plugins/sglang/models/forward_mla_rocm
+    env:
+      AKLR_SGLANG_PLUGIN: "1"
+    matches:
+      - hw: mi355x
+        pdMode: unified
+        strategy: balanced
+  - cookbook: moonshotai/kimi-k3.1-pro
+    model_path: moonshotai/Kimi-K3.1-Pro
+    plugin_paths:
+      - aklr/plugins/sglang/models/kimi_k3
+      - aklr/plugins/sglang/models/deepseek_common
+      - aklr/plugins/sglang/models/forward_mla_rocm
+    env:
+      AKLR_SGLANG_PLUGIN: "1"
+    matches:
+      - hw: mi355x
+        pdMode: unified
+        # not low-latency: its --max-running-requests 4 would queue GSM8K's 64 requests
+        strategy: high-throughput

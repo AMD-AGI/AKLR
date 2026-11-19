@@ -1256,7 +1256,7 @@ def test_pipeline_persists_bench_before_interrupted_e2e(
             return BenchReport.from_findings(
                 [],
                 workload_records=tuple(
-                    _workload(w.axes, 123.0, 0.0).model_copy(update={"baseline": None})
+                    _workload(w.axes, 123.0, True).model_copy(update={"baseline": None})
                     for w in schema.workloads
                 ),
             )
@@ -1275,3 +1275,35 @@ def test_pipeline_persists_bench_before_interrupted_e2e(
         Pipeline([_FixedAudit("passed"), Bench("passed"), InterruptedE2e()]).run(scope, out=out)
     assert (out / "schemas" / _SCHEMA).is_file()
     assert "aborted (e2e)" in (out / "report.md").read_text()
+
+
+@pytest.mark.parametrize("timed", [True, False], ids=["baseline_timed", "baseline_not_timed"])
+def test_report_exports_the_defined_baseline_that_was_timed(tmp_path: Path, timed: bool) -> None:
+    path = Path(_SCHEMA)
+    schema = ContractRegistry.default().parse_schema(path.read_bytes(), _SCHEMA)
+    record = _workload(schema.workloads[0].axes, 1.2, True)
+    if not timed:
+        record = record.model_copy(update={"timings": ()})
+    report = PipelineReport(
+        head_sha="head",
+        base_sha=None,
+        measurement_profile={},
+        platform=PlatformRecord(**_PLATFORM),
+        schema_paths=(_SCHEMA,),
+        bench_paths=(_SCHEMA,),
+        stages=(BenchReport.from_findings([], workload_records=(record,)),),
+    )
+    scope = ValidationScope(Path.cwd(), "head", None, (path,), (path,))
+    report.write_baselines(scope, tmp_path)
+    files = list(tmp_path.rglob("*.json"))
+    if not timed:
+        assert files == []
+        return
+    assert len(files) == 1
+    data = json.loads(files[0].read_text())
+    assert data["workloads"][0]["axes"] == schema.workloads[0].axes
+    source = data["sources"][0]["content"]
+    assert "from aklr.plugins.aiter.provider.gemm.baseline import GemmBaseline" in source
+    namespace = {}
+    exec(source, namespace)
+    assert callable(namespace["run"])

@@ -53,10 +53,11 @@ def test_under_keeps_the_schemas_inside_or_outside_a_directory(tmp_path: Path) -
 def test_plugin_only_change_selects_full_validation(tmp_path, monkeypatch) -> None:
     import subprocess
 
-    path = tmp_path / f"aklr/ops/gemm/impls/triton/gemm_n8_k8/{_UUID}.json"
+    path = tmp_path / f"aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n8_k8/{_UUID}.json"
     path.parent.mkdir(parents=True)
     path.write_text("{}")
-    (tmp_path / "aklr/plugins").mkdir()
+    (tmp_path / "aklr/plugins/aiter/provider/gemm/contract.py").touch()
+    (tmp_path / "aklr/plugins").mkdir(exist_ok=True)
     monkeypatch.chdir(tmp_path)
 
     def git(argv, **kwargs):
