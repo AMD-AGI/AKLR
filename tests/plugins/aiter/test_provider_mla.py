@@ -509,6 +509,63 @@ def test_mla_decode_fwd_hands_aklr_the_pool_and_aiters_o(monkeypatch, aklr_serve
     assert kwargs == {"sm_scale": 576**-0.5, "o": call["o"]}
 
 
+def _cprr_call(**changes):
+    """vLLM's verify under decode context parallelism: 2 requests of 1 + 2 draft tokens each, rank 3 of 8."""
+    z = torch.zeros
+    return {
+        **_call("mla_decode_fwd"),
+        "q": z(6, 16, 576, dtype=FP8),
+        "o": z(6, 16, 512, dtype=BF16),
+        "qo_indptr": torch.arange(3, dtype=I32) * 3,
+        "max_seqlen_q": 3,
+        "g_kv_indptr": torch.tensor([0, 21, 60], dtype=I32),
+        "cp_world_size": 8,
+        "cp_rank": 3,
+        "causal": True,
+        **changes,
+    }
+
+
+def test_a_verify_under_context_parallelism_hands_aklr_its_queries_per_request(monkeypatch, aklr_serves):
+    call = _cprr_call()
+    asked = []
+    api = _Api(lambda *a, o, **k: (o, torch.arange(2 * 3 * 16.0).view(2, 3, 16)))
+    api.serving = lambda *a, **k: asked.append((a, k)) or KERNEL
+    monkeypatch.setattr(mla, "mla_decode_fwd_cprr", api)
+    monkeypatch.setattr(mla, "mla_decode_fwd", _Api(lambda *a, **k: pytest.fail("mla_decode_fwd asked")))
+    _, run = _select("mla_decode_fwd", call)
+    o, lse = run(*_args("mla_decode_fwd", call), **_kwargs("mla_decode_fwd", call))
+    # aiter's o, and the lse a row's per head, as aiter's rows
+    assert o is call["o"] and lse.shape == (6, 16) and lse[4, 5].item() == 4 * 16 + 5
+    ((args, kwargs),) = api.calls
+    assert len(asked) == 1 and asked[0][1].keys() == kwargs.keys()
+    q, kv_buffer, kv_indptr, kv_indices, g_kv_indptr, q_scale, kv_scale = args
+    assert q.shape == (2, 3, 16, 576) and q.data_ptr() == call["q"].data_ptr()
+    assert kwargs["o"].shape == (2, 3, 16, 512) and kwargs["o"].data_ptr() == call["o"].data_ptr()
+    assert g_kv_indptr is call["g_kv_indptr"] and kv_indptr is call["kv_indptr"]
+    assert (kwargs["cp_world_size"], kwargs["cp_rank"], kwargs["sm_scale"]) == (8, 3, 576**-0.5)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"causal": False},
+        {
+            "max_seqlen_q": 1,
+            "q": torch.zeros(2, 16, 576, dtype=FP8),
+            "o": torch.zeros(2, 16, 512, dtype=BF16),
+        },
+        # fewer queries than max_seqlen_q for some request
+        {"q": torch.zeros(5, 16, 576, dtype=FP8), "o": torch.zeros(5, 16, 512, dtype=BF16)},
+        {"cp_world_size": 1},
+        {"g_kv_indptr": None},
+    ],
+    ids=["not_causal", "one_query", "ragged", "no_cp", "no_global_offsets"],
+)
+def test_a_verify_under_context_parallelism_outside_cprr_is_declined(aklr_serves, changes):
+    assert _select("mla_decode_fwd", _cprr_call(**changes)) is None
+
+
 def test_mla_paged_decode_hands_aklr_one_q_and_writes_aiters_o(monkeypatch, aklr_serves):
     """q_nope and q_pe go as the one q they are views of; AKLR's output lands in aiter's o."""
     output = torch.full((2, 1, 4, 512), 3.0, dtype=BF16)

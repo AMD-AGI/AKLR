@@ -16,6 +16,7 @@ from aklr.ops.mla.api import (
     fp8_paged_mqa_logits,
     fp8_paged_mqa_logits_verify,
     mla_decode_fwd,
+    mla_decode_fwd_cprr,
 )
 from aklr.plugins.aiter.provider._base import offer, selector, served
 
@@ -64,21 +65,19 @@ def _select_mla_decode_fwd(args, kwargs):
         return_lse,
         g_kv_indptr,
         cp_world_size,
-        _cp_rank,
-        _causal,
+        cp_rank,
+        causal,
         kv_layout,
         seq_lens,
         page_table,
         kv_csr_layout,
         _fast_mode,
     ) = args
-    # one query a request over a page-size-1 pool of token-major rows, its lse returned. aiter's
-    # schedule (work and reduce maps, splits, batch and fast modes) only orders its own kernel's work;
-    # causal has no effect on one query, nor cp_rank without context parallelism. The keyword-only
-    # tensors are aiter's NVFP4 path
+    # a page-size-1 pool of token-major rows, its lse returned. aiter's schedule (work and reduce maps,
+    # splits, batch and fast modes) only orders its own kernel's work. The keyword-only tensors are
+    # aiter's NVFP4 path
     if (
         any(kwargs[name] is not None for name in _NVFP4)
-        or max_seqlen_q != 1
         or page_size != 1
         or nhead_kv != 1
         or logit_cap > 0
@@ -87,22 +86,82 @@ def _select_mla_decode_fwd(args, kwargs):
         or not return_lse
         or q_scale is None
         or kv_scale is None
-        or g_kv_indptr is not None
-        or cp_world_size != 1
         or kv_layout != "token_major"
         or seq_lens is not None
         or page_table is not None
         or kv_csr_layout != "page"
         or q.dim() != 3
-        or q.shape[0] != kv_indptr.shape[0] - 1
     ):
         return None
-    return offer(
-        mla_decode_fwd.serving(
-            q, kv_buffer, kv_indptr, kv_indices, q_scale, kv_scale, sm_scale=_sm_scale(q, sm_scale), o=o
-        ),
-        _run_mla_decode_fwd,
+    batch = kv_indptr.shape[0] - 1
+    sm_scale = _sm_scale(q, sm_scale)
+    # one query a request: causal has no effect on it, nor cp_rank without context parallelism
+    if g_kv_indptr is None and cp_world_size == 1:
+        if max_seqlen_q != 1 or q.shape[0] != batch:
+            return None
+        return offer(
+            mla_decode_fwd.serving(
+                q, kv_buffer, kv_indptr, kv_indices, q_scale, kv_scale, sm_scale=sm_scale, o=o
+            ),
+            _run_mla_decode_fwd,
+        )
+    # vLLM's verify of draft tokens under decode context parallelism: as many causal queries a request
+    # (rows of max_seqlen_q a request, so none fewer) over its round-robin shard of the pool
+    cprr = _cprr_call(
+        q,
+        kv_buffer,
+        o,
+        kv_indptr,
+        kv_indices,
+        max_seqlen_q,
+        sm_scale,
+        q_scale,
+        kv_scale,
+        g_kv_indptr,
+        cp_world_size,
+        cp_rank,
+        causal,
     )
+    if cprr is None:
+        return None
+    call_args, call_kwargs = cprr
+    return offer(mla_decode_fwd_cprr.serving(*call_args, **call_kwargs), _run_mla_decode_fwd)
+
+
+def _cprr_call(
+    q,
+    kv_buffer,
+    o,
+    kv_indptr,
+    kv_indices,
+    max_seqlen_q,
+    sm_scale,
+    q_scale,
+    kv_scale,
+    g_kv_indptr,
+    cp_world_size,
+    cp_rank,
+    causal,
+):
+    """``mla_decode_fwd_cprr``'s (args, kwargs) for aiter's call, its q and o as [batch, queries, heads,
+    width]; ``None`` outside it."""
+    batch = kv_indptr.shape[0] - 1
+    if (
+        g_kv_indptr is None
+        or cp_world_size < 2
+        or not causal
+        or max_seqlen_q < 2
+        or q.shape[0] != batch * max_seqlen_q
+        or o.shape[0] != q.shape[0]
+    ):
+        return None
+    queries = (batch, max_seqlen_q)
+    return (q.unflatten(0, queries), kv_buffer, kv_indptr, kv_indices, g_kv_indptr, q_scale, kv_scale), {
+        "cp_world_size": cp_world_size,
+        "sm_scale": sm_scale,
+        "cp_rank": cp_rank,
+        "o": o.unflatten(0, queries),
+    }
 
 
 def _run_mla_decode_fwd(
@@ -146,12 +205,31 @@ def _run_mla_decode_fwd(
     nvfp4_params=None,
     nvfp4_lse=None,
 ):
-    # (o, lse): aiter returns its split scratch first, which its callers do not read
-    return served(
-        mla_decode_fwd(
-            q, kv_buffer, kv_indptr, kv_indices, q_scale, kv_scale, sm_scale=_sm_scale(q, sm_scale), o=o
-        )
+    sm_scale = _sm_scale(q, sm_scale)
+    cprr = _cprr_call(
+        q,
+        kv_buffer,
+        o,
+        kv_indptr,
+        kv_indices,
+        max_seqlen_q,
+        sm_scale,
+        q_scale,
+        kv_scale,
+        g_kv_indptr,
+        cp_world_size,
+        cp_rank,
+        causal,
     )
+    # (o, lse): aiter returns its split scratch first, which its callers do not read
+    if cprr is None:
+        return served(
+            mla_decode_fwd(q, kv_buffer, kv_indptr, kv_indices, q_scale, kv_scale, sm_scale=sm_scale, o=o)
+        )
+    call_args, call_kwargs = cprr
+    _, lse = served(mla_decode_fwd_cprr(*call_args, **call_kwargs))
+    # aiter's lse is a row's per head, as its q's rows
+    return o, lse.flatten(0, 1)
 
 
 def _whole_query(q_nope, q_pe):
