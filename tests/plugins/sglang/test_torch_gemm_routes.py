@@ -39,14 +39,13 @@ def gemm(monkeypatch):
 
 @pytest.fixture
 def sglang(monkeypatch):
-    """sglang's helpers the lm_head routes ask: a head is quantized where it carries ``quantized``, uses AMX where it
-    carries ``amx``; the DSpark module, without 0.5.23's fp8 head flag."""
+    """sglang's helpers the lm_head routes ask, as its logits processor names them: a head is quantized where it
+    carries ``quantized``, uses AMX where it carries ``amx``; the DSpark module, without 0.5.23's fp8 head flag."""
     logits = ModuleType("sglang.srt.layers.logits_processor")
     logits.should_apply_lm_head_quant_method = lambda head, method: getattr(head, "quantized", False)
-    common = ModuleType("sglang.srt.utils.common")
-    common.use_intel_amx_backend = lambda head: getattr(head, "amx", False)
+    logits.use_intel_amx_backend = lambda head: getattr(head, "amx", False)
     dspark = ModuleType("sglang.srt.models.dspark")
-    for module in (logits, common, dspark):
+    for module in (logits, dspark):
         monkeypatch.setitem(sys.modules, module.__name__, module)
     return dspark
 
@@ -89,6 +88,54 @@ def test_a_plain_lm_head_hands_its_hidden_states_and_weight_to_gemm(sglang, gemm
     gemm.result = result
     x, lm_head = hidden(), head()
     assert lm_head_route._compute_lm_head(processor(), x, lm_head) is result
+    (call,) = gemm.calls
+    assert call["a"] is x and call["b"] is lm_head.weight
+
+
+def test_an_lm_head_the_nightly_hands_to_aiters_gemm_stays_on_sglang(sglang, gemm, monkeypatch):
+    """Its call of aiter's tgemm has a route of its own."""
+    monkeypatch.setattr(
+        sys.modules["sglang.srt.layers.logits_processor"],
+        "_aiter_lm_head_ok",
+        lambda x, weight: True,
+        raising=False,
+    )
+    assert lm_head_route._compute_lm_head(processor(), hidden(), head()) is FallbackReason.OUT_OF_CONTRACT
+    assert gemm.calls == []
+
+
+@pytest.mark.parametrize(
+    ("installed", "buffer", "written"),
+    [
+        ("0.5.23.dev20261111", torch.empty(ROWS, VOCAB, dtype=torch.bfloat16), True),
+        ("0.5.23.dev20261111", torch.empty(ROWS, VOCAB, dtype=torch.float32), False),
+        ("0.5.23.dev20261111", torch.empty(ROWS + 1, VOCAB, dtype=torch.bfloat16), False),
+        ("0.5.23", torch.empty(ROWS, VOCAB, dtype=torch.bfloat16), False),
+    ],
+    ids=["nightly", "nightly_other_dtype", "nightly_other_shape", "release"],
+)
+def test_an_lm_head_writes_the_buffer_sglangs_matmul_would(
+    sglang, gemm, monkeypatch, installed, buffer, written
+):
+    """The nightly's matmul writes a buffer of the logits' shape and the head's dtype; 0.5.23's writes none."""
+    monkeypatch.setattr(lm_head_route, "sglang_version", lambda: installed)
+    lm_head_route._compute_lm_head(processor(), hidden(), head(), out=buffer)
+    (call,) = gemm.calls
+    assert call["out"] is (buffer if written else None)
+
+
+@pytest.mark.parametrize("dtype", ["fp8", "mxfp8"])
+def test_a_draft_head_of_a_requested_dtype_stays_on_sglang(sglang, gemm, dtype):
+    """The nightly's --speculative-dspark-lm-head-dtype: sglang quantizes the head and runs another kernel."""
+    sglang.get_spec = lambda: SimpleNamespace(speculative_dspark_lm_head_dtype=dtype)
+    assert dspark_route._project_through_lm_head(hidden(), head()) is FallbackReason.OUT_OF_CONTRACT
+    assert gemm.calls == []
+
+
+def test_a_draft_head_of_no_requested_dtype_reaches_gemm_on_the_nightly(sglang, gemm):
+    sglang.get_spec = lambda: SimpleNamespace(speculative_dspark_lm_head_dtype=None)
+    x, lm_head = hidden(), head()
+    assert dspark_route._project_through_lm_head(x, lm_head) == "aklr"
     (call,) = gemm.calls
     assert call["a"] is x and call["b"] is lm_head.weight
 
