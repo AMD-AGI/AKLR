@@ -1,0 +1,259 @@
+{
+  "schema_version": 5,
+  "name": "kimi_k3_kda_conv_strided_rows_proj1536_width4",
+  "contract_id": "kimi_k3_kda_conv@1.0",
+  "description": "Kimi-K3's KDA short convolution, every sequence's tokens back to back: sequence s owns rows cu_seqlens[s]:cu_seqlens[s + 1] of x and slot state_indices[s] of conv_state. Per channel c of the packed q|k|v (c = part * proj + j for x[:, part, j]), the window is conv_state[slot, :, c] (when has_initial_state[s], else width - 1 zeros) then the sequence's inputs; token t's y[t, c] = silu(sum_j weight[c, j] * window[t + j]) in float32, rounded to x's dtype; the window's last width - 1 entries are written back to conv_state[slot, :, c]. q = y[:, :proj], k = y[:, proj:2 * proj], v = y[:, 2 * proj:]. Slots no sequence names are left unchanged.",
+  "op_type": "kda_conv",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens of every sequence, back to back."
+    },
+    "n_seqs": {
+      "type": "var",
+      "description": "Sequences."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Sequence offsets: sequences + 1."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Slots of the convolution state."
+    },
+    "proj": {
+      "type": "const",
+      "value": 1536,
+      "description": "Channels of each of q, k and v on this rank."
+    },
+    "width": {
+      "type": "const",
+      "value": 4,
+      "description": "The convolution's taps."
+    },
+    "dim": {
+      "type": "const",
+      "value": 4608,
+      "description": "Channels of the packed q|k|v."
+    },
+    "state_len": {
+      "type": "const",
+      "value": 3,
+      "description": "Inputs a slot keeps."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        3,
+        "proj"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The packed q|k|v projection before the convolution: x[t, 0] is q's, x[t, 1] k's, x[t, 2] v's."
+    },
+    "weight": {
+      "shape": [
+        "dim",
+        "width"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4
+      },
+      "description": "Each packed channel's taps, the oldest input's first; float32, as vLLM keeps Kimi-K3's."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "state_len",
+        "dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The paged convolution state, vLLM's SD layout: per slot, its last width - 1 inputs, oldest first, each a row of every packed channel (vLLM's slot may hold more rows, for speculative decoding: the first width - 1 are these)."
+    },
+    "state_indices": {
+      "shape": [
+        "n_seqs"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each sequence's slot, distinct."
+    },
+    "has_initial_state": {
+      "shape": [
+        "n_seqs"
+      ],
+      "dtype": "bool",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Whether each sequence resumes from its slot's state, else from zeros."
+    },
+    "cu_seqlens": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_tokens"
+      },
+      "description": "Where each sequence's tokens start, then where the last ends."
+    }
+  },
+  "outputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "proj"
+      ],
+      "dtype": "bfloat16",
+      "description": "Queries after the convolution."
+    },
+    "k": {
+      "shape": [
+        "n_tokens",
+        "proj"
+      ],
+      "dtype": "bfloat16",
+      "description": "Keys after the convolution."
+    },
+    "v": {
+      "shape": [
+        "n_tokens",
+        "proj"
+      ],
+      "dtype": "bfloat16",
+      "description": "Values after the convolution."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 4096,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4632,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4712,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6144,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6240,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7680,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7680,
+        "n_seqs": 2,
+        "n_offsets": 3,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7688,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8192,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "strided_rows": {
+        "layouts": {
+          "x": {
+            "kind": "strided_rows"
+          },
+          "conv_state": {
+            "kind": "strided_rows"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "storage",
+            "expected_value": "strided_rows"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.4"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}

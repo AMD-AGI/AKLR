@@ -785,6 +785,24 @@ SMALL_POINTS += (
         attrs={"trans_b": True, "has_bias": False},
         layout_variant_name="b_shuffled",
     ),
+    # Kimi-K3's KDA short convolution shrunk to 128 channels a part: two sequences in vLLM's paged conv state
+    PointSpec(
+        contract_id="kimi_k3_kda_conv@1.0",
+        axes={"n_tokens": 70, "n_seqs": 2, "n_offsets": 3, "n_slots": 3, "proj": 128, "width": 4},
+        dtypes={
+            "x": "bfloat16",
+            "weight": "float32",
+            "conv_state": "bfloat16",
+            "state_indices": "int32",
+            "has_initial_state": "bool",
+            "cu_seqlens": "int32",
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 
 GFX950_CONTRACT_IDS = frozenset(
