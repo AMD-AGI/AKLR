@@ -1,0 +1,464 @@
+{
+  "schema_version": 5,
+  "name": "deepseekv41_mono_k2_attention_inv_rope_pos_wo_a_scale_peer_wo_a_float8_e4m3fn_strided_pages_n_heads16_page_size32_n_indices128_hidden_size5120_o_dim2048",
+  "contract_id": "deepseekv41_mono_k2_attention@1.0",
+  "description": "The attention back of a DeepSeek-V4.1 layer and its FFN boundary on one rank, as one launch (the K2 of sglang's AMD monokernel up to the MoE's input; under data-parallel attention the MoE's rows are gathered from the other ranks first). deepseekv41_sparse_mla's attention with the rotation back, rounded to bf16; each group of 8 heads times its rows of wo_a, rounded to bf16; that, to fp8 e4m3 at an e8m0 scale per 32 values, times wo_b, rounded to bf16: x, the attention's output on a rank holding every head. A rank of a TP group holds its share of the heads, of wo_a's groups and of wo_b's columns: x is then its wo_b output plus peer_x, the sum of the other ranks', which the caller's collective brings, rounded to bf16. Then the mHC boundary into the FFN and its RMSNorm, ffn_input: residual_out[j] = x * post_mix[j] + sum_i comb_mix[i, j] * residual[i], rounded to bf16; the layer input is sum_j mix[j] * residual_out[j] under the previous boundary's pre mix, rounded to bf16, then times rsqrt(mean square + norm_eps) and norm_weight. This boundary's mixes come of the 24 logits hc_fn @ flatten(residual_out) * rsqrt(mean square + hc_rms_eps): sigmoid(logits[:4] * hc_scale[0] + hc_base[:4]) + hc_eps the pre mix, twice the sigmoid of the next 4 at hc_scale[1] the post mix, and the last 16 at hc_scale[2] as a 4 x 4 softmax over its rows plus hc_eps, normalized over columns, then sinkhorn_iters - 1 times over rows and columns (each sum plus hc_eps), the combination mix. An fp8 wo_a comes with wo_a_scale, an e8m0 scale per 32 x 32 block, no block over two groups: the attended values are then rounded to fp8 e4m3 at an e8m0 scale per 32 values before it.",
+  "op_type": "deepseekv41",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the KV pool."
+    },
+    "page_size": {
+      "type": "const",
+      "value": 32,
+      "description": "Slots per page of the KV pool."
+    },
+    "n_indices": {
+      "type": "const",
+      "value": 128,
+      "description": "Indices per token into the KV pool."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the RoPE table."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 5120,
+      "description": "The hidden size."
+    },
+    "mix_dim": {
+      "type": "const",
+      "value": 20480,
+      "description": "The four streams flattened: the mix projection's reduction."
+    },
+    "hidden_blocks": {
+      "type": "const",
+      "value": 160,
+      "description": "MXFP8 blocks of a hidden row."
+    },
+    "o_dim": {
+      "type": "const",
+      "value": 2048,
+      "description": "wo_a's rows, a group's after another's: wo_b's reduction."
+    },
+    "o_blocks": {
+      "type": "const",
+      "value": 64,
+      "description": "MXFP8 blocks of wo_b's reduction."
+    }
+  },
+  "attrs": {
+    "has_extra_kv_cache": false,
+    "has_extra_indices": false,
+    "has_rope_freqs": true,
+    "has_positions": true,
+    "has_wo_a_scale": true,
+    "has_peer_x": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head, the RoPE part last."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        1,
+        584
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "deepseekv4_fp8_kv_cache"
+      },
+      "description": "The layer's KV pool: DeepSeek-V4's packed fp8 slots."
+    },
+    "indices": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_pages * page_size - 1",
+        "distinct": false
+      },
+      "description": "Slots of the KV pool each token reads; negative: skipped."
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head logit added to the normalisation only."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    },
+    "rope_freqs": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The RoPE table: a (c, s) per pair of each position."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's row of the RoPE table."
+    },
+    "wo_a": {
+      "shape": [
+        "o_dim",
+        4096
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4096
+      },
+      "description": "wo_a's weight over a group's 8 heads."
+    },
+    "wo_a_scale": {
+      "shape": [
+        "o_blocks",
+        128
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": 1
+      },
+      "description": "Per 32 x 32 block of an fp8 wo_a."
+    },
+    "wo_b": {
+      "shape": [
+        "hidden_size",
+        "o_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "wo_b's weight."
+    },
+    "wo_b_scale": {
+      "shape": [
+        "hidden_blocks",
+        "o_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -6
+      },
+      "description": "Per 32 x 32 block of wo_b."
+    },
+    "peer_x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The other ranks' wo_b outputs of these tokens, each in bf16, summed."
+    },
+    "residual": {
+      "shape": [
+        "n_tokens",
+        4,
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The four residual streams."
+    },
+    "post_mix": {
+      "shape": [
+        "n_tokens",
+        4
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "The attention boundary's post mix, of x into each stream."
+    },
+    "comb_mix": {
+      "shape": [
+        "n_tokens",
+        4,
+        4
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "The attention boundary's combination mix: [token, from, to]."
+    },
+    "pre_mix": {
+      "shape": [
+        "n_tokens",
+        4
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "The attention boundary's pre mix, which the FFN's input sums the streams under."
+    },
+    "hc_fn": {
+      "shape": [
+        24,
+        "mix_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 20480
+      },
+      "description": "Projects the flattened streams to the 24 mix logits: 4 pre, 4 post, 16 combination."
+    },
+    "hc_scale": {
+      "shape": [3],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "Scale of the pre, post and combination logits."
+    },
+    "hc_base": {
+      "shape": [24],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Bias of the 24 mix logits."
+    },
+    "norm_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "Weight of the RMSNorm of the mixed streams."
+    },
+    "hc_rms_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of the streams."
+    },
+    "hc_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each pre mix and in each Sinkhorn normalization."
+    },
+    "norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each RMSNorm's mean square."
+    },
+    "sinkhorn_iters": {
+      "shape": null,
+      "dtype": "int32",
+      "description": "Sinkhorn normalizations of the combination mix."
+    }
+  },
+  "outputs": {
+    "ffn_input": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The MoE's input: the mixed streams under the post-attention RMSNorm."
+    },
+    "residual_out": {
+      "shape": [
+        "n_tokens",
+        4,
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The streams after the owed post; the streams as given when none is owed."
+    },
+    "pre_mix_out": {
+      "shape": [
+        "n_tokens",
+        4
+      ],
+      "dtype": "float32",
+      "description": "This boundary's pre mix, which the next boundary sums the streams under."
+    },
+    "post_mix_out": {
+      "shape": [
+        "n_tokens",
+        4
+      ],
+      "dtype": "float32",
+      "description": "This boundary's post mix, of the post it owes."
+    },
+    "comb_mix_out": {
+      "shape": [
+        "n_tokens",
+        4,
+        4
+      ],
+      "dtype": "float32",
+      "description": "This boundary's combination mix, of the post it owes."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_pages": 594270,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_pages": 594270,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_pages": 594270,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6,
+        "n_pages": 594270,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "strided_pages": {
+        "layouts": {
+          "kv_cache": {
+            "kind": "strided_pages"
+          },
+          "extra_kv_cache": {
+            "kind": "strided_pages"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "kv_cache_layout",
+            "expected_value": "strided_pages"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}

@@ -1,0 +1,594 @@
+{
+  "schema_version": 5,
+  "name": "deepseekv41_mxfp8_linear_n5120_k288",
+  "contract_id": "deepseekv41_mxfp8_linear@1.0",
+  "description": "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear), before any bias: x @ weight.T, weight fp8 e4m3 at an e8m0 scale per 32 x 32 block. A bf16 x is first rounded to fp8 e4m3 at an e8m0 scale per 32 values of a row, the scale 2**ceil(log2(amax / 448)) of the block's largest magnitude, never below 1e-30; an fp8 x comes with those scales.",
+  "op_type": "deepseekv41",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Rows of x."
+    },
+    "n": {
+      "type": "const",
+      "value": 5120,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 288,
+      "description": "Reduction length."
+    },
+    "scale_rows": {
+      "type": "const",
+      "value": 160,
+      "description": "Weight-scale rows."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 9,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "has_x_scale": false
+  },
+  "inputs": {
+    "x": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations: bf16, or the fp8 values x_scale scales."
+    },
+    "weight": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights."
+    },
+    "weight_scale": {
+      "shape": [
+        "scale_rows",
+        "scale_columns"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -9,
+        "log2_hi": -3
+      },
+      "description": "Per 32 x 32 block of weight."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "x @ weight.T, dequantized."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 7
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 38
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    },
+    {
+      "axes": {
+        "m": 147
+      }
+    },
+    {
+      "axes": {
+        "m": 148
+      }
+    },
+    {
+      "axes": {
+        "m": 160
+      }
+    },
+    {
+      "axes": {
+        "m": 161
+      }
+    },
+    {
+      "axes": {
+        "m": 165
+      }
+    },
+    {
+      "axes": {
+        "m": 166
+      }
+    },
+    {
+      "axes": {
+        "m": 232
+      }
+    },
+    {
+      "axes": {
+        "m": 233
+      }
+    },
+    {
+      "axes": {
+        "m": 246
+      }
+    },
+    {
+      "axes": {
+        "m": 247
+      }
+    },
+    {
+      "axes": {
+        "m": 314
+      }
+    },
+    {
+      "axes": {
+        "m": 315
+      }
+    },
+    {
+      "axes": {
+        "m": 321
+      }
+    },
+    {
+      "axes": {
+        "m": 375
+      }
+    },
+    {
+      "axes": {
+        "m": 376
+      }
+    },
+    {
+      "axes": {
+        "m": 398
+      }
+    },
+    {
+      "axes": {
+        "m": 399
+      }
+    },
+    {
+      "axes": {
+        "m": 415
+      }
+    },
+    {
+      "axes": {
+        "m": 416
+      }
+    },
+    {
+      "axes": {
+        "m": 435
+      }
+    },
+    {
+      "axes": {
+        "m": 436
+      }
+    },
+    {
+      "axes": {
+        "m": 445
+      }
+    },
+    {
+      "axes": {
+        "m": 446
+      }
+    },
+    {
+      "axes": {
+        "m": 498
+      }
+    },
+    {
+      "axes": {
+        "m": 499
+      }
+    },
+    {
+      "axes": {
+        "m": 559
+      }
+    },
+    {
+      "axes": {
+        "m": 560
+      }
+    },
+    {
+      "axes": {
+        "m": 566
+      }
+    },
+    {
+      "axes": {
+        "m": 567
+      }
+    },
+    {
+      "axes": {
+        "m": 577
+      }
+    },
+    {
+      "axes": {
+        "m": 578
+      }
+    },
+    {
+      "axes": {
+        "m": 654
+      }
+    },
+    {
+      "axes": {
+        "m": 655
+      }
+    },
+    {
+      "axes": {
+        "m": 851
+      }
+    },
+    {
+      "axes": {
+        "m": 852
+      }
+    },
+    {
+      "axes": {
+        "m": 1120
+      }
+    },
+    {
+      "axes": {
+        "m": 1121
+      }
+    },
+    {
+      "axes": {
+        "m": 1128
+      }
+    },
+    {
+      "axes": {
+        "m": 1129
+      }
+    },
+    {
+      "axes": {
+        "m": 1418
+      }
+    },
+    {
+      "axes": {
+        "m": 1419
+      }
+    },
+    {
+      "axes": {
+        "m": 1707
+      }
+    },
+    {
+      "axes": {
+        "m": 1708
+      }
+    },
+    {
+      "axes": {
+        "m": 1772
+      }
+    },
+    {
+      "axes": {
+        "m": 1773
+      }
+    },
+    {
+      "axes": {
+        "m": 1948
+      }
+    },
+    {
+      "axes": {
+        "m": 1949
+      }
+    },
+    {
+      "axes": {
+        "m": 1979
+      }
+    },
+    {
+      "axes": {
+        "m": 1980
+      }
+    },
+    {
+      "axes": {
+        "m": 2063
+      }
+    },
+    {
+      "axes": {
+        "m": 2064
+      }
+    },
+    {
+      "axes": {
+        "m": 2149
+      }
+    },
+    {
+      "axes": {
+        "m": 2150
+      }
+    },
+    {
+      "axes": {
+        "m": 2166
+      }
+    },
+    {
+      "axes": {
+        "m": 2167
+      }
+    },
+    {
+      "axes": {
+        "m": 2222
+      }
+    },
+    {
+      "axes": {
+        "m": 2223
+      }
+    },
+    {
+      "axes": {
+        "m": 2496
+      }
+    },
+    {
+      "axes": {
+        "m": 2497
+      }
+    },
+    {
+      "axes": {
+        "m": 2599
+      }
+    },
+    {
+      "axes": {
+        "m": 2600
+      }
+    },
+    {
+      "axes": {
+        "m": 2684
+      }
+    },
+    {
+      "axes": {
+        "m": 2685
+      }
+    },
+    {
+      "axes": {
+        "m": 3096
+      }
+    },
+    {
+      "axes": {
+        "m": 3097
+      }
+    },
+    {
+      "axes": {
+        "m": 3298
+      }
+    },
+    {
+      "axes": {
+        "m": 3299
+      }
+    },
+    {
+      "axes": {
+        "m": 3334
+      }
+    },
+    {
+      "axes": {
+        "m": 3335
+      }
+    },
+    {
+      "axes": {
+        "m": 3355
+      }
+    },
+    {
+      "axes": {
+        "m": 3356
+      }
+    },
+    {
+      "axes": {
+        "m": 3385
+      }
+    },
+    {
+      "axes": {
+        "m": 3386
+      }
+    },
+    {
+      "axes": {
+        "m": 3847
+      }
+    },
+    {
+      "axes": {
+        "m": 3848
+      }
+    },
+    {
+      "axes": {
+        "m": 5908
+      }
+    },
+    {
+      "axes": {
+        "m": 5909
+      }
+    },
+    {
+      "axes": {
+        "m": 5949
+      }
+    },
+    {
+      "axes": {
+        "m": 5950
+      }
+    },
+    {
+      "axes": {
+        "m": 6628
+      }
+    },
+    {
+      "axes": {
+        "m": 6629
+      }
+    },
+    {
+      "axes": {
+        "m": 6898
+      }
+    },
+    {
+      "axes": {
+        "m": 6899
+      }
+    },
+    {
+      "axes": {
+        "m": 6991
+      }
+    },
+    {
+      "axes": {
+        "m": 6992
+      }
+    },
+    {
+      "axes": {
+        "m": 19915
+      }
+    },
+    {
+      "axes": {
+        "m": 19916
+      }
+    },
+    {
+      "axes": {
+        "m": 32768
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}
