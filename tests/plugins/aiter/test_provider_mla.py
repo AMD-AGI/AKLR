@@ -746,6 +746,18 @@ def test_flash_attn_varlen_hands_aklr_offsets_on_a_16_byte_boundary(monkeypatch,
     assert offsets.data_ptr() % 16 == 0 and offsets.tolist() == [0, 300]
 
 
+def test_flash_attn_varlen_asks_with_unaligned_offsets_stood_in_for_not_copied(monkeypatch, aklr_serves):
+    asked = []
+    api = _Api(_varlen_result)
+    api.serving = lambda *args, **kwargs: asked.append(args) or KERNEL
+    monkeypatch.setattr(mla_prefill, "mla_prefill_varlen_lse", api)
+    unaligned = torch.tensor([7, 0, 300], dtype=I32)[1:]
+    monkeypatch.setattr(torch.Tensor, "clone", lambda *_: pytest.fail("select copied the offsets"))
+    _select("flash_attn_varlen_chunk", _call("flash_attn_varlen_chunk", cu_seqlens_q=unaligned))
+    ((_, _, _, offsets),) = asked
+    assert offsets.data_ptr() % 16 == 0 and offsets.shape == unaligned.shape
+
+
 def test_a_fallback_after_select_accepted_raises(monkeypatch, aklr_serves):
     """aiter does not fall back once run started; a fallback there is a bug, not a decline."""
     _, run = _select("mla_sparse_prefill_v4")

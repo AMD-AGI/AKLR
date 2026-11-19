@@ -139,17 +139,21 @@ def _run_mla_sparse_prefill_v4(
     return out
 
 
-def _aligned(offsets):
-    """``offsets``, or a copy where its data does not start on the 16 bytes AKLR's dispatch requires."""
-    return offsets if offsets is None or offsets.data_ptr() % 16 == 0 else offsets.clone()
+def _aligned(offsets, copy):
+    """``offsets``, or where its data does not start on the 16 bytes AKLR's dispatch requires, a copy
+    (``copy``) or an aligned tensor of its shape to ask with, which enqueues nothing."""
+    if offsets is None or offsets.data_ptr() % 16 == 0:
+        return offsets
+    return offsets.clone() if copy else torch.empty_like(offsets)
 
 
-def _varlen_call(q, cu_seqlens_q, cu_seqlens_k, softmax_scale, causal):
-    """mla_prefill_varlen_lse's offsets and keywords for aiter's call. Both causal masks are aligned
-    at the end of the keys; keys that are the queries' own rows are AKLR's default."""
-    keys = None if cu_seqlens_k is cu_seqlens_q else _aligned(cu_seqlens_k)
+def _varlen_call(q, cu_seqlens_q, cu_seqlens_k, softmax_scale, causal, copy):
+    """mla_prefill_varlen_lse's offsets and keywords for aiter's call, unaligned offsets copied when
+    ``copy`` (to run) or stood in for (to ask). Both causal masks are aligned at the end of the keys;
+    keys that are the queries' own rows are AKLR's default."""
+    keys = None if cu_seqlens_k is cu_seqlens_q else _aligned(cu_seqlens_k, copy)
     scale = q.shape[-1] ** -0.5 if softmax_scale is None else softmax_scale
-    return _aligned(cu_seqlens_q), {
+    return _aligned(cu_seqlens_q, copy), {
         "qkv_fp8": True,
         "causal": bool(causal),
         "cu_seqlens_k": keys,
@@ -205,7 +209,7 @@ def _select_flash_attn_varlen(args, kwargs):
     # AKLR's result has no autograd graph; aiter's own path keeps the backward
     if torch.is_grad_enabled() and any(t.requires_grad for t in (q, k, v)):
         return None
-    offsets, call = _varlen_call(q, cu_seqlens_q, cu_seqlens_k, softmax_scale, causal)
+    offsets, call = _varlen_call(q, cu_seqlens_q, cu_seqlens_k, softmax_scale, causal, copy=False)
     # v may be a strided view (vLLM's is a slice of kv_b's output): asked with a contiguous stand-in
     stand_in = v if v.is_contiguous() else torch.empty(v.shape, dtype=v.dtype, device=v.device)
     return offer(mla_prefill_varlen_lse.serving(q, k, stand_in, offsets, **call), _run_flash_attn_varlen)
@@ -240,7 +244,7 @@ def _run_flash_attn_varlen(
     k_descale,
     v_descale,
 ):
-    offsets, call = _varlen_call(q, cu_seqlens_q, cu_seqlens_k, softmax_scale, causal)
+    offsets, call = _varlen_call(q, cu_seqlens_q, cu_seqlens_k, softmax_scale, causal, copy=True)
     output, lse = served(mla_prefill_varlen_lse(q, k, v.contiguous(), offsets, **call))
     # aiter's lse is [heads, tokens], AKLR's [tokens, heads]
     return output, lse.t().contiguous()
