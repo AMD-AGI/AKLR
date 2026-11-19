@@ -21,13 +21,13 @@ measured:
   - {metric: "speedup over aiter, local validate lower bound (measurement profile 19) per Point", value: "1.026–1.092; 5 of 6 measured Points ≥ 1.03 (the file lists those 5)", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n65536_k1536, m 1, 2, 4, 8, 16, 32, measured on the kernel.py of 95f46e6ce3030a27's predecessor (E11)", date: "2026-11-09"}
   - {metric: "speedup over aiter, local validate lower bound (measurement profile 19) per Point", value: "1.020–1.155; 2 of 8 measured Points ≥ 1.03 (the file lists those 2)", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k384, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
 sources:
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k256/f15fac0a07c83b80.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k512/a3a340bda94329c4.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024/20f055ee7ad96354.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k2048/6aded8b56a0cd969.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k4096/977b435f04391052.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k8192/9709c92e2a280fe2.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n8192_k1024/a42eb5e259909010.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k256/ba0a99d6c08b2a9c.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k512/20988693e020acc9.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024/b3a68c27b90bff2d.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k2048/ffe0c170803ba94c.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k4096/1ec1668183b09ec8.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k8192/074d439448fd7875.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n8192_k1024/d43254ea5570fcae.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n32768_k1024/5477b83d84bc4ecd.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536/6f9768d6659b1d4f.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n65536_k1536/95f46e6ce3030a27.json
@@ -309,7 +309,7 @@ On an MI355X, in a checkout of main at 0e02a81, with the three K 1536 and K 384 
 a time:
 
 ```
-python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024/20f055ee7ad96354.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024/b3a68c27b90bff2d.json
 python -m aklr validate --base 0e02a81 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536/6f9768d6659b1d4f.json
 ```
 
@@ -344,12 +344,12 @@ the contract's `compare` becomes `bitwise`.
 - E8 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR CI, measurement profile 19] speedup over aiter 1.061–2.152 per Point, 13 of 13 ≥ 1.03; m 1–32 1.319–1.500, m 64 1.061, m 128–512 1.520–1.876, m 1024–4096 1.814–2.152 (gemm_a8w8_blockwise_scaled_b_shuffled_n32768_k1024, m 1–4096; 6d7cfec, #102, CI run 42549655045)
 - E9 [2026-11, gfx950, FlyDSL 0.3.2, N=6–10, AKLR CI, every measurement of each file on main; measurement profile 17 in #3–#38, 18 in #41–#71, 19 in #102] near-threshold Points: n4096_k256 m 1–64 0.986–1.043 (≥ 1.03 only in #3), m 128 1.002–1.038 (ten runs: #3, #30, #38, #41, #51, #53, #62, #70, #71, #102); n4096_k512 m 256 0.997–1.044 (seven: #3, #10, #30, #38, #62, #70, #71); n4096_k1024 m 4, 8, 16 0.998–1.085 (below 1.03 in #30, #51, #62, #102; 1.073–1.080 in #71), m 32 1.004–1.032 (ten: #3, #10, #30, #38, #41, #51, #53, #62, #71, #102); n4096_k2048 m 2048 1.023–1.073 (eight); n4096_k8192 m 4096 1.005–1.100 (six); n32768_k1024 m 64 1.016–1.026 in #3, #30, #41, #51, #53 and 1.061 in #102 (those schemas' history on main, e.g. `git log 9a29616..6d7cfec -- <schema>`)
 - S1 aklr/plugins/aiter/provider/gemm/contract.py:188 the contract notes that k8192's split-K order follows CTA arrival; compare `bounded` at :269
-- S2 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k8192/9709c92e2a280fe2.json#kernel.py:962 `finish` sums its own partial, then peers (bid_z + d) & (split_k − 1) at :968; counter zeroed once at :1399, decremented by the last arriver at :155
-- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k8192/9709c92e2a280fe2.json#kernel.py:234 `_pick_tiles`: split 4 at m 64 and 128, split 2 with two groups at 256, two groups at 512
-- S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024/20f055ee7ad96354.json#kernel.py:638 m 4, 8, 16 take `_compile_wave_splitk_gemm`; wave 0 sums the K blocks in order at :596
-- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k512/a3a340bda94329c4.json#kernel.py:771 `_pick_tiles`; the kernel has no split-K parameter; one LDS buffer per K tile on the DMA path at :143
-- S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k256/f15fac0a07c83b80.json#kernel.py:101 `tile_k = K`
-- S7 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k4096/977b435f04391052.json#kernel.py:304 owner-wave reduction; half exchange through the B ring at :1092
+- S2 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k8192/074d439448fd7875.json#kernel.py:962 `finish` sums its own partial, then peers (bid_z + d) & (split_k − 1) at :968; counter zeroed once at :1399, decremented by the last arriver at :155
+- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k8192/074d439448fd7875.json#kernel.py:234 `_pick_tiles`: split 4 at m 64 and 128, split 2 with two groups at 256, two groups at 512
+- S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024/b3a68c27b90bff2d.json#kernel.py:638 m 4, 8, 16 take `_compile_wave_splitk_gemm`; wave 0 sums the K blocks in order at :596
+- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k512/20988693e020acc9.json#kernel.py:771 `_pick_tiles`; the kernel has no split-K parameter; one LDS buffer per K tile on the DMA path at :143
+- S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k256/ba0a99d6c08b2a9c.json#kernel.py:101 `tile_k = K`
+- S7 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k4096/1ec1668183b09ec8.json#kernel.py:304 owner-wave reduction; half exchange through the B ring at :1092
 - S8 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n32768_k1024/5477b83d84bc4ecd.json#kernel.py:1139 skinny kernel; path choice in `_Runner` at :1415
 - E10 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 19, 16 rounds per Point] speedup over aiter m 1 1.871, 2 1.328, 4 1.868, 16 1.945, 32 1.408; median kernel / aiter time 5.17 / 9.70, 5.20 / 6.91, 5.23 / 9.78, 5.52 / 10.73, 5.61 / 7.92 µs; worst violation fraction 0 (gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536 6f9768d6659b1d4f, m 1, 2, 4, 16, 32; main 0e02a81, aiter 0.1.21.dev66+gdbd8bf5bd)
 - E11 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 19, 16 rounds per Point] speedup over aiter m 1 1.047, 2 1.056, 4 1.061, 8 1.065, 16 1.092, 32 1.026; median kernel / aiter time 16.52 / 17.34, 16.50 / 17.46, 16.52 / 17.54, 16.57 / 17.65, 16.66 / 18.22, 18.60 / 19.09 µs; worst violation fraction 0; measured as e5f9fd89c5a994fa.json at AMD-AGI/AKLR@3877820, which also lists m 32 and embeds the same kernel.py as the predecessor of 95f46e6ce3030a27; 95f46e6ce3030a27 moves each slab pass's offset from `soffset` into the lane's offset, the same 295 instructions in a compile-only ISA dump at m 16, and calls the compiled launcher directly (gemm_a8w8_blockwise_scaled_b_shuffled_n65536_k1536, m 1–32; main 0e02a81, aiter 0.1.21.dev66+gdbd8bf5bd)
@@ -360,6 +360,6 @@ the contract's `compare` becomes `bitwise`.
 - S11 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k384/c4f8eed63e5deff1.json#kernel.py:389 `_pick_config`; whole K per tile at :80; K-block partials scaled after the last MFMA at :272; direct stores at :282
 - S12 ROCm/aiter@dbd8bf5:aiter/configs/model_configs/dsv4_a8w8_blockscale_bpreshuffle_tuned_gemm.csv:671 N 16384 × K 1536 on 256 CUs: `triton` at m 1, 4, 8, 16 (:671, :673–675), CK kernel 7 at m 2, 32 (:672, :676); no other bpreshuffle table of that commit lists this (N, K)
 - S13 ROCm/aiter@dbd8bf5:aiter/ops/gemm_op_a8w8.py:453 `get_CKGEMM_config` looks up (gfx, cu_num, M, N, K) with M as given, then `get_padded_m` at granularity 0 and 1 (:480); `gemm_a8w8_blockscale_bpreshuffle` (:913) uses it
-- E15 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8, AKLR `bench_cudagraph` of measurement profile 19, kernel and aiter paired in each round in one process (profile 18 at 43e112e in a second process, N=6)] the eight-wave split against aiter at m 4, 8, 16: 1.051, 1.053, 1.041; kernel 4.349–4.370 µs, an empty Triton kernel 4.337 µs; profile 18 read 0.30–0.48% higher (gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024 20f055ee7ad96354)
+- E15 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8, AKLR `bench_cudagraph` of measurement profile 19, kernel and aiter paired in each round in one process (profile 18 at 43e112e in a second process, N=6)] the eight-wave split against aiter at m 4, 8, 16: 1.051, 1.053, 1.041; kernel 4.349–4.370 µs, an empty Triton kernel 4.337 µs; profile 18 read 0.30–0.48% higher (gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024 b3a68c27b90bff2d)
 - E16 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8, AKLR `bench_cudagraph` of measurement profile 19, all arms in each round in one process] the skinny path as shipped (128 columns per workgroup) against the same kernel compiled with 64: n32768_k1024 m 64 9.794 against 9.899 µs; n65536_k1536 (95f46e6ce3030a27) m 32 18.413 against 17.972 µs, aiter 18.915 µs, m 16 16.628 µs against aiter 18.166 µs
 - E17 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6, AKLR `bench_cudagraph` of measurement profile 19, all arms in each round in one process] n65536_k1536 (95f46e6ce3030a27) m 1–16 16.544–16.791 µs, 6.08–5.99 TB/s on 100.66 MB of weights, aiter 17.348–18.298 µs; the fastest of 17 Triton and HIP read-only kernels over the same 100.66 MB 16.434 µs, 6.125 TB/s, over 1.007 GB 6.84 TB/s; checksums and GEMM outputs correct

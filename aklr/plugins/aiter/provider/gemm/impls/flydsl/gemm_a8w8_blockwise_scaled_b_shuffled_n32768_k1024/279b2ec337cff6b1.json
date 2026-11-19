@@ -114,11 +114,31 @@
     },
     {
       "axes": {
+        "m": 3
+      }
+    },
+    {
+      "axes": {
         "m": 4
       },
       "accuracy": "passed",
       "speedup": 1.416,
       "microseconds": 7.13
+    },
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 6
+      }
+    },
+    {
+      "axes": {
+        "m": 7
+      }
     },
     {
       "axes": {
@@ -130,11 +150,61 @@
     },
     {
       "axes": {
+        "m": 9
+      }
+    },
+    {
+      "axes": {
+        "m": 10
+      }
+    },
+    {
+      "axes": {
+        "m": 11
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 13
+      }
+    },
+    {
+      "axes": {
+        "m": 14
+      }
+    },
+    {
+      "axes": {
+        "m": 15
+      }
+    },
+    {
+      "axes": {
         "m": 16
       },
       "accuracy": "passed",
       "speedup": 1.39,
       "microseconds": 7.3
+    },
+    {
+      "axes": {
+        "m": 20
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 28
+      }
     },
     {
       "axes": {
@@ -146,11 +216,41 @@
     },
     {
       "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
         "m": 64
       },
       "accuracy": "passed",
       "speedup": 1.068,
       "microseconds": 9.33
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "m": 112
+      }
     },
     {
       "axes": {
@@ -162,11 +262,21 @@
     },
     {
       "axes": {
+        "m": 192
+      }
+    },
+    {
+      "axes": {
         "m": 256
       },
       "accuracy": "passed",
       "speedup": 1.564,
       "microseconds": 15.6
+    },
+    {
+      "axes": {
+        "m": 384
+      }
     },
     {
       "axes": {

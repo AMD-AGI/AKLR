@@ -26,10 +26,10 @@ sources:
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n64_k4096/1ceb094e60e8e93a.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n128_k6144/c58e9c0252303d4c.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n256_k6144/e144986609f2bd34.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2048_k4096/1314ac336355d83c.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k4096/e3ba366a3b21bacf.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2048_k4096/22a8ab761e7f870f.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k4096/a1e77d4ed9a80aca.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n256_k4096/1daaac73309632cb.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n512_k4096/8c0d7540963bb886.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n512_k4096/ad3911a4954d177d.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n512_k4096/2b317e922d5da7e6.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2048_k2048/340a6d0c546989bc.json
 ---
@@ -222,10 +222,10 @@ own path.
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root:
 
 ```
-python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2048_k4096/1314ac336355d83c.json
-python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k4096/e3ba366a3b21bacf.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2048_k4096/22a8ab761e7f870f.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k4096/a1e77d4ed9a80aca.json
 python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n256_k4096/1daaac73309632cb.json
-python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n512_k4096/8c0d7540963bb886.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n512_k4096/ad3911a4954d177d.json
 ```
 
 The report goes to `aklr_validation/report.md`; a run outside CI checks the file, the served numbers are CI's
