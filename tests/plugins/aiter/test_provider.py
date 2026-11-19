@@ -123,6 +123,7 @@ AITER_CONTRACTS = {
             "intermediate_pad",
             "bias1",
             "bias2",
+            "splitk",
             "swiglu_limit",
             "beta",
             "linear_beta",
