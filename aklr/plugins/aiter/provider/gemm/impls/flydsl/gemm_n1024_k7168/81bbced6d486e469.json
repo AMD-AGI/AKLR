@@ -74,6 +74,14 @@
       "accuracy": "passed",
       "speedup": 1.084,
       "microseconds": 18.1
+    },
+    {
+      "axes": {
+        "m": 1024
+      },
+      "accuracy": "passed",
+      "speedup": 1.107,
+      "microseconds": 24.9
     }
   ],
   "layout_variants": {

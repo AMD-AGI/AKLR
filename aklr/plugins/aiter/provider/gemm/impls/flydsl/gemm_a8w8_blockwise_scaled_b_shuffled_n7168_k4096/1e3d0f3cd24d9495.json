@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k2048",
+  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k4096",
   "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
   "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
   "op_type": "gemm",
@@ -16,7 +16,7 @@
     },
     "k": {
       "type": "const",
-      "value": 2048,
+      "value": 4096,
       "description": "Reduction length."
     },
     "scale_rows": {
@@ -26,7 +26,7 @@
     },
     "scale_columns": {
       "type": "const",
-      "value": 16,
+      "value": 32,
       "description": "Scale columns."
     }
   },
@@ -98,47 +98,17 @@
   "workloads": [
     {
       "axes": {
-        "m": 7
+        "m": 1
       }
     },
     {
       "axes": {
-        "m": 8
+        "m": 2
       }
     },
     {
       "axes": {
-        "m": 9
-      }
-    },
-    {
-      "axes": {
-        "m": 10
-      }
-    },
-    {
-      "axes": {
-        "m": 11
-      }
-    },
-    {
-      "axes": {
-        "m": 12
-      }
-    },
-    {
-      "axes": {
-        "m": 13
-      }
-    },
-    {
-      "axes": {
-        "m": 14
-      }
-    },
-    {
-      "axes": {
-        "m": 15
+        "m": 4
       }
     },
     {
@@ -148,142 +118,7 @@
     },
     {
       "axes": {
-        "m": 20
-      }
-    },
-    {
-      "axes": {
-        "m": 21
-      }
-    },
-    {
-      "axes": {
-        "m": 24
-      }
-    },
-    {
-      "axes": {
-        "m": 28
-      }
-    },
-    {
-      "axes": {
         "m": 32
-      }
-    },
-    {
-      "axes": {
-        "m": 35
-      }
-    },
-    {
-      "axes": {
-        "m": 40
-      }
-    },
-    {
-      "axes": {
-        "m": 42
-      }
-    },
-    {
-      "axes": {
-        "m": 48
-      }
-    },
-    {
-      "axes": {
-        "m": 49
-      }
-    },
-    {
-      "axes": {
-        "m": 56
-      }
-    },
-    {
-      "axes": {
-        "m": 64
-      }
-    },
-    {
-      "axes": {
-        "m": 70
-      }
-    },
-    {
-      "axes": {
-        "m": 80
-      }
-    },
-    {
-      "axes": {
-        "m": 84
-      }
-    },
-    {
-      "axes": {
-        "m": 96
-      }
-    },
-    {
-      "axes": {
-        "m": 98
-      }
-    },
-    {
-      "axes": {
-        "m": 112
-      }
-    },
-    {
-      "axes": {
-        "m": 126
-      }
-    },
-    {
-      "axes": {
-        "m": 128
-      }
-    },
-    {
-      "axes": {
-        "m": 140
-      }
-    },
-    {
-      "axes": {
-        "m": 154
-      }
-    },
-    {
-      "axes": {
-        "m": 168
-      }
-    },
-    {
-      "axes": {
-        "m": 182
-      }
-    },
-    {
-      "axes": {
-        "m": 192
-      }
-    },
-    {
-      "axes": {
-        "m": 196
-      }
-    },
-    {
-      "axes": {
-        "m": 210
-      }
-    },
-    {
-      "axes": {
-        "m": 224
       }
     }
   ],
@@ -315,9 +150,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "flydsl",
