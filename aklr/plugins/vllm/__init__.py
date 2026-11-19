@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Callable
 
 from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import RuntimeEnv
@@ -14,7 +15,11 @@ from aklr.core.runtime.dispatch._vllm import _register_runtime_hook
 from aklr.plugins.vllm import hook
 from aklr.plugins.vllm.stack import roomy
 
-__all__ = ["register"]
+__all__ = ["AFTER_STEP", "register"]
+
+# Called after each step a worker executes, on every rank alike: an op's watch over state its kernels keep between
+# steps (the latent-MoE tail's fail-stop), registered when the op sets that state up
+AFTER_STEP: list[Callable[[], None]] = []
 
 
 def register() -> None:
@@ -73,7 +78,10 @@ def _warm_up(result, worker, *args, **kwargs):
 
 def _execute(next_fn, *args, **kwargs):
     # Keep AITER's hot launches away from CPython's frame-chunk boundary.
-    return roomy(next_fn, *args, **kwargs)
+    result = roomy(next_fn, *args, **kwargs)
+    for after_step in AFTER_STEP:
+        after_step()
+    return result
 
 
 def _install_once() -> list[str]:

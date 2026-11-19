@@ -71,6 +71,21 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"n_valid_rows": 2, "write_bank": True, "has_addend": True, "has_norm": True},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's latent-MoE tail shrunk, a one-rank group (the generic tests draw one rank's inputs; the CPU tests of
+    # the op run its eight ranks)
+    PointSpec(
+        contract_id="kimi_k3_latent_moe_tail@1.0",
+        axes={"n_tokens": 4, "hidden_size": 256, "latent_size": 128},
+        dtypes={
+            "routed": "bfloat16",
+            "shared": "bfloat16",
+            "up_weight": "bfloat16",
+            "norm_weight": "bfloat16",
+            "out": "bfloat16",
+        },
+        attrs={"tp_size": 1},
+        layout_variant_name="row_major",
+    ),
     # Muse Spark's MoE experts shrunk: half the routed experts on the rank, as vLLM holds
     # them for aiter
     PointSpec(
