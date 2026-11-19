@@ -39,11 +39,10 @@ def dsa_topk_transform(score, lengths, page_table_size_1, cu_seqlens_q, out_page
 def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_table_1, sm_scale):
     """The decode's attention as one op call on the whole q, returned as sglang returns it,
     [tokens, heads, v_head_dim]; v_head_dim is q_nope's width, as sglang's kernel asserts."""
-    from sglang.srt.runtime_context import get_spec
-
     q = _whole_query(q_nope, q_rope)
-    # speculative decoding's draft steps stay on sglang
-    if q is None or get_spec().speculative_algorithm is not None:
+    # speculative decoding's draft steps are decodes too, a query per sequence over its own
+    # top-k; a decode context parallel rank holds every dcp_size-th slot under global indices
+    if q is None or self.dcp_size > 1:
         return FallbackReason.OUT_OF_CONTRACT
     return dsa_sparse_mla_decode(
         q=q,
@@ -116,7 +115,8 @@ def _fast_topk_transform_fused(score, lengths, page_table_size_1, cu_seqlens_q, 
     )
 
 
-# HIP's DSA prefill; forward_extend imports it at each call.
+# HIP's DSA prefill, and with speculative decoding its target_verify and draft_extend_v2;
+# forward_extend imports it at each call.
 @sglang_route(
     "sglang.kernels.ops.attention.dsa.triton_sparse_mla.triton_sparse_mla_fwd",
     versions=("0.5.22", "0.5.23"),
@@ -124,30 +124,31 @@ def _fast_topk_transform_fused(score, lengths, page_table_size_1, cu_seqlens_q, 
 def _triton_sparse_mla_fwd(
     q_nope, q_rope, kv, indices, sm_scale, d_v=512, topk_length=None, max_topk_length=None
 ):
-    """New sequences' prefill as one op call; tokens after a cached prefix stay on sglang."""
+    """New sequences' prefill as one op call; any other call as sparse_mla_verify's, a query per
+    token over that token's own top-k."""
     import torch
     from sglang.srt.runtime_context import get_spec
 
     q = _whole_query(q_nope, q_rope)
-    if (
-        q is None
-        or d_v != q_nope.shape[-1]
-        or get_spec().speculative_algorithm is not None
-        or topk_length is not None
-        or (max_topk_length is not None and max_topk_length <= _SGLANG_SHORT_TOPK)
-        or torch.cuda.is_current_stream_capturing()
-        or not _is_new_sequences(q.shape[0])
-    ):
+    if q is None or d_v != q_nope.shape[-1] or topk_length is not None:
         return FallbackReason.OUT_OF_CONTRACT
-    output = dsa_sparse_mla_prefill(
-        q=q,
-        kv_cache=kv.view(-1, kv.shape[-1]),
-        topk_indices=indices.squeeze(1),
-        sm_scale=sm_scale,
-    )
-    if isinstance(output, FallbackReason):
-        return output
-    return output.unsqueeze(0)
+    if (
+        get_spec().speculative_algorithm is None
+        and (max_topk_length is None or max_topk_length > _SGLANG_SHORT_TOPK)
+        and not torch.cuda.is_current_stream_capturing()
+        and _is_new_sequences(q.shape[0])
+    ):
+        output = dsa_sparse_mla_prefill(
+            q=q,
+            kv_cache=kv.view(-1, kv.shape[-1]),
+            topk_indices=indices.squeeze(1),
+            sm_scale=sm_scale,
+        )
+        if not isinstance(output, FallbackReason):
+            return output.unsqueeze(0)
+    from aklr.plugins.sglang.layers.sparse_mla.api import triton_sparse_mla_verify
+
+    return triton_sparse_mla_verify(q, kv, indices, sm_scale, max_topk_length)
 
 
 def _is_new_sequences(tokens):
