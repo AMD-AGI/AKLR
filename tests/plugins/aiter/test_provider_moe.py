@@ -17,6 +17,7 @@ import torch
 
 from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.plugins.aiter.situv2_a4w4_moe.api import situv2_a4w4_moe
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
@@ -319,10 +320,53 @@ def test_a_call_outside_aklrs_contract_is_declined_before_aklr_is_asked(aklr_ser
     assert _select(op, **changes) is None
 
 
-@pytest.mark.parametrize("picked", [FP4, BF16], ids=["fp4", "bf16"])
-def test_situv2_is_declined_where_aiter_quantizes_its_activations_to_other_than_fp8(aklr_serves, picked):
-    aklr_serves.picked = picked
+def test_situv2_is_declined_where_aiter_keeps_its_activations_in_bf16(aklr_serves):
+    aklr_serves.picked = BF16
     assert _select("fused_moe", activation=ActivationType.Situv2.value) is None
+
+
+SITUV2_A4W4 = {"activation": ActivationType.Situv2.value, "beta": 1.5, "linear_beta": 2.5}
+
+
+def test_situv2_on_mxfp4_activations_is_served_by_situv2_a4w4_moe(monkeypatch, aklr_serves):
+    """vLLM's Kimi-K3 (AITER_SITUV2_A4W4): aiter rounds SiTUv2's activations to MXFP4."""
+    aklr_serves.picked = FP4
+    calls, asked = [], []
+    api = _api(lambda *a, **k: calls.append((a, k)) or "y")
+    api.serving = lambda *a, **k: asked.append(k) or KERNEL
+    monkeypatch.setattr(moe, "situv2_a4w4_moe", api)
+    monkeypatch.setattr(moe, "fused_moe", _api(lambda *a, **k: pytest.fail("fused_moe asked")))
+    out = torch.empty(4, 256, dtype=BF16)
+    changes = {**SITUV2_A4W4, "output": out, "dtype": BF16}
+    kernel, run = _select("fused_moe", **changes)
+    assert kernel is KERNEL
+    args = _args("fused_moe", **changes)
+    assert run(*args) == "y"
+    ((tensors, kwargs),) = calls
+    # asked with what it runs on
+    ((selected),) = asked
+    assert _same(tensors, args[:5]) and selected.keys() == kwargs.keys()
+    assert kwargs["w1_scale"] is args[9] and kwargs["w2_scale"] is args[10]
+    assert (kwargs["beta"], kwargs["linear_beta"], kwargs["out_dtype"]) == (1.5, 2.5, BF16)
+    assert kwargs["out"] is out
+    inspect.signature(situv2_a4w4_moe).bind(*tensors, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"expert_mask": torch.ones(2, dtype=I32)},
+        {"num_local_tokens": torch.ones(1, dtype=I32)},
+        {"doweight_stage1": True},
+        {"swiglu_limit": 7.0},
+        {"beta": None},
+        {"gate_mode": "interleaved"},
+    ],
+    ids=["expert_mask", "num_local_tokens", "doweight_stage1", "swiglu_limit", "no_beta", "interleaved"],
+)
+def test_situv2_on_mxfp4_activations_outside_its_contract_is_declined(aklr_serves, changes):
+    aklr_serves.picked = FP4
+    assert _select("fused_moe", **{**SITUV2_A4W4, **changes}) is None
 
 
 def test_a_one_group_call_aiter_routes_by_herd_is_declined(monkeypatch, aklr_serves):
