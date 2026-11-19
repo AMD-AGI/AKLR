@@ -207,7 +207,7 @@ def _forward_cuda_k_only(
 
 @sglang_route(
     "sglang.srt.layers.attention.dsa.dsa_indexer.Indexer._aiter_fused_fp8_prepare_and_store",
-    versions=("0.5.22",),
+    versions=("0.5.22", "0.5.23"),
 )
 def _aiter_fused_fp8_prepare_and_store(
     self, x, q_lora, positions, forward_batch, layer_id, *, num_tokens=None
