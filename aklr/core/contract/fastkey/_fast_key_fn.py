@@ -49,6 +49,23 @@ _DECLINE = (
 )
 
 
+def _apart_in_pages(a: torch.Tensor, b: torch.Tensor, a_ptr: int, b_ptr: int) -> bool:
+    """Whether ``a`` and ``b``, whose spans meet, are rows of one page grid that never share a byte: the same row
+    stride in bytes, each row's elements dense, ``b``'s row in every page between the end of ``a``'s and the start of
+    the next (vLLM's Mamba pages: a slot's convolution state, then its recurrent state)."""
+    if a.dim() < 2 or b.dim() < 2 or not a.shape[0] or not b.shape[0]:
+        return False
+    page = a.stride(0) * a.element_size()
+    if (
+        page <= 0
+        or b.stride(0) * b.element_size() != page
+        or not (a[0].is_contiguous() and b[0].is_contiguous())
+    ):
+        return False
+    offset = (b_ptr - a_ptr) % page
+    return a[0].numel() * a.element_size() <= offset and offset + b[0].numel() * b.element_size() <= page
+
+
 class FastKeyFnGenerator(ClosureGenerator):
     """Generates ``fast_key(call)``; ``body`` grows by one ``_emit_*`` per step.
     ``read_tensors`` (tensor inputs, then required outputs) carry the axes."""
@@ -69,6 +86,7 @@ class FastKeyFnGenerator(ClosureGenerator):
             "_type": type,
             "_getattr": getattr,
             "_strided": torch.strided,
+            "_apart_in_pages": _apart_in_pages,
         }
         super().__init__(codec, device, scope)
         self.body: list[ast.stmt] = []
@@ -238,16 +256,18 @@ class FastKeyFnGenerator(ClosureGenerator):
 
     def _overlap_checks(self, written: str, others: list[str]) -> list[ast.stmt]:  # structure: allow S4 long caller  # fmt: skip
         """Decline when the tensor the kernel writes, ``written``, shares a byte with
-        any of ``others``."""
+        any of ``others``: their spans meet, and they are not rows of one page grid kept
+        apart in every page."""
         size, tests = f"_bytes_{written}", []
         for name in others:
             spec = self.read_tensors.get(name)  # None: an allocated output
             test = fill_expr(
-                "P < Q + T.nbytes and Q < P + B",
+                "P < Q + T.nbytes and Q < P + B and not _apart_in_pages(O, T, P, Q)",
                 P=f"_ptr_{written}",
                 Q=f"_ptr_{name}",
                 T=name,
                 B=size,
+                O=written,
             )
             if spec is None or spec.present_when is not None:
                 test = fill_expr("T is not None and X", T=name, X=test)
