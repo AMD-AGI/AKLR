@@ -103,6 +103,14 @@ class E2eStage(PipelineStage[E2eReport]):
         """Run scenarios until done, out of time, or unable to verify cleanup."""
         if not self._scenarios:  # every model disabled: no reason to fail the run
             return E2eReport.skipped("no enabled scenario in scenarios.yaml")
+        scenarios = self._scenarios
+        if scope.base_sha is not None:  # with a base, only the models the change since it reaches
+            changed = [p for p in scope.changed_paths() if scope.path_kind(p) != "other"]
+            scenarios = tuple(s for s in scenarios if any(map(s.is_reached_by, changed)))
+            if not scenarios:
+                return E2eReport.skipped(
+                    f"the change since {scope.base_sha[:12]} reaches no scenario's model"
+                )
         if time.monotonic() >= self._deadline - self._cleanup_budget:
             return E2eReport.aborted("e2e deadline exhausted before startup")
         findings: list[Finding] = []
@@ -123,11 +131,11 @@ class E2eStage(PipelineStage[E2eReport]):
             earlier.write_schemas(scope.root, measured_dir)
             python_path = os.pathsep.join(filter(None, (str(scope.root), os.environ.get("PYTHONPATH"))))
             env = self._env | {"PYTHONPATH": python_path, ENV_MEASURED_DIR: str(measured_dir)}
-            for index, scenario in enumerate(self._scenarios):
+            for index, scenario in enumerate(scenarios):
                 if time.monotonic() >= self._deadline - self._cleanup_budget:
                     findings.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, "e2e deadline exhausted"))
                     break
-                where = f"scenario {index + 1}/{len(self._scenarios)} {scenario.name}"
+                where = f"scenario {index + 1}/{len(scenarios)} {scenario.name}"
                 record = E2eRecord(
                     scenario=scenario.name,
                     cookbook=scenario.cookbook,

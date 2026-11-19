@@ -70,6 +70,7 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
         "server_failure": None,
         "controls": [],
         "control_failures": {},
+        "changed_paths": [],
     }
     read_text = Path.read_text
     glob = Path.glob
@@ -117,6 +118,9 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
             state["controls"].append((argv, action))
             failure = state["control_failures"].get(action, "")
             return subprocess.CompletedProcess(argv, int(bool(failure)), "", failure)
+        if argv[0] == "git" and {"diff", "ls-files"} & set(argv):  # the scope's change set
+            changed = state["changed_paths"] if "diff" in argv else []
+            return subprocess.CompletedProcess(argv, 0, "\0".join(changed).encode(), b"")
         if argv[0] == "git":
             assert 0 < kwargs.get("timeout", 0) <= 60, "Git lookup must be bounded"
             if state["git_failure"]:
@@ -150,8 +154,10 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
     return state
 
 
-def evaluate(tmp_path: Path, devices=("cuda:0",), *, all_scenarios=True, baseline_dir=None) -> E2eReport:
-    scope = ValidationScope(tmp_path, "head", None, (), ())
+def evaluate(
+    tmp_path: Path, devices=("cuda:0",), *, all_scenarios=True, baseline_dir=None, base_sha=None
+) -> E2eReport:
+    scope = ValidationScope(tmp_path, "head", base_sha, (), ())
     # The earlier pipeline report is the stage's other public input.
     earlier = Mock(spec=PipelineReport)
     stage = E2eStage(devices, all_scenarios=all_scenarios, baseline_dir=baseline_dir)
@@ -866,3 +872,45 @@ def test_invalid_gate_fails_configuration(serving: dict, tmp_path: Path, gate) -
     serving["config"]["gate"] = gate
     with pytest.raises(ValueError, match="scenarios.yaml"):
         evaluate(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("changed", "served"),
+    [
+        (["aklr/plugins/sglang/models/model_a/api.py"], ["model-mi355x"]),
+        (["aklr/plugins/sglang/models/model_a/api.py", "aklr/plugins/sglang/models/model_b/api.py"],
+         ["model-mi355x", "other-mi355x"]),
+        (["aklr/plugins/sglang/models/unlisted/api.py"], []),
+        (["aklr/plugins/sglang/models/model_ab/api.py"], []),
+        (["aklr/plugins/sglang/models/shared.py"], ["model-mi355x", "other-mi355x"]),
+        (["aklr/plugins/sglang/hook.py"], ["model-mi355x", "other-mi355x"]),
+        (["aklr/core/jit/kernel.py", "aklr/plugins/sglang/models/model_a/api.py"],
+         ["model-mi355x", "other-mi355x"]),
+        (["docs/guide.md", "tests/core/test_x.py"], []),
+    ],
+    ids=["one-model", "two-models", "unlisted-model", "name-prefix", "file-beside-models", "shared-plugin",
+         "core", "docs-and-tests"],
+)  # fmt: skip
+def test_stage_serves_only_the_models_a_change_reaches(
+    serving: dict, tmp_path: Path, changed: list[str], served: list[str]
+) -> None:
+    first = serving["config"]["scenarios"][0]
+    first["plugin_paths"] = ["aklr/plugins/sglang/models/model_a"]
+    other = first | {"cookbook": "vendor/other", "plugin_paths": ["aklr/plugins/sglang/models/model_b/"]}
+    serving["config"]["scenarios"].append(other)
+    cookbook = tmp_path / "sglang/docs/src/snippets/configs/vendor"
+    (cookbook / "other.jsx").write_text((cookbook / "model.jsx").read_text())
+    serving["changed_paths"] = changed
+
+    report = evaluate(tmp_path, base_sha="base")
+
+    assert report.status == ("passed" if served else "skipped")
+    assert [record.scenario for record in report.scenario_records] == served
+    assert len(serving["commands"]) == 2 * len(served)
+
+
+def test_stage_serves_every_model_without_a_base(serving: dict, tmp_path: Path) -> None:
+    serving["config"]["scenarios"][0]["plugin_paths"] = ["aklr/plugins/sglang/models/model_a"]
+
+    assert evaluate(tmp_path).status == "passed"
+    assert len(serving["commands"]) == 2
