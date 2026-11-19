@@ -1,0 +1,6 @@
+{
+  "samples": 3,
+  "schemas": {
+    "dsa_topk_transform_topk2048": {"recordings": ["glm52-fp8-tp8-mi355x-agentx-c10"]}
+  }
+}
