@@ -21,7 +21,7 @@ __all__ = ["MeasurementProfile"]
 
 @frozen_dataclass
 class MeasurementProfile:
-    num_trials: int = 3
+    num_trials: int = Field(default=3, gt=0)  # a workload no trial checks would pass unchecked
     graph_budget_ms: float = 20.0
     max_log_ratio: float = Field(default_factory=lambda: math.log(2))
 

@@ -20,6 +20,7 @@ from aklr.core.platform.device import DeviceTarget
 from aklr.core.validation import PipelineReport, ValidationScope
 from aklr.core.validation.pipeline import PlatformRecord
 from aklr.core.validation.stages.bench import BenchStage, OpBench
+from aklr.core.validation.stages.bench._measure._input_sampler import InputSampler
 from tests.op_case import GEMM_KERNEL_SOURCE, OpCase
 
 _TARGET = DeviceTarget.from_names("gfx950", "MI355X")
@@ -244,6 +245,15 @@ class TestPlan:
         repo.write(_schema(_OTHER_KERNEL + "# third\n", speedup=2.5), "3")
         base = repo.commit()
         assert _only(repo.plans(base, repo.write(_schema(), "2"))).opponent.stored_speedup == 2.5
+
+    def test_among_equal_stored_speedups_the_incumbent_is_the_one_dispatch_serves(self, repo: _Repo) -> None:
+        schemas = [_schema(_OTHER_KERNEL + f"# {i}\n", speedup=2.0) for i in "13"]
+        for name, schema in zip("13", schemas, strict=True):
+            repo.write(schema, name)
+        base = repo.commit()
+        served = max(schemas, key=lambda s: s.rank_key(s.workloads[0]))
+        opponent = _only(repo.plans(base, repo.write(_schema(), "2"))).opponent
+        assert opponent.schema.kernel.content_hash == served.kernel.content_hash
 
     def test_the_own_kernel_is_preferred_to_a_faster_incumbent(self, repo: _Repo) -> None:
         repo.write(_schema(_OTHER_KERNEL, speedup=3.0), "1")
@@ -520,6 +530,11 @@ class TestVerdict:
             != three
         )
 
+    @pytest.mark.parametrize("num_trials", [0, -1])
+    def test_a_bench_of_no_trials_is_refused(self, num_trials: int) -> None:
+        with pytest.raises(ValueError, match="num_trials"):
+            BenchStage(["cuda:0"], num_trials=num_trials)
+
     def test_a_report_read_back_shows_the_protocol_it_was_measured_under(self, repo: _Repo) -> None:
         report = repo.run(_Tasks({1: _timed(1.5)}), None, repo.write(_schema(), "2"))
         adapter = TypeAdapter(type(report))
@@ -528,7 +543,16 @@ class TestVerdict:
         assert any("protocol 0123456789abcdef" in line for line in rendered)
 
 
-def test_a_mega_moe_task_runs_on_ep_size_ranks_in_fresh_processes() -> None:
-    schema = _group_schema(2)
+@pytest.mark.parametrize("ep_size", [1, 2])
+def test_a_mega_moe_task_runs_on_ep_size_ranks_in_fresh_processes(ep_size: int) -> None:
+    schema = _group_schema(ep_size)
     bench = OpBench.for_op(schema.op_type)
-    assert (bench.ranks(schema), bench.isolate(schema)) == (2, True)
+    assert (bench.ranks(schema), bench.isolate(schema)) == (ep_size, True)
+
+
+def test_a_trial_draws_its_workloads_own_scalars() -> None:
+    case = OpCase.of("rms_norm@1.0")
+    workload = case.contract.workload_for(case.point, {"epsilon": 1e-3})
+    schema = case.contract.narrow(case.point, workloads=[workload], kernel=_kernel())
+    inputs = InputSampler(schema, workload.axes).draw(0, 0, "cpu")
+    assert inputs["epsilon"] == workload.scalars["epsilon"] != 1e-6

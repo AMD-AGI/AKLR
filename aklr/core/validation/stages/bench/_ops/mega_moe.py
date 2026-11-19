@@ -22,6 +22,11 @@ class MegaMoeBench(OpBench, name="mega_moe"):
         return ContractWorkload.of(schema, schema.workloads[0].axes).ranks
 
     @classmethod
+    def isolate(cls, schema: Schema) -> bool:
+        """Always, a single rank too: setup registers mori's process group, once per process."""
+        return True
+
+    @classmethod
     def setup(cls, schema: Schema) -> None:
         """mori's symmetric heap over the task's process group, where the kernels and MegaMoEV2 allocate their buffers."""
         import os

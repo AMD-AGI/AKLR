@@ -78,7 +78,8 @@ class ContractWorkload:
         )
 
     def draw(self, input_set: str, device: Any, rank: int = 0) -> dict[str, Any]:
-        """Rank's row-major inputs of input_set, drawn on device: the same in every process."""
+        """Rank's row-major inputs of input_set, drawn on device: the same in every process. The scalars are the
+        workload's own, the ones its serving call passes."""
         return semantics.row_major_inputs(
             self.schema_json,
             self.workload_json,
@@ -86,7 +87,7 @@ class ContractWorkload:
             input_set=input_set,
             device=str(device),
             rank=rank,
-        )
+        ) | self.workload_json.get("scalars", {})
 
     def assemble_call(self, row_major_args: Mapping[str, Any], device: str | torch.device) -> dict[str, Any]:
         """The api's call of row_major_args on device: the inputs as stored, the Point's attrs and layout facts,

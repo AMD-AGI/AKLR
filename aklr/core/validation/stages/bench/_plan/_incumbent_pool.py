@@ -104,8 +104,8 @@ class IncumbentPool:
         )
 
     def incumbent(self, workload: Workload) -> IncumbentOpponent | None:
-        """Another kernel the base serves workload's Point by: the higher stored speedup first, then the kernel
-        hash and the path. A stored speedup is carried only from a base workload of workload's own key: one of
+        """Another kernel the base serves workload's Point by: the higher stored speedup first, then the higher
+        kernel hash, as dispatch ranks them, and the path. A stored speedup is carried only from a base workload of workload's own key: one of
         other inputs is not."""
         own = self.schema.kernel.content_hash
         key = WorkloadKey.from_workload(workload)
@@ -119,6 +119,6 @@ class IncumbentPool:
             if not (self._runs_here(base) and served.qualifies(min_speedup)):
                 continue
             speedup = served.speedup if WorkloadKey.from_workload(served) == key else None
-            rank = (-(speedup or 0.0), base.kernel.content_hash, path)
+            rank = (speedup or 0.0, base.kernel.content_hash, path)
             ranked.append((rank, IncumbentOpponent(self.baseline, path, base, speedup)))
-        return min(ranked, key=lambda item: item[0], default=(None, None))[1]
+        return max(ranked, key=lambda item: item[0], default=(None, None))[1]

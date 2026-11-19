@@ -24,8 +24,9 @@ the statistics, `_plan/` for what a Point is timed against, `_judge/` for the ju
   | Case | Opponent | Threshold | Speedup written back |
   |---|---|---|---|
   | the base holds this very kernel at the Point | Baseline | Retain | measured |
-  | the base serves another kernel, with a stored speedup s | Incumbent | Entry | ratio × s |
-  | the base serves another kernel, without one | Incumbent | Entry | the ratio over the Incumbent |
+  | the base serves another kernel, with a stored speedup s | Incumbent | Entry | the speedup over the Incumbent × s |
+  | the base serves another kernel, without one, and the op has a Baseline | Baseline | Entry | measured |
+  | the base serves another kernel, without one, and the op has no Baseline | Incumbent | Entry | the speedup over the Incumbent |
   | nothing served, no base or a first release | Baseline | Retain | measured |
   | nothing served otherwise | Baseline | Entry | measured |
   | neither a Baseline nor an Incumbent | nothing | - | 1.0 |
