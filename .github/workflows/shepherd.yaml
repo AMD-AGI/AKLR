@@ -10,6 +10,10 @@ on:
   schedule:
     - cron: '7,37 * * * *'
   workflow_dispatch:
+    inputs:
+      issue:
+        description: An issue an allowed user wrote, taken as if labeled shepherd now; empty runs a plain round.
+        type: string
 
 permissions: {}
 
@@ -17,6 +21,7 @@ env:
   PYTHONDONTWRITEBYTECODE: '1'
   SCRIPTS: harness/automations/shepherd/skills/optimize-and-deliver-kernels/scripts
   CONFIG: .shepherd/configuration.yaml
+  EVENT: ${{ github.event_path }}
 
 defaults:
   run:
@@ -54,7 +59,6 @@ jobs:
           permission-pull-requests: write
       - uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
           persist-credentials: false
       - name: Link the host's configuration
@@ -62,27 +66,42 @@ jobs:
         run: |
           host="$HOME/.shepherd/$GITHUB_REPOSITORY/configuration.yaml"
           mkdir -p "$(dirname "$host")" .shepherd && ln -sfn "$host" "$CONFIG"
-      - name: Set up shepherd on this host
-        # The text is the event's own copy of the issue, as the allowed user labeled it.
-        if: github.event.action == 'labeled'
+      - name: Take the dispatched issue
+        # As an issues event of now: dispatching it approves its text as it stands.
+        if: inputs.issue != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          ISSUE: ${{ github.event.issue.number }}
+          ISSUE: ${{ inputs.issue }}
+          ALLOWED: ${{ vars.SHEPHERD_ALLOWED_USERS }}
+        run: |
+          [[ $ISSUE =~ ^[0-9]+$ ]] || { echo '::error::issue is not a number'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" > "$RUNNER_TEMP/issue.json"
+          jq -e --argjson allowed "$ALLOWED" '(.pull_request | not) and (.user.login as $author | $allowed | index($author))' \
+            "$RUNNER_TEMP/issue.json" > /dev/null || { echo '::error::not an issue an allowed user wrote'; exit 1; }
+          jq --arg sender "$GITHUB_TRIGGERING_ACTOR" --arg repository "$GITHUB_REPOSITORY" \
+            '{issue: ., sender: {login: $sender}, repository: {full_name: $repository}}' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/event.json"
+          echo "EVENT=$RUNNER_TEMP/event.json" >> "$GITHUB_ENV"
+      - name: Set up shepherd on this host
+        # The text is the event's own copy of the issue, as the allowed user labeled it.
+        if: github.event.action == 'labeled' || inputs.issue != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
         run: |
           claude -p "$(cat harness/automations/shepherd/templates/actions-setup-prompt.md)
           #$ISSUE of $GITHUB_REPOSITORY, labeled by $GITHUB_TRIGGERING_ACTOR:
-          $(jq -r '.issue.body // ""' "$GITHUB_EVENT_PATH")" --dangerously-skip-permissions --disallowedTools 'Skill(aklr:remote-gpu)' 'Skill(remote-gpu)' < /dev/null
+          $(jq -r '.issue.body // ""' "$EVENT")" --dangerously-skip-permissions --disallowedTools 'Skill(aklr:remote-gpu)' 'Skill(remote-gpu)' < /dev/null
       - name: Check the configuration
         run: |
           test -f "$CONFIG" || { echo "::error::this host is not set up: an allowed user's shepherd issue sets it up (see setup-shepherd)"; exit 1; }
           python3 -c 'import yaml' || { echo '::error::the runner python3 needs PyYAML'; exit 1; }
       - name: Freeze or stop the issue's request
         # From the event's own copy of the issue, as the allowed user saw it; later edits are never read.
-        if: github.event_name == 'issues'
+        if: github.event_name == 'issues' || inputs.issue != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          ACTION: ${{ github.event.action == 'labeled' && 'freeze' || 'stop' }}
-        run: python3 -I "$SCRIPTS/request.py" "$ACTION" --config "$CONFIG" --event "$GITHUB_EVENT_PATH"
+          ACTION: ${{ github.event.action == 'closed' && 'stop' || 'freeze' }}
+        run: python3 -I "$SCRIPTS/request.py" "$ACTION" --config "$CONFIG" --event "$EVENT"
       - name: Begin a round
         id: begin
         env:
