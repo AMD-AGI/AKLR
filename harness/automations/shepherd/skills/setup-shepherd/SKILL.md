@@ -93,6 +93,26 @@ Probe worker isolation on an allocated node. Start a container with the worker's
 
 Do not use undocumented integration endpoints.
 
+### GitHub Actions host
+
+For `.github/workflows/shepherd.yaml`, the host is the one runner labeled `aklr-gpu` (or the label in the
+`SHEPHERD_RUNNER` variable), and the workflow replaces the Cursor automation. Instead of the automation
+and round needs above, check, as the runner's user on that host:
+
+- `claude` on the runner's `PATH`, with the model endpoint and key in that user's
+  `~/.claude/settings.json`; `gh`, `jq`, Docker, and PyYAML for `python3`.
+- The configuration at a fixed path outside the runner's workspace, named by the repository variable
+  `SHEPHERD_CONFIG`, with `execution.cluster: local`, `execution.gpus`, `execution.work_dir`,
+  `execution.round_hours` at most 0.9 (the job and its token end within the hour), an `issue` strategy,
+  and `publication.ci_gpu_label: ci:gpu-direct`.
+- Repository variables `SHEPHERD_ALLOWED_USERS` (JSON list of logins) and, for scheduled rounds,
+  `SHEPHERD_SCHEDULE_ENABLED: true`. The `shepherd` label exists.
+- The App whose key the workflow uses may write contents, issues and pull requests of this repository.
+- Probe worker isolation with the `docker run` of
+  [local](../optimize-and-deliver-kernels/references/local.md) instead of `remote-gpu exec`.
+
+The job's log is public with the repository: it shows the round's report.
+
 ## 5. Initialize state
 
 Read [state.md](../optimize-and-deliver-kernels/references/state.md). Initialize a new state directory once with the helper; it creates missing private parents.

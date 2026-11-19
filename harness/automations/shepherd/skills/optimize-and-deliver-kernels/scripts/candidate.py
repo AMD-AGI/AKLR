@@ -4,7 +4,7 @@ Run at the repository root.
 
 `candidate.py list --config .shepherd/configuration.yaml --commit <main SHA> --ledger <file>` prints the
 candidates at that commit, by strategy order with the configuration's filters, as {path, op, backend,
-input_sha256, strategy, contract_key} sorted by path, then the skipped ones with their reason. The ledger
+input_sha256, strategy, contract_key} (and `issue` for a schema an issue request names) sorted by path, then the skipped ones with their reason. The ledger
 (a file holding `state.py show`'s output) skips what a campaign still works on, delivered, cools down or
 found blocked; when that campaign had a regime, only that regime is closed, listed in the candidate's
 `skip_regimes`. Competing PRs, the AKLR-baseline check and the GEMM regime split stay with the round.
@@ -18,11 +18,13 @@ changes, or the base is no longer an ancestor of main); 2: error, treat as unkno
 import argparse
 import hashlib
 import json
+import os
+import pwd
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 OPS = PurePosixPath("aklr/plugins/aiter/provider")
 
@@ -70,6 +72,7 @@ class Candidate:
         runtime = (config.get("execution") or {}).get("runtime_revision")
         now, op_trees = datetime.now(timezone.utc), {}
         listed = {}  # path -> strategy; manual wins wherever it stands, as it names the schema.
+        issues = {}  # path -> the issue whose request names it.
         for strategy in policy["strategies"]:
             if strategy["type"] == "manual":
                 listed.update(dict.fromkeys(strategy.get("schemas") or [], "manual"))
@@ -81,6 +84,18 @@ class Candidate:
                     except ValueError:
                         continue
                     listed.setdefault(path, "kernel-less")
+            elif strategy["type"] == "issue":
+                # The open requests `request.py` froze. A request names its schema, as manual does.
+                if "USER" not in os.environ:
+                    os.environ["USER"] = pwd.getpwuid(os.getuid()).pw_name
+                state_dir = Path(os.path.expandvars(config["execution"]["state_dir"])).expanduser()
+                for file in sorted(state_dir.glob("requests/*.json")):
+                    request = json.loads(file.read_text())
+                    if request.get("stopped_at") or request.get("closed_at"):
+                        continue
+                    for path in request["schemas"]:
+                        if listed.get(path) != "manual":
+                            listed[path], issues[path] = "issue", request["issue"]
             else:
                 raise ValueError(f"unknown strategy {strategy['type']!r}")
         paths = sorted(listed)
@@ -110,6 +125,8 @@ class Candidate:
         candidates, skipped = [], []
         for path, strategy in listed.items():
             entry, blob = {"path": path, "strategy": strategy}, blobs[path]
+            if strategy == "issue":
+                entry["issue"] = issues[path]
             if blob is None:
                 skipped.append({**entry, "reason": "missing at this commit"})
                 continue

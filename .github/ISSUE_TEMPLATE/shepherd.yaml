@@ -1,0 +1,15 @@
+name: Kernel optimization request (shepherd)
+description: Ask shepherd to optimize kernel-less schemas. It runs only when an allowed user opens or labels the issue.
+title: 'shepherd: '
+labels: [shepherd]
+body:
+  - type: textarea
+    id: schemas
+    attributes:
+      label: Schemas
+      description: >-
+        Repository-relative schema JSON paths on main, one per line. Nothing else in this issue is read,
+        and edits after the request is accepted have no effect. Closing the issue stops the request.
+      placeholder: aklr/ops/gemm/impls/flydsl/<name>/<file>.json
+    validations:
+      required: true

@@ -168,3 +168,31 @@ def test_a_manual_schema_is_kept_wherever_its_strategy_stands(tmp_path):
     assert [(c["path"], c["strategy"]) for c in listed(tmp_path, "HEAD", [])["candidates"]] == [
         (path, "manual")
     ]
+
+
+def test_an_open_issue_request_lists_its_schemas_with_the_issue(tmp_path):
+    paths = [f"aklr/ops/gemm/impls/flydsl/{name}/a.json" for name in ("open", "stopped", "closed")]
+    for path in paths:
+        (tmp_path / path).parent.mkdir(parents=True)
+        # A request names its schema as a manual strategy does: a kernel does not drop it.
+        (tmp_path / path).write_text(json.dumps({"kernel": {"sources": ["k.py"]}}))
+    (tmp_path / "state/requests").mkdir(parents=True)
+    for issue, (path, more) in enumerate(
+        zip(
+            paths,
+            ({}, {"stopped_at": "2026-01-01T00:00:00+00:00"}, {"closed_at": "2026-01-01T00:00:00+00:00"}),
+        ),
+        start=7,
+    ):
+        request = {"issue": issue, "schemas": [path], **more}
+        (tmp_path / f"state/requests/{issue}.json").write_text(json.dumps(request))
+    (tmp_path / "config.yaml").write_text(
+        f"execution: {{state_dir: {tmp_path}/state}}\n"
+        "policy: {strategies: [{type: issue}], allowed_ops: [all], backends: [flydsl]}\n"
+    )
+    git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "aklr"], check=True)
+    subprocess.run([*git, "commit", "-qm", "schemas"], check=True)
+    (candidate,) = listed(tmp_path, "HEAD", [])["candidates"]
+    assert (candidate["path"], candidate["strategy"], candidate["issue"]) == (paths[0], "issue", 7)
