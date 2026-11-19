@@ -71,7 +71,9 @@ def _aiter_sparse_decode_fwd(
         arguments["extra_indices"] = extra_indices_in_kvcache.reshape(tokens, 1, -1)
     if inv_rope is not None:
         arguments["rope_freqs"], positions = inv_rope
-        arguments["positions"] = positions.view(-1)[:tokens]
+        positions = positions.view(-1)[:tokens]
+        # a slice of the batch's int64 positions starts 8 bytes past the 16 AKLR's dispatch requires at an odd row
+        arguments["positions"] = positions if positions.data_ptr() % 16 == 0 else positions.clone()
     output = deepseekv41_sparse_mla(**arguments)
     if isinstance(output, FallbackReason):
         return output
