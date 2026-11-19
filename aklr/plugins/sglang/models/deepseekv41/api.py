@@ -507,7 +507,13 @@ def moe_forward_normal(moe, hidden_states, skip_shared_experts, use_vision_topk,
             routed_scaling_factor=moe.routed_scaling_factor,
             shared_is_replicated=False,
         )
-    return moe._finalize_normal_output(out, None)
+    if not moe.reduce_results:
+        return out
+    # as forward_normal ends with no shared output apart, on the release and on the cookbook
+    # build (whose _finalize_normal_output the release lacks)
+    from sglang.srt.layers.moe import post_experts_all_reduce
+
+    return post_experts_all_reduce(out)
 
 
 def _ffn_arguments(moe, hidden_states) -> dict:

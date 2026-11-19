@@ -125,3 +125,15 @@ def test_a_deepseekv41_moe_reaches_its_op_only_as_the_cookbook_serves_it(monkeyp
     reason = deepseek_v2._moe_forward_normal(deepseekv41_moe(**changes), torch.zeros(4, 8))
     assert reason is (FallbackReason.NO_WORKLOAD if asked else FallbackReason.OUT_OF_CONTRACT)
     assert [call["topk"] for call in calls] == ([6] if asked else [])
+
+
+@pytest.mark.parametrize("reduce_results", [True, False], ids=["summed_here", "summed_later"])
+def test_a_served_deepseekv41_moe_ends_as_forward_normal_does_on_the_release_too(monkeypatch, reduce_results):
+    """sglang 0.5.23 has no DeepseekV2MoE._finalize_normal_output, the cookbook build's: with the
+    shared expert fused, both end in the ranks' all-reduce where this block reduces."""
+    served = torch.ones(4, 8)
+    monkeypatch.setattr(deepseek_v2.moe_blocks, "runtime_falls_back", lambda: False)
+    monkeypatch.setattr(deepseek_v2.deepseekv41, "deepseekv41_mono_k2_ffn", lambda **call: served)
+    monkeypatch.setattr("sglang.srt.layers.moe.post_experts_all_reduce", lambda out: out * 2)
+    out = deepseek_v2._moe_forward_normal(deepseekv41_moe(reduce_results=reduce_results), torch.zeros(4, 8))
+    assert torch.equal(out, served * 2 if reduce_results else served)
