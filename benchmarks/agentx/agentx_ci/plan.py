@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Resolve model targets for serial sweep jobs."""
+"""Build per-run serving plans from reviewed recipes/<family>/<target>/<framework>/serving.<model>.json files."""
 
 from __future__ import annotations
 
@@ -9,93 +9,152 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from typing import NoReturn
 
-from agentx_ci import recipe_resolve as rr
-from agentx_ci.model_config import ConfigError, model_config, select_runs
-from agentx_ci.recipe_resolve import POLICY, add_arguments, prepare, selected_points, validate_options
-from agentx_ci.utils import DEFAULT_CONFIG, load_config, sha256_json, target_path, utc_now, write_json
+from agentx_ci import ci_image
+from agentx_ci import serving_config as sc
+from agentx_ci.model_config import ConfigError, model_config, select_models, select_runs
+from agentx_ci.pr_scope import ALLOWLIST_FILE, COMMAND, authorized_request, load_reviewers, requested_models
+from agentx_ci.utils import (
+    DEFAULT_CONFIG,
+    SCHEMA,
+    load_config,
+    read_json,
+    sha256_json,
+    target_path,
+    utc_now,
+    write_json,
+)
 
-MODEL_CATALOG = "https://inferencex.semianalysis.com/api/v1/views/options"
+
+def load_recipe(config: str | Path, definition: dict, images: dict[str, str] | None = None) -> dict:
+    """Build a run from its reviewed recipe; images caches each framework's pinned CI image for one plan."""
+    path = sc.recipe_path(config, definition)
+    if not path.is_file():
+        raise ConfigError(f"missing {path}; the recipe must be generated and reviewed first")
+    framework = definition["framework"]["id"]
+    images = {} if images is None else images
+    if framework not in images:
+        images[framework] = ci_image.run_image(framework)
+    return sc.build_run(read_json(path), definition, images[framework])
 
 
-def catalog_model(catalog: dict, prefix: str) -> str:
-    models = catalog.get("models") if isinstance(catalog, dict) else None
-    if not isinstance(models, list):
-        raise ConfigError("InferenceX model catalog must contain a models array")
-    matches = []
-    for model in models:
-        if (
-            not isinstance(model, dict)
-            or not isinstance(model.get("name"), str)
-            or not model["name"].strip()
-            or not isinstance(model.get("dbKeys"), list)
-            or not model["dbKeys"]
-            or any(not isinstance(key, str) or not key for key in model["dbKeys"])
-        ):
-            raise ConfigError("Invalid InferenceX model catalog entry")
-        if prefix in model["dbKeys"]:
-            matches.append(model["name"])
-    if len(matches) != 1:
-        raise ConfigError(
-            f"InferenceX model prefix {prefix!r} needs exactly one catalog match; got {matches}"
+def annotate(message: str, level: str = "warning") -> None:
+    """Annotate the GitHub run so a skipped, narrowed or refused AgentX scope is visible on its check."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::{level} title=AgentX scope::{escaped}", flush=True)
+
+
+def summarize(note: str) -> None:
+    print(note)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+            summary.write(note + "\n")
+
+
+def refuse(message: str) -> NoReturn:
+    annotate(message, "error")
+    summarize(message)
+    raise ConfigError(message)
+
+
+def check_manual_trigger(args: argparse.Namespace) -> None:
+    """Let only an allowlisted reviewer start a manual run, and only from main."""
+    if args.manual_actor is None:
+        return
+    allowlist = load_reviewers(args.allowlist)
+    if args.manual_actor.lower() not in {login.lower() for login in allowlist}:
+        reviewers = ", ".join(f"@{login}" for login in allowlist)
+        refuse(
+            f"@{args.manual_actor} may not start AgentX manually. Ask one of {reviewers} to run it, "
+            "or to add you to benchmarks/agentx/allowlist.yaml."
         )
-    return matches[0]
+    if args.manual_ref != "refs/heads/main":
+        refuse(
+            f"Manual AgentX runs use main only, not {args.manual_ref}; choose main under `Use workflow from`."
+        )
 
 
-def cached_resolution(cache: dict, key, resolve, *args):
-    if key not in cache:
-        try:
-            cache[key] = resolve(*args)
-        except Exception as error:
-            cache[key] = error
-    value = cache[key]
-    if isinstance(value, Exception):
-        raise value
-    return value
+def apply_pr_scope(args: argparse.Namespace) -> tuple[str | None, bool]:
+    """Narrow --models to the latest `/agentx-mi355x` request of an allowlisted reviewer on the PR.
+
+    Return a note for the job summary and whether to skip AgentX, as when the request selects no model.
+    Raise ConfigError when no allowlisted reviewer has requested AgentX on the PR.
+    """
+    if args.pr_comments is None:
+        return None, False
+    if args.models != "all":
+        raise ConfigError("--pr-comments cannot be combined with --models")
+    allowlist = load_reviewers(args.allowlist)
+    request = authorized_request(json.loads(args.pr_comments.read_text()), allowlist)
+    if request is None:
+        reviewers = ", ".join(f"@{login}" for login in allowlist)
+        refuse(
+            f"No AgentX reviewer has authorized this PR. Ask one of {reviewers} to review it and comment "
+            f"`{COMMAND} <model ids or all>` on it, then re-run this workflow."
+        )
+    declared, unmatched = requested_models(request["body"], select_models(load_config(args.config)))
+    source = f"@{request['user']}'s `{COMMAND}` comment" + (
+        f" ({request['url']})" if request.get("url") else ""
+    )
+    missed = (
+        f" Not an enabled model id, skipped: {', '.join(f'`{name}`' for name in unmatched)}."
+        if unmatched
+        else ""
+    )
+    if not declared:
+        note = f"{source} selects no model; skipping AgentX.{missed}"
+        annotate(note)
+        return note, True
+    if unmatched:
+        annotate(missed.strip())
+    args.models = declared
+    if declared == "all":
+        return f"{source} requests `all`; running every enabled model.", False
+    return f"{source} selects {declared}; skipping the other models.{missed}", False
+
+
+def write_outputs(ready: list[dict], skipped: bool = False) -> None:
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write(f"matrix={json.dumps({'include': ready})}\ncount={len(ready)}\n")
+            output.write(f"skipped={str(skipped).lower()}\n")
 
 
 def build(args: argparse.Namespace) -> dict:
-    validate_options(args)
-    policy = getattr(args, "point_policy", "all")
-    auto_model = policy == POLICY and getattr(args, "inferencex_model", None) == "auto"
-    if auto_model and args.inferencex_run_id:
-        raise ConfigError("--inferencex-model auto cannot be combined with --inferencex-run-id")
     required_duration = getattr(args, "require_recipe_duration", None)
+    duration = getattr(args, "duration", None)
+    points = getattr(args, "points", None)
     if required_duration is not None:
         if required_duration <= 0:
             raise ConfigError("--require-recipe-duration must be positive")
-        if args.duration is not None:
+        if duration is not None:
             raise ConfigError("--require-recipe-duration cannot be combined with --duration")
+    if duration is not None and duration <= 0:
+        raise ConfigError("--duration must be positive")
     config = load_config(args.config)
-    selected = select_runs(config, args.models, args.targets)
-    definitions = [model_config(config, model_id, target_id) for model_id, target_id in selected]
+    selected = select_runs(config, args.models, args.targets, args.frameworks)
+    definitions = [model_config(config, *run) for run in selected]
     runner_label = getattr(args, "runner_label", None)
     if runner_label is not None:
         definitions = [item for item in definitions if item["target"]["runner_label"] == runner_label]
         if not definitions:
-            raise ConfigError(f"no selected targets use runner label {runner_label!r}")
-    if policy == POLICY and not auto_model and len(definitions) != 1:
-        raise ConfigError("Pareto selection requires exactly one model target unless --inferencex-model auto")
-    if (
-        policy == "all"
-        and len(definitions) > 1
-        and (args.arms != "all" or args.points or args.duration is not None)
-    ):
-        raise ConfigError("--arms, --points and --duration smoke filters require exactly one selected target")
-    if args.duration is not None and args.duration <= 0:
-        raise ConfigError("--duration must be positive")
+            raise ConfigError(f"no selected runs use runner label {runner_label!r}")
+    if points and len(definitions) != 1:
+        raise ConfigError("--points smoke filters require exactly one selected model/target/framework run")
     args.out = args.out.resolve()
-    args.work = args.work.resolve()
     if (args.out / "manifest.json").exists():
         raise ConfigError(f"plan already exists in {args.out}; choose a fresh output directory")
     manifest = {
-        "schema": 3,
+        "schema": SCHEMA,
         "run_id": str(args.run_id),
         "created_at": utc_now(),
         "targets": [
             {
                 "model": definition["model"],
                 "target": definition["target"],
+                "framework": definition["framework"],
                 "image": None,
                 "status": "pending",
                 "error": None,
@@ -104,117 +163,109 @@ def build(args: argparse.Namespace) -> dict:
         ],
     }
     write_json(args.out / "manifest.json", manifest)
-    refs = {}
-    images = {}
-    catalogs = {}
+    images: dict[str, str] = {}
     for item, definition in zip(manifest["targets"], definitions):
-        model_id, target_id = item["model"]["id"], item["target"]["id"]
-        relative = target_path(model_id, target_id)
-        source = definition["inferencex"]
-        ref = args.inferencex_ref or source["ref"]
-        image_reference = args.run_image or definition["run_image"]
-        print(f"[{utc_now()}] resolving {model_id}/{target_id}", flush=True)
+        run = (item["model"]["id"], item["target"]["id"], item["framework"]["id"])
+        label = "/".join(run)
+        print(f"[{utc_now()}] loading recipe for {label}", flush=True)
         try:
-            image, warnings = cached_resolution(images, image_reference, rr.resolve_image, image_reference)
-            item["image"] = image
-            sha = cached_resolution(refs, (source["repo"], ref), rr.resolve_ref, source["repo"], ref)
-            dst = args.out / relative / "serving.json"
-            spec = rr.resolve(
-                argparse.Namespace(
-                    config=args.config,
-                    model=model_id,
-                    target=target_id,
-                    inferencex_ref=sha,
-                    inferencex_src=None,
-                    run_image=image,
-                    work=args.work / relative,
-                    out=args.work / relative / "resolved-serving.json",
-                )
-            )
-            spec["provenance"]["inferencex"]["requested_ref"] = ref
-            spec["warnings"] = warnings + spec["warnings"]
+            spec = load_recipe(args.config, definition, images)
             spec["plan_id"] = uuid.uuid4().hex
-            target_args = args
-            if auto_model:
-                scope = rr.scope_of(spec, args.inferencex_hardware)
-                catalog, _ = cached_resolution(catalogs, MODEL_CATALOG, rr.fetch_json, MODEL_CATALOG)
-                target_args = argparse.Namespace(**vars(args))
-                target_args.inferencex_model = catalog_model(catalog, scope["model"])
-            spec["selection"] = prepare(spec, target_args, dst.parent)
-            if spec["selection"]["policy"] == "all":
-                spec["selection"].update(arms=args.arms, points=args.points, duration=args.duration)
-            write_json(dst, spec)
-            points = selected_points(spec)
+            spec["selection"] = sc.narrow_selection(spec["selection"], points, duration)
+            item["image"] = spec["image"]["run"]
+            write_json(args.out / target_path(*run) / "serving.json", spec)
+            selected_points = sc.selected_points(spec)
             if required_duration is not None:
                 mismatches = [
-                    f"{rr.point_id(point)}={point.get('client_env', {}).get('DURATION')!r}"
-                    for point in points
+                    f"{sc.point_id(point)}={point.get('client_env', {}).get('DURATION')!r}"
+                    for point in selected_points
                     if str(point.get("client_env", {}).get("DURATION")) != str(required_duration)
                 ]
                 if mismatches:
                     raise ConfigError(
-                        f"upstream DURATION must be {required_duration} seconds for every selected point: "
+                        f"recipe DURATION must be {required_duration} seconds for every selected point: "
                         + ", ".join(mismatches)
                     )
             item.update(
                 status="resolved",
-                points=len(points),
+                points=len(selected_points),
                 point_policy=spec["selection"]["policy"],
                 serving_sha256=sha256_json(spec),
-                point_ids=[rr.point_id(p) for p in points],
+                point_ids=[sc.point_id(p) for p in selected_points],
+                selection_manifest_sha256=spec["selection"]["manifest_sha256"],
             )
-            if spec["selection"]["policy"] == POLICY:
-                item["selection_manifest_sha256"] = spec["selection"]["manifest_sha256"]
         except Exception as error:
             item.update(status="resolve-failed", error=f"{type(error).__name__}: {error}"[:1000])
-            print(f"ERROR [{model_id}/{target_id}]: {item['error']}", file=sys.stderr)
+            print(f"ERROR [{label}]: {item['error']}", file=sys.stderr)
         write_json(args.out / "manifest.json", manifest)
     return manifest
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="python -m agentx_bench plan",
-        description=__doc__,
-        epilog="For per-target Pareto sources, plan supports --inferencex-model auto with --inferencex-hardware.",
-    )
+    parser = argparse.ArgumentParser(prog="python -m agentx_bench plan", description=__doc__)
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--models", default="all", help="enabled model ids, comma-separated, or all")
     parser.add_argument("--targets", default="all", help="enabled target ids in selected models, or all")
-    parser.add_argument("--runner-label", help="Only resolve selected targets assigned to this runner label")
-    parser.add_argument("--inferencex-ref")
-    parser.add_argument("--run-image")
-    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument(
+        "--frameworks", default="all", help="enabled frameworks (sglang, vllm) in selected targets, or all"
+    )
+    parser.add_argument("--runner-label", help="Only plan selected runs whose target uses this runner label")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", "local"))
-    parser.add_argument("--arms", default="all")
-    parser.add_argument("--points")
-    parser.add_argument("--duration", type=int)
+    parser.add_argument("--points", help="smoke run: comma-separated recipe ARM:CONC ids (one run only)")
+    parser.add_argument("--duration", type=int, help="smoke run: override DURATION in seconds")
     parser.add_argument(
         "--require-recipe-duration",
         type=int,
-        help="Require selected points' upstream DURATION without overriding it",
+        help="Require selected points' recipe DURATION without overriding it",
     )
-    add_arguments(parser)
+    parser.add_argument(
+        "--pr-comments",
+        type=Path,
+        help=f"JSON list of PR comments ({{user, body, url}}, oldest first); the latest allowlisted reviewer's "
+        f"`{COMMAND} <model ids or all>` selects the models, and without one the plan fails",
+    )
+    parser.add_argument(
+        "--allowlist",
+        type=Path,
+        default=ALLOWLIST_FILE,
+        help="YAML file whose `reviewers` list holds the GitHub logins allowed to authorize a run",
+    )
+    parser.add_argument(
+        "--manual-actor",
+        help="GitHub login that started a manual run; the plan fails unless it is an allowlisted reviewer",
+    )
+    parser.add_argument(
+        "--manual-ref",
+        help="Git ref of a manual run (with --manual-actor); the plan fails unless it is refs/heads/main",
+    )
     args = parser.parse_args(argv)
+    if (args.manual_actor is None) != (args.manual_ref is None):
+        parser.error("--manual-actor and --manual-ref go together")
     try:
+        check_manual_trigger(args)
+        note, skip = apply_pr_scope(args)
+        if note:
+            summarize(note)
+        if skip:
+            write_outputs([], skipped=True)
+            return 0
         manifest = build(args)
-    except (ConfigError, rr.ResolveError, ValueError, OSError) as error:
+    except (ConfigError, ValueError, OSError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
     ready = [
         {
             "model": item["model"]["id"],
             "target": item["target"]["id"],
+            "framework": item["framework"]["id"],
             "runner": item["target"]["runner_label"],
             "job_index": index,
         }
         for index, item in enumerate(manifest["targets"])
         if item["status"] == "resolved"
     ]
-    if os.environ.get("GITHUB_OUTPUT"):
-        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            output.write(f"matrix={json.dumps({'include': ready})}\ncount={len(ready)}\n")
+    write_outputs(ready)
     print(json.dumps(manifest, indent=1))
-    # Defer target failures until CI saves the report.
+    # Defer run failures until CI saves the report.
     return 0

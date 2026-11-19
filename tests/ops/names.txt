@@ -85,6 +85,11 @@ fp8_paged_mqa_logits_page_size32_n_heads#
 fp8_paged_mqa_logits_page_size64_n_heads#
 fp8_paged_mqa_logits_page_size128_n_heads#
 fp8_paged_mqa_logits_page_size256_n_heads#
+fp8_paged_mqa_logits_verify_next_n#_n_heads#
+fp8_paged_mqa_logits_verify_page_size32_next_n#_n_heads#
+fp8_paged_mqa_logits_verify_page_size64_next_n#_n_heads#
+fp8_paged_mqa_logits_verify_page_size128_next_n#_n_heads#
+fp8_paged_mqa_logits_verify_page_size256_next_n#_n_heads#
 fused_moe_model_dim#_n_experts#_topk#_inter_dim#
 fused_moe_shuffled_16x16_model_dim#_n_experts#_topk#_inter_dim#
 fused_moe_topk_ids_int64_model_dim#_n_experts#_topk#_inter_dim#
@@ -500,6 +505,9 @@ mhc_post_hidden_size#
 mhc_pre_hidden_size#
 mhc_pre_has_norm_weight_hidden_size#
 mla_decode_fwd_n_heads#
+mla_decode_fwd_cprr_query_length#_n_heads#
+mla_decode_fwd_cprr_cp2_query_length#_n_heads#
+mla_decode_fwd_cprr_cp4_query_length#_n_heads#
 mla_prefill_varlen_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_no_fp8_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_prefix_n_heads#_qk_head_dim#_v_head_dim#

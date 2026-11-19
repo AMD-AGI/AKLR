@@ -21,7 +21,7 @@ __all__: list[str] = []
     "vllm.v1.attention.backends.rocm_aiter_fa.AiterFlashAttentionImpl.forward",
     "aiter.ops.triton.unified_attention.unified_attention",
     "aiter.ops.triton.attention.unified_attention.unified_attention",
-    versions=("0.33.0rc1.dev910",),
+    versions=("0.33.0rc1.dev910", "0.33.0", "0.34.0"),
 )
 def _unified_attention(
     q,

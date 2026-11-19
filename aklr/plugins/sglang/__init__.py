@@ -27,6 +27,10 @@ def register() -> None:
 def _register() -> None:
     register_sglang_plugin()
     env = RuntimeEnv()
+    if env.is_aiter_plugin_enabled and not env.is_all_disabled:
+        from aklr.plugins.aiter.provider import enable
+
+        enable("AKLR sglang plugin, AKLR_AITER_PLUGIN=1")
     if env.is_all_disabled or not env.is_sglang_plugin_enabled:
         return
     # imports this package's api modules, which declare its routes, the routes on aiter's calls and its other routes

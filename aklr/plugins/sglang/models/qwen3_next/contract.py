@@ -346,7 +346,7 @@ QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
             ("n_slots", "n_kv_heads", "head_dim"),
             _FP8,
             mutable=True,
-            # sglang 0.5.22 rotates Qwen3-Next's Q and K on HIP with sgl_kernel's
+            # sglang 0.5.23 rotates Qwen3-Next's Q and K on HIP with sgl_kernel's
             # rotary_embedding in BF16 arithmetic: cos and sin, each product and the sum
             # rounded to BF16. Where a rotated key nearly cancels, that is ~2**-8 of the
             # pair's magnitude off the reference's FP32 rotation, several FP8 steps at the

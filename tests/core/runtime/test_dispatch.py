@@ -3,6 +3,8 @@
 
 import logging
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -335,6 +337,24 @@ class TestKernelDispatcher:
         assert api_fn.fallback_reason(**out_of_contract) is FallbackReason.OUT_OF_CONTRACT
         assert {k.reason: n for k, n in recorder.calls.items()} == {FallbackReason.OUT_OF_CONTRACT: 1}
 
+    def test_serving_names_the_kernel_without_serving(self, builder_registry: BuilderRegistry) -> None:
+        """``serving``: the metadata of the kernel ``dispatch`` would run, nothing run; else
+        ``fallback_reason``'s reason."""
+        case = OpCase.of("gemm@1.0")
+        dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
+        api_fn = dispatcher.make_api_fn(aklr.ops.gemm.gemm.__wrapped__)
+        call = case.call(case.inputs())
+        call["out"] = torch.full(
+            case.contract.storage_shape_of("out", case.point),
+            float("nan"),
+            dtype=call["out_dtype"],
+        )
+        meta = api_fn.serving(**call)
+        assert meta is dispatcher.table.runnables[next(iter(dispatcher.table.runnables))].metadata
+        assert meta.kernel_ref == f"flydsl:{meta.schema_name}:{meta.content_hash[:12]}"
+        assert call["out"].isnan().all()
+        assert api_fn.serving(**{**call, "a": call["a"].float()}) is FallbackReason.OUT_OF_CONTRACT
+
     def test_recorder_counts_calls(self, builder_registry: BuilderRegistry, tmp_path: Path) -> None:
         case = OpCase.of("gemm@1.0")
         dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
@@ -365,6 +385,24 @@ class TestKernelDispatcher:
 
 class TestDispatcherRegistry:
     """``DispatcherRegistry.init`` over the committed schemas."""
+
+    def test_concurrent_first_calls_init_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Two threads starting AKLR at once: one init, and the other waits for it."""
+        calls = []
+
+        def init(registry: DispatcherRegistry) -> None:
+            calls.append(threading.get_ident())
+            time.sleep(0.05)
+            registry.is_initialized = True
+
+        monkeypatch.setattr(DispatcherRegistry, "init", init)
+        registry = DispatcherRegistry()
+        threads = [threading.Thread(target=registry.init_once) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert len(calls) == 1 and registry.is_initialized
 
     def test_disabled_init_closes_every_dispatcher(
         self,

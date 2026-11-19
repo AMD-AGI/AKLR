@@ -207,9 +207,11 @@ class PipelineReport(FrozenModel):
                 continue
             for w in schema.workloads:
                 m = measured[axes_text(w.axes)]
-                if (w.accuracy, w.speedup is None) != (
+                # a time that comes or goes rewrites the file; a time that drifts rides with speedup
+                if (w.accuracy, w.speedup is None, w.microseconds is None) != (
                     m.accuracy,
                     m.speedup is None,
+                    m.microseconds is None,
                 ) or (m.speedup is not None and abs(m.speedup / w.speedup - 1) > _REWRITE_TOLERANCE):
                     out = directory / path
                     out.parent.mkdir(parents=True, exist_ok=True)
