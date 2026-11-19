@@ -19,6 +19,7 @@ from aklr.core.contract.semantics import (
     LogUniformDistribution,
     Preshuffle,
     SqnrBound,
+    StridedPages,
     ToleranceBound,
 )
 from aklr.core.contract.spec import (
@@ -57,7 +58,8 @@ MXFP8_BLOCK = 32
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
 _E8M0 = DTypeSpec(any_of=(DType.FLOAT8_E8M0,))
 # Each pool is pages of page_size slots: 576-byte payloads, then 8-byte scale slots.
-_PAGE_SIZES = "{0} == 2 or {0} == 64 or {0} == 128 or {0} == 256"
+# vLLM's window cache has 32 slots a page
+_PAGE_SIZES = "{0} == 2 or {0} == 32 or {0} == 64 or {0} == 128 or {0} == 256"
 _SLOT_LIMIT = 2**31  # slots are int32 indices
 _KV_POOL = DTypeSpec(any_of=(DType.UINT8, DType.FLOAT8_E4M3FN))
 
@@ -191,6 +193,13 @@ DEEPSEEKV41_SPARSE_MLA = OpContract(
                 layouts={"kv_cache": Deepseekv4KvPages(), "extra_kv_cache": Deepseekv4KvPages()},
                 detect_facts=(
                     LayoutFact(location="arg", name="kv_cache_layout", expected_value="padded_pages"),
+                ),
+            ),
+            # vLLM's caches share each block's row: a pool's pages are a row apart
+            "strided_pages": LayoutVariant(
+                layouts={"kv_cache": StridedPages(), "extra_kv_cache": StridedPages()},
+                detect_facts=(
+                    LayoutFact(location="arg", name="kv_cache_layout", expected_value="strided_pages"),
                 ),
             ),
         }

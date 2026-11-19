@@ -14,8 +14,11 @@ _HIDDEN, _Q_RANK, _HEADS, _TOPK = 64, 32, 4, 8
 
 
 def pool(pages, page_size, row_bytes=None):
-    """A vLLM fp8_ds_mla cache: a block's records in a row padded to 576 bytes."""
-    return torch.zeros(pages, row_bytes or -(-page_size * 584 // 576) * 576, dtype=torch.uint8)
+    """A vLLM fp8_ds_mla cache: a page of records in each block's row, which other caches' pages share."""
+    row_bytes = row_bytes or 3 * page_size * 584
+    return torch.zeros(pages, row_bytes, dtype=torch.uint8).as_strided(
+        (pages, page_size, 584), (row_bytes, 584, 1)
+    )
 
 
 @pytest.fixture
@@ -40,7 +43,7 @@ def step(monkeypatch):
         num_decodes=64,
         num_decode_tokens=64,
         num_prefill_tokens=0,
-        block_size=128,
+        block_size=32,
         decode_swa_width=128,
         decode_swa_ragged_indices=torch.zeros(64 * 128, dtype=torch.int32),
         prefill_swa_ragged_indices=None,
@@ -66,7 +69,7 @@ def attention(**changes):
         return SimpleNamespace(weight=torch.zeros(width, dtype=torch.bfloat16), variance_epsilon=1e-6)
 
     attn = SimpleNamespace(
-        swa_cache_layer=SimpleNamespace(prefix="swa", kv_cache=pool(3, 128)),
+        swa_cache_layer=SimpleNamespace(prefix="swa", kv_cache=pool(3, 32)),
         compressed_cache_prefix="compressed",
         compress_ratio=2,
         _compressed_kv_cache=lambda: pool(5, 64),
@@ -107,7 +110,7 @@ def test_a_decode_steps_sparse_mla_is_asked_for_at_vllms_pools_and_index_widths(
     shapes = {name: tuple(value.shape) for name, value in call.items() if isinstance(value, torch.Tensor)}
     assert shapes == {
         "q": (64, 1, _HEADS, 512),
-        "kv_cache": (3, 128, 1, 584),
+        "kv_cache": (3, 32, 1, 584),
         "indices": (64, 1, 128),
         "sinks": (_HEADS,),
         "extra_kv_cache": (5, 64, 1, 584),
@@ -115,8 +118,9 @@ def test_a_decode_steps_sparse_mla_is_asked_for_at_vllms_pools_and_index_widths(
         "rope_freqs": (16, 64),
         "positions": (64,),
     }
-    assert call["kv_cache_layout"] == "padded_pages"
-    assert call["kv_cache"].stride() == (130 * 576, 584, 584, 1)
+    assert call["kv_cache_layout"] == "strided_pages"
+    assert call["kv_cache"].stride() == (3 * 32 * 584, 584, 584, 1)
+    assert call["extra_kv_cache"].stride() == (3 * 64 * 584, 584, 584, 1)
 
 
 def test_a_prefills_sparse_mla_is_asked_for_at_the_prefill_index_width(asked, step):
@@ -141,17 +145,17 @@ def test_a_prefills_sparse_mla_is_asked_for_at_the_prefill_index_width(asked, st
 @pytest.mark.parametrize(
     "changes",
     [
-        {"swa_k_cache": pool(3, 128, row_bytes=128 * 528)},
+        {"swa_k_cache": torch.zeros(3, 32, 528, dtype=torch.uint8)},
         {"swa_indices": torch.zeros(4, dtype=torch.int32)},
     ],
-    ids=["rows_shorter_than_their_records", "indices_of_neither_phase"],
+    ids=["records_of_another_width", "indices_of_neither_phase"],
 )
 def test_a_sparse_mla_the_contract_cannot_express_is_not_asked_for(asked, step, changes):
     assert sparse_mla(attention(), step, **changes) is FallbackReason.OUT_OF_CONTRACT
     assert asked == {}
 
 
-def mono_decode(attn, taken=False, ffn_only=False, first=False, tokens=64):
+def mono_decode(attn, taken=False, ffn_only=False, first=False, tokens=64, stage_pre_mix=None):
     mono = SimpleNamespace(
         ffn_only=ffn_only,
         _decode_step=lambda layer, rows: (None if taken else f"{rows} rows", None, None),
@@ -170,6 +174,9 @@ def mono_decode(attn, taken=False, ffn_only=False, first=False, tokens=64):
     )
     x = torch.zeros(tokens, _HIDDEN, dtype=torch.bfloat16)
     positions = torch.zeros(tokens, dtype=torch.int64)
+    if stage_pre_mix is not None:
+        streams = torch.zeros(tokens, 4, _HIDDEN, dtype=torch.bfloat16)
+        return api._mono_decode(mono, layer, streams, positions, None, None, None, stage_pre_mix)
     if first:
         return api._mono_decode(mono, layer, x, positions, None, None, None, None)
     return api._mono_decode(
@@ -201,7 +208,17 @@ def test_a_first_layers_attention_front_owes_no_post(asked, step):
     assert mono_decode(attention(), first=True) is FallbackReason.NO_WORKLOAD
     (call,) = asked["deepseekv41_mono_k1"]
     assert call["residual"].shape == (64, 4, _HIDDEN)
+    # the contract's row_major storage: an expanded embedding (stride 0) is outside it
+    assert call["residual"].is_contiguous()
     assert not {"x", "post_mix", "comb_mix", "prev_pre_mix"} & {k for k, v in call.items() if v is not None}
+
+
+def test_a_pipeline_stages_first_layer_reads_its_streams_under_the_pre_mix_carried_in(asked, step):
+    assert mono_decode(attention(), stage_pre_mix=torch.ones(64, 4)) is FallbackReason.NO_WORKLOAD
+    (call,) = asked["deepseekv41_mono_k1"]
+    assert call["residual"].shape == (64, 4, _HIDDEN)
+    assert call["prev_pre_mix"].shape == (64, 4)
+    assert not {"x", "post_mix", "comb_mix"} & {k for k, v in call.items() if v is not None}
 
 
 @pytest.mark.parametrize(

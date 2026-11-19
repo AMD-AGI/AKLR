@@ -230,6 +230,24 @@ class Deepseekv4KvPages(Layout):
         )
 
 
+class StridedPages(Layout):
+    """A ``(pages, page_size, 1, width)`` pool whose pages are dense and any distance apart,
+    at least a page: pages in the rows of a wider buffer, as vLLM's DeepSeek-V4 caches, which
+    share each block's row. A row-major pool is one too, and so is a ``Deepseekv4KvPages`` one."""
+
+    kind: Literal["strided_pages"] = "strided_pages"
+
+    def encode(self, tensor):
+        pages, page_size, _, width = tensor.shape
+        used = page_size * width
+        stored = tensor.new_zeros(pages, 2 * used)
+        stored[:, :used] = tensor.reshape(pages, used)
+        return stored[:, :used].view(tensor.shape)
+
+    def storage_test(self):
+        return "T.stride()[1:] == (T.shape[3], T.shape[3], 1) and T.stride(0) >= T.shape[1] * T.shape[3]"
+
+
 class KvSplitPages(Layout):
     """vLLM's paged KV cache: a ``(blocks, block_size, heads, head_dim)`` side is the
     first or second half of each row of a row-major ``(blocks, heads, block_size, 2 *
@@ -276,6 +294,7 @@ LayoutUnion = Annotated[
     | GateUpInterleavedScales
     | Deepseekv4KvPages
     | KvSplitPages
+    | StridedPages
     | StridedRows,
     Field(discriminator="kind"),
 ]
