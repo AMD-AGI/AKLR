@@ -16,7 +16,7 @@ __all__: list[str] = []
 @vllm_route(
     "vllm.v1.attention.backends.mla.rocm_aiter_mla.AiterMLAImpl._forward_mqa",
     "aiter.mla.mla_decode_fwd",
-    versions=("0.33.0rc1.dev910",),
+    versions=("0.34.0",),
 )
 def _mla_decode_fwd(
     q,
@@ -54,7 +54,7 @@ def _mla_decode_fwd(
     kv_csr_layout="page",
     fast_mode=True,
 ):
-    # aiter 0.1.28's other KV layouts and its paged CSR metadata are not the contract's pool
+    # aiter's other KV layouts and its paged CSR metadata are not the contract's pool
     if (
         kv_layout != "token_major"
         or kv_csr_layout != "page"

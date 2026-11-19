@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Plan, run and report one model target locally."""
+"""Plan, run and report one model/target/framework run locally."""
 
 from __future__ import annotations
 
@@ -10,8 +10,7 @@ import uuid
 from pathlib import Path
 
 from agentx_ci import plan, report_all, sweep
-from agentx_ci.model_config import model_config, validate_model_id, validate_target_id
-from agentx_ci.recipe_resolve import add_arguments, validate_options
+from agentx_ci.model_config import model_config, validate_framework_id, validate_model_id, validate_target_id
 from agentx_ci.utils import DEFAULT_CONFIG, REPO_ROOT, load_config, read_json, target_path, utc_now
 
 
@@ -42,39 +41,39 @@ def main(argv: list[str] | None = None) -> int:
         "--model", required=True, help="One enabled model id; all and model lists are not accepted"
     )
     parser.add_argument("--target", help="One enabled target id; optional only when the model has one target")
+    parser.add_argument(
+        "--framework", help="sglang or vllm; optional only when the target has one enabled framework"
+    )
     parser.add_argument("--hub", type=Path, required=True, help="Host HF hub cache with the pinned weights")
     parser.add_argument(
         "--out", type=Path, required=True, help="Fresh run directory containing plan/, results/ and site/"
     )
     parser.add_argument(
-        "--work", type=Path, help="Persistent resolver/runtime workspace; default is deleted after the run"
+        "--work", type=Path, help="Persistent runtime workspace; default is deleted after the run"
     )
     parser.add_argument(
         "--cache", type=Path, help="Persistent kernel cache root; default cache is deleted after the run"
     )
     parser.add_argument("--run-id", help="Shared run identifier for all stages; generated if omitted")
-    parser.add_argument("--inferencex-ref")
-    parser.add_argument("--run-image", help="Image used by both the plan and local Docker execution")
-    parser.add_argument("--arms", default="all")
-    parser.add_argument("--points")
+    parser.add_argument("--points", help="Smoke run: comma-separated recipe ARM:CONC ids")
     parser.add_argument("--duration", type=int, help="Optional per-point smoke duration override")
     parser.add_argument("--model-path", help="Optional model path visible inside the container")
     parser.add_argument("--git-dir", type=Path, default=REPO_ROOT, help="Checkout used for report history")
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--baseline-dir", type=Path)
     source.add_argument("--baseline-url")
-    add_arguments(parser)
     args = parser.parse_args(argv)
     root = args.out.resolve()
     created = False
     try:
-        validate_options(args)
         validate_model_id(args.model)
         if args.target is not None:
             validate_target_id(args.target)
-        definition = model_config(load_config(args.config), args.model, args.target)
-        target_id = definition["target"]["id"]
-        relative = target_path(args.model, target_id)
+        if args.framework is not None:
+            validate_framework_id(args.framework)
+        definition = model_config(load_config(args.config), args.model, args.target, args.framework)
+        target_id, framework_id = definition["target"]["id"], definition["framework"]["id"]
+        relative = target_path(args.model, target_id, framework_id)
         if args.duration is not None and args.duration <= 0:
             raise ValueError("--duration must be positive")
         if root.exists():
@@ -88,8 +87,10 @@ def main(argv: list[str] | None = None) -> int:
         cache = (args.cache or root / "cache").resolve()
         if any(path.is_relative_to(REPO_ROOT.resolve()) for path in (root, work, cache)):
             raise ValueError("run, work and cache directories must be outside the source checkout")
-        plan_args = argparse.Namespace(**vars(args), models=args.model, targets=target_id)
-        plan_args.out, plan_args.work, plan_args.run_id = root / "plan", work, run_id
+        plan_args = argparse.Namespace(
+            **vars(args), models=args.model, targets=target_id, frameworks=framework_id
+        )
+        plan_args.out, plan_args.run_id = root / "plan", run_id
         root.mkdir(parents=True, exist_ok=False)
         created = True
         print(f"[{utc_now()}] pipeline {run_id}: creating plan in {root / 'plan'}", flush=True)
@@ -99,9 +100,10 @@ def main(argv: list[str] | None = None) -> int:
             len(targets) != 1
             or targets[0]["model"]["id"] != args.model
             or targets[0]["target"]["id"] != target_id
+            or targets[0]["framework"]["id"] != framework_id
         ):
-            raise ValueError("pipeline plan must contain exactly the requested model and target")
-    except (ValueError, OSError, plan.rr.ResolveError) as error:
+            raise ValueError("pipeline plan must contain exactly the requested model, target and framework")
+    except (ValueError, OSError) as error:
         print(f"ERROR: pipeline planning failed: {error}", file=sys.stderr)
         if created:
             cleanup(root, args)
@@ -111,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     interrupt_code = 0
     cleanup_safe = True
     target = targets[0]
-    label = f"{args.model}/{target_id}"
+    label = f"{args.model}/{target_id}/{framework_id}"
     if target["status"] != "resolved":
         failed = True
         print(f"ERROR [{label}]: {target.get('error') or 'target plan was not resolved'}", file=sys.stderr)

@@ -7,9 +7,9 @@ import argparse
 import copy
 import importlib.metadata
 import json
-import math
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -19,14 +19,25 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from agentx_ci.inferencex_client import FetchError, fetch_inferencex
 from agentx_ci.preflight import validate_hardware, verify_image
-from agentx_ci.recipe_resolve import POLICY, ResolveError, SelectionError, fetch_inferencex, selected_points
+from agentx_ci.serving_config import (
+    EXP_NAME,
+    POLICY,
+    RecipeError,
+    SelectionError,
+    check_point_runtime,
+    point_id,
+    selected_points,
+)
 from agentx_ci.utils import (
     INTERACTIVITY_METRIC,
     REPO_ROOT,
     begin_attempt,
     full_response_interactivity,
     pending_results,
+    plugin_switch,
+    points_framework,
     read_json,
     sha256_json,
     utc_now,
@@ -35,7 +46,12 @@ from agentx_ci.utils import (
 )
 
 
-def metrics_of(aggregate: dict) -> dict:
+def metrics_of(aggregate: dict, gpus: int) -> dict:
+    if aggregate.get("num_gpus") != gpus:
+        raise ValueError(
+            f"AgentX client counted {aggregate.get('num_gpus')!r} GPUs, the point uses {gpus}; "
+            "throughput per GPU would be wrong"
+        )
     request = aggregate["request_metrics"]
     metrics = {
         "tput_per_gpu": request["throughput"]["per_gpu"]["total_tput_tps"],
@@ -146,7 +162,56 @@ def wait_ready(base_url: str, server: subprocess.Popen, timeout_s: float, interv
 
 
 class CleanupError(RuntimeError):
-    """A child process could not be stopped safely; the sweep must abort."""
+    """A child process could not be stopped or its GPUs freed; the sweep must abort."""
+
+
+GPU_IDLE_TIMEOUT_S = 300
+GPU_IDLE_POLL_S = 5
+
+
+def vram_used_percent() -> dict[int, int]:
+    """Whole-percent VRAM use of every GPU amd-smi lists, as rocm-smi's VRAM% reports it."""
+    try:
+        done = subprocess.run(
+            [shutil.which("amd-smi") or "/opt/rocm/bin/amd-smi", "metric", "--mem-usage", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise CleanupError(f"amd-smi could not run: {type(error).__name__}: {error}") from error
+    if done.returncode:
+        raise CleanupError(f"amd-smi exited with code {done.returncode}: {done.stderr.strip()[:200]}")
+    text = done.stdout
+    starts = [index for index in (text.find("["), text.find("{")) if index >= 0]
+    try:
+        data = json.loads(text[min(starts) :]) if starts else None
+        gpus = data.get("gpu_data") if isinstance(data, dict) else data
+        usage = {}
+        for gpu in gpus:
+            memory = gpu["mem_usage"]
+            used, total = float(memory["used_vram"]["value"]), float(memory["total_vram"]["value"])
+            usage[int(gpu["gpu"])] = int(used * 100 // total)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError) as error:
+        raise CleanupError(f"amd-smi memory usage is unreadable: {type(error).__name__}: {error}") from error
+    if not usage:
+        raise CleanupError("amd-smi listed no GPUs")
+    return usage
+
+
+def wait_gpus_idle(timeout_s: float = GPU_IDLE_TIMEOUT_S, poll_s: float = GPU_IDLE_POLL_S) -> float:
+    """Wait until every GPU's VRAM use reads 0%; servers such as HiCache free memory late."""
+    began = time.monotonic()
+    while True:
+        busy = {gpu: percent for gpu, percent in sorted(vram_used_percent().items()) if percent}
+        waited = time.monotonic() - began
+        if not busy:
+            return waited
+        if waited >= timeout_s:
+            listed = ", ".join(f"GPU{gpu} {percent}%" for gpu, percent in busy.items())
+            raise CleanupError(f"GPU VRAM still in use after {timeout_s:.0f} s: {listed}")
+        time.sleep(min(poll_s, max(0, timeout_s - waited)))
 
 
 def stop(server: subprocess.Popen, grace_s: float = 120) -> None:
@@ -179,32 +244,16 @@ def run_client(command: list[str], *, timeout: float, **kwargs) -> int:
 
 
 def validate_runtime(points: list[dict]) -> None:
+    names = [point.get("exp_name") for point in points]
+    if not all(isinstance(name, str) and EXP_NAME.fullmatch(name) for name in names):
+        raise RuntimeError("every point needs an exp_name that is a single safe path component")
+    if len(names) != len(set(names)):
+        raise RuntimeError("point exp_name values must be unique")
     for point in points:
-        runtime = point.get("runtime", {})
-        for field in ("ready_timeout_s", "point_timeout_s", "poll_s"):
-            value = runtime.get(field)
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or value <= 0
-            ):
-                raise RuntimeError(f"{point['arm']}: upstream runtime.{field} needs a finite positive value")
-        port = runtime.get("port")
-        if port is not None and (isinstance(port, bool) or not isinstance(port, int) or not 0 < port < 65536):
-            raise RuntimeError(f"invalid upstream server port {port!r}")
-        dram = point["client_env"].get("TOTAL_CPU_DRAM_GB")
-        if not isinstance(dram, str) or not dram.isdigit():
-            raise RuntimeError(f"{point['arm']}: upstream TOTAL_CPU_DRAM_GB is missing or invalid")
-        env = point["client_env"]
-        for name in ("TP", "PP_SIZE", "PCP_SIZE", "DCP_SIZE", "EP_SIZE"):
-            value = env.get(name)
-            if not isinstance(value, str) or not value.isdigit() or int(value) <= 0:
-                raise RuntimeError(f"{point['arm']}: invalid or missing {name}; regenerate the plan")
-        if int(env["TP"]) * int(env["PP_SIZE"]) * int(env["PCP_SIZE"]) != point["gpus"]:
-            raise RuntimeError(f"{point['arm']}: client and launch GPU counts differ")
-        if env.get("DP_ATTENTION") not in ("true", "false"):
-            raise RuntimeError(f"{point['arm']}: invalid or missing DP_ATTENTION; regenerate the plan")
+        try:
+            check_point_runtime(point_id(point), point)
+        except RecipeError as error:
+            raise RuntimeError(str(error)) from error
 
 
 def available_port() -> int:
@@ -254,8 +303,42 @@ def trace_datasets_cache(host: dict, dataset: str, revision: str) -> Path:
     return host["datasets_cache"] / sha256_json([dataset, revision])
 
 
+RESOLVE_LOADERS = """
+import json, sys
+from infx.bench.agentic import traces
+print(json.dumps({loader: traces.resolve("", loader)[1] for loader in json.loads(sys.argv[1])}))
+"""
+
+
+def verify_trace_loaders(host: dict, points: list[dict]) -> None:
+    """Require the pinned client to replay, for each point's loader, the dataset its trace records."""
+    loaders = sorted({p["client_env"]["WEKA_LOADER_OVERRIDE"] for p in points})
+    done = subprocess.run(
+        [sys.executable, "-c", RESOLVE_LOADERS, json.dumps(loaders)],
+        cwd=host["inferencex_e2e"],
+        env={**execution_env(), "PYTHONPATH": str(host["inferencex_e2e"])},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if done.returncode:
+        raise RuntimeError(
+            f"the AgentX client rejects the trace loaders {loaders}: {done.stderr.strip()[-400:]}"
+        )
+    datasets = json.loads(done.stdout)
+    for point in points:
+        loader, repo = point["client_env"]["WEKA_LOADER_OVERRIDE"], point["trace"]["repo"]
+        if datasets.get(loader) != repo:
+            raise RuntimeError(
+                f"point {point_id(point)}: loader {loader} replays {datasets.get(loader)!r}, "
+                f"but its trace is {repo!r}"
+            )
+
+
 def prepare_traces(host: dict, points: list[dict], log_path: Path) -> None:
     """Prepare traces and verify offline loading."""
+    verify_trace_loaders(host, points)
     sources = {(p["trace"]["repo"], p["trace"]["revision"]) for p in points}
     if len(sources) != len({repo for repo, _ in sources}):
         raise RuntimeError("a run cannot use different revisions of the same trace dataset")
@@ -281,6 +364,9 @@ def prepare_traces(host: dict, points: list[dict], log_path: Path) -> None:
 
 def run_live(point: dict, out: Path, host: dict) -> dict:
     runtime = point["runtime"]
+    waited = wait_gpus_idle()
+    if waited >= 1:
+        print(f"  waited {waited:.0f} s for GPU VRAM to reach 0%", flush=True)
     port = runtime["port"] if runtime["port"] is not None else available_port()
     base_url = f"http://127.0.0.1:{port}"
     if not port_free(port):
@@ -353,7 +439,7 @@ def run_point(point: dict, out: Path, host: dict) -> dict:
     began = time.monotonic()
     try:
         aggregate = run_live(point, out, host)
-        record.update(metrics_of(aggregate))
+        record.update(metrics_of(aggregate, point["gpus"]))
         record["raw_data"] = aggregate
     except (RuntimeError, OSError, KeyError, ValueError, TypeError, subprocess.TimeoutExpired) as error:
         record.update(status="failed", error=f"{type(error).__name__}: {error}"[:500])
@@ -433,11 +519,11 @@ def client_packages(host: dict) -> dict:
     )
 
 
-def server_packages() -> dict:
+def server_packages(framework: str) -> dict:
     try:
         return {
             name: importlib.metadata.version(name)
-            for name in ("sglang", "torch", "triton", "amd-aiter", "flydsl")
+            for name in (framework, "torch", "triton", "amd-aiter", "flydsl")
         }
     except importlib.metadata.PackageNotFoundError as error:
         raise RuntimeError(f"serving package identity is unavailable: {error}") from error
@@ -477,8 +563,8 @@ def host_settings(args: argparse.Namespace, serving: dict) -> dict:
             raise RuntimeError(f"trace hub contains a conflicting model cache: {model_link}")
     if not Path(model_path).is_dir():
         raise RuntimeError(f"model snapshot {model_path} not found; prefill the HF hub cache")
-    inferencex = serving["provenance"]["inferencex"]
-    inferencex_dir = fetch_inferencex(inferencex["repo"], inferencex["sha"], args.work / "inferencex")
+    client = serving["client"]
+    inferencex_dir = fetch_inferencex(client["repo"], client["sha"], args.work / "inferencex")
     overrides = {"DURATION": str(args.duration)} if args.duration else {}
     return {
         "model_path": str(model_path),
@@ -496,12 +582,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--serving", type=Path, required=True, help="serving.json for one model target")
     parser.add_argument("--out", type=Path, required=True, help="directory for results.json")
     parser.add_argument("--work", type=Path, default=Path("/tmp/agentx-work"))
-    parser.add_argument("--arms", help="comma-separated arms, or all; defaults to the plan selection")
-    parser.add_argument("--point-policy", choices=("all", POLICY), help="Must match the frozen serving plan")
-    parser.add_argument(
-        "--points",
-        help="comma-separated ARM:CONC using the generated ids in serving.json (smoke runs only)",
-    )
     parser.add_argument("--model-path", help="default: the pinned revision in $HF_HUB_CACHE")
     parser.add_argument("--duration", type=int, help="override DURATION (smoke runs only)")
     parser.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", "local"))
@@ -512,25 +592,14 @@ def main(argv: list[str] | None = None) -> int:
         args.model_path = str(Path(args.model_path).resolve())
     serving = read_json(args.serving)
     selection = serving.get("selection", {})
-    policy = selection.get("policy", "all")
-    if args.point_policy is not None and args.point_policy != policy:
-        parser.error("--point-policy must match the plan; regenerate it with plan to change it")
-    if policy == POLICY and (args.points is not None or args.arms is not None):
-        parser.error("Pareto selection is fixed by the plan; --arms and --points are not allowed")
-    args.arms = args.arms if args.arms is not None else selection.get("arms", "all")
-    args.points = (
-        args.points if args.points is not None else (selection.get("points") if policy == "all" else None)
-    )
+    policy = selection.get("policy")
+    if policy != POLICY:
+        parser.error("serving.json has no Pareto selection; regenerate it with plan")
     args.duration = args.duration if args.duration is not None else selection.get("duration")
     if args.duration is not None and args.duration <= 0:
         parser.error("--duration must be positive")
     try:
-        effective = (
-            {**serving, "selection": {**selection, "arms": args.arms, "points": args.points}}
-            if policy == "all"
-            else serving
-        )
-        points = selected_points(effective)
+        points = selected_points(serving)
     except SelectionError as error:
         parser.error(str(error))
     try:
@@ -543,8 +612,7 @@ def main(argv: list[str] | None = None) -> int:
                 "aklr_sha": aklr_sha(),
                 "source_dirty": source_dirty(),
                 "host": socket.gethostname(),
-                "arms_requested": args.arms,
-                "points_requested": args.points,
+                "points_requested": selection.get("points_requested"),
                 "duration_override_s": args.duration,
                 "model_path_override": args.model_path,
             },
@@ -557,10 +625,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     records = results["points"]
     write_json(args.out / "results.json", results)
-    if policy == POLICY:
-        write_json(args.out / "selection.json", selection)
+    write_json(args.out / "selection.json", selection)
     try:
         validate_runtime(points)
+        framework = points_framework(points)
+        switch = plugin_switch(framework)
         execution, image_defaults = execution_identity(serving)
         hardware = observed_hardware()
         validate_hardware(hardware, serving["hardware"])
@@ -573,13 +642,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{utc_now()}] preparing the AgentX traces", flush=True)
         prepare_traces(host, points, args.out / "prepare_traces.log")
         packages = client_packages(host)
-        serving_packages = server_packages()
+        serving_packages = server_packages(framework)
         for target in (results, results["control"]):
             target["run"]["client_packages"] = packages
             target["run"]["server_packages"] = serving_packages
     except (
         RuntimeError,
-        ResolveError,
+        FetchError,
         OSError,
         ValueError,
         KeyError,
@@ -596,8 +665,7 @@ def main(argv: list[str] | None = None) -> int:
         for planned in points:
             point = copy.deepcopy(planned)
             point["launch"]["env"].update(
-                AKLR_SGLANG_PLUGIN="1" if mode == "enabled" else "0",
-                AKLR_DISABLE="0" if mode == "enabled" else "1",
+                {switch: "1" if mode == "enabled" else "0", "AKLR_DISABLE": "0" if mode == "enabled" else "1"}
             )
             measurement = {
                 "environment_policy": ENVIRONMENT_POLICY,

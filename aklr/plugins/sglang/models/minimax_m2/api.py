@@ -42,7 +42,7 @@ def minimax_m2_mxfp4_moe(
 ): ...
 
 
-@sglang_route("sglang.srt.models.minimax_m2.MiniMaxM2MoE.forward_normal", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.minimax_m2.MiniMaxM2MoE.forward_normal", versions=("0.5.22", "0.5.23"))
 def _moe_forward_normal(self, hidden_states):
     """The MoE's gate, routing and experts on this rank as one op call; sglang's layer
     boundary sums the ranks' shares after it, as it does sglang's own."""

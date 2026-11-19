@@ -25,21 +25,36 @@ class _Param:
 
 
 class _Narrowed:
-    def __init__(self, raw):
+    def __init__(self, raw, kernel_call_keys):
         self.raw = raw
+        self.kernel_call_keys = kernel_call_keys
 
     def schema_text(self):
         return json.dumps(self.raw, indent=2) + "\\n"
 
 
+def gemm_scaled_baseline(**params):
+    return params["out"]
+
+
 class _Contract:
-    api_params = [_Param(name) for name in ("a", "b", "trans_b", "bias", "out_dtype", "out")]
+    def __init__(self, raw):
+        self.raw = raw
+        inputs = [name for name in raw["inputs"] if name not in ("a", "b")]
+        self.api_params = [_Param(name) for name in ("a", "b", *inputs, "trans_b", "bias", "out_dtype", "out")]
+        self.outputs = {"out": None}
+
+    def baseline(self):
+        has_baseline = "a_scale" in self.raw["inputs"] or self.raw["op_type"] == "mla"
+        return gemm_scaled_baseline if has_baseline else None
 
     def point_from_json(self, raw, axes):
         return axes
 
     def narrow(self, point, *, workloads, kernel):
-        return _Narrowed(dict(self.raw, workloads=workloads, kernel=kernel))
+        hidden = {name for name, spec in self.raw["inputs"].items() if "present_when" in spec}
+        keys = tuple(p.name for p in self.api_params if p.name not in hidden)
+        return _Narrowed(dict(self.raw, workloads=workloads, kernel=kernel), keys)
 
 
 class ContractRegistry:
@@ -48,9 +63,7 @@ class ContractRegistry:
         return ContractRegistry()
 
     def for_schema_json(self, raw):
-        contract = _Contract()
-        contract.raw = raw
-        return contract
+        return _Contract(raw)
 
 
 class OpContract:
