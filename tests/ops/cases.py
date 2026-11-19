@@ -117,6 +117,25 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's MLA verify on vLLM under decode context parallelism shrunk: 3 queries of 16 heads
+    # a request, two ranks, so this rank holds two of a request's three query tokens
+    PointSpec(
+        contract_id="mla_decode_fwd_cprr@1.0",
+        axes={"batch": 2, "query_length": 3, "n_heads": 16, "n_slots": 64, "n_indices": 40, "n_offsets": 3},
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_buffer": "float8_e4m3fn",
+            "kv_indptr": "int32",
+            "kv_indices": "int32",
+            "g_kv_indptr": "int32",
+            "q_scale": "float32",
+            "kv_scale": "float32",
+            "o": "bfloat16",
+            "lse": "float32",
+        },
+        attrs={"cp_world_size": 2},
+        layout_variant_name="row_major",
+    ),
     # Kimi-K3's MLA prefill after kv_b, two sequences: 12 heads, which aiter's fp8 path tiles to 16
     PointSpec(
         contract_id="mla_prefill_varlen@1.0",
@@ -760,6 +779,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "mega_moe@1.0",
         "flash_mla_with_kvcache@1.0",
         "mla_decode_fwd@1.0",  # aiter's ASM MLA
+        "mla_decode_fwd_cprr@1.0",
         "mla_prefill_varlen@1.0",
         "mla_prefill_varlen_lse@1.0",
         "fp8_paged_mqa_logits@1.0",  # gfx942 reads its fp8 bytes as e4m3fnuz
