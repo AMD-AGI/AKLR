@@ -23,11 +23,15 @@ before any container (what a container writes is root's; delete it in a containe
 
 | On a cluster | Here |
 |---|---|
-| `remote-gpu bg -j <pool> --name <task> --image <image> -C <dir> -e K=V --mount <dir>` | `docker run -d --init --name <task> --label shepherd=<campaign> --network host --ipc host --device /dev/kfd --device /dev/dri --group-add video --security-opt seccomp=unconfined -e HIP_VISIBLE_DEVICES=<gpu> -e TMPDIR=/tmp -v <dir>:<dir> -w <dir> <image> timeout <limit> bash -c '<step>'`, with `-v <campaign>/secrets:<campaign>/secrets:ro` only for a model-calling step |
+| `remote-gpu bg -j <pool> --name <task> --image <image> -C <dir> -e K=V --mount <dir>` | `docker run -d --init --name <task> --label shepherd=<campaign> --network host --ipc host --device /dev/kfd --device /dev/dri --group-add video --security-opt seccomp=unconfined -e HIP_VISIBLE_DEVICES=<gpu> -e TMPDIR=/tmp -v <dir>:<dir> -w <dir> <image> timeout -k 60 <limit> bash -c '<step>'`, with `-v <campaign>/secrets:<campaign>/secrets:ro` only for a model-calling step |
 | `remote-gpu logs -j <pool> <task>` | `docker logs <task>`; `docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' <task>` |
 | `remote-gpu exec -j <pool> -- <command>` | the command, in this shell |
-| `remote-gpu push` / `pull` | `cp`, of the named regular files only, checked as [worker](worker.md#isolation) says |
+| `remote-gpu push` / `pull` | `cp -P`, of the named regular files only (`test -f` and not `test -L`: a link is refused, never followed), checked as [worker](worker.md#isolation) says |
 | `remote-gpu ls`, `release` | `docker ps -a --filter label=shepherd=<campaign>`; `docker stop -t 30 <task>`, then `docker rm <task>` |
+
+The container sees every GPU, and `HIP_VISIBLE_DEVICES` alone picks the campaign's: a step never sets
+it again (the `forge_task` examples set `0`; drop that), and `<limit>` plus the 60 seconds before the
+kill stays within the campaign's bound.
 
 The container name is the operation's unique external name: a lost reply is reconciled with `docker
 inspect <task>`, never by starting it again. No `--rm`, so a finished step keeps its exit code until

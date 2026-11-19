@@ -101,7 +101,7 @@ labels `shepherd`, before its round: that issue's text holds the owner's choices
 is there to ask. Instead of the automation and round needs above, check, as the runner's user on that host:
 
 - `claude` on the runner's `PATH`, with the model endpoint and key in that user's
-  `~/.claude/settings.json`; `gh`, `jq`, Docker, and PyYAML for `python3`.
+  `~/.claude/settings.json`; `gh`, `jq`, Docker, and PyYAML importable by `python3 -I` (not only from the user site).
 - The configuration at `~/.shepherd/<owner>/<repository>/configuration.yaml`, outside the runner's
   workspace; the workflow links `.shepherd/configuration.yaml` to it. It has
   `execution.cluster: local`, `execution.gpus`, `execution.work_dir`,

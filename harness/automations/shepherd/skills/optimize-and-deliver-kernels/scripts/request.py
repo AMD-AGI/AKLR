@@ -41,7 +41,7 @@ class Request:
     at: str
     body_sha256: str
     text: str = ""
-    dropped: int = 0
+    dropped: tuple = ()
     comment: int | None = None
     stopped_at: str | None = None
     closed_at: str | None = None
@@ -60,7 +60,7 @@ class Request:
             at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             body_sha256=hashlib.sha256(body.encode()).hexdigest(),
             text=body,
-            dropped=len(schemas[limit:]),
+            dropped=schemas[limit:],
         )
 
     def report(self, campaigns, skipped):
@@ -86,7 +86,7 @@ class Request:
             f"(text `{self.body_sha256[:12]}`). Later edits have no effect; for another request, open a new issue."
         )
         if self.dropped:
-            notes.append(f"{self.dropped} more schema paths were over the batch size and dropped.")
+            notes.append(f"{len(self.dropped)} more schema paths were over the batch size and dropped.")
         if self.stopped_at:
             notes.append(f"Closed at {self.stopped_at}: stopped, nothing more is admitted.")
         table = ["| Schema | Campaign | State | PR | Result |", "|---|---|---|---|---|", *rows]
@@ -115,7 +115,8 @@ class RequestBoard:
     def save(self, request, **changes):
         request = Request(**{**asdict(request), **changes})
         directory = self.state_dir / "requests"
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # No parents: the state directory is setup's to make (`state.py init` refuses an existing one).
+        directory.mkdir(mode=0o700, exist_ok=True)
         temporary = directory / f".{request.issue}.tmp"
         temporary.write_text(json.dumps(asdict(request)))
         os.replace(temporary, directory / f"{request.issue}.json")
@@ -126,14 +127,15 @@ class RequestBoard:
         issue = int(event["issue"]["number"])
         comments = f"repos/{self.repository}/issues/{issue}/comments"
         request = self.opened().get(issue)
-        if request:
-            return request
-        request = Request.frozen(event, limit)
         if request is None:
-            self.gh("api", comments, "-f", "body=shepherd: this issue is empty; nothing was requested.")
-            return None
-        # The file comes first: a lost comment only loses the progress display.
-        self.save(request)
+            request = Request.frozen(event, limit)
+            if request is None:
+                self.gh("api", comments, "-f", "body=shepherd: this issue is empty; nothing was requested.")
+                return None
+            # The file comes first: a lost comment only loses the progress display, until the next freeze.
+            self.save(request)
+        if request.comment:
+            return request
         created = self.gh("api", comments, "-f", f"body={request.report([], {})}", "--jq", ".id")
         return self.save(request, comment=int(created))
 
@@ -141,9 +143,9 @@ class RequestBoard:
         """Rewrite the request's comment from the ledger (a file holding `state.py show`'s output)."""
         if not request.comment:
             return
-        # A finished campaign's ledger entry is cut down; its archive holds the whole of it.
+        # A finished campaign's ledger entry is cut down; its archive holds the rest of it.
         campaigns = [
-            json.loads((self.state_dir / c["archive"]).read_text()) if "archive" in c else c
+            {**json.loads((self.state_dir / c["archive"]).read_text()), **c} if "archive" in c else c
             for c in json.loads(Path(ledger).read_text())["state"]["campaigns"]
         ]
         skipped = json.loads(Path(listed).read_text())["skipped"] if listed else ()
@@ -199,7 +201,9 @@ def main():
             schemas = tuple(dict.fromkeys([*request.schemas, *args.schema]))
             limit = int(config["policy"]["batch_size"])
             request = board.save(
-                request, schemas=schemas[:limit], dropped=request.dropped + len(schemas[limit:])
+                request,
+                schemas=schemas[:limit],
+                dropped=tuple(dict.fromkeys([*request.dropped, *schemas[limit:]])),
             )
             print(json.dumps(asdict(request)))
         elif args.command == "stop":
