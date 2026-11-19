@@ -1,7 +1,8 @@
 # Pools
 
 A pool is one node of `execution.cluster`, shared by up to one campaign per GPU. Use
-`harness/skills/remote-gpu/SKILL.md` for every command.
+`harness/skills/remote-gpu/SKILL.md` for every command. With `execution.cluster: local`, read
+[local](local.md) instead of the sections on allocating and releasing.
 
 ## Allocating
 

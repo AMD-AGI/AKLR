@@ -1,0 +1,105 @@
+name: shepherd
+
+# One shepherd round on the GPU host (harness/automations/shepherd), begun by the schedule or by an
+# allowed user's event: labeling an issue `shepherd` freezes its request, closing it stops the request.
+# issues and schedule events run main's copy of this file; nothing here reads a pull request.
+on:
+  issues:
+    types: [labeled, closed]
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  SCRIPTS: harness/automations/shepherd/skills/optimize-and-deliver-kernels/scripts
+  CONFIG: .shepherd/configuration.yaml
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  round:
+    # Allowed users are the logins in the SHEPHERD_ALLOWED_USERS variable (a JSON list; unset allows
+    # nobody), until a team replaces it. Both who caused the event and who started this run or re-run
+    # must be allowed, so no job reaches the runner for anyone else.
+    if: >-
+      github.event_name == 'schedule' && vars.SHEPHERD_SCHEDULE_ENABLED == 'true' ||
+      github.event_name != 'schedule' &&
+      contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.event.sender.login) &&
+      contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.triggering_actor) &&
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' ||
+       github.event.action == 'labeled' && github.event.label.name == 'shepherd' ||
+       github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'shepherd'))
+    # Exactly one runner may carry this label: the ledger lives on its disk, and its lease serializes rounds.
+    runs-on: ${{ vars.SHEPHERD_RUNNER || 'aklr-gpu' }}
+    # The App token lasts an hour; execution.round_hours must stay under this too.
+    timeout-minutes: 55
+    steps:
+      # Branches, draft PRs and issue comments are the App's; the job token has no permission.
+      - id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_CLAUDE_APP_ID }}
+          private-key: ${{ secrets.AKLR_CLAUDE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Link the host's configuration
+        # Uncommitted and outside the workspace, which checkout cleans.
+        env:
+          HOST_CONFIG: ${{ vars.SHEPHERD_CONFIG }}
+        run: |
+          test -f "$HOST_CONFIG" || { echo "::error::SHEPHERD_CONFIG names no file on this runner; see setup-shepherd"; exit 1; }
+          mkdir -p .shepherd && ln -sfn "$HOST_CONFIG" "$CONFIG"
+          python3 -c 'import yaml' || { echo '::error::the runner python3 needs PyYAML'; exit 1; }
+      - name: Freeze or stop the issue's request
+        # From the event's own copy of the issue, as the allowed user saw it; later edits are never read.
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ACTION: ${{ github.event.action == 'labeled' && 'freeze' || 'stop' }}
+        run: python3 -I "$SCRIPTS/request.py" "$ACTION" --config "$CONFIG" --event "$GITHUB_EVENT_PATH"
+      - name: Begin a round
+        id: begin
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NOW: ${{ github.event_name != 'schedule' && '--now' || '' }}
+        run: |
+          seen=$(python3 -I "$SCRIPTS/observation.py" --config "$CONFIG") || seen=
+          begun=$(python3 -I "$SCRIPTS/state.py" begin --config "$CONFIG" ${seen:+--observation "$seen"} $NOW)
+          echo "$begun"
+          # Busy or waiting: no round, and no model call.
+          if jq -e 'has("round")' <<< "$begun" > /dev/null; then
+            { echo 'begun<<SHEPHERD_EOF'; echo "$begun"; echo SHEPHERD_EOF; } >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run the round
+        if: steps.begin.outputs.begun != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          BEGUN: ${{ steps.begin.outputs.begun }}
+          # Pushes use the App token through gh, without writing a credential to disk.
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: credential.https://github.com.helper
+          GIT_CONFIG_VALUE_0: '!gh auth git-credential'
+        # The model comes from the runner user's own Claude settings. remote-gpu is shut out: the pool is this host.
+        run: |
+          claude -p "$(cat harness/automations/shepherd/templates/actions-prompt.md)
+          $BEGUN" --dangerously-skip-permissions --disallowedTools 'Skill(aklr:remote-gpu)' 'Skill(remote-gpu)' < /dev/null
+      - name: Rewrite the requests' progress comments
+        if: ${{ !cancelled() && steps.begin.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          root=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["execution"]["state_dir"])' "$CONFIG")
+          python3 -I "$SCRIPTS/state.py" --root "$root" show > "$RUNNER_TEMP/ledger.json"
+          python3 -I "$SCRIPTS/request.py" progress --config "$CONFIG" --ledger "$RUNNER_TEMP/ledger.json"
