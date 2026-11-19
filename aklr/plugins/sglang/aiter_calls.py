@@ -137,7 +137,7 @@ def _triton_gemm_a16w16(
     )
 
 
-@sglang_route("aiter.ops.gemm_op_a8w8.gemm_a8w8_blockscale_bpreshuffle", versions=("0.5.22",))
+@sglang_route("aiter.ops.gemm_op_a8w8.gemm_a8w8_blockscale_bpreshuffle", versions=("0.5.22", "0.5.23"))
 def _gemm_a8w8_blockscale_bpreshuffle(XQ, WQ, x_scale, w_scale, dtype=torch.bfloat16, out=None):
     return aklr_aiter.gemm_a8w8_blockscale_bpreshuffle(XQ, WQ, x_scale, w_scale, dtype=dtype, out=out)
 
