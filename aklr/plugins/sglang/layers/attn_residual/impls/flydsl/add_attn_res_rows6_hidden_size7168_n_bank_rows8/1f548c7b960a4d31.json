@@ -121,8 +121,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.078,
-      "microseconds": 4.92
+      "speedup": 2.044,
+      "microseconds": 4.99
     },
     {
       "axes": {
@@ -133,8 +133,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.038,
-      "microseconds": 4.97
+      "speedup": 2.015,
+      "microseconds": 5.0
     },
     {
       "axes": {
@@ -145,8 +145,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.024,
-      "microseconds": 5.0
+      "speedup": 2.011,
+      "microseconds": 5.02
     },
     {
       "axes": {
@@ -157,8 +157,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.002,
-      "microseconds": 5.07
+      "speedup": 2.015,
+      "microseconds": 5.04
     },
     {
       "axes": {
@@ -169,8 +169,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.958,
-      "microseconds": 5.14
+      "speedup": 1.939,
+      "microseconds": 5.27
     },
     {
       "axes": {
@@ -181,8 +181,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.924,
-      "microseconds": 5.35
+      "speedup": 1.919,
+      "microseconds": 5.4
     },
     {
       "axes": {
@@ -193,8 +193,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.503,
-      "microseconds": 48.9
+      "speedup": 1.49,
+      "microseconds": 49.3
     },
     {
       "axes": {
@@ -205,8 +205,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.517,
-      "microseconds": 402.0
+      "speedup": 1.536,
+      "microseconds": 401.0
     }
   ],
   "layout_variants": {
