@@ -117,7 +117,7 @@ def magnified_inputs(
     decoded, log2_limits = {}, []
     for name, distribution in distributions.items():
         dtype = schema["inputs"][name]["dtype"]["any_of"][0]
-        if distribution["kind"] == "int_range":
+        if distribution["kind"] in ("int_range", "causal_topk"):
             continue
         traits = DTYPE_TRAITS[dtype]
         x = to_float64(row_major_args[name], dtype)

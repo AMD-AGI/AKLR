@@ -36,12 +36,12 @@ SGLang 在调用 `fused_moe` 之前，把第 1–3 步作为单独的调用执�
 
 ### 1. 确定要替换的函数
 
-即 SGLang `srt/models/deepseek_v2.py` 中的 `DeepseekV2MoE.forward_normal`。它完成上表第 1–10 步，返回这一层的输出；`self.reduce_results` 为真时，输出已在各卡之间求和。它在 SGLang 0.5.22 中的参数如下，route 要原样照抄：
+即 SGLang `srt/models/deepseek_v2.py` 中的 `DeepseekV2MoE.forward_normal`。它完成上表第 1–10 步，返回这一层的输出；`self.reduce_results` 为真时，输出已在各卡之间求和。它在 SGLang 0.5.23 中的参数如下，route 要原样照抄：
 
 ```python
 def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_ids=None, input_ids_global=None,
-                   skip_shared_experts=False, num_token_non_padded=None, use_vision_topk=False,
-                   return_moe_output=False):
+                   skip_shared_experts=False, use_vision_topk=False, return_moe_output=False,
+                   leave_output_sum=False):
 ```
 
 ### 2. 建包
@@ -65,7 +65,7 @@ def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_i
 route 写在 `api.py` 中，放在算子入口函数旁边。下面省略了部分参数：
 
 ```python
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
 def _moe_forward_normal(self, hidden_states, ...):  # 参数与被替换的函数完全一致
     # AKLR 不支持的 SGLang 配置
     if _forward_normal_falls_back(self, ...):
@@ -144,7 +144,7 @@ SGLANG_USE_AITER=1 AKLR_SGLANG_PLUGIN=1 python -m sglang.launch_server \
     --model-path <GLM-5 MXFP4 checkpoint> --tensor-parallel-size 8 --trust-remote-code
 ```
 
-日志会报告挂载了哪些函数（`aklr hooks N sglang functions on sglang 0.5.22`），模型的回答必须保持正确。
+日志会报告挂载了哪些函数（`aklr hooks N sglang functions on sglang 0.5.23`），模型的回答必须保持正确。
 
 新的 route 还要报告端到端提升：同一个 server 配置，分别在关闭这个算子（`AKLR_DISABLE=deepseek_v2_mxfp4_moe@1.0`）和打开时跑 benchmark，结果写进 PR 的 `End to end` 小节。标准是在说明的 workload 下提升 2%（[合入标准](acceptance_criteria.zh.md)）。
 

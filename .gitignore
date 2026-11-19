@@ -14,3 +14,6 @@ test-reports/
 aklr_validation/
 # forge_task prepare's default run directories
 aklr-runs/
+
+# Local shepherd configuration
+.shepherd/configuration.yaml

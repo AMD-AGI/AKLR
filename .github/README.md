@@ -34,7 +34,7 @@ An engine calls an AKLR operator. AKLR checks the inputs and picks a kernel that
 
 ## The Kernel Rosetta Stone
 
-The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA3/CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/aklr-kb/SKILL.md).
+The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA3/CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/kb/SKILL.md).
 
 It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. Below is our first measurement on one GEMM ([details](../docs/kernel_rosetta_stone.md)):
 
@@ -48,8 +48,8 @@ It aims to help agents reach the same speed sooner, use fewer tokens, and find f
 
 | Framework | Development image |
 |---|---|
-| SGLang | `lmsysorg/sglang:v0.5.22-rocm10-mi35x` |
-| vLLM | TODO |
+| SGLang | `lmsysorg/sglang:v0.5.23-rocm10-mi35x` ([stack.json](../stack.json)) |
+| vLLM | `vllm/vllm-openai-rocm:v0.34.0-rocm100` ([stack.json](../stack.json)) |
 
 Inside the image, install AKLR, one pure-Python package `aklr` (Python 3.11 or later), versioned `0.1.devN+g<commit>` before the first tag. It uses the image's torch, Triton and SGLang and replaces none of them:
 
@@ -57,8 +57,6 @@ Inside the image, install AKLR, one pure-Python package `aklr` (Python 3.11 or l
 git clone https://github.com/AMD-AGI/AKLR.git && cd AKLR
 pip install -e .
 ```
-
-Validation times AKLR's kernels against a baseline pinned at `AKLR_BASELINE_AITER` in [ci.yaml](workflows/ci.yaml); install that commit before validating: `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<that commit>"`.
 
 ## Usage
 

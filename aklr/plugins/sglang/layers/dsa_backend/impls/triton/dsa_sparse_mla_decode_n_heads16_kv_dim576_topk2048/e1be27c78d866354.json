@@ -100,7 +100,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.256
+      "speedup": 1.251,
+      "microseconds": 16.7
     }
   ],
   "layout_variants": {

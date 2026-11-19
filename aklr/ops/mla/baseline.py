@@ -5,7 +5,13 @@ from __future__ import annotations
 
 import weakref
 
-__all__ = ["flash_mla_with_kvcache_baseline", "fp8_paged_mqa_logits_baseline", "mla_decode_fwd_baseline"]
+__all__ = [
+    "flash_mla_with_kvcache_baseline",
+    "fp8_paged_mqa_logits_baseline",
+    "fp8_paged_mqa_logits_verify_baseline",
+    "mla_decode_fwd_baseline",
+    "mla_decode_fwd_cprr_baseline",
+]
 
 # aiter's work schedule for a kv_indptr, by the tensor's id while it lives: a framework plans
 # it once a step for every MLA layer, not at each call
@@ -42,7 +48,7 @@ def flash_mla_with_kvcache_baseline(
     take its multi-token path. It writes into the caller's output and lse when it passes
     them."""
     if kv_cache_format == "dsv4_fp8":
-        from sglang.kernels.ops.attention.dsa.tilelang_kernel import (
+        from sglang.kernels.ops.attention.dsv4.tilelang_fp8_attention import (
             dpsk_v4_fp8_attention_fwd,
         )
 
@@ -112,6 +118,26 @@ def fp8_paged_mqa_logits_baseline(
         logits.shape[1],
         Preshuffle=preshuffled,
         KVBlockSize=page_size,
+    )
+    return logits
+
+
+def fp8_paged_mqa_logits_verify_baseline(
+    q, kv_cache, weights, context_lens, block_tables, logits, *, page_size, preshuffled
+):
+    """sglang's verify logits with its kernel off: aiter's kernel a query row at a time, over the
+    block table row-expanded as sglang passes it. The expansion, a copy sglang makes once a
+    step, is timed with each call here."""
+    batch, next_n = q.shape[:2]
+    fp8_paged_mqa_logits_baseline(
+        q.flatten(0, 1).unsqueeze(1),
+        kv_cache,
+        weights.flatten(0, 1),
+        context_lens.flatten(),
+        block_tables.repeat_interleave(next_n, dim=0),
+        logits.view(batch * next_n, -1),
+        page_size=page_size,
+        preshuffled=preshuffled,
     )
     return logits
 
@@ -198,6 +224,125 @@ def mla_decode_fwd_baseline(
         return_lse=True,
     )
     final_lse = final_lse.view(batch, n_heads)
+    if lse is None:
+        return o, final_lse
+    lse.copy_(final_lse)
+    return o, lse
+
+
+def mla_decode_fwd_cprr_baseline(
+    q,
+    kv_buffer,
+    kv_indptr,
+    kv_indices,
+    g_kv_indptr,
+    q_scale,
+    kv_scale,
+    cp_world_size=None,
+    sm_scale=None,
+    cp_rank=0,
+    o=None,
+    lse=None,
+):
+    """aiter's ASM MLA decode as vLLM's aiter MLA backend verifies draft tokens under decode context
+    parallelism (its cprr route): fp8 q and pool, causal over global positions, the persistent
+    schedule vLLM's metadata builder plans once a step for every MLA layer (fast mode, round robin,
+    as many splits a request as the GPU has CUs), planned here once per kv_indptr."""
+    import torch
+    from aiter.mla import mla_decode_fwd
+    from aiter.ops.attention import get_mla_metadata_info_v1, get_mla_metadata_v1
+
+    batch, query_length, n_heads, dim = q.shape
+    rows = batch * query_length
+    if o is None:
+        o = torch.empty((batch, query_length, n_heads, 512), dtype=torch.bfloat16, device=q.device)
+    # planned again for an offsets tensor rewritten in place, other queries, heads, dtypes or device
+    key = (
+        id(kv_indptr),
+        kv_indptr._version,
+        "cprr",
+        query_length,
+        n_heads,
+        q.dtype,
+        kv_buffer.dtype,
+        q.device,
+    )
+    schedule = _SCHEDULES.get(key)
+    if schedule is None:
+        # vLLM's split cap: the CU count (AiterMLAMetadataBuilder._mla_max_split_per_batch)
+        splits = torch.cuda.get_device_properties(q.device).multi_processor_count
+        qo_indptr = torch.arange(batch + 1, dtype=torch.int32, device=q.device) * query_length
+        last_page_lens = torch.ones(batch, dtype=torch.int32, device=q.device)
+        sizes = get_mla_metadata_info_v1(
+            batch,
+            query_length,
+            n_heads,
+            q.dtype,
+            kv_buffer.dtype,
+            is_sparse=False,
+            fast_mode=True,
+            max_split_per_batch=splits,
+        )
+        buffers = [torch.empty(size, dtype=dtype, device=q.device) for size, dtype in sizes]
+        work_metadata, work_indptr, work_info_set, reduce_indptr, reduce_final_map, reduce_partial_map = (
+            buffers
+        )
+        # the round-robin schedule is not causal: the kernel masks by global position
+        get_mla_metadata_v1(
+            qo_indptr,
+            kv_indptr,
+            last_page_lens,
+            n_heads,
+            1,
+            False,
+            work_metadata,
+            work_info_set,
+            work_indptr,
+            reduce_indptr,
+            reduce_final_map,
+            reduce_partial_map,
+            page_size=1,
+            kv_granularity=16,
+            max_seqlen_qo=query_length,
+            uni_seqlen_qo=query_length,
+            fast_mode=True,
+            max_split_per_batch=splits,
+            intra_batch_mode=False,
+            is_cp_round_robin=True,
+            dtype_q=q.dtype,
+            dtype_kv=kv_buffer.dtype,
+        )
+        schedule = _SCHEDULES[key] = (qo_indptr, last_page_lens, splits, buffers)
+        weakref.finalize(kv_indptr, _SCHEDULES.pop, key, None)
+    qo_indptr, last_page_lens, splits, buffers = schedule
+    work_metadata, work_indptr, work_info_set, reduce_indptr, reduce_final_map, reduce_partial_map = buffers
+    _, final_lse = mla_decode_fwd(
+        q.view(rows, n_heads, dim),
+        kv_buffer,
+        o.view(rows, n_heads, 512),
+        qo_indptr,
+        kv_indptr,
+        kv_indices,
+        last_page_lens,
+        query_length,
+        sm_scale=sm_scale,
+        num_kv_splits=splits,
+        work_meta_data=work_metadata,
+        work_indptr=work_indptr,
+        work_info_set=work_info_set,
+        reduce_indptr=reduce_indptr,
+        reduce_final_map=reduce_final_map,
+        reduce_partial_map=reduce_partial_map,
+        q_scale=q_scale,
+        kv_scale=kv_scale,
+        intra_batch_mode=False,
+        return_lse=True,
+        g_kv_indptr=g_kv_indptr,
+        cp_world_size=cp_world_size,
+        cp_rank=cp_rank,
+        causal=True,
+    )
+    final_lse = final_lse.view(batch, query_length, n_heads)
     if lse is None:
         return o, final_lse
     lse.copy_(final_lse)

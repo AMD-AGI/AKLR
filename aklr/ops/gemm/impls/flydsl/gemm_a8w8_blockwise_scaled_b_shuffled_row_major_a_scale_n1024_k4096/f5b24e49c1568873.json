@@ -101,91 +101,104 @@
         "m": 1
       },
       "accuracy": "passed",
-      "speedup": 2.273
+      "speedup": 2.361,
+      "microseconds": 4.28
     },
     {
       "axes": {
         "m": 2
       },
       "accuracy": "passed",
-      "speedup": 3.145
+      "speedup": 3.275,
+      "microseconds": 4.24
     },
     {
       "axes": {
         "m": 4
       },
       "accuracy": "passed",
-      "speedup": 3.159
+      "speedup": 3.216,
+      "microseconds": 4.35
     },
     {
       "axes": {
         "m": 8
       },
       "accuracy": "passed",
-      "speedup": 3.101
+      "speedup": 3.109,
+      "microseconds": 4.52
     },
     {
       "axes": {
         "m": 16
       },
       "accuracy": "passed",
-      "speedup": 2.853
+      "speedup": 2.855,
+      "microseconds": 4.88
     },
     {
       "axes": {
         "m": 32
       },
       "accuracy": "passed",
-      "speedup": 2.813
+      "speedup": 2.8,
+      "microseconds": 4.99
     },
     {
       "axes": {
         "m": 64
       },
       "accuracy": "passed",
-      "speedup": 2.673
+      "speedup": 2.648,
+      "microseconds": 5.2
     },
     {
       "axes": {
         "m": 128
       },
       "accuracy": "passed",
-      "speedup": 2.394
+      "speedup": 2.397,
+      "microseconds": 6.06
     },
     {
       "axes": {
         "m": 256
       },
       "accuracy": "passed",
-      "speedup": 1.81
+      "speedup": 1.776,
+      "microseconds": 7.7
     },
     {
       "axes": {
         "m": 512
       },
       "accuracy": "passed",
-      "speedup": 1.618
+      "speedup": 1.611,
+      "microseconds": 9.06
     },
     {
       "axes": {
         "m": 1024
       },
       "accuracy": "passed",
-      "speedup": 1.586
+      "speedup": 1.573,
+      "microseconds": 12.1
     },
     {
       "axes": {
         "m": 2048
       },
       "accuracy": "passed",
-      "speedup": 1.623
+      "speedup": 1.614,
+      "microseconds": 15.7
     },
     {
       "axes": {
         "m": 4096
       },
       "accuracy": "passed",
-      "speedup": 1.344
+      "speedup": 1.339,
+      "microseconds": 24.8
     }
   ],
   "layout_variants": {

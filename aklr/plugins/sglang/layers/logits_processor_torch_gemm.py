@@ -13,21 +13,22 @@ from aklr.plugins.sglang.hook import sglang_route
 __all__: list[str] = []
 
 
-@sglang_route("sglang.srt.layers.logits_processor.LogitsProcessor._compute_lm_head", versions=("0.5.22",))
-def _compute_lm_head(self, hidden_states, lm_head, embedding_bias=None):
+@sglang_route("sglang.srt.layers.logits_processor.LogitsProcessor._compute_lm_head", versions=("0.5.23",))
+def _compute_lm_head(self, hidden_states, lm_head, embedding_bias=None, *, out=None):
     from sglang.srt.layers.logits_processor import should_apply_lm_head_quant_method
     from sglang.srt.utils.common import use_intel_amx_backend
 
     # LoRA, a quantized head, logits in fp32 and the other branches sglang takes before its
-    # plain matmul, which ignores embedding_bias
+    # plain matmul, which ignores embedding_bias and out
     if (
         (hasattr(lm_head, "set_lora") and hasattr(lm_head, "apply_lora"))
         or should_apply_lm_head_quant_method(lm_head, getattr(lm_head, "quant_method", None))
         or not hasattr(lm_head, "weight")
         or self.use_fp32_lm_head
+        or self.use_fp32_lm_head_output
         or use_intel_amx_backend(lm_head)
         or self.rl_on_policy_target is not None
     ):
         return FallbackReason.OUT_OF_CONTRACT
-    weight = lm_head.weight
-    return gemm(hidden_states.to(weight.dtype), weight)
+    # hidden states of another dtype than the head's go back to sglang, which converts them: none is copied first
+    return gemm(hidden_states, lm_head.weight)

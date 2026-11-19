@@ -99,6 +99,25 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # the same shrunk, a new sequence longer than the top-k
+    PointSpec(
+        contract_id="dsa_sparse_mla_prefill@1.0",
+        axes={
+            "n_tokens": 96,
+            "n_heads": 4,
+            "kv_dim": 192,
+            "topk": 64,
+            "n_slots": 512,
+        },
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_cache": "float8_e4m3fn",
+            "topk_indices": "int32",
+            "output": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # GLM-5.2's DSA indexer shrunk: 16 heads (32 on GLM-5.2) and narrow projections, its
     # 128-value heads and keys, 64-value RoPE part and one index-K page as sglang holds them on
     # aiter
@@ -767,6 +786,21 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="shuffled_16x16",
     ),
+    PointSpec(
+        contract_id="mla_v_absorb@1.0",
+        axes={"n_tokens": 4, "n_heads": 2, "v_head_dim": 32},
+        dtypes={"attn_output": "bfloat16", "w_vc": "bfloat16", "output": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+)
+# test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
+# tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
+BACKEND_POINTS: tuple[PointSpec, ...] = tuple(
+    point.model_copy(update={"axes": {**point.axes, "latent_dim": 3584, "n_routed": 896, "inter_dim": 384}})
+    if point.contract_id == "kimi_k3_latent_moe@1.0"
+    else point
+    for point in SMALL_POINTS
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -778,6 +812,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "dsa_indexer_key_prepare@1.0",
         "dsa_indexer_prepare@1.0",
         "dsa_sparse_mla_decode@1.0",
+        "dsa_sparse_mla_prefill@1.0",
         "dsa_topk_transform@1.0",
         "gdn_prefill_group_fp8_quant@1.0",
         "gdn_prefill@1.0",

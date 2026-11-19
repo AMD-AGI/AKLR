@@ -4,25 +4,21 @@
 from __future__ import annotations
 
 import copy
-import io
-import tempfile
-import unittest
-from contextlib import redirect_stdout
 from html import escape
 from pathlib import Path
-from unittest import mock
 
-from tests.benchmarks.test_agentx_baselines import formal_results
-from tests.benchmarks.test_agentx_metrics import REPO, legacy_results, report, report_all, utils
+import pytest
+from agentx_ci import report, report_all, utils
+
+from tests.benchmarks.agentx_results import REPO, formal_results, legacy_results
 
 
-class AgentXArchiveTests(unittest.TestCase):
-    def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.relative = utils.target_path("fixture", "fixture-gpu")
+class ArchiveCase:
+    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.root = root
+        self.relative = utils.target_path("fixture", "fixture-gpu", "sglang")
         self.serial = 0
-        self.enterContext(mock.patch.object(report, "landed", return_value=None))
-        self.enterContext(redirect_stdout(io.StringIO()))
+        monkeypatch.setattr(report, "landed", lambda _base, _head, _cwd, _repo_url: None)
 
     def directory(self, name):
         self.serial += 1
@@ -32,20 +28,23 @@ class AgentXArchiveTests(unittest.TestCase):
         return {
             "model": results["model"],
             "target": results["target"],
+            "framework": results["framework"],
             "status": "resolved",
             "serving_sha256": results["run"]["serving_sha256"],
             "point_ids": [f"{point['arm']}:{point['conc']}" for point in results["points"]],
+            "point_policy": results["run"]["point_policy"],
+            "selection_manifest_sha256": results["run"]["selection"]["manifest_sha256"],
         }
 
     def previous(self, results, *, baseline=None):
         directory = self.directory("previous")
         utils.write_json(
             directory / "manifest.json",
-            {"schema": 3, "run_id": results["run"]["id"], "targets": [self.descriptor(results)]},
+            {"schema": 4, "run_id": results["run"]["id"], "targets": [self.descriptor(results)]},
         )
         utils.write_json(directory / self.relative / "results.json", results)
         if baseline is not None:
-            utils.write_json(directory / self.relative / "baseline-live.json", baseline)
+            utils.write_json(directory / self.relative / "baseline-pareto.json", baseline)
         return directory
 
     def publish(self, *, current=None, previous=None, selected=True, error=None):
@@ -55,7 +54,7 @@ class AgentXArchiveTests(unittest.TestCase):
         if error:
             planned.update(status="resolve-failed", error=error)
         plan = {
-            "schema": 3,
+            "schema": 4,
             "run_id": current["run"]["id"] if current else "current-run",
             "targets": [planned] if selected else [],
         }
@@ -72,111 +71,112 @@ class AgentXArchiveTests(unittest.TestCase):
         )
         return out, manifest["targets"][0]
 
-    def test_historical_results_and_baselines_survive_failed_or_partial_normalization(self):
-        for missing in ((1, 2, 3), (2,)):
-            with self.subTest(missing=missing):
-                original = formal_results("previous-run")
-                for mode in (original, original["control"]):
-                    for point in mode["points"]:
-                        point.pop("p90_full_response_intvty")
-                        if point["conc"] in missing:
-                            point.pop("raw_data")
-                previous = self.previous(original, baseline=original)
-                before = (previous / self.relative / "results.json").read_bytes()
 
-                for _ in range(2):
-                    site, target = self.publish(previous=previous, selected=False)
-                    self.assertEqual(utils.read_json(site / self.relative / "results.json"), original)
-                    self.assertEqual(utils.read_json(site / self.relative / "baseline-live.json"), original)
-                    summary = utils.read_json(site / self.relative / "report.json")
-                    pairs = summary["aklr_comparison"]["points"]
-                    self.assertEqual(
-                        [row["conc"] for row in pairs], [c for c in (1, 2, 3) if c not in missing]
-                    )
-                    self.assertEqual(target["points_ok"], 2 * (3 - len(missing)))
-                    self.assertEqual("live" in target["baseline_unavailable"], len(missing) == 3)
-                    self.assertEqual((previous / self.relative / "results.json").read_bytes(), before)
-                    previous = site
+@pytest.fixture
+def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ArchiveCase:
+    return ArchiveCase(tmp_path, monkeypatch)
 
-    def test_unverified_full_response_only_baseline_is_preserved_but_unavailable(self):
-        original = formal_results("previous-run")
-        for mode in (original, original["control"]):
-            for point in mode["points"]:
+
+@pytest.mark.parametrize("missing", [(1, 2, 3), (2,)], ids=str)
+def test_historical_results_and_baselines_survive_failed_or_partial_normalization(case, missing):
+    original = formal_results("previous-run")
+    for mode in (original, original["control"]):
+        for point in mode["points"]:
+            point.pop("p90_full_response_intvty")
+            if point["conc"] in missing:
                 point.pop("raw_data")
-                point.pop("p90_e2e_norm_intvty")
-        previous = self.previous(original, baseline=original)
+    previous = case.previous(original, baseline=original)
+    before = (previous / case.relative / "results.json").read_bytes()
 
-        site, target = self.publish(previous=previous, selected=False)
-
-        self.assertEqual(utils.read_json(site / self.relative / "baseline-live.json"), original)
-        self.assertEqual(utils.read_json(site / self.relative / "results.json"), original)
-        self.assertIn("live", target["baseline_unavailable"])
-        self.assertNotIn("live", target["baselines"])
-        self.assertEqual(target["points_ok"], 0)
-        summary = utils.read_json(site / self.relative / "report.json")
-        self.assertEqual(summary["frontiers"]["combined"], [])
-        self.assertEqual(summary["aklr_comparison"]["status"], "unavailable")
-
-    def test_current_results_archive_and_baseline_retain_unverifiable_point_evidence(self):
-        current = formal_results("current-run")
-        for mode in (current, current["control"]):
-            mode["points"][1].pop("raw_data")
-        original = copy.deepcopy(current)
-
-        site, target = self.publish(current=current)
-
-        self.assertEqual(current, original)
-        self.assertEqual(utils.read_json(site / self.relative / "results.json"), original)
-        self.assertEqual(utils.read_json(site / self.relative / "baseline-live.json"), original)
-        self.assertEqual(target["status"], "partial")
-        self.assertEqual(target["points_ok"], 4)
-        summary = utils.read_json(site / self.relative / "report.json")
-        self.assertEqual([row["conc"] for row in summary["aklr_comparison"]["points"]], [1, 3])
-
-    def test_single_result_entry_can_rerender_without_rewriting_the_archive(self):
-        original = legacy_results("previous-run")
-        source = utils.write_json(self.root / "input.json", original)
-        config = self.root / "config.yaml"
-        config.write_text("report:\n  repo_url: https://example.invalid/repo\n")
-
-        for _ in range(2):
-            out = self.directory("single")
-            self.assertEqual(
-                report.main(["--results", str(source), "--out", str(out), "--config", str(config)]),
-                0,
-            )
-            self.assertEqual(utils.read_json(out / "results.json"), original)
-            summary = utils.read_json(out / "report.json")
-            point = summary["frontiers"]["combined"][0]
-            self.assertAlmostEqual(point["p90_full_response_intvty"], 1 / 0.00351)
-            source = out / "results.json"
-
-    def test_historical_single_mode_results_remain_readable(self):
-        original = legacy_results("previous-run")
-        original.pop("control")
-        previous = self.previous(original, baseline=original)
-
-        site, target = self.publish(previous=previous, selected=False)
-
-        self.assertTrue(target["report"])
-        self.assertIsNone(target["failure_stage"])
-        self.assertEqual(target["points_ok"], 1)
-        self.assertEqual(utils.read_json(site / self.relative / "results.json"), original)
-        self.assertEqual(utils.read_json(site / self.relative / "baseline-live.json"), original)
-
-    def test_current_failure_is_visible_when_rendering_a_historical_target(self):
-        previous = self.previous(legacy_results("previous-run"))
-        error = "recipe <weights> could not resolve & no measurement ran"
-
-        site, target = self.publish(previous=previous, error=error)
-
-        self.assertEqual(target["failure_stage"], "plan")
-        self.assertTrue(target["report"])
-        for path in (site / "index.html", site / self.relative / "index.html"):
-            html = path.read_text()
-            self.assertIn(escape(error), html)
-            self.assertNotIn(error, html)
+    for _ in range(2):
+        site, target = case.publish(previous=previous, selected=False)
+        assert utils.read_json(site / case.relative / "results.json") == original
+        assert utils.read_json(site / case.relative / "baseline-pareto.json") == original
+        summary = utils.read_json(site / case.relative / "report.json")
+        pairs = summary["aklr_comparison"]["points"]
+        assert [row["conc"] for row in pairs] == [c for c in (1, 2, 3) if c not in missing]
+        assert target["points_ok"] == 2 * (3 - len(missing))
+        assert ("pareto" in target["baseline_unavailable"]) == (len(missing) == 3)
+        assert (previous / case.relative / "results.json").read_bytes() == before
+        previous = site
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_unverified_full_response_only_baseline_is_preserved_but_unavailable(case):
+    original = formal_results("previous-run")
+    for mode in (original, original["control"]):
+        for point in mode["points"]:
+            point.pop("raw_data")
+            point.pop("p90_e2e_norm_intvty")
+    previous = case.previous(original, baseline=original)
+
+    site, target = case.publish(previous=previous, selected=False)
+
+    assert utils.read_json(site / case.relative / "baseline-pareto.json") == original
+    assert utils.read_json(site / case.relative / "results.json") == original
+    assert "pareto" in target["baseline_unavailable"]
+    assert "pareto" not in target["baselines"]
+    assert target["points_ok"] == 0
+    summary = utils.read_json(site / case.relative / "report.json")
+    assert summary["frontiers"]["combined"] == []
+    assert summary["aklr_comparison"]["status"] == "unavailable"
+
+
+def test_current_results_archive_and_baseline_retain_unverifiable_point_evidence(case):
+    current = formal_results("current-run")
+    for mode in (current, current["control"]):
+        mode["points"][1].pop("raw_data")
+    original = copy.deepcopy(current)
+
+    site, target = case.publish(current=current)
+
+    assert current == original
+    assert utils.read_json(site / case.relative / "results.json") == original
+    assert utils.read_json(site / case.relative / "baseline-pareto.json") == original
+    assert target["status"] == "partial"
+    assert target["points_ok"] == 4
+    summary = utils.read_json(site / case.relative / "report.json")
+    assert [row["conc"] for row in summary["aklr_comparison"]["points"]] == [1, 3]
+
+
+def test_single_result_entry_can_rerender_without_rewriting_the_archive(case):
+    original = legacy_results("previous-run")
+    source = utils.write_json(case.root / "input.json", original)
+    config = case.root / "config.yaml"
+    config.write_text("report:\n  repo_url: https://example.invalid/repo\n")
+
+    for _ in range(2):
+        out = case.directory("single")
+        assert report.main(["--results", str(source), "--out", str(out), "--config", str(config)]) == 0
+        assert utils.read_json(out / "results.json") == original
+        summary = utils.read_json(out / "report.json")
+        point = summary["frontiers"]["combined"][0]
+        assert point["p90_full_response_intvty"] == pytest.approx(1 / 0.00351, abs=5e-8)
+        source = out / "results.json"
+
+
+def test_historical_single_mode_results_remain_readable(case):
+    original = legacy_results("previous-run")
+    original.pop("control")
+    previous = case.previous(original, baseline=original)
+
+    site, target = case.publish(previous=previous, selected=False)
+
+    assert target["report"]
+    assert target["failure_stage"] is None
+    assert target["points_ok"] == 1
+    assert utils.read_json(site / case.relative / "results.json") == original
+    assert utils.read_json(site / case.relative / "baseline-pareto.json") == original
+
+
+def test_current_failure_is_visible_when_rendering_a_historical_target(case):
+    previous = case.previous(legacy_results("previous-run"))
+    error = "recipe <weights> could not resolve & no measurement ran"
+
+    site, target = case.publish(previous=previous, error=error)
+
+    assert target["failure_stage"] == "plan"
+    assert target["report"]
+    for path in (site / "index.html", site / case.relative / "index.html"):
+        html = path.read_text()
+        assert escape(error) in html
+        assert error not in html

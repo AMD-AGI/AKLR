@@ -23,6 +23,7 @@ triton_gemm_module = importlib.import_module("aklr.plugins.aiter.triton_gemm")
 class ActivationType(enum.Enum):
     Silu = 0
     Situv2 = 1
+    Swiglu = 2
 
 
 FP8, FP4 = torch.float8_e4m3fn, torch.float4_e2m1fn_x2
@@ -112,13 +113,13 @@ NONE_TAKEN = {
 }
 
 
-def moe_call(activation, gate_up_interleave=None, **changed):
-    hidden = torch.zeros(5, 8)
+def moe_call(activation, gate_up_interleave=None, rows=5, **changed):
+    hidden = torch.zeros(rows, 8)
     w1 = torch.zeros(2, 16, 8, dtype=torch.uint8).view(FP4)
     if gate_up_interleave is not None:
         w1.gate_up_interleave = gate_up_interleave
     return aklr_aiter.fused_moe(
-        hidden, w1, torch.zeros(2, 8, 8), torch.zeros(5, 2), torch.zeros(5, 2), activation=activation,
+        hidden, w1, torch.zeros(2, 8, 8), torch.zeros(rows, 2), torch.zeros(rows, 2), activation=activation,
         **(NONE_TAKEN | changed),
     )  # fmt: skip
 
@@ -174,6 +175,37 @@ def test_fp4_activations_on_anything_else_go_back_to_aiter(op_calls, aiter_picks
     marked = {"gate_up_interleave": False} | changed
     assert moe_call(ActivationType.Situv2, **marked) is FallbackReason.OUT_OF_CONTRACT
     assert op_calls == []
+
+
+@pytest.mark.parametrize(
+    ("rows", "picked", "served"),
+    [(255, torch.bfloat16, True), (256, FP4, True), (255, FP4, False), (256, torch.bfloat16, False)],
+    ids=["unrounded below 256", "fp4 from 256", "aiter rounds below 256", "aiter keeps from 256"],
+)
+def test_swiglu_reaches_the_op_only_where_aiter_rounds_as_fused_moe_does(
+    op_calls, aiter_picks, rows, picked, served
+):
+    """GPTOSS_SWIGLU_MXFP4_BF16_BOUND other than 256 moves the row count from which aiter rounds to fp4."""
+    aiter_picks.dtype = picked
+    result = moe_call(ActivationType.Swiglu, rows=rows)
+    assert aiter_picks.calls == [{"M": rows, "q_dtype_w": FP4}]
+    if served:
+        assert result == "aklr" and op_calls[0]["act_quant"] == 4
+    else:
+        assert result is FallbackReason.OUT_OF_CONTRACT and op_calls == []
+
+
+@pytest.mark.parametrize(("bound", "served"), [(256, True), (512, False)])
+def test_on_an_aiter_without_the_resolver_swiglu_follows_its_bound(op_calls, aiter_picks, bound, served):
+    del sys.modules["aiter.fused_moe"].resolve_activation_dtype
+    sys.modules["aiter.fused_moe"]._SWIGLU_MXFP4_BF16_BOUND = bound
+    result = moe_call(ActivationType.Swiglu, rows=300)
+    assert (result == "aklr") is served
+
+
+def test_swiglu_on_interleaved_gate_and_up_stays_unrounded_without_asking_aiter(op_calls, aiter_picks):
+    assert moe_call(ActivationType.Swiglu, rows=300, gate_mode="interleave") == "aklr"
+    assert aiter_picks.calls == []
 
 
 def test_an_aiter_that_reads_the_gate_up_interleave_is_asked_with_it(op_calls, aiter_picks):

@@ -8,7 +8,7 @@ Times every operator on its own, sums them as `per-layer cost × layer count`, c
 
 ## Usage
 
-CI uses `lmsysorg/sglang:v0.5.22-rocm10-mi35x` with its bundled ROCm Triton 3.8.0. Keep that build: replacing it with the PyPI wheel crashes when Triton is imported after PyTorch. The benchmark publishes each worker's GPU and world rank for SGLang's process-local runtime context; older runner-owned parallel state remains supported.
+CI uses the image `sglang_image` in `stack.json`, with its bundled ROCm Triton. Keep that build: replacing it with the PyPI wheel crashes when Triton is imported after PyTorch. The benchmark publishes each worker's GPU and world rank for SGLang's process-local runtime context; older runner-owned parallel state remains supported.
 
 ```bash
 cd aklr/benchmarks/models/glm52     # required, the scripts do `import model_bench`

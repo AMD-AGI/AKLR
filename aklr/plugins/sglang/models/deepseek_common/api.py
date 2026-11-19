@@ -47,7 +47,7 @@ def mla_vc(attn_output, w_vc, w_scale): ...
 @sglang_route(
     "sglang.srt.models.deepseek_common.attention_forward_methods.forward_mla_rocm."
     "DeepseekMLARocmForwardMixin.forward_absorb_rocm_prepare",
-    versions=("0.5.22",),
+    versions=("0.5.22", "0.5.23"),
 )
 def _forward_absorb_rocm_prepare(
     self,
@@ -241,7 +241,7 @@ def _core_serves_kc(attn, hidden_states, positions, forward_batch, llama_4_scali
 @sglang_route(
     "sglang.srt.models.deepseek_common.attention_forward_methods.forward_mla_rocm."
     "DeepseekMLARocmForwardMixin.forward_absorb_rocm_core",
-    versions=("0.5.22",),
+    versions=("0.5.22", "0.5.23"),
 )
 def _forward_absorb_rocm_core(
     self,

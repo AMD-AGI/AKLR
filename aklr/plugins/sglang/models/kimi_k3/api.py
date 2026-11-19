@@ -8,14 +8,12 @@ from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models import moe_blocks
 from aklr.plugins.sglang.models.kimi_k3.contract import (
     KIMI_K3_LATENT_MOE,
-    KIMI_K3_MLA_DECODE,
     KIMI_K3_MLA_PREFILL_GATE,
     KIMI_K3_MLA_VC_OUTPUT_GATE,
 )
 
 __all__ = [
     "kimi_k3_latent_moe",
-    "kimi_k3_mla_decode",
     "kimi_k3_mla_prefill_gate",
     "kimi_k3_mla_vc_output_gate",
 ]
@@ -37,10 +35,6 @@ def kimi_k3_latent_moe(
 ): ...
 
 
-@api(KIMI_K3_MLA_DECODE)
-def kimi_k3_mla_decode(q, kv_cache, kv_indptr, kv_indices, sm_scale=192**-0.5, output=None): ...
-
-
 @api(KIMI_K3_MLA_VC_OUTPUT_GATE)
 def kimi_k3_mla_vc_output_gate(latent, vc_weight, gate, output=None): ...
 
@@ -49,7 +43,7 @@ def kimi_k3_mla_vc_output_gate(latent, vc_weight, gate, output=None): ...
 def kimi_k3_mla_prefill_gate(q, k, v, gate, qo_indptr, sm_scale=192**-0.5, max_seq_len=8192, output=None): ...
 
 
-@sglang_route("sglang.srt.models.kimi_k3.KimiK3MoE._forward_fused", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.kimi_k3.KimiK3MoE._forward_fused", versions=("0.5.22", "0.5.23"))
 def _forward_fused(self, hidden_states, *, prefix_sum):
     """The front, routing, routed and shared experts as one op writing both partial sums into
     the buffer sglang all-reduces; then sglang's all-reduce, latent norm, up projection and
@@ -172,51 +166,8 @@ def _experts_fall_back(experts) -> bool:
 
 
 @sglang_route(
-    "sglang.srt.layers.attention.triton_backend.TritonAttnBackend.forward_decode", versions=("0.5.22",)
+    "sglang.srt.models.kimi_k3.KimiK3MLAAttention.forward_absorb_rocm_core", versions=("0.5.22", "0.5.23")
 )
-def _forward_decode(
-    self, q, k, v, layer, forward_batch, save_kv_cache=True, sinks=None, score_mod=None, aux_tensors=None
-):
-    """MLA decode with a page-size-1 latent cache and no extras as one op, after sglang's own KV
-    write; every other decode runs sglang's forward_decode."""
-    if (
-        not self.use_mla
-        or self.dcp_size > 1
-        or self.page_size != 1
-        or self.enable_deterministic
-        or sinks is not None
-        or score_mod is not None
-        or aux_tensors is not None
-        or layer.k_scale is not None
-        or layer.tp_k_head_num != 1
-        or layer.logit_cap
-        or (layer.sliding_window_size is not None and layer.sliding_window_size > -1)
-        or (layer.xai_temperature_len or -1) > 0
-    ):
-        return FallbackReason.OUT_OF_CONTRACT
-    metadata = self.forward_metadata
-    arguments = {
-        "q": q.reshape(-1, layer.tp_q_head_num, layer.qk_head_dim),
-        "kv_cache": self.token_to_kv_pool.get_key_buffer(layer.layer_id),
-        "kv_indptr": metadata.kv_indptr,
-        "kv_indices": metadata.kv_indices,
-        "sm_scale": layer.scaling,
-    }
-    reason = kimi_k3_mla_decode.fallback_reason(**arguments)
-    if reason is not None:
-        return reason
-    if save_kv_cache:
-        from sglang.srt.layers.attention.triton_backend import KVWriteLoc
-
-        loc = KVWriteLoc.for_batch(forward_batch, swa_loc=metadata.swa_out_cache_loc)
-        self.token_to_kv_pool.set_kv_buffer(layer, loc, k, v)
-    output = kimi_k3_mla_decode(**arguments)
-    if isinstance(output, FallbackReason):
-        raise RuntimeError(f"kimi_k3_mla_decode declined after its KV write: {output}")
-    return output.view(-1, layer.tp_q_head_num * layer.v_head_dim)
-
-
-@sglang_route("sglang.srt.models.kimi_k3.KimiK3MLAAttention.forward_absorb_rocm_core", versions=("0.5.22",))
 def _forward_absorb_rocm_core(
     self,
     q_pe,
@@ -286,7 +237,9 @@ def _absorb_core_falls_back(attn, forward_batch, llama_4_scaling, q_nope_unabsor
     )
 
 
-@sglang_route("sglang.srt.models.kimi_k3.KimiK3MLAAttention.forward_normal_core", versions=("0.5.22",))
+@sglang_route(
+    "sglang.srt.models.kimi_k3.KimiK3MLAAttention.forward_normal_core", versions=("0.5.22", "0.5.23")
+)
 def _forward_normal_core(self, q, k, v, forward_batch, gate=None, key_value_num_tokens=None):
     """A Kimi-K3 prefill without cached prefix on the triton backend: the attention and the
     output gate as one op in place of attn_mha and the o_proj wrapper's gate, then o_proj."""

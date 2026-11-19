@@ -4,82 +4,42 @@
 from __future__ import annotations
 
 import copy
-import io
-import tempfile
-import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
-from unittest import mock
 
-from tests.benchmarks.test_agentx_metrics import (
-    REPO,
-    analysis,
-    legacy_results,
-    recipe_resolve,
-    report,
-    report_all,
-    utils,
-)
+import pytest
+from agentx_ci import performance_analysis as analysis
+from agentx_ci import report, report_all, utils
 
-POINT_IDS = ["tp1:1", "tp1:2", "tp1:3"]
+from tests.benchmarks.agentx_results import POINT_IDS, REPO, fail, formal_results
 
 
-def formal_results(run_id="fixture-run"):
-    results = utils.validated_results(legacy_results(run_id))
-    for mode in (results, results["control"]):
-        mode["run"].update(points_expected=3, attempt_id=f"{run_id}-attempt")
-        template = mode["points"][0]
-        points = []
-        for conc in (1, 2, 3):
-            point = copy.deepcopy(template)
-            point.update(
-                conc=conc,
-                exp_name=f"tp1-c{conc}",
-                serve_spec_sha256=utils.sha256_json({"arm": "tp1", "conc": conc}),
-            )
-            point["measurement"]["client_env"] = {"CONC": str(conc)}
-            point["measurement_sha256"] = utils.sha256_json(point["measurement"])
-            points.append(point)
-        mode["points"] = points
-        mode["serving"]["arms"]["tp1"].update(
-            concs=[1, 2, 3],
-            arm_measurement_sha256=utils.sha256_json({p["conc"]: p["measurement"] for p in points}),
-        )
-    return results
-
-
-def fail(point):
-    point.update(status="failed", error="server failed before ready")
-
-
-class AgentXBaselineTests(unittest.TestCase):
-    def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+class BaselineCase:
+    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.root = root
         self.config = self.root / "config.yaml"
         self.config.write_text("report:\n  repo_url: https://example.invalid/repo\n")
-        self.relative = utils.target_path("fixture", "fixture-gpu")
+        self.relative = utils.target_path("fixture", "fixture-gpu", "sglang")
         self.site_count = 0
         # Git history is independent of baseline eligibility and metric comparisons.
-        self.enterContext(mock.patch.object(report, "landed", return_value=None))
-        self.enterContext(redirect_stdout(io.StringIO()))
+        monkeypatch.setattr(report, "landed", lambda _base, _head, _cwd, _repo_url: None)
 
     def publish(self, results, previous=None):
         self.site_count += 1
         run_dir = self.root / f"run-{self.site_count}"
-        policy = results["run"].get("point_policy", "all")
+        policy = results["run"]["point_policy"]
         target = {
             "model": results["model"],
             "target": results["target"],
+            "framework": results["framework"],
             "status": "resolved",
             "serving_sha256": results["run"]["serving_sha256"],
             "point_policy": policy,
             "point_ids": POINT_IDS,
+            "selection_manifest_sha256": results["run"]["selection"]["manifest_sha256"],
         }
-        if policy == recipe_resolve.POLICY:
-            target["selection_manifest_sha256"] = results["run"]["selection"]["manifest_sha256"]
         plan_path = utils.write_json(
             run_dir / "plan.json",
-            {"schema": 3, "run_id": results["run"]["id"], "targets": [target]},
+            {"schema": 4, "run_id": results["run"]["id"], "targets": [target]},
         )
         results_dir = run_dir / "results"
         result_path = utils.write_json(results_dir / self.relative / "results.json", results)
@@ -93,240 +53,221 @@ class AgentXBaselineTests(unittest.TestCase):
             git_dir=REPO,
             baseline_dir=previous,
         )
-        self.assertEqual(result_path.read_bytes(), original)
-        self.assertTrue((site / "index.html").is_file())
-        self.assertEqual(utils.read_json(site / "manifest.json"), manifest)
+        assert result_path.read_bytes() == original
+        assert (site / "index.html").is_file()
+        assert utils.read_json(site / "manifest.json") == manifest
         return site, manifest["targets"][0]
 
-    def baseline(self, site, kind="live"):
+    def baseline(self, site, kind="pareto"):
         return utils.read_json(site / self.relative / f"baseline-{kind}.json")
 
-    def test_any_successful_mode_promotes_without_requiring_a_successful_pair(self):
-        for success in ("enabled", "disabled", "disabled-with-empty-enabled", "disjoint"):
-            with self.subTest(success=success):
-                current = formal_results(success)
-                for mode in (current, current["control"]):
-                    for point in mode["points"]:
-                        fail(point)
-                if success in ("enabled", "disjoint"):
-                    current["points"][0].update(status="ok", error=None)
-                if success != "enabled":
-                    current["control"]["points"][1].update(status="ok", error=None)
-                if success == "disabled-with-empty-enabled":
-                    current["points"] = []
-                    current["run"]["completed"] = False
-                    current["serving"]["arms"]["tp1"].pop("arm_measurement_sha256")
-                site, target = self.publish(current)
-                self.assertEqual(target["status"], "partial")
-                self.assertEqual(target["points_ok"], 2 if success == "disjoint" else 1)
-                self.assertEqual(target["points_total"], 6)
-                self.assertIsNone(target["failure_stage"])
-                self.assertEqual(target["baselines"]["live"], current["run"]["finished_at"])
-                stored = self.baseline(site)
-                self.assertEqual(stored, utils.validated_results(current))
-                self.assertFalse(utils.complete_measurement(stored))
-                self.assertNotEqual(analysis.compare_aklr(stored)["status"], "ok")
 
-    def test_no_valid_success_preserves_the_previous_baseline(self):
-        previous, _ = self.publish(formal_results("previous-run"))
-        expected = self.baseline(previous)
-        for outcome in ("failed", "empty", "invalid-throughput", "invalid-latency"):
-            with self.subTest(outcome=outcome):
-                current = formal_results(outcome)
-                for mode in (current, current["control"]):
-                    if outcome == "empty":
-                        mode["points"] = []
-                        mode["run"]["completed"] = False
-                    for point in mode["points"]:
-                        if outcome == "failed":
-                            fail(point)
-                        elif outcome == "invalid-throughput":
-                            point["tput_per_gpu"] = 0
-                        elif outcome == "invalid-latency":
-                            point["raw_data"]["request_metrics"]["latency"]["full_response_itl"]["p90"] = 0
-                site, target = self.publish(current, previous)
-                self.assertEqual(target["status"], "failed")
-                self.assertEqual(target["points_ok"], 0)
-                self.assertIsNone(target["failure_stage"])
-                self.assertEqual(self.baseline(site), expected)
-        self.assertEqual(self.baseline(previous), expected)
+@pytest.fixture
+def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BaselineCase:
+    return BaselineCase(tmp_path, monkeypatch)
 
-    def test_all_failed_first_run_does_not_create_a_baseline(self):
-        current = formal_results()
-        for mode in (current, current["control"]):
-            for point in mode["points"]:
+
+@pytest.mark.parametrize("success", ["enabled", "disabled", "disabled-with-empty-enabled", "disjoint"])
+def test_any_successful_mode_promotes_without_requiring_a_successful_pair(case, success):
+    current = formal_results(success)
+    for mode in (current, current["control"]):
+        for point in mode["points"]:
+            fail(point)
+    if success in ("enabled", "disjoint"):
+        current["points"][0].update(status="ok", error=None)
+    if success != "enabled":
+        current["control"]["points"][1].update(status="ok", error=None)
+    if success == "disabled-with-empty-enabled":
+        current["points"] = []
+        current["run"]["completed"] = False
+        current["serving"]["arms"]["tp1"].pop("arm_measurement_sha256")
+    site, target = case.publish(current)
+    assert target["status"] == "partial"
+    assert target["points_ok"] == (2 if success == "disjoint" else 1)
+    assert target["points_total"] == 6
+    assert target["failure_stage"] is None
+    assert target["baselines"]["pareto"] == current["run"]["finished_at"]
+    stored = case.baseline(site)
+    assert stored == utils.validated_results(current)
+    assert not utils.complete_measurement(stored)
+    assert analysis.compare_aklr(stored)["status"] != "ok"
+
+
+def test_sites_from_before_frameworks_start_fresh_baselines(case):
+    previous, _ = case.publish(formal_results("previous-run"))
+    manifest = utils.read_json(previous / "manifest.json")
+    utils.write_json(previous / "manifest.json", {**manifest, "schema": 3})
+    current = formal_results("current-run")
+    site, target = case.publish(current, previous)
+    assert target["baselines"] == {"pareto": current["run"]["finished_at"]}
+    assert utils.read_json(site / case.relative / "report.json")["comparison"]["status"] == "no-baseline"
+
+
+@pytest.mark.parametrize("outcome", ["failed", "empty", "invalid-throughput", "invalid-latency"])
+def test_no_valid_success_preserves_the_previous_baseline(case, outcome):
+    previous, _ = case.publish(formal_results("previous-run"))
+    expected = case.baseline(previous)
+    current = formal_results(outcome)
+    for mode in (current, current["control"]):
+        if outcome == "empty":
+            mode["points"] = []
+            mode["run"]["completed"] = False
+        for point in mode["points"]:
+            if outcome == "failed":
                 fail(point)
-        site, target = self.publish(current)
-        self.assertEqual(target["baselines"], {})
-        self.assertFalse((site / self.relative / "baseline-live.json").exists())
+            elif outcome == "invalid-throughput":
+                point["tput_per_gpu"] = 0
+            elif outcome == "invalid-latency":
+                point["raw_data"]["request_metrics"]["latency"]["full_response_itl"]["p90"] = 0
+    site, target = case.publish(current, previous)
+    assert target["status"] == "failed"
+    assert target["points_ok"] == 0
+    assert target["failure_stage"] is None
+    assert case.baseline(site) == expected
+    assert case.baseline(previous) == expected
 
-    def test_partial_baseline_round_trips_and_compares_only_successful_points(self):
-        prior = formal_results("previous-run")
-        for mode in (prior, prior["control"]):
-            fail(mode["points"][1])
-        previous, _ = self.publish(prior)
-        expected_previous = self.baseline(previous)
-        current = formal_results("current-run")
-        for mode in (current, current["control"]):
-            fail(mode["points"][2])
-        current["points"][0]["tput_per_gpu"] *= 1.25
-        current["points"][0]["raw_data"]["request_metrics"]["throughput"]["per_gpu"]["total_tput_tps"] *= 1.25
-        current["points"][0]["raw_data"]["request_metrics"]["latency"]["full_response_itl"]["p90"] /= 2
-        site, target = self.publish(current, previous)
-        self.assertEqual(target["status"], "partial")
-        self.assertIsNone(target["failure_stage"])
-        self.assertEqual(self.baseline(site)["run"]["id"], "current-run")
-        self.assertEqual(self.baseline(previous), expected_previous)
-        stored = self.baseline(site)
-        self.assertEqual(stored["points"][2]["status"], "failed")
-        self.assertEqual(stored["points"][2]["error"], "server failed before ready")
-        comparison = utils.read_json(site / self.relative / "report.json")["comparison"]
-        self.assertEqual(comparison["status"], "ok")
-        self.assertEqual(comparison["baseline_run"], "previous-run")
-        arm = comparison["arms"]["tp1"]
-        rows = {row["conc"]: row for row in arm["points"]}
-        self.assertAlmostEqual(rows[1]["tput_ratio"], 1.25)
-        self.assertAlmostEqual(rows[1]["intvty_ratio"], 2)
-        self.assertAlmostEqual(arm["tput_geomean_ratio"], 1.25)
-        for conc in (2, 3):
-            self.assertIsNone(rows[conc].get("tput_ratio"))
-            self.assertIsNone(rows[conc].get("intvty_ratio"))
-        self.assertNotIn(
-            "week-over-week comparison disabled", (site / self.relative / "index.html").read_text()
+
+def test_all_failed_first_run_does_not_create_a_baseline(case):
+    current = formal_results()
+    for mode in (current, current["control"]):
+        for point in mode["points"]:
+            fail(point)
+    site, target = case.publish(current)
+    assert target["baselines"] == {}
+    assert not (site / case.relative / "baseline-pareto.json").exists()
+
+
+def test_partial_baseline_round_trips_and_compares_only_successful_points(case):
+    prior = formal_results("previous-run")
+    for mode in (prior, prior["control"]):
+        fail(mode["points"][1])
+    previous, _ = case.publish(prior)
+    expected_previous = case.baseline(previous)
+    current = formal_results("current-run")
+    for mode in (current, current["control"]):
+        fail(mode["points"][2])
+    current["points"][0]["tput_per_gpu"] *= 1.25
+    current["points"][0]["raw_data"]["request_metrics"]["throughput"]["per_gpu"]["total_tput_tps"] *= 1.25
+    current["points"][0]["raw_data"]["request_metrics"]["latency"]["full_response_itl"]["p90"] /= 2
+    site, target = case.publish(current, previous)
+    assert target["status"] == "partial"
+    assert target["failure_stage"] is None
+    assert case.baseline(site)["run"]["id"] == "current-run"
+    assert case.baseline(previous) == expected_previous
+    stored = case.baseline(site)
+    assert stored["points"][2]["status"] == "failed"
+    assert stored["points"][2]["error"] == "server failed before ready"
+    comparison = utils.read_json(site / case.relative / "report.json")["comparison"]
+    assert comparison["status"] == "ok"
+    assert comparison["baseline_run"] == "previous-run"
+    arm = comparison["arms"]["tp1"]
+    rows = {row["conc"]: row for row in arm["points"]}
+    assert rows[1]["tput_ratio"] == pytest.approx(1.25, abs=5e-8)
+    assert rows[1]["intvty_ratio"] == pytest.approx(2, abs=5e-8)
+    assert arm["tput_geomean_ratio"] == pytest.approx(1.25, abs=5e-8)
+    for conc in (2, 3):
+        assert rows[conc].get("tput_ratio") is None
+        assert rows[conc].get("intvty_ratio") is None
+    assert "week-over-week comparison disabled" not in (site / case.relative / "index.html").read_text()
+
+
+def test_interrupted_baseline_compares_matching_point_measurements(case):
+    prior = formal_results("interrupted-run")
+    for mode in (prior, prior["control"]):
+        mode["points"] = mode["points"][:2]
+        fail(mode["points"][1])
+        mode["run"]["completed"] = False
+        mode["serving"]["arms"]["tp1"].pop("arm_measurement_sha256")
+    previous, _ = case.publish(prior)
+    current = formal_results("current-run")
+    current["points"][0]["tput_per_gpu"] *= 1.2
+    site, _ = case.publish(current, previous)
+    comparison = utils.read_json(site / case.relative / "report.json")["comparison"]
+    assert comparison["status"] == "ok"
+    rows = {row["conc"]: row for row in comparison["arms"]["tp1"]["points"]}
+    assert rows[1]["tput_ratio"] == pytest.approx(1.2, abs=5e-8)
+    assert rows[2].get("tput_ratio") is None
+    assert rows[3]["baseline"] is None
+    assert rows[3].get("tput_ratio") is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("duration_override_s", 600),
+        ("model_path_override", "/fixture/model"),
+        ("arms_requested", "tp1"),
+        ("points_requested", "tp1:1"),
+        ("source_dirty", True),
+        ("source_dirty", None),
+        ("execution", {}),
+    ],
+)
+def test_smoke_dirty_and_unverified_runs_do_not_replace_the_baseline(case, field, value):
+    previous, _ = case.publish(formal_results("previous-run"))
+    expected = case.baseline(previous)
+    current = formal_results("unqualified-run")
+    for mode in (current, current["control"]):
+        mode["run"][field] = value
+    site, target = case.publish(current, previous)
+    assert target["failure_stage"] is None
+    assert case.baseline(site) == expected
+
+
+def test_changed_point_settings_compare_frontiers_instead_of_points(case):
+    prior = formal_results("interrupted-run")
+    for mode in (prior, prior["control"]):
+        mode["points"] = mode["points"][:1]
+        mode["run"]["completed"] = False
+        mode["serving"]["arms"]["tp1"].pop("arm_measurement_sha256")
+    previous, _ = case.publish(prior)
+    current = formal_results("changed-settings")
+    for mode in (current, current["control"]):
+        point = mode["points"][0]
+        point["measurement"]["client_env"]["DURATION"] = "30"
+        point["measurement_sha256"] = utils.sha256_json(point["measurement"])
+        mode["serving"]["arms"]["tp1"]["arm_measurement_sha256"] = utils.sha256_json(
+            {p["conc"]: p["measurement"] for p in mode["points"]}
         )
-
-    def test_interrupted_baseline_compares_matching_point_measurements(self):
-        prior = formal_results("interrupted-run")
-        for mode in (prior, prior["control"]):
-            mode["points"] = mode["points"][:2]
-            fail(mode["points"][1])
-            mode["run"]["completed"] = False
-            mode["serving"]["arms"]["tp1"].pop("arm_measurement_sha256")
-        previous, _ = self.publish(prior)
-        current = formal_results("current-run")
-        current["points"][0]["tput_per_gpu"] *= 1.2
-        site, _ = self.publish(current, previous)
-        comparison = utils.read_json(site / self.relative / "report.json")["comparison"]
-        self.assertEqual(comparison["status"], "ok")
-        rows = {row["conc"]: row for row in comparison["arms"]["tp1"]["points"]}
-        self.assertAlmostEqual(rows[1]["tput_ratio"], 1.2)
-        self.assertIsNone(rows[2].get("tput_ratio"))
-        self.assertIsNone(rows[3]["baseline"])
-        self.assertIsNone(rows[3].get("tput_ratio"))
-
-    def test_smoke_dirty_and_unverified_runs_do_not_replace_the_baseline(self):
-        previous, _ = self.publish(formal_results("previous-run"))
-        expected = self.baseline(previous)
-        for field, value in (
-            ("duration_override_s", 600),
-            ("model_path_override", "/fixture/model"),
-            ("arms_requested", "tp1"),
-            ("points_requested", "tp1:1"),
-            ("source_dirty", True),
-            ("source_dirty", None),
-            ("execution", {}),
-        ):
-            with self.subTest(field=field, value=value):
-                current = formal_results("unqualified-run")
-                for mode in (current, current["control"]):
-                    mode["run"][field] = value
-                site, target = self.publish(current, previous)
-                self.assertIsNone(target["failure_stage"])
-                self.assertEqual(self.baseline(site), expected)
-
-    def test_interrupted_baseline_does_not_compare_changed_point_settings(self):
-        prior = formal_results("interrupted-run")
-        for mode in (prior, prior["control"]):
-            mode["points"] = mode["points"][:1]
-            mode["run"]["completed"] = False
-            mode["serving"]["arms"]["tp1"].pop("arm_measurement_sha256")
-        previous, _ = self.publish(prior)
-        current = formal_results("changed-settings")
-        for mode in (current, current["control"]):
-            point = mode["points"][0]
-            point["measurement"]["client_env"]["DURATION"] = "30"
-            point["measurement_sha256"] = utils.sha256_json(point["measurement"])
-            mode["serving"]["arms"]["tp1"]["arm_measurement_sha256"] = utils.sha256_json(
-                {p["conc"]: p["measurement"] for p in mode["points"]}
-            )
-        site, _ = self.publish(current, previous)
-        comparison = utils.read_json(site / self.relative / "report.json")["comparison"]
-        self.assertEqual(comparison["status"], "ok")
-        arm = comparison["arms"]["tp1"]
-        self.assertIsNone(arm.get("tput_geomean_ratio"))
-        self.assertFalse(any(row.get("tput_ratio") for row in arm["points"]))
-
-    def test_mismatched_pair_provenance_does_not_replace_the_baseline(self):
-        previous, _ = self.publish(formal_results("previous-run"))
-        expected = self.baseline(previous)
-        for mismatch in ("source", "image", "mode-switch"):
-            with self.subTest(mismatch=mismatch):
-                current = formal_results("mismatched-run")
-                control = current["control"]
-                if mismatch == "source":
-                    control["run"]["aklr_sha"] = "4" * 40
-                elif mismatch == "image":
-                    control["run"]["execution"]["image_id"] = "sha256:" + "4" * 64
-                else:
-                    control["points"][0]["measurement"]["launch"]["env"]["AKLR_DISABLE"] = "0"
-                site, _ = self.publish(current, previous)
-                self.assertEqual(self.baseline(site), expected)
-
-    def test_control_points_must_belong_to_the_plan_without_duplicates(self):
-        previous, _ = self.publish(formal_results("previous-run"))
-        expected = self.baseline(previous)
-        for invalid in ("unplanned", "duplicate", "expected-count"):
-            with self.subTest(invalid=invalid):
-                current = formal_results("invalid-control")
-                control = current["control"]
-                if invalid == "unplanned":
-                    control["points"][1].update(conc=4, exp_name="tp1-c4")
-                elif invalid == "duplicate":
-                    control["points"][1] = copy.deepcopy(control["points"][0])
-                else:
-                    control["run"]["points_expected"] = 4
-                site, target = self.publish(current, previous)
-                self.assertEqual(target["status"], "failed")
-                self.assertEqual(target["failure_stage"], "report")
-                self.assertEqual(self.baseline(site), expected)
-
-    def test_pareto_subset_updates_only_the_pareto_baseline(self):
-        previous, _ = self.publish(formal_results("full-grid-run"))
-        live = self.baseline(previous)
-        current = formal_results("pareto-run")
-        selection = {
-            "schema": 1,
-            "policy": recipe_resolve.POLICY,
-            "algorithm": recipe_resolve.ALGORITHM,
-            "scope": {
-                "model": "fixture",
-                "hardware": "fixture-gpu",
-                "framework": "sglang",
-                "precision": "fp4",
-            },
-            "curve_date": "2026-11-09",
-            "curve_workflow_run_id": "fixture-curve",
-            "candidate_count": 3,
-            "points": POINT_IDS,
-            "unselected": [],
-            "errors": [],
-            "selection_sha256": "5" * 64,
-        }
-        selection["manifest_sha256"] = utils.sha256_json(selection)
-        for mode in (current, current["control"]):
-            mode["run"].update(
-                point_policy=recipe_resolve.POLICY, selection=copy.deepcopy(selection), completed=False
-            )
-            mode["points"] = mode["points"][:1]
-            mode["serving"]["arms"]["tp1"].pop("arm_measurement_sha256")
-        site, target = self.publish(current, previous)
-        self.assertEqual(target["status"], "partial")
-        self.assertEqual(set(target["baselines"]), {"live", "pareto"})
-        self.assertEqual(self.baseline(site), live)
-        self.assertEqual(self.baseline(site, "pareto")["run"]["id"], "pareto-run")
-        next_site, _ = self.publish(formal_results("next-full-grid-run"), site)
-        self.assertEqual(self.baseline(next_site, "pareto")["run"]["id"], "pareto-run")
+    site, _ = case.publish(current, previous)
+    comparison = utils.read_json(site / case.relative / "report.json")["comparison"]
+    assert comparison["status"] == "ok"
+    arm = comparison["arms"]["tp1"]
+    assert arm["status"] == "curve"
+    assert arm["changed_concs"] == [1]
+    assert arm["points"] == []
+    assert arm["tput_geomean_ratio"] == pytest.approx(1, abs=5e-8)
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("mismatch", ["source", "image", "mode-switch"])
+def test_mismatched_pair_provenance_does_not_replace_the_baseline(case, mismatch):
+    previous, _ = case.publish(formal_results("previous-run"))
+    expected = case.baseline(previous)
+    current = formal_results("mismatched-run")
+    control = current["control"]
+    if mismatch == "source":
+        control["run"]["aklr_sha"] = "4" * 40
+    elif mismatch == "image":
+        control["run"]["execution"]["image_id"] = "sha256:" + "4" * 64
+    else:
+        control["points"][0]["measurement"]["launch"]["env"]["AKLR_DISABLE"] = "0"
+    site, _ = case.publish(current, previous)
+    assert case.baseline(site) == expected
+
+
+@pytest.mark.parametrize("invalid", ["unplanned", "duplicate", "expected-count"])
+def test_control_points_must_belong_to_the_plan_without_duplicates(case, invalid):
+    previous, _ = case.publish(formal_results("previous-run"))
+    expected = case.baseline(previous)
+    current = formal_results("invalid-control")
+    control = current["control"]
+    if invalid == "unplanned":
+        control["points"][1].update(conc=4, exp_name="tp1-c4")
+    elif invalid == "duplicate":
+        control["points"][1] = copy.deepcopy(control["points"][0])
+    else:
+        control["run"]["points_expected"] = 4
+    site, target = case.publish(current, previous)
+    assert target["status"] == "failed"
+    assert target["failure_stage"] == "report"
+    assert case.baseline(site) == expected

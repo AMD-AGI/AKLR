@@ -173,7 +173,8 @@
         "linear_beta": 25.0
       },
       "accuracy": "passed",
-      "speedup": 1.799
+      "speedup": 1.674,
+      "microseconds": 791.0
     },
     {
       "axes": {
@@ -184,7 +185,8 @@
         "linear_beta": 25.0
       },
       "accuracy": "passed",
-      "speedup": 1.814
+      "speedup": 1.644,
+      "microseconds": 1260.0
     }
   ],
   "layout_variants": {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Monitor Upstreams"
+  short_description: "Monitor upstream repositories for kernel candidates"
+  default_prompt: "Use $monitor-upstreams to identify upstream kernel candidates."

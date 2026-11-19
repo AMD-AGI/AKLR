@@ -6,6 +6,7 @@ from __future__ import annotations
 import atexit
 import functools
 import logging
+import threading
 from collections import Counter
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
@@ -31,6 +32,8 @@ from aklr.core.runtime.dispatch._recorder import CallRecorder
 __all__ = ["DispatcherRegistry", "api"]
 
 _LOGGER = logging.getLogger(__name__)
+# one init at a time: hosts and the aiter provider may start AKLR from several threads
+_INIT_LOCK = threading.Lock()
 
 
 class DispatcherRegistry:
@@ -185,9 +188,11 @@ class DispatcherRegistry:
         )
 
     def init_once(self) -> None:
-        """``init`` unless ``is_initialized``: for hosts that may start twice (the sglang plugin)."""
-        if not self.is_initialized:
-            self.init()
+        """``init`` unless ``is_initialized``, one caller at a time: for hosts that may start twice
+        (the sglang plugin) and the aiter provider's concurrent first calls."""
+        with _INIT_LOCK:
+            if not self.is_initialized:
+                self.init()
 
     @staticmethod
     def _probe_device() -> tuple[torch.device, DeviceTarget]:

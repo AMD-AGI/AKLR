@@ -172,7 +172,7 @@ def _aiter_reduces_whole_tiles() -> bool:
 def mla_prefill_varlen_lse_baseline(
     q, k, v, cu_seqlens_q, qkv_fp8=True, causal=True, cu_seqlens_k=None, sm_scale=None, output=None, lse=None
 ):
-    """sglang 0.5.22's chunked-prefix passes on aiter (``_mla_fp8_prefill_attn_ps``): with qkv_fp8 its fp8 path
+    """sglang 0.5.23's chunked-prefix passes on aiter (``_mla_fp8_prefill_attn_ps``): with qkv_fp8 its fp8 path
     (the heads tiled up to one aiter's reduce instantiates, q, k and v cast to fp8, the ASM prefill over aiter's
     persistent plan built with need_lse, then mla_reduce_v1 writing the lse), else aiter's flash attention in bf16
     with return_lse. The plan is built as aiter's planner builds it (``ps_plan``): only aiter 0.1.23 on has

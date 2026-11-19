@@ -114,7 +114,7 @@ class AuditStage(PipelineStage[AuditReport]):
                         schema_path=path,
                         axes=None,
                         detail=f"measured fields at {'; '.join(edited)} differ from"
-                        " the base: only the bot writes speedup and accuracy",
+                        " the base: only the bot writes speedup, accuracy and microseconds",
                     )
                 )
         return findings

@@ -187,42 +187,48 @@
         "n_tokens": 1
       },
       "accuracy": "passed",
-      "speedup": 2.062
+      "speedup": 1.733,
+      "microseconds": 36.4
     },
     {
       "axes": {
         "n_tokens": 2
       },
       "accuracy": "passed",
-      "speedup": 2.175
+      "speedup": 1.862,
+      "microseconds": 41.5
     },
     {
       "axes": {
         "n_tokens": 4
       },
       "accuracy": "passed",
-      "speedup": 1.992
+      "speedup": 1.714,
+      "microseconds": 50.7
     },
     {
       "axes": {
         "n_tokens": 8
       },
       "accuracy": "passed",
-      "speedup": 1.708
+      "speedup": 1.494,
+      "microseconds": 73.4
     },
     {
       "axes": {
         "n_tokens": 12
       },
       "accuracy": "passed",
-      "speedup": 1.348
+      "speedup": 1.209,
+      "microseconds": 105.0
     },
     {
       "axes": {
         "n_tokens": 16
       },
       "accuracy": "passed",
-      "speedup": 1.229
+      "speedup": 1.123,
+      "microseconds": 127.0
     }
   ],
   "layout_variants": {

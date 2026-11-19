@@ -13,7 +13,7 @@ from aklr.core.contract import expr, locate, semantics
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import sorted_key_json
-from aklr.core.contract.spec import TOOLCHAINS, attr
+from aklr.core.contract.spec import TOOLCHAINS, WorkloadSpec, attr
 from tests.op_case import HIP_GEMM_KERNEL_SOURCE, OpCase
 
 
@@ -80,9 +80,18 @@ class TestSchemaFile:
         for field in ("language", "entry_point"):
             assert any(line.startswith(f"bad.json: kernel.{field}: ") for line in lines)
 
+    def test_microseconds_is_measured(self) -> None:
+        """``microseconds`` comes with an ``accuracy``, as ``speedup`` does, and is left
+        out of the file when unmeasured."""
+        with pytest.raises(ValueError, match="microseconds 4.17 has no accuracy"):
+            WorkloadSpec(axes={"m": 1}, microseconds=4.17)
+        measured = WorkloadSpec(axes={"m": 1}, accuracy="passed", speedup=1.2, microseconds=4.17)
+        assert measured.model_dump()["microseconds"] == 4.17
+        assert "microseconds" not in WorkloadSpec(axes={"m": 1}).model_dump()
+
     def test_kernel_requires(self) -> None:
         """``kernel.requires`` follows ``targets`` and is absent when empty; a key is a
-        language, a value a version specifier. The uuid hashes it."""
+        language or a known library, a value a version specifier. The uuid hashes it."""
         schema = OpCase.of("gemm@1.0").schema()
         data = json.loads(schema.schema_text())
         kernel = data["kernel"]
@@ -100,6 +109,8 @@ class TestSchemaFile:
         parsed = parse(with_requires({"flydsl": ">=0.3.2"}), "a.json")
         assert parsed.kernel.requires == {"flydsl": ">=0.3.2"}
         assert parsed.relative_path() != schema.relative_path()
+        with_library = {"flydsl": ">=0.3.2", "mori": ">=1.2.4"}
+        assert parse(with_requires(with_library), "a.json").kernel.requires == with_library
         for bad in ({"flydsl": ""}, {"flydsl": "0.3.2"}, {"cuda": ">=12"}):
             with pytest.raises(ValueError, match=r"^a\.json: kernel\.requires"):
                 parse(with_requires(bad), "a.json")
@@ -137,6 +148,24 @@ class TestSchemaFile:
         if not pinned:
             assert f"names no {TOOLCHAINS[language]} version" in error
         assert kernel.model_copy(update={"sources": ()}).requires_error is None
+
+    @pytest.mark.parametrize(
+        ("line", "imports"),
+        [
+            ("import mori.shmem as ms", True),
+            ("import torch, mori", True),
+            ("if True: from mori.shmem import mori_shmem_create_tensor", True),
+            ('"""import mori"""', False),
+        ],
+    )
+    def test_kernel_requires_the_libraries_its_sources_import(self, line: str, imports: bool) -> None:
+        kernel = OpCase.of("gemm@1.0").schema(language="flydsl").kernel
+        entry, *rest = kernel.sources
+        sources = (entry.model_copy(update={"content": f"{entry.content}\n{line}\n"}), *rest)
+        importing = kernel.model_copy(update={"requires": {"flydsl": ">=0.3.2"}, "sources": sources})
+        assert ("names no mori version" in (importing.requires_error or "")) == imports
+        pinned = importing.model_copy(update={"requires": {"flydsl": ">=0.3.2", "mori": ">=1.2.4"}})
+        assert pinned.requires_error is None
 
     def test_kernel_author(self) -> None:
         """``kernel.author`` follows ``targets``, is absent when empty and is one line
