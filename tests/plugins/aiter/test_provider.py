@@ -306,6 +306,27 @@ AITER_CONTRACTS = {
             "v_descale",
         ),
     ),
+    "causal_conv1d_split_qkv": (
+        1,
+        (
+            "x",
+            "weight",
+            "bias",
+            "conv_states",
+            "query_start_loc",
+            "k_dim",
+            "v_dim",
+            "cache_indices",
+            "has_initial_state",
+            "activation",
+            "pad_slot_id",
+            "block_m",
+            "block_n",
+            "num_warps",
+            "metadata",
+            "preserve_input_dtype",
+        ),
+    ),
 }
 
 
