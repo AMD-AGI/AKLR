@@ -222,3 +222,55 @@ def test_a_long_prefill_the_op_declines_stays_on_sglang(sparse_mla, monkeypatch)
         None,
     )
     assert reason is FallbackReason.NO_WORKLOAD
+
+
+def wo_a_call(tokens=3, groups=2, block=32):
+    """sglang's wo_a projection of a rank as its BMM takes it: each group's quantized rows, its weight in aiter's
+    16 x 16 tiles and the compact block scales."""
+    return (
+        torch.zeros(tokens, groups, 128, dtype=torch.float8_e4m3fn),
+        torch.zeros(groups, 64, 128, dtype=torch.float8_e4m3fn),
+        torch.arange(tokens * groups * 4, dtype=torch.uint8).view(tokens, groups, 4),
+        torch.zeros(groups, 64 // block, 128 // block, dtype=torch.uint8),
+    )
+
+
+def test_wo_a_reaches_the_mxfp8_linear_once_a_group_on_its_shuffled_weight(monkeypatch):
+    asked = []
+
+    def op(**call):
+        asked.append(call)
+        return torch.full((3, 64), float(len(asked)), dtype=torch.bfloat16)
+
+    monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", op)
+    o_fp8, weight, o_scale, weight_scale = wo_a_call()
+    out = api._wo_a_bmm(o_fp8, weight, o_scale, weight_scale)
+    assert len(asked) == 2
+    for group, call in enumerate(asked):
+        assert set(call) == {"x", "x_scale", "weight", "weight_scale", "weight_layout"}
+        assert call["weight_layout"] == "shuffled_16x16"
+        # the group's rows, row-major on the 16 bytes dispatch requires
+        assert call["x"].shape == (3, 128) and call["x"].is_contiguous() and call["x"].data_ptr() % 16 == 0
+        assert call["x_scale"].is_contiguous() and call["x_scale"].data_ptr() % 16 == 0
+        assert call["x_scale"].tolist() == [[4 * (2 * t + group) + i for i in range(4)] for t in range(3)]
+        assert call["weight"].data_ptr() == weight[group].data_ptr() and call["weight"].shape == (64, 128)
+        assert call["weight_scale"].data_ptr() == weight_scale[group].data_ptr()
+    # as aiter's BMM returns it: a token's groups side by side
+    assert out.shape == (3, 2, 64) and out.dtype == torch.bfloat16 and out.is_contiguous()
+    assert out[:, 0].eq(1).all() and out[:, 1].eq(2).all()
+
+
+@pytest.mark.parametrize(
+    "call",
+    [wo_a_call(block=64), wo_a_call(tokens=0), tuple(t.flatten(0, 1) for t in wo_a_call())],
+    ids=["other_block", "no_token", "ungrouped"],
+)
+def test_a_wo_a_the_op_cannot_express_stays_on_sglang(monkeypatch, call):
+    asked = []
+    monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", lambda **call: asked.append(call))
+    assert api._wo_a_bmm(*call) is FallbackReason.OUT_OF_CONTRACT and asked == []
+
+
+def test_a_wo_a_group_the_op_declines_stays_on_sglang(monkeypatch):
+    monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", lambda **call: FallbackReason.NO_WORKLOAD)
+    assert api._wo_a_bmm(*wo_a_call()) is FallbackReason.NO_WORKLOAD
