@@ -176,3 +176,117 @@ def deepseekv41_mono_k2_attention(
     post_mix_out=None,
     comb_mix_out=None,
 ): ...
+
+
+@sglang_route(
+    "sglang.srt.models.deepseek_v4_platform_stage.forward_hc_pre_from_prev_fused_boundary",
+    versions=("0.5.23.dev20261111",),
+)
+def _forward_hc_pre_from_prev_fused_boundary(
+    layer,
+    positions,
+    hidden_states,
+    input_ids,
+    forward_batch,
+    input_ids_global,
+    prev_pre,
+    pending_post,
+    defer_post,
+):
+    """A decode or verify step's layer where no monokernel took the step, on a rank holding
+    every head: its attention front and back as the two launches a monokernel runs them in,
+    each asked for with the layer's own tensors (the back's inputs the front writes stand in
+    by shape)."""
+    import torch
+    from sglang.srt.model_executor.forward_context import get_attn_backend, get_token_to_kv_pool
+
+    attn, mode = layer.self_attn, forward_batch.forward_mode
+    linears = (attn.wqkv_a, attn.wq_b, attn.wo_b) if attn.fuse_wqa_wkv else ()
+    if (
+        not (mode.is_decode_or_idle() or mode.is_target_verify())
+        or not linears
+        or attn.q_head_norm
+        or attn.attn_tp_size != 1
+        or attn.wo_a.weight.dtype != torch.bfloat16
+        or any(getattr(linear, "mxfp8_aiter_preshuffled", False) for linear in linears)
+        or any(getattr(linear, "weight_scale_mx_e8m0", None) is None for linear in linears)
+        or len({layer.input_layernorm.variance_epsilon, attn.q_norm.variance_epsilon, attn.eps}) != 1
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    x, residual, post, comb = pending_post or (None, hidden_states, None, None)
+    tokens, pool = residual.shape[0], get_token_to_kv_pool()
+    if not tokens or residual.dim() != 3:
+        return FallbackReason.OUT_OF_CONTRACT
+    seam = {
+        "residual": residual,
+        "hc_rms_eps": layer.rms_norm_eps,
+        "hc_eps": layer.hc_eps,
+        "norm_eps": attn.eps,
+        "sinkhorn_iters": layer.hc_sinkhorn_iters,
+    }
+    rope = {
+        "rope_freqs": torch.view_as_real(attn.freqs_cis).flatten(-2),
+        "positions": positions[:tokens],
+    }
+    front = deepseekv41_mono_k1.fallback_reason(
+        **seam,
+        **rope,
+        hc_fn=layer.hc_attn_fn,
+        hc_scale=layer.hc_attn_scale,
+        hc_base=layer.hc_attn_base,
+        norm_weight=layer.input_layernorm.weight,
+        wqkv=attn.wqkv_a.weight,
+        wqkv_scale=attn.wqkv_a.weight_scale_mx_e8m0,
+        q_norm_weight=attn.q_norm.weight,
+        kv_norm_weight=attn.kv_norm.weight,
+        wq_b=attn.wq_b.weight,
+        wq_b_scale=attn.wq_b.weight_scale_mx_e8m0,
+        x=x,
+        post_mix=None if post is None else post.view(tokens, -1),
+        comb_mix=comb,
+        prev_pre_mix=prev_pre,
+    )
+
+    def pages(buffer, page_size):
+        # the pool's rows are pages padded to 576 bytes; the op takes each page's slots
+        if buffer.dim() == 4:
+            return buffer
+        return buffer.view(torch.uint8).as_strided(
+            (buffer.shape[0], page_size, 1, _SLOT_BYTES), (buffer.stride(0), _SLOT_BYTES, _SLOT_BYTES, 1)
+        )
+
+    metadata, ratio = get_attn_backend().forward_metadata.core_attn_metadata, attn.compress_ratio
+    extra = {}
+    if ratio:
+        extra = {
+            "extra_kv_cache": pages(
+                pool.get_extra_key_buffer(attn.layer_id), pool.get_extra_key_page_size(attn.layer_id)
+            ),
+            "extra_indices": metadata.sparse_page_indices(ratio)[:tokens].reshape(tokens, 1, -1),
+        }
+    mixes = residual.new_empty((tokens, 4, 4), dtype=torch.float32)
+    back = deepseekv41_mono_k2_attention.fallback_reason(
+        **seam,
+        **rope,
+        **extra,
+        q=residual.new_empty((tokens, 1, attn.n_local_heads, 512)),
+        kv_cache=pages(pool.get_swa_raw_buffer(attn.layer_id), pool.get_swa_key_page_size()),
+        indices=metadata.swa_page_indices[:tokens].reshape(tokens, 1, -1),
+        sinks=attn.attn_sink.float(),
+        sm_scale=512**-0.5,
+        kv_cache_layout="padded_pages",
+        wo_a=attn.wo_a.weight,
+        wo_b=attn.wo_b.weight,
+        wo_b_scale=attn.wo_b.weight_scale_mx_e8m0,
+        post_mix=mixes[:, 0],
+        comb_mix=mixes,
+        pre_mix=mixes[:, 0],
+        hc_fn=layer.hc_ffn_fn,
+        hc_scale=layer.hc_ffn_scale,
+        hc_base=layer.hc_ffn_base,
+        norm_weight=layer.post_attention_layernorm.weight,
+    )
+    # shortcut: the launches are asked for, which records the layer's two calls, and the layer
+    # is left to sglang; run them here (the KV store and an index source's indexer between
+    # them) once a kernel serves both
+    return front or back or FallbackReason.OUT_OF_CONTRACT
