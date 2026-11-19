@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on HIP for a speculative step's DSA sparse MLA: native "tilelang",
-DeepseekSparseAttnBackend._forward_tilelang's tilelang_sparse_fwd; native "triton",
+"""What sglang 0.5.22 and 0.5.23 run on HIP for a speculative step's DSA sparse MLA: native
+"tilelang", DeepseekSparseAttnBackend._forward_tilelang's tilelang_sparse_fwd; native "triton",
 forward_extend's triton_sparse_mla_fwd."""
 
 from __future__ import annotations
