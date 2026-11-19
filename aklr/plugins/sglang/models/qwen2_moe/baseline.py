@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on aiter on gfx950 for Qwen2MoeSparseMoeBlock's
+"""What sglang 0.5.23 runs on aiter on gfx950 for Qwen2MoeSparseMoeBlock's
 _forward_router_experts with the shared expert fused into the experts: the routing from
 its small-M router of 1 to 8 Qwen3.5 tokens (smallm_router_gfx950, which appends the gated
 shared expert itself), else the gate as ReplicatedLinear runs it, TopK's fused_topk and

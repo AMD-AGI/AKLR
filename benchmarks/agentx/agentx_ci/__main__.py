@@ -11,6 +11,7 @@ COMMANDS = {
     "sweep": ("agentx_ci.sweep", "main"),
     "pipeline": ("agentx_ci.pipeline", "main"),
     "report": ("agentx_ci.report", "main"),
+    "publish": ("agentx_ci.publish", "main"),
     "check-recipes": ("agentx_ci.check_recipes", "main"),
 }
 

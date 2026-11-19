@@ -107,6 +107,16 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §3.
   slot.
 - **Another wave reads what you wrote:** the writer waits `lgkmcnt(0)`, then everyone meets at
   `s_barrier`.
+- **A ring barrier that lets the next DMA refill a slot the waves have read waits `lgkmcnt(0)` as well as
+  `vmcnt`.** `vmcnt` counts the DMA; the waves' own `ds_read`s of that slot count in `lgkmcnt`, so after
+  `s_waitcnt vmcnt(N)` and `s_barrier` alone a wave can still have them in flight when the refill is issued, and the
+  DMA overwrites what they read. Write `s_waitcnt vmcnt(N) lgkmcnt(0)` before the barrier, or keep one spare ring
+  slot between the slot read and the slot refilled. *(field, E37)* #110's `gemm_n4096_k8192` (`50af7968`), whose
+  barriers wait `vmcnt` only and which refills the slot read one stage earlier right after the barrier, gave wrong
+  output at m=2 in 10 of 2000 calls (relative error up to 8.7e-2) and different bits for the same input in 26 while
+  another process ran matmuls on the same GPU; with `lgkmcnt(0)` added to both waits, 0 and 0. Run alone, 300 calls
+  each at m 1, 2, 4 and 8 were right, so a check that runs the kernel by itself passes it. #220 added the same wait
+  to the twin `gemm_n8192_k4096` (`326521f0`) (S1).
 - **A FLAT (generic-address) access counts in both `vmcnt` and `lgkmcnt`.** *(field, E4)* Waiting
   `lgkmcnt(0)` after a flat load from global took 96 ticks against 56 after a `global_load`, and both
   took about 250 to `vmcnt(0)` on a line read before (about 1000 on first touch). The lgkm count retires
@@ -360,3 +370,5 @@ earliest record that has the number.
 - E34 [2026-11, gfx950 (MI355X), hipcc, N=1 run of 64 address sets, LDS filled with each byte's own address] one wave, every lane reading at its own 8-byte-aligned address: for `ds_read_b64_tr_b8` and `ds_read_b64_tr_b16` a per-lane-address model matched all 32768 bytes, a group-base model 0 of 61 distinguishing sets; no byte crossed a 16-lane group; `tr_b8`: lane l, byte b from byte l mod 8 of the row read by group lane 2b + ⌊(l mod 16)/8⌋ (HIP microbenchmark)
 - E35 [2026-11, gfx950 (MI355X), hipcc, N=11 rounds, hipEvent per launch, ratios paired by round; A-vs-A within 3.5% in L2, 2.3% from HBM] `global_load_dwordx4`, 1 KiB per instruction per wave, the rest of each line never read: in L2, 16 / 32 / 64 lines against 8 full lines 1.89 / 3.60 / 7.28×, the same lines over interleaved instead of adjacent lanes 1.78–3.34×; from HBM, each line read by ½, ¼ or ⅛: 1.89 / 3.73 / 7.29× for the same useful bytes (HIP microbenchmark)
 - E36 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Primus-Turbo 7615a5a2, N=9 rounds, profiler kernel time, A-vs-A within 0.55%; outputs bitwise equal across arms] Turbo's 8-wave dense fp8 TN kernel with only A's `ds_read_b64_tr_b8` changed: the intrinsic (compiler drain before it) against inline asm with `vmcnt(3)`, 1618.3 against 1398.8 µs (+15.6%) at 8192×8192×28672, +7.4% at 8192×8192×4096 (dense fp8 tensorwise TN GEMM)
+- E37 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=2000 calls per m and build under contention, 300 per m alone; eager calls, a fresh A each call, each input run twice back to back and compared bit for bit, the output against fp32 `a @ bᵀ` (wrong: non-finite or relative max error > 2e-2); contention: a second process running back-to-back bf16 8192 × 8192 matmuls on its own stream on the same GPU] 50af7968719f3ff6 under contention, m=2: as shipped 10 of 2000 wrong (worst relative error 8.7e-2) and 26 of 2000 with different bits; with `lgkmcnt(0)` added to the waits at kernel.py:388 and :855, 0 and 0; m=1 and 4: 0 and 0 in both builds; m=8 with `lgkmcnt(0)`: 0 and 0; alone, as shipped, m 1, 2, 4, 8: 0 wrong of 300 each (bf16 GEMM n4096 k8192)
+- S1 aklr/ops/gemm/impls/flydsl/gemm_n4096_k8192/50af7968719f3ff6.json#kernel.py:855 the gemv loop's barrier `s_waitcnt vmcnt({vm})` then `s_barrier`, followed by `issue(st + NS - 1)` (:858), which refills the slot read one stage earlier; the tiled path's barrier the same at :388; aklr/ops/gemm/impls/flydsl/gemm_n8192_k4096/326521f04ca6707a.json#kernel.py:855 and :388 `s_waitcnt vmcnt(…) lgkmcnt(0)` then `s_barrier`

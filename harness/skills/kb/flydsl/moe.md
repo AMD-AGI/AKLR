@@ -18,7 +18,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/quantization/
   - aiter/fused_moe.py
   - aiter/ops/flydsl/
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02b4c053c7.json
+  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
 ---
 
 # MoE in FlyDSL
@@ -87,7 +87,7 @@ and MoE kernels FlyDSL lacks; the mapping is in § grouped_sorted_tokens §1 bel
 ## few_tokens How to write it
 
 Steps c and f of the head (`../moe/few_tokens.md` § How to write it), in `g1_fold.py` of the schema file
-`4fbd9d02b4c053c7.json`:
+`5d5b47d0fbd5c2ba.json`:
 
 ```python
 # c: one LDS atomic add per routed item (g1_fold.py:1965-1968)
@@ -166,6 +166,16 @@ epilogue (`_SUPPORTED` in both host files).
   `moe_2stage_a16wmix/gemm2.py:517`). aiter's copy has no automatic switch: its host takes the modifier from the
   tuned row's `b_nt` (`_bnt<N>` in the kernel name) and loads B cached when the row gives none
   (`aiter/ops/flydsl/kernels/moe_2stage_a16wmix/__init__.py:228-230`; `aiter/fused_moe.py:1555`).
+- **aiter's mixed stage 2 drops `b_nt`.** aiter registers every stage-2 kernel with and without a `_bnt2` suffix
+  (`aiter/ops/flydsl/moe_kernels.py:302`, `:316`) and, for fp4 and fp8 weights, passes the row's `b_nt` to
+  `compile_mixed_moe_gemm2` as an argument "accepted as ignored" (:747, :768-773). `compile_mixed_moe_gemm2_common`
+  takes it and discards it (`del b_nt`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3448`, `:3459`):
+  its w2 load passes no `cache_modifier` (:4256-4265), where stage 1's B load passes `cache_modifier=b_nt` (:992).
+  Two AKLR kernels restore it. #190 (`681897ac`) rewrites the installed builder's source at import: it drops
+  `del b_nt`, adds `cache_modifier=b_nt` to the w2 load, adds `_nt<b_nt>` to the kernel name so the variants do not
+  share a cache entry, and fails if an anchor is not found exactly once (kernel.py:12-35). #122 (`e6c03532`) ships
+  its own copy of the builder with `cache_modifier=b_nt` on the w2 load (kernel.py:2316). What it costs:
+  `../moe/grouped_sorted_tokens.md` §4.
 
 ## grouped_sorted_tokens §6 Stage 2: atomics or split + reduce
 

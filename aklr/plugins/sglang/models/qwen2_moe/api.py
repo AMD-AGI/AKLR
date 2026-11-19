@@ -81,7 +81,7 @@ def qwen2_moe_mxfp4_router_experts(
 ): ...
 
 
-@sglang_route("sglang.srt.models.qwen2_moe.Qwen2MoeSparseMoeBlock.forward", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.qwen2_moe.Qwen2MoeSparseMoeBlock.forward", versions=("0.5.22", "0.5.23"))
 def _forward(self, hidden_states, forward_batch=None, defer_finalize=False):
     """The whole block, its BF16 shared expert apart from the MXFP4 experts (sglang's path for
     a checkpoint that keeps its shared expert BF16), as one op; then the sum over the TP group
@@ -118,7 +118,8 @@ def _forward(self, hidden_states, forward_batch=None, defer_finalize=False):
 
 
 @sglang_route(
-    "sglang.srt.models.qwen2_moe.Qwen2MoeSparseMoeBlock._forward_router_experts", versions=("0.5.22",)
+    "sglang.srt.models.qwen2_moe.Qwen2MoeSparseMoeBlock._forward_router_experts",
+    versions=("0.5.22", "0.5.23"),
 )
 def _forward_router_experts(self, hidden_states, *, defer_finalize=False):
     """The router and experts, the shared expert last, as one op; where it does not serve, for

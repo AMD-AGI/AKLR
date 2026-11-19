@@ -40,7 +40,7 @@ def add_attn_res(
 ): ...
 
 
-@sglang_route("sglang.kernels.ops.attention.attn_res_hip.attn_res_hip", versions=("0.5.22",))
+@sglang_route("sglang.kernels.ops.attention.attn_res_hip.attn_res_hip", versions=("0.5.22", "0.5.23"))
 def _attn_res_hip(
     prefix_sum,
     bank,

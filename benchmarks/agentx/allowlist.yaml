@@ -1,0 +1,8 @@
+# GitHub logins whose `/agentx-mi355x` comment on a PR authorizes its ci:agentx-mi355x run and picks
+# its models. Add one login per line; case does not matter.
+reviewers:
+  - RuibinCheung
+  - xiaobochen-amd
+  - jiejingzhangamd
+  - zhenhuang12
+  - kyle-256

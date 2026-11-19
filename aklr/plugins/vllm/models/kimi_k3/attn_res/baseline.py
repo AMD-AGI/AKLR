@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What vLLM 0.33.0 runs: its Triton kernel, one launch per call, with the launch
+"""What vLLM 0.34.0 runs: its Triton kernel, one launch per call, with the launch
 configuration of its ``attn_res`` (copied in ``_triton``, so the baseline runs without
 vLLM)."""
 

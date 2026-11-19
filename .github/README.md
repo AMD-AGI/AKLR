@@ -48,8 +48,8 @@ It aims to help agents reach the same speed sooner, use fewer tokens, and find f
 
 | Framework | Development image |
 |---|---|
-| SGLang | `lmsysorg/sglang:v0.5.22-rocm10-mi35x` ([stack.json](../stack.json)) |
-| vLLM | `vllm/vllm-openai-rocm:v0.33.0-rocm100` ([stack.json](../stack.json)) |
+| SGLang | `lmsysorg/sglang:v0.5.23-rocm10-mi35x` ([stack.json](../stack.json)) |
+| vLLM | `vllm/vllm-openai-rocm:v0.34.0-rocm100` ([stack.json](../stack.json)) |
 
 Inside the image, install AKLR, one pure-Python package `aklr` (Python 3.11 or later), versioned `0.1.devN+g<commit>` before the first tag. It uses the image's torch, Triton and SGLang and replaces none of them:
 

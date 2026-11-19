@@ -34,26 +34,23 @@ def dsa_topk_transform(score, lengths, page_table_size_1, cu_seqlens_q, out_page
 # implementation (triton, HIP's default), and this is the one the baseline measures.
 @sglang_route(
     "sglang.srt.layers.attention.dsa_backend.DeepseekSparseAttnBackend._forward_triton_decode",
-    versions=("0.5.22",),
+    versions=("0.5.23",),
 )
 def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_table_1, sm_scale):
-    """The decode's attention as one op call on the whole q, returned as sglang's kernel returns
-    it, [1, tokens, heads, v_head_dim]; v_head_dim is q_nope's width, as sglang's kernel asserts."""
+    """The decode's attention as one op call on the whole q, returned as sglang returns it,
+    [tokens, heads, v_head_dim]; v_head_dim is q_nope's width, as sglang's kernel asserts."""
     from sglang.srt.runtime_context import get_spec
 
     q = _whole_query(q_nope, q_rope)
     # speculative decoding's draft steps stay on sglang
     if q is None or get_spec().speculative_algorithm is not None:
         return FallbackReason.OUT_OF_CONTRACT
-    output = dsa_sparse_mla_decode(
+    return dsa_sparse_mla_decode(
         q=q,
         kv_cache=kv_cache.view(-1, kv_cache.shape[-1]),
         topk_indices=page_table_1,
         sm_scale=sm_scale,
     )
-    if isinstance(output, FallbackReason):
-        return output
-    return output.unsqueeze(0)
 
 
 # (query rows, whether a target verify) of the paged top-k sglang's indexer is running, noted by the route on
@@ -75,7 +72,7 @@ def _get_topk_paged(self, forward_batch, layer_id, q_fp8, *args, **kwargs):
 
 @sglang_route(
     "sglang.kernels.ops.attention.dsa.paged_mqa_logits.aiter_paged_mqa_logits",
-    versions=("0.5.22", "0.5.24.dev809"),
+    versions=("0.5.22", "0.5.23", "0.5.24.dev809"),
 )
 def _aiter_paged_mqa_logits(
     q_fp8, kv_cache_fp8, weights, seq_lens, block_tables, max_seq_len, *, preshuffle, kv_block_size
@@ -102,7 +99,7 @@ def _aiter_paged_mqa_logits(
 
 
 # HIP's DSA top-k: sglang turns the v2 paged top-k off there for DSA models
-@sglang_route("sgl_kernel.top_k.fast_topk_transform_fused", versions=("0.5.22",))
+@sglang_route("sgl_kernel.top_k.fast_topk_transform_fused", versions=("0.5.22", "0.5.23"))
 def _fast_topk_transform_fused(score, lengths, page_table_size_1, cu_seqlens_q, topk, row_starts=None):
     """The DSA indexer's paged top-k as one op call, into the [rows, topk] int32 tensor
     sgl_kernel allocates; a ragged row_starts stays on sgl_kernel."""
@@ -122,7 +119,7 @@ def _fast_topk_transform_fused(score, lengths, page_table_size_1, cu_seqlens_q, 
 # HIP's DSA prefill; forward_extend imports it at each call.
 @sglang_route(
     "sglang.kernels.ops.attention.dsa.triton_sparse_mla.triton_sparse_mla_fwd",
-    versions=("0.5.22",),
+    versions=("0.5.22", "0.5.23"),
 )
 def _triton_sparse_mla_fwd(
     q_nope, q_rope, kv, indices, sm_scale, d_v=512, topk_length=None, max_topk_length=None

@@ -50,7 +50,7 @@ def deepseek_v2_fp8_moe(
 ): ...
 
 
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
 def _moe_forward_normal(
     self,
     hidden_states,
@@ -58,14 +58,14 @@ def _moe_forward_normal(
     input_ids=None,
     input_ids_global=None,
     skip_shared_experts=False,
-    num_token_non_padded=None,
     use_vision_topk=False,
     return_moe_output=False,
+    leave_output_sum=False,
 ):
     """The MoE's router, top-k and experts, the shared one last, as one op call; then
     forward_normal's all-reduce unless a later step sums the ranks."""
     if _forward_normal_falls_back(
-        self, skip_shared_experts, num_token_non_padded, use_vision_topk, return_moe_output
+        self, skip_shared_experts, use_vision_topk, return_moe_output or leave_output_sum
     ):
         return FallbackReason.OUT_OF_CONTRACT
     op, arguments = _moe_call(self, hidden_states)
@@ -81,22 +81,31 @@ def _moe_forward_normal(
 _EXPERT_FORMATS = ("QuarkW4A4MXFp4MoE", "Fp8MoEMethod")
 
 
-def _forward_normal_falls_back(
-    mlp, skip_shared_experts, num_token_non_padded, use_vision_topk, return_moe_output
-) -> bool:
+def _forward_normal_falls_back(mlp, skip_shared_experts, use_vision_topk, return_moe_output) -> bool:
     # a rank's share of the experts (expert parallelism) or the routed ones alone (the shared
     # expert apart) are another shape than the op's w1, which holds the shared one last
     return (
         skip_shared_experts
-        or num_token_non_padded is not None
         or use_vision_topk
         or return_moe_output
+        or _masks_padded_rows()
         or moe_blocks.runtime_falls_back()
         or moe_blocks.experts_fall_back(mlp.experts, _EXPERT_FORMATS)
         or mlp._fuse_shared_experts_inside_sbo
         or mlp.is_hash
         or mlp.gate.e_score_correction_bias_vl is not None
     )
+
+
+def _masks_padded_rows() -> bool:
+    """Whether sglang's top-k masks padded rows here: the bound it reads from the forward context
+    (resolve_routing_inputs), forward_normal's num_token_non_padded until 0.5.23."""
+    from sglang.srt.model_executor.forward_context import get_forward_context, has_forward_context
+
+    if not has_forward_context():
+        return False
+    get_bound = get_forward_context().moe_num_token_non_padded
+    return get_bound is not None and get_bound() is not None
 
 
 def _moe_call(mlp, hidden_states):

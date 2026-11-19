@@ -9,9 +9,9 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter (deepgemm_fp8_paged_mqa_logits through aklr/ops/mla/baseline.py), CI, measurement profile 19, per Point", value: "1.046–1.837; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "fp8_paged_mqa_logits_page_size64_n_heads64 file 2c17b79278febb6a, batch 1–256 × 4–9 pool sizes, max_blocks 4097", run_ref: "227aa66 (#115, CI run 42599763780)", date: "2026-11-09"}
+  - {metric: "speedup over aiter (deepgemm_fp8_paged_mqa_logits through aklr/ops/mla/baseline.py), CI, measurement profile 19, per Point", value: "1.046–1.837; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "fp8_paged_mqa_logits_page_size64_n_heads64 file db2a94175bd6e1d0, batch 1–256 × 4–9 pool sizes, max_blocks 4097", run_ref: "227aa66 (#115, CI run 42599763780)", date: "2026-11-09"}
 sources:
-  - aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json
+  - aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0.json
 ---
 
 # fp8 paged MQA logits: whole pages per wave, no merge
@@ -162,7 +162,7 @@ its 61 Points, batch 1 at 1.030–1.134, the 262,144-page Points at 1.030 (batch
 On an MI355X, in a checkout that holds this file:
 
 ```
-python -m aklr validate aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json
+python -m aklr validate aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0.json
 ```
 
 It runs the audit and bench stages and writes `aklr_validation/report.md` with the per-Point speedup
@@ -182,19 +182,19 @@ calls the kernel on two devices or two streams at batch ≥ 64, or a FlyDSL or L
 ## Evidence
 
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schema embeds; `<schema>` is
-aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.
+aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0.
 
 - E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter 1.041–1.884 per Point, 58 of 58 ≥ 1.03; batch 1 1.041–1.101, 2 1.211–1.284, 4 1.272–1.372, 8 1.117–1.165, 16 1.212–1.264, 32 1.195–1.269, 64 1.643–1.714, 128 1.700–1.747, 256 1.794–1.884 (fp8_paged_mqa_logits_page_size64_n_heads64, 58 Points)
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] the other committed measurement: 1.024–1.891 per Point, 57 of 58 ≥ 1.03; batch 1 by pool size 105428 1.055, 109404 1.035, 111670 1.024, 111761 1.073, 115603 1.035, 119349 1.030, 120631 1.037, 123163 1.031 (fp8_paged_mqa_logits_page_size64_n_heads64)
 - E3 [2026-10, gfx950, FlyDSL ?, N=?, AKLR bench_cudagraph, not CI] batch 1, 2 and 4 "1.7x, 2.1x and 2.2x faster than aiter" after the depth-2 pipeline (fp8_paged_mqa_logits_page_size64_n_heads64)
-- E4 [2026-11, gfx950, FlyDSL 0.3.4.1, N=1, `python -m aklr validate --base origin/main`, not CI] speedup over aiter 1.030–1.809 per Point, 61 of 61 passed; batch 1 1.030–1.134, 2 1.244–1.302, 4 1.294–1.341, 8 1.278–1.307, 16 1.217–1.261, 32 1.241–1.271, 64 1.409–1.700, 128 1.570–1.731, 256 1.696–1.809 (fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a, PR #96)
-- E5 [2026-11, gfx950, FlyDSL 0.3.2 (aiter dbd8bf5's pin), N=1, AKLR CI, measurement profile 19] speedup over aiter 1.046–1.837 per Point, 61 of 61 ≥ 1.03, accuracy passed at every Point; batch 1 1.046–1.110, 2 1.206–1.301, 4 1.327–1.390, 8 1.296–1.311, 16 1.203–1.257, 32 1.241–1.269, 64 1.434–1.674, 128 1.572–1.727, 256 1.796–1.837 (fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a; 227aa66, #115, CI run 42599763780)
-- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8 rounds in one process, AKLR's `bench_cudagraph` with a 1 GiB flush per call] 2c17b79278febb6a's kernel.py (band path) against a copy forced to the slice path and against aiter, batch 64, 128, 256, each request owning its pages, contexts uniform in 8,192–49,152 tokens: band / slice speed 0.882–0.937 with the pages scattered over the pool, 0.194–0.514 with one contiguous run per request, there band at 0.266–0.471 of aiter's speed; band and slice outputs bitwise equal inside the context
+- E4 [2026-11, gfx950, FlyDSL 0.3.4.1, N=1, `python -m aklr validate --base origin/main`, not CI] speedup over aiter 1.030–1.809 per Point, 61 of 61 passed; batch 1 1.030–1.134, 2 1.244–1.302, 4 1.294–1.341, 8 1.278–1.307, 16 1.217–1.261, 32 1.241–1.271, 64 1.409–1.700, 128 1.570–1.731, 256 1.696–1.809 (fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0, PR #96)
+- E5 [2026-11, gfx950, FlyDSL 0.3.2 (aiter dbd8bf5's pin), N=1, AKLR CI, measurement profile 19] speedup over aiter 1.046–1.837 per Point, 61 of 61 ≥ 1.03, accuracy passed at every Point; batch 1 1.046–1.110, 2 1.206–1.301, 4 1.327–1.390, 8 1.296–1.311, 16 1.203–1.257, 32 1.241–1.269, 64 1.434–1.674, 128 1.572–1.727, 256 1.796–1.837 (fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0; 227aa66, #115, CI run 42599763780)
+- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8 rounds in one process, AKLR's `bench_cudagraph` with a 1 GiB flush per call] db2a94175bd6e1d0's kernel.py (band path) against a copy forced to the slice path and against aiter, batch 64, 128, 256, each request owning its pages, contexts uniform in 8,192–49,152 tokens: band / slice speed 0.882–0.937 with the pages scattered over the pool, 0.194–0.514 with one contiguous run per request, there band at 0.266–0.471 of aiter's speed; band and slice outputs bitwise equal inside the context
 - S1 aklr/ops/mla/contract.py:410 `SqnrBound(min_sqnr_db=30.0)`; compare `BOUNDED` at :414; `context_lens` drawn at `max_seq_len` only at :396; pool bytes below 0x40 at :380
 - S2 aklr/ops/mla/baseline.py:98 the baseline calls aiter with `Preshuffle`, `KVBlockSize` and the logits' width only, leaving `ChunkK`, `WavePerEU` and the scheduling arguments at aiter's defaults
 - S3 aklr/ops/mla/reference.py:133 the reference scales the keys before relu
-- S4 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json#kernel.py:199 `_issue_page`; MFMA at :275; scale after the head sum at :288; −inf past the context at :290; nt store at :301; a pool's descriptor or a page's own at :188 (`_key_pool`) and :218
-- S5 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json#kernel.py:334 `split_table`; `band_table` at :354; `_BAND_MIN_BLOCKS` at :46; the untuned split (`_FILL`) at :416; `small` at :422; body chosen at :876
-- S6 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json#kernel.py:524 `small_kernel`: page ids by `v_readlane` at :628, look-ahead at :639, aimed at `kv_bytes` at :222
-- S7 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json#kernel.py:744 `sort_kernel`: LDS-atomic histogram at :782, scatter at :833; `ORD` / `OFF` allocated with `device="cuda"` at :850; `flyc.compile` at :917
-- S8 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json#kernel.py:172 the `small` branch of `_slice_plan`, which no launched kernel reaches
+- S4 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0.json#kernel.py:199 `_issue_page`; MFMA at :275; scale after the head sum at :288; −inf past the context at :290; nt store at :301; a pool's descriptor or a page's own at :188 (`_key_pool`) and :218
+- S5 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0.json#kernel.py:334 `split_table`; `band_table` at :354; `_BAND_MIN_BLOCKS` at :46; the untuned split (`_FILL`) at :416; `small` at :422; body chosen at :876
+- S6 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0.json#kernel.py:524 `small_kernel`: page ids by `v_readlane` at :628, look-ahead at :639, aimed at `kv_bytes` at :222
+- S7 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0.json#kernel.py:744 `sort_kernel`: LDS-atomic histogram at :782, scatter at :833; `ORD` / `OFF` allocated with `device="cuda"` at :850; `flyc.compile` at :917
+- S8 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/db2a94175bd6e1d0.json#kernel.py:172 the `small` branch of `_slice_plan`, which no launched kernel reaches
