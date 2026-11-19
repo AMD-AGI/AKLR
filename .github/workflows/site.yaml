@@ -1,0 +1,74 @@
+name: AKLR-site
+
+# The only workflow that deploys GitHub Pages. CIs write their own section of the site-data branch
+# (agentx/, later accuracy/); this one deploys the branch tip with a home page built from each
+# section's section.json, so no CI's deploy replaces another's results.
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] reads only main's code and the site-data branch, never the triggering run's artifacts or code
+    # Workflow names, not file names. workflow_run uses main's copy of this file.
+    workflows: [AKLR-agentx-ci]
+    # completed, not success: a run whose targets failed may still have published.
+    types: [completed]
+    # The triggering run's head branch: PR runs never deploy.
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Queued deploys collapse to the newest, which reads the newest site-data.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Only scheduled and manual runs on main write site-data.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(fromJSON('["schedule", "workflow_dispatch"]'), github.event.workflow_run.event)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Check out the site-data tip
+        id: data
+        run: |
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          status=0
+          git ls-remote --exit-code --heads "$url" site-data >/dev/null || status=$?
+          if [[ $status == 0 ]]; then
+            git clone -q --depth=1 --branch site-data "$url" "$RUNNER_TEMP/site-data"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif [[ $status == 2 ]]; then
+            echo "::notice::site-data does not exist yet; nothing to deploy"
+          else
+            exit "$status"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.data.outputs.exists == 'true'
+        with:
+          python-version: '3.12'
+      - name: Build the site
+        if: steps.data.outputs.exists == 'true'
+        run: |
+          python3 .github/scripts/build_site.py --data "$RUNNER_TEMP/site-data" --out "$RUNNER_TEMP/site" \
+            --commit "$(git -C "$RUNNER_TEMP/site-data" rev-parse HEAD)"
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.data.outputs.exists == 'true'
+        with:
+          path: ${{ runner.temp }}/site/
+      - id: deploy
+        if: steps.data.outputs.exists == 'true'
+        uses: actions/deploy-pages@v4

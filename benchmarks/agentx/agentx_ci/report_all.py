@@ -124,16 +124,22 @@ class PreviousSite:
         return None
 
 
-def render_index(manifest: dict) -> str:
+def render_index(manifest: dict, home: str | None = None) -> str:
     titles = {
         lang: "AgentX · " + tr(lang, "Models, targets and frameworks", "模型、测试目标与框架")
         for lang in LANGS
     }
-    pages = "\n".join(index_page(manifest, lang, titles[lang]) for lang in LANGS)
+    pages = "\n".join(index_page(manifest, lang, titles[lang], home) for lang in LANGS)
     return render_document(titles, pages)
 
 
-def index_page(manifest: dict, lang: str, title: str) -> str:
+def source_commits(manifest: dict) -> list[str]:
+    """The distinct main commits the published targets were measured on, in target order."""
+    commits = (item.get("source", {}).get("commit") for item in manifest["targets"])
+    return list(dict.fromkeys(commit for commit in commits if commit))
+
+
+def index_page(manifest: dict, lang: str, title: str, home: str | None = None) -> str:
     modes = {"live / pareto": tr(lang, "Live · Pareto-selected", "实测 · Pareto 选点")}
     baseline_labels = {"pareto": tr(lang, "Pareto-selected", "前沿选点")}
     rows = []
@@ -160,12 +166,18 @@ def index_page(manifest: dict, lang: str, title: str) -> str:
             if error
             else ""
         )
+        source = item.get("source") or {}
+        origin = (
+            f'<a href="{escape(source["run_url"])}"><code>{escape(source["commit"][:8])}</code></a>'
+            if source.get("run_url") and source.get("commit")
+            else "—"
+        )
         rows.append(
             f"<tr><td>{label}<br><code>{model_id}</code></td><td><code>{target_id}</code></td>"
             f"<td><code>{framework_id}</code></td>"
             f"<td>{escape(status_label(lang, item['status']))}{detail}</td><td>{escape(modes.get(mode, mode))}</td>"
             f"<td>{item.get('points_ok', 0)}/{item.get('points_total', 0)}</td>"
-            f"<td>{escape(item.get('measured_at', '—'))}</td><td>{baselines}</td></tr>"
+            f"<td>{escape(item.get('measured_at', '—'))}</td><td>{origin}</td><td>{baselines}</td></tr>"
         )
     headers = (
         tr(lang, "Model", "模型"),
@@ -175,11 +187,13 @@ def index_page(manifest: dict, lang: str, title: str) -> str:
         tr(lang, "Mode", "模式"),
         tr(lang, "Points OK", "成功点"),
         tr(lang, "Measured", "测量时间"),
+        tr(lang, "Source (main)", "来源（main）"),
         tr(lang, "Baselines", "有效基线"),
     )
+    back = f'<a href="{escape(home)}">← {tr(lang, "AKLR results", "AKLR 测试结果")}</a> · ' if home else ""
     return f"""<div class="page" data-page="{lang}" lang="{tr(lang, "en", "zh-CN")}">
 <header><div class="top"><h1>{escape(title)}</h1>{language_switch(lang)}</div>
-<div class="meta">{tr(lang, "Run", "运行")} {escape(manifest["run_id"])} · {
+<div class="meta">{back}{tr(lang, "Run", "运行")} {escape(manifest["run_id"])} · {
         escape(manifest["generated_at"])
     }</div></header>
 <main><p>{

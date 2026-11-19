@@ -161,8 +161,8 @@
         "expert_offset": 0
       },
       "accuracy": "passed",
-      "speedup": 2.603,
-      "microseconds": 21.4
+      "speedup": 2.61,
+      "microseconds": 21.1
     },
     {
       "axes": {
@@ -172,8 +172,8 @@
         "expert_offset": 0
       },
       "accuracy": "passed",
-      "speedup": 2.035,
-      "microseconds": 32.4
+      "speedup": 2.013,
+      "microseconds": 32.6
     },
     {
       "axes": {
@@ -183,8 +183,8 @@
         "expert_offset": 0
       },
       "accuracy": "passed",
-      "speedup": 1.664,
-      "microseconds": 50.6
+      "speedup": 1.617,
+      "microseconds": 51.5
     }
   ],
   "layout_variants": {
