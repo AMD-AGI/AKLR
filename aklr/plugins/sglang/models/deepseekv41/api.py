@@ -318,6 +318,8 @@ def _forward_hc_pre_from_prev_fused_boundary(
             "extra_indices": metadata.sparse_page_indices(ratio)[:tokens].reshape(tokens, 1, -1),
         }
     mixes = residual.new_empty((tokens, 4, 4), dtype=torch.float32)
+    # dispatch takes row-major tensors only: its first rows, not a column of it
+    mix = mixes.view(-1, 4)[:tokens]
     back = deepseekv41_mono_k2_attention.fallback_reason(
         **seam,
         **rope,
@@ -331,9 +333,9 @@ def _forward_hc_pre_from_prev_fused_boundary(
         wo_a=attn.wo_a.weight,
         wo_b=attn.wo_b.weight,
         wo_b_scale=attn.wo_b.weight_scale_mx_e8m0,
-        post_mix=mixes[:, 0],
+        post_mix=mix,
         comb_mix=mixes,
-        pre_mix=mixes[:, 0],
+        pre_mix=mix,
         hc_fn=layer.hc_ffn_fn,
         hc_scale=layer.hc_ffn_scale,
         hc_base=layer.hc_ffn_base,
