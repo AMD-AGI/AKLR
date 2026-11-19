@@ -349,7 +349,7 @@ The script downloads the Linux x64 runner, registers it with `config.sh --unatte
 
 The selected target's `runner_label` in `agentx.yaml` must match registration's `--label`; both are `agentx-mi355x` in this example.
 
-2. To publish reports, set the build and deployment source to **GitHub Actions** under **Settings → Pages**; the `github-pages` environment must allow `main`. The publish job reads `AKLR_BOT_APP_ID` and `AKLR_BOT_PRIVATE_KEY` from the `bot` environment (whose deployment branches allow only `main`), and the `AKLR_BOT_LOGIN` variable. The App needs `contents: write` permission.
+2. To publish reports, set the build and deployment source to **GitHub Actions** under **Settings → Pages**; the `github-pages` environment must allow `main`. The publish job pushes as the `aklr-agentx-ci` GitHub App. It reads the secrets `AKLR_AGENTX_BOT_APP_ID` and `AKLR_AGENTX_BOT_PRIVATE_KEY` and the variable `AKLR_AGENTX_BOT_LOGIN` (`aklr-agentx-ci[bot]`) from the `agentx-bot` environment, whose deployment branches allow only `main`. The App needs only `contents: write`, and the `site-data` ruleset must let it bypass.
 
 Confirm that the runner appears Online / Idle on GitHub, then check the service on the host:
 
