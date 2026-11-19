@@ -45,7 +45,7 @@ __all__ = [
     "StageStatus",
 ]  # fmt: skip
 
-StageName = Literal["audit", "bench"]
+StageName = Literal["audit", "bench", "e2e"]
 STAGE_ORDER: Final = get_args(StageName)
 StageStatus = Literal["passed", "failed", "skipped", "aborted"]
 _MAX_CONSOLE_FINDINGS: Final = 10

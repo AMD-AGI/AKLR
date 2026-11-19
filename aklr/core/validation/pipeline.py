@@ -54,7 +54,7 @@ class Pipeline:
             raise ValueError(f"stages {names} are not in the order {STAGE_ORDER}")
         self._stages = tuple(stages)
 
-    def run(self, scope: ValidationScope) -> PipelineReport:
+    def run(self, scope: ValidationScope, *, out: Path | None = None) -> PipelineReport:
         """Run each stage on ``scope``; later stages are skipped once one does not pass."""
         platform = PlatformRecord.current()
         base = "-" if scope.base_sha is None else scope.base_sha[:12]
@@ -86,6 +86,13 @@ class Pipeline:
                     skip_reason = f"the previous stage {stage.name} {report.status}"
             reports.append(report)
             stage.progress.finish(report)
+            if out is not None:
+                checkpoint = pipeline_report()
+                # A killed later stage must not leave an apparently passing report.
+                pending = tuple(s.report_type.aborted("not completed") for s in self._stages[number:])
+                checkpoint.model_copy(update={"stages": (*checkpoint.stages, *pending)}).write(out)
+                checkpoint.write_schemas(scope.root, out / "schemas")
+                checkpoint.write_baselines(scope, out / "baseline")
         return pipeline_report()
 
 

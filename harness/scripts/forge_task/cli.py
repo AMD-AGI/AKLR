@@ -119,7 +119,9 @@ def _publish(args: argparse.Namespace) -> int:
         return completed.returncode
     path = completed.stdout.strip()
     print(f"published: {path}")
-    print(f"next: python -m aklr export check && python -m aklr validate --base origin/main {path}")
+    print(
+        f"next: python -m aklr export check && python -m aklr validate --base origin/main --stages audit,bench {path}"
+    )
     return 0
 
 
