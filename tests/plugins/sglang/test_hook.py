@@ -38,6 +38,15 @@ def test_no_two_routes_take_one_target():
     assert targets and len(set(targets)) == len(targets)
 
 
+def test_the_monokernels_launch_is_routed_on_the_cookbook_build_alone():
+    """sgl_amd_mono's launch of a DeepSeek-V4.1 layer, outside the sglang package: the build of
+    the InferenceX cookbook's image ships it."""
+    (versions,) = [
+        versions for target, versions, _ in DECLARED if target == "sgl_amd_mono.deepseek_v41.spec._launch"
+    ]
+    assert versions == ("0.5.23.dev20261111",)
+
+
 def installed_sglang():
     try:
         return hook.sglang_version()
