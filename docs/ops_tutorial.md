@@ -40,7 +40,7 @@ flowchart TD
 Following `harness/skills/port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
 
 1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`.
-2. `reference.py`: a float64 `<contract>_reference(point, row_major_args, to_float64)`.
+2. `reference.py`: a float32 `<contract>_reference(point, row_major_args)`, each input read through `semantics.to_float32`; integer outputs in their declared dtype.
 3. `api.py`: an `@api(<CONTRACT>)` stub (the body may only be `...`).
 4. `baseline.py`: one `<contract>_baseline` per contract that has a baseline. It takes the api's arguments (passed as the call's keyword arguments), imports AITER or SGLang inside the function, and returns the outputs the same way the api does; for an unsupported call it raises `NotImplementedError` (bench reports `baseline_failed`). Without this function the op is its own baseline, and the kernel has nothing to beat.
 5. `__init__.py`: exports the api.

@@ -440,16 +440,30 @@ class OpContract(FrozenModel):
         point: PointSpec,
         group_args: Sequence[Mapping[str, Any]],
         rank: int,
-        decode: Callable,
     ) -> dict[str, Any]:
-        """The reference of ``rank``'s call, its inputs read through ``decode``, by name in
-        ``mutable_tensors``; ``group_args`` holds every rank's row-major args in rank order,
-        each on its rank's device. A contract with ``ranks`` has a reference of ``(point,
-        group_args, rank, decode)``, any other one of ``(point, row_major_args, decode)``."""
+        """The reference of ``rank``'s call, by name in ``mutable_tensors``; ``group_args``
+        holds every rank's row-major args in rank order, each on its rank's device. A contract
+        with ``ranks`` has a reference of ``(point, group_args, rank)``, any other one of
+        ``(point, row_major_args)``."""
         reference_fn = getattr(op_module(self.op_package, "reference"), self.reference_name)
         if self.ranks is None:
-            return self.mutable_tensors_by_name(reference_fn(point, group_args[rank], decode))
-        return self.mutable_tensors_by_name(reference_fn(point, group_args, rank, decode))
+            return self.mutable_tensors_by_name(reference_fn(point, group_args[rank]))
+        return self.mutable_tensors_by_name(reference_fn(point, group_args, rank))
+
+    def tie_scores(
+        self,
+        point: PointSpec,
+        group_args: Sequence[Mapping[str, Any]],
+        rank: int,
+    ) -> dict[str, Any]:
+        """``compare_outputs``' ``tie_scores`` of ``rank``'s call, called as the reference is;
+        empty when the op's ``reference.py`` has no ``tie_scores_name``."""
+        tie_fn = getattr(op_module(self.op_package, "reference"), self.tie_scores_name, None)
+        if tie_fn is None:
+            return {}
+        if self.ranks is None:
+            return tie_fn(point, group_args[rank])
+        return tie_fn(point, group_args, rank)
 
     def call_mutable_tensors(self, result: Any, call: Mapping[str, Any]) -> dict[str, Any]:
         """A call's mutable tensors by name: its api ``result``'s outputs, then the mutable
@@ -546,6 +560,11 @@ class OpContract(FrozenModel):
     def reference_name(self) -> str:
         """The reference function's name in the op's ``reference.py``."""
         return f"{contract_name(self.contract_id)}_reference"
+
+    @property
+    def tie_scores_name(self) -> str:
+        """The optional tie scores function's name in the op's ``reference.py``."""
+        return f"{contract_name(self.contract_id)}_tie_scores"
 
     @property
     def group_init_name(self) -> str:

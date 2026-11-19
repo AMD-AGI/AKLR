@@ -1,55 +1,51 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The aggregation from its math, in float64; the only rounding is p's, to its dtype."""
+"""The aggregation from its math, in float32; the only rounding is p's, to its dtype."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
 
 __all__ = ["add_attn_res_reference", "attn_res_reference"]
 
-_CHUNK_TOKENS = 2048  # float64 rows of 9 x 8192 per token: about 1.2 GB a chunk
+_CHUNK_TOKENS = 2048  # float32 rows of 9 x 8192 per token: about 0.6 GB a chunk
 
 
 def attn_res_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """(normalized, bank) over the prefix as it is."""
     args, dtypes = row_major_args, point.dtypes
-    return _aggregate(point, args, decode, decode(args["prefix"], dtypes["prefix"]).double())
+    return _aggregate(point, args, to_float32(args["prefix"], dtypes["prefix"]))
 
 
 def add_attn_res_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor, Tensor]:
     """(normalized, prefix_out, bank) over prefix + addend rounded to the prefix's dtype."""
     args, dtypes = row_major_args, point.dtypes
-    total = (
-        decode(args["prefix"], dtypes["prefix"]).double() + decode(args["addend"], dtypes["addend"]).double()
-    )
-    prefix = total.to(args["prefix"].dtype).double()
-    normalized, bank = _aggregate(point, args, decode, prefix)
+    total = to_float32(args["prefix"], dtypes["prefix"]) + to_float32(args["addend"], dtypes["addend"])
+    prefix = total.to(args["prefix"].dtype).float()
+    normalized, bank = _aggregate(point, args, prefix)
     return normalized, prefix, bank
 
 
-def _aggregate(
-    point: Any, args: Mapping[str, Any], decode: Callable, prefix: Tensor
-) -> tuple[Tensor, Tensor]:
+def _aggregate(point: Any, args: Mapping[str, Any], prefix: Tensor) -> tuple[Tensor, Tensor]:
     import torch
 
     dtypes, valid = point.dtypes, point.attrs["n_valid_rows"]
-    bank = decode(args["bank"], dtypes["bank"]).double()
-    score_weight = decode(args["score_weight"], dtypes["score_weight"]).double()
-    norm_weight = decode(args["norm_weight"], dtypes["norm_weight"]).double()
+    bank = to_float32(args["bank"], dtypes["bank"])
+    score_weight = to_float32(args["score_weight"], dtypes["score_weight"])
+    norm_weight = to_float32(args["norm_weight"], dtypes["norm_weight"])
     normalized = torch.empty_like(prefix)
     for start in range(0, prefix.shape[0], _CHUNK_TOKENS):
         tokens = slice(start, start + _CHUNK_TOKENS)

@@ -112,17 +112,18 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
   the baseline's output: outside the repository, call the contract's `<contract>_baseline` yourself.
 - `compare.element_order` is `fixed` (element by element) or `any_in_full_rows` (integer outputs only: a row
   holding no padding may list its entries in any order); each is an `ElementOrder` member.
-- The reference is `<contract>_reference(point, row_major_args, decode) -> Tensor` (a tuple when there are
+- The reference is `<contract>_reference(point, row_major_args) -> Tensor` (a tuple when there are
   several: the mutable tensors in order, each mutable input as the call leaves it), never rounded to the output
-  dtype. It computes in the float dtype `decode(tensor, dtype)` returns the inputs in: float32 in validation
-  (`semantics.to_float32`, on the GPU; again with `semantics.to_float64` where a float32 result is not
-  finite), float64 when a test passes `semantics.to_float64`; it upcasts to float64
-  itself only where the op defines an exact value (an exact sum rounded once, an index past 2**24), or where float32 overflows on finite inputs (a mean
-  square). `decode` may
-  return the very tensor it was given, which the reference therefore never writes. It reads only
+  dtype. It reads each input through `semantics.to_float32(tensor, dtype)` and computes in float32 on the
+  inputs' device (the GPU in validation); an integer output (an id, a slot) it returns in its declared dtype.
+  `to_float32` may return the very tensor it was given, which the reference therefore never writes. It reads only
   `point.axes`, `point.attrs` and `point.dtypes`. A rounding every correct
   kernel must perform bit for bit is part of the op and is written in the reference (each docstring lists its
   rounding points); everything else is error left to `compare`.
+- An integer output is compared exactly, unless `reference.py` also has `<contract>_tie_scores(point,
+  row_major_args) -> {output: (scores, tie)}`: each candidate's score (the ids index its last dim) and how far
+  apart two scores may be and still tie; an id that differs from the reference's then passes where the two are
+  tied, in range and not repeated in its row (`qwen2_moe_router`: its bf16 logits, one bf16 step).
 
 ## The kernel section and ABI
 

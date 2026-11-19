@@ -8,8 +8,8 @@ each file are in `aklr/ops/README.md`; this is the order and the traps.
    names none of them `out` (`outputs are 'out' alone, or names other than 'out'`); give each output
    its `error_bounds` and the contract its `determinism` (`bitwise` unless the op's kernels need
    atomics).
-2. **`reference.py`**: one `<contract>_reference(point, row_major_args, decode)` per contract,
-   in the dtype `decode` returns (float32 in validation), returning the outputs in contract order.
+2. **`reference.py`**: one `<contract>_reference(point, row_major_args)` per contract, in float32
+   (each input read through `semantics.to_float32`), returning the outputs in contract order.
    Any rounding every correct kernel must do belongs here.
 3. **`api.py`**: one `@api(<CONTRACT>)` stub per contract. Example: `aklr/ops/gemm/api.py`.
 4. **`baseline.py`**: what kernels are timed against, one `<contract>_baseline` per contract that
