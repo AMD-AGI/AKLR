@@ -83,7 +83,8 @@ def _aiter_sparse_mla(
         arguments["extra_indices"] = topk_indices.new_empty((tokens, 1, self.topk_indices_buffer.shape[-1]))
     if positions is not None:
         arguments["rope_freqs"] = self.rotary_emb.cos_sin_cache
-        arguments["positions"] = positions
+        # vLLM's positions past a first row start 8 bytes past the 16 AKLR's dispatch requires
+        arguments["positions"] = positions if positions.data_ptr() % 16 == 0 else positions.clone()
     if any(cache is None for cache in pools.values()):
         return FallbackReason.OUT_OF_CONTRACT
     # shortcut: the op is asked for, which records the call, and the attention is left to
