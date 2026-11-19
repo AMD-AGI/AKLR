@@ -492,7 +492,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                 with task_log.redirected_stdio():
                     import torch
 
-                    # the kernel tracer registers as torch initializes the GPU: before the process's first kernel
                     import aklr.core.utils.testing  # noqa: F401
 
                     torch.cuda.set_device(device)
