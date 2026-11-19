@@ -201,6 +201,8 @@ def deepseekv41_mono_k2_attention_baseline(
     extra_indices=None,
     rope_freqs=None,
     positions=None,
+    wo_a_scale=None,
+    peer_x=None,
     kv_cache_layout="row_major",
     hc_rms_eps=1e-6,
     hc_eps=1e-6,
@@ -221,6 +223,8 @@ def deepseekv41_mono_k2_attention_baseline(
     from sglang.kernels.ops.layernorm.mhc_boundary_hip import rmsnorm_with_sinkhorn
     from sglang.srt.models.deepseek_common.amd import deepseek_v4_gfx95_dense as gfx95_dense
 
+    if wo_a_scale is not None or peer_x is not None:
+        raise NotImplementedError("sglang's chain is one rank holding every head, on a bf16 wo_a")
     attended = deepseekv41_sparse_mla_baseline(
         q, kv_cache, indices, sinks, sm_scale, extra_kv_cache, extra_indices, rope_freqs, positions
     )
@@ -250,6 +254,10 @@ def deepseekv41_mono_k2_ffn_baseline(
     w1_scale,
     w2,
     w2_scale,
+    shared_w1=None,
+    shared_w1_scale=None,
+    shared_w2=None,
+    shared_w2_scale=None,
     topk=6,
     routed_scaling_factor=1.5,
     swiglu_limit=10.0,
@@ -269,6 +277,8 @@ def deepseekv41_mono_k2_ffn_baseline(
     from sglang.kernels.ops.moe.rocm_router_gate import rocm_router_gate, rocm_router_max_tokens
     from sglang.srt.layers.moe.moe_runner.aiter import _MOE_SORTING_DISPATCH_POLICY
 
+    if shared_w1 is not None:
+        raise NotImplementedError("sglang's DeepseekV2MoE fuses the shared expert as the last slot")
     tokens, n_routed = hidden_states.shape[0], router_weight.shape[0]
     split_k_rows = rocm_router_max_tokens(
         num_experts=n_routed, hidden_size=hidden_states.shape[1], topk=topk, weight_dtype=router_weight.dtype

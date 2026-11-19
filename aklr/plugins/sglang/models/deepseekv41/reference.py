@@ -200,17 +200,40 @@ def deepseekv41_mono_k2_attention_reference(
     decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, ...]:
     """The outputs in the contract's order. Rounding points, past the boundary's: the attended
-    values, wo_a's output and wo_b's round to bf16; wo_b rounds its input to fp8."""
+    values, wo_a's output and wo_b's round to bf16, and so does x with peer_x; wo_b rounds its
+    input to fp8, and so does an fp8 wo_a."""
     import torch
 
     args = row_major_args
     attended = rounded_to_bfloat16(deepseekv41_sparse_mla_reference(point, args, decode)).float()
-    wo_a = decode(args["wo_a"], point.dtypes["wo_a"]).float()
     n_groups = point.axes["n_heads"] // GROUP_HEADS
     grouped = attended.reshape(attended.shape[0], n_groups, -1)
-    projected = torch.einsum("tgd,grd->tgr", grouped, wo_a.unflatten(0, (n_groups, -1)))
+    if point.attrs["has_wo_a_scale"]:
+        rows = point.axes["o_dim"] // n_groups
+        blocks = rows // MXFP8_BLOCK
+        projected = torch.stack(
+            [
+                _mxfp8_linear(
+                    grouped[:, g],
+                    {
+                        "wo_a": args["wo_a"][g * rows : (g + 1) * rows],
+                        "wo_a_scale": args["wo_a_scale"][g * blocks : (g + 1) * blocks],
+                    },
+                    point,
+                    "wo_a",
+                    decode,
+                )
+                for g in range(n_groups)
+            ],
+            dim=1,
+        )
+    else:
+        wo_a = decode(args["wo_a"], point.dtypes["wo_a"]).float()
+        projected = torch.einsum("tgd,grd->tgr", grouped, wo_a.unflatten(0, (n_groups, -1)))
     projected = rounded_to_bfloat16(projected).float().flatten(1)
     x = rounded_to_bfloat16(_mxfp8_linear(projected, args, point, "wo_b", decode)).float()
+    if point.attrs["has_peer_x"]:
+        x = rounded_to_bfloat16(x + decode(args["peer_x"], point.dtypes["peer_x"]).float()).float()
     return _boundary(point, args, decode, x, "pre_mix")
 
 
@@ -230,10 +253,10 @@ def deepseekv41_mono_k2_ffn_reference(
     row_major_args: Mapping[str, Any],
     decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    """Each token's routed experts and the shared one (the last slot) at weight 1. Rounding
-    points: the router's logits, exact products summed in float64, round once to fp32;
-    each expert linear's input goes to MXFP8 per 1 x 32, the clamped SwiGLU product to bf16
-    first."""
+    """Each token's routed experts and the shared one (the last slot, or the MXFP8 MLP) at
+    weight 1. Rounding points: the router's logits, exact products summed in float64, round
+    once to fp32; each expert linear's input goes to MXFP8 per 1 x 32, the clamped SwiGLU
+    product to bf16 first."""
     import torch
     import torch.nn.functional as F
 
@@ -248,8 +271,10 @@ def deepseekv41_mono_k2_ffn_reference(
     ids = (scores + f("correction_bias")).topk(point.attrs["topk"], dim=-1).indices
     weights = scores.gather(-1, ids)
     weights = weights / weights.sum(dim=-1, keepdim=True) * args["routed_scaling_factor"]
-    ids = torch.cat([ids, torch.full_like(ids[:, :1], point.axes["n_routed"])], dim=-1)
-    weights = torch.cat([weights, torch.ones_like(weights[:, :1])], dim=-1)
+    shared_mlp = point.attrs["has_shared_w1"]
+    if not shared_mlp:
+        ids = torch.cat([ids, torch.full_like(ids[:, :1], point.axes["n_routed"])], dim=-1)
+        weights = torch.cat([weights, torch.ones_like(weights[:, :1])], dim=-1)
 
     def weight(name: str, e: int) -> Tensor:
         return f(name, e) * f(f"{name}_scale", e).repeat_interleave(MXFP8_BLOCK, dim=-1)
@@ -262,4 +287,8 @@ def deepseekv41_mono_k2_ffn_reference(
         gate, up = (x[tokens] @ weight("w1", e).T).chunk(2, dim=-1)
         gated = rounded_to_bfloat16(F.silu(gate.clamp(max=limit)) * up.clamp(-limit, limit))
         output.index_add_(0, tokens, weights[tokens, slots, None] * (_mxfp8(gated) @ weight("w2", e).T))
+    if shared_mlp:
+        gate, up = _mxfp8_linear(hidden, args, point, "shared_w1", decode).chunk(2, dim=-1)
+        gated = rounded_to_bfloat16(F.silu(gate.clamp(max=limit)) * up.clamp(-limit, limit)).float()
+        output += _mxfp8_linear(gated, args, point, "shared_w2", decode)
     return output
