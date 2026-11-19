@@ -1,30 +1,16 @@
-# cluster.sh — remote-gpu scheduler adapter for <NAME>. Made from templates/safe.sh.
 # shellcheck shell=bash disable=SC2016,SC2034
-# Adapted: nothing
-#
-# Primus-SaFE (Kubernetes) behind the hook contract of templates/slurm.sh. What stands for what:
-#   login node   HOST: any host that mounts the volume the workspace mounts into its pods, at the
-#                same path, and reaches SAFE_URL. The state dir is on that volume. The user's API
-#                key is the file $HOME/.remote-gpu/<NAME>.key there (mode 600), nowhere else.
-#   job          one SaFE workload of SAFE_KIND in the workspace PARTITION, one whole node. Its
-#                entry point is the shared holder, so the workload ends when the holder does.
-#                The job ID is a number made here; $B/safe/ID.id holds the workload ID and name.
-#   node         the pod. Nothing can exec into it from the login node, so scheduler_run hands
-#                the command to the holder as a spawn request and reads its output and exit code
-#                back from files in the state dir.
-# No accounts or QOS (ACCOUNTS='' BURST_QOS=''), no scheduler_extend (EXTEND=0), no docker in the
-# pod (DOCKER=0): commands run in SAFE_IMAGE, and exec --image does not work.
+: "${SAFE_URL:?} ${SAFE_KIND:?} ${SAFE_IMAGE:?} ${SAFE_RESOURCES:?}"
+EXTEND=0 DOCKER=0 MULTI_NODE=0 NODE_SHELL=0
+[[ $SAFE_KIND != Deployment ]] || IDLE_RELEASE=0
 
 read -r -d '' CLUSTER_RLIB <<'REMOTE_GPU_ADAPTER'
 LATE_HINT="save results now; SaFE stops the workload at its time limit"
 DOCKER_X=() NODE_ENV=()
 
-# safe_api METHOD PATH [BODY]: the reply on stdout; 0 for 2xx, 4 for 404, 1 otherwise.
 safe_api() {
   local key=$HOME/.remote-gpu/$C.key reply data=()
   if [[ ! -r $key ]]; then echo "$C: no SaFE API key in $key" >&2; return 1; fi
   if [[ -n ${3:-} ]]; then data=(--data-binary "$3"); fi
-  # The key reaches curl through a file descriptor, never argv: other users see argv in ps.
   reply=$(curl -sS --max-time 30 -X "$1" -H 'Content-Type: application/json' "${data[@]}" -w '\n%{http_code}' \
     -K <(printf 'header = "Authorization: Bearer %s"\n' "$(<"$key")") "$SAFE_URL/api/v1$2") || return 1
   printf '%s\n' "${reply%$'\n'*}"
@@ -34,7 +20,6 @@ safe_api() {
 scheduler_submit() {
   local nodes=$1 time=$2 name=$3 workspace=$4 holder=$7 idle=$8 excluded='' specified='' job entry body reply id
   shift 8
-  if ((nodes != 1)); then echo "$C: a SaFE job is one node; alloc -N 1" >&2; return 206; fi
   while (($#)); do
     case $1 in
       -x | --exclude) excluded=$2 ;;
@@ -46,12 +31,9 @@ scheduler_submit() {
   job=$(date +%s%3N)
   mkdir -p "$B/safe"
   until (set -C; : >"$B/safe/$job.id") 2>/dev/null; do job=$((job + 1)); done
-  # The pod is root: a directory it made first, this user could not write in. A file it touches
-  # becomes root's too, so the heartbeat both sides touch must be writable by everyone.
   mkdir -p "$B/jobs/$job/tasks" "$B/jobs/$job/spawn" "$B/jobs/$job/run"
   touch "$B/jobs/$job/heartbeat"; chmod 666 "$B/jobs/$job/heartbeat"
   printf -v entry 'export REMOTE_GPU_SAFE_JOB=%s\nbash %q %q %q %q %q\n' "$job" "$holder" "$idle" "$holder" "$B" "$C"
-  # A Deployment restarts a pod whose entry point ends, and would start a second holder.
   if [[ $SAFE_KIND == Deployment ]]; then entry+=$'exec sleep infinity\n'; fi
   body=$(jq -n --arg name "$(tr 'A-Z_.' 'a-z--' <<<"$name" | tr -cd 'a-z0-9-' | cut -c1-40)" \
     --arg workspace "$workspace" --arg kind "$SAFE_KIND" --arg image "$SAFE_IMAGE" --arg entry "$(base64 -w0 <<<"$entry")" \
@@ -69,12 +51,10 @@ scheduler_submit() {
   return 206
 }
 
-# A workload whose pod is not up yet is PENDING: nothing can run in it, and cancelling it is safe.
 scheduler_query() {
   local id name reply status record
   { read -r id && read -r name; } 2>/dev/null <"$B/safe/$1.id" || return 1
   reply=$(safe_api GET "/workloads/$id" 2>/dev/null); status=$?
-  # The ID is one this user was given, so a 404 is a deleted workload, not an unknown job.
   if ((status == 4)); then printf 'CANCELLED|||||||||%s|%s|||1\n' "${USER:-}" "$name"; return 0; fi
   ((status == 0)) || return 1
   record=$(jq -r --arg user "${USER:-}" --arg name "$name" --argjson now "$(date +%s)" '
@@ -91,7 +71,6 @@ scheduler_query() {
        "", (.workspaceId // ""), "", "", (if $limit > 0 then $limit | hms else "" end), $user, $name,
        (if $start then $now - $start | hms else "" end),
        (if $start and $limit > 0 then $start + $limit | tostring else "" end), "1"] | join("|")' <<<"$reply") || return 1
-  # The holder in the pod has no other way to learn the name its node goes by here.
   if [[ $record == RUNNING\|* && ! -s $B/safe/$1.node ]]; then cut -d'|' -f2 <<<"$record" >"$B/safe/$1.node"; fi
   printf '%s\n' "$record"
 }
@@ -111,20 +90,18 @@ scheduler_jobs() {
 scheduler_cancel() {
   local id status
   read -r id 2>/dev/null <"$B/safe/$1.id" || return 1
-  # shortcut: SaFE has no delete-if-pending, so a workload that starts between this check and the delete is cancelled too; use one when the API has it.
   if [[ ${2:-} == pending && $(scheduler_query "$1") != PENDING\|* ]]; then return 1; fi
   safe_api DELETE "/workloads/$id" >/dev/null 2>&1; status=$?
   ((status == 0 || status == 4))
 }
 
-# The pod's side of scheduler_run, started by the holder as a spawn request: BASE [TIMEOUT] CMD...
 read -r -d '' SAFE_RUN <<'SAFE_RUN_EOF'
 #!/bin/bash
 F=$2 T=$3; shift 3
 if [[ -n $T ]]; then set -- timeout "$T" "$@"; fi
 setsid "$@" >"$F.out" 2>"$F.err" </dev/null & pid=$!
 while kill -0 "$pid" 2>/dev/null; do
-  t=$(mktemp "${F%/*}/.sync.XXXXXX" 2>/dev/null) && rm -f "$t"   # as nfs_sync: see a new .kill now
+  t=$(mktemp "${F%/*}/.sync.XXXXXX" 2>/dev/null) && rm -f "$t"
   if [[ -e $F.kill ]]; then kill -TERM -- "-$pid" 2>/dev/null; fi
   sleep 1
 done
@@ -135,22 +112,18 @@ scheduler_run() {
   local job=$1 node=$2 mode=$3 base request runner stream size finished=0 ticks=0 status=255 record traps
   local -A sent=([out]=0 [err]=0) descriptor=([out]=1 [err]=2)
   shift 3
-  if [[ $mode != batch ]]; then
-    echo "$C: no interactive shell from here; on your own machine run the pod's sshCommand (SaFE web UI, workload details)" >&2
-    return 200
-  fi
+  [[ $mode == batch ]] || return 200
   base=$B/jobs/$job/run/$(date +%s%N).$BASHPID
   request=$B/jobs/$job/spawn/.$node.${base##*/}
   runner=$B/saferun.$(cksum <<<"$SAFE_RUN" | cut -d' ' -f1).sh
   [[ -f $runner && -O $runner ]] || install_script "${runner##*/}" <<<"$SAFE_RUN"
   : >"$base.out"; : >"$base.err"
-  # A killed caller (tool timeout, Ctrl-C) must not leave the command running in the pod.
   traps=$(trap -p TERM INT HUP)
   trap 'touch "$base.kill"; exit 143' TERM INT HUP
   printf '%s\0' "$base" "$runner" "${ONTO:-}" "$@" >"$request" && mv -f "$request" "${request%/*}/${request##*/.}"
   while :; do
     [[ -e $base.rc ]] && finished=1
-    for stream in out err; do   # an open reads the file's real size, whatever this NFS client cached
+    for stream in out err; do
       size=$(wc -c <"$base.$stream")
       ((size > sent[$stream])) || continue
       tail -c +$((sent[$stream] + 1)) "$base.$stream" | head -c $((size - sent[$stream])) >&"${descriptor[$stream]}"
@@ -173,7 +146,7 @@ scheduler_run() {
 scheduler_holder() {
   local attempt
   J=$REMOTE_GPU_SAFE_JOB
-  for attempt in $(seq 300); do   # written by scheduler_query once SaFE reports the pod running
+  for attempt in $(seq 300); do
     nfs_sync "$B/safe"
     [[ -s $B/safe/$J.node ]] && break
     sleep 2

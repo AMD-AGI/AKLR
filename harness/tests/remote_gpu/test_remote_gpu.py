@@ -665,7 +665,7 @@ def test_git_seed_rejects_options_and_non_network_transports(env, tmp_path, orig
 
 
 def test_all_embedded_remote_scripts_parse():
-    for path in (RG, RG.parents[1] / "templates/slurm.sh", RG.parents[1] / "templates/safe.sh"):
+    for path in (RG, *sorted((RG.parents[1] / "schedulers").glob("*.sh"))):
         text = path.read_text()
         for match in re.finditer(r"read -r -d '' (\w+) <<'([^']+)'\n(.*?)\n\2\n", text, re.S):
             result = subprocess.run(["bash", "-n"], input=match[3], capture_output=True, text=True)
@@ -678,7 +678,7 @@ def embedded_script(path, name):
 
 
 def test_slurm_query_normalizes_nodes_start_estimate_and_pending_count(env):
-    library = embedded_script(RG.parents[1] / "templates/slurm.sh", "CLUSTER_RLIB")
+    library = embedded_script(RG.parents[1] / "schedulers/slurm.sh", "CLUSTER_RLIB")
     script = r"""
 C=fake REL=$HOME B=$HOME/work HOME_FULL=0 DOCKER_FLAGS=''
 squeue() {
@@ -700,7 +700,7 @@ scontrol() { printf '%s\n' n0 n1; }
 
 
 def test_slurm_submit_passes_the_selected_pair_holder_and_scheduler_options(env):
-    library = embedded_script(RG.parents[1] / "templates/slurm.sh", "CLUSTER_RLIB")
+    library = embedded_script(RG.parents[1] / "schedulers/slurm.sh", "CLUSTER_RLIB")
     script = r"""
 C=fake REL=$HOME B=$HOME/work HOME_FULL=0 DOCKER_FLAGS='' GPUS_PER_NODE=8
 sbatch() { printf '%s\n' "$@" >"$HOME/submit_args"; echo '42;site'; }
@@ -879,13 +879,8 @@ LOGIN_HOSTS=''
 LOGIN_PROFILE=0
 PRIORITY=1
 WORK_ROOT=$HOME/work
-HOME_FULL=0
-DOCKER_FLAGS=''
-ACCOUNTS=''
-BURST_QOS=''
-ALLOC_AGGRESSIVE=0
+SCHEDULER=safe
 PARTITION=team-ws
-EXTEND=0
 MAX_TIME=24:00:00
 GPUS_PER_NODE=0
 GPU_ARCH=gfx950
@@ -932,11 +927,25 @@ def test_safe_adapter_allocates_a_workload_runs_in_its_pod_and_deletes_it(env):
     home = Path(env["HOME"])
     cluster = home / ".remote-gpu/clusters/fake"
     (cluster / "cluster.env").write_text(SAFE_ENV)
-    shutil.copy(RG.parents[1] / "templates/safe.sh", cluster / "cluster.sh")
+    (cluster / "cluster.sh").unlink()  # SCHEDULER=safe alone selects schedulers/safe.sh
     (home / ".remote-gpu/fake.key").write_text("ak-test\n")
     curl = Path(env["PATH"].split(":")[0]) / "curl"
     curl.write_text(FAKE_SAFE_CURL)
     curl.chmod(0o755)
+
+    # What the type lacks is refused before anything reaches the login node or the API.
+    for command in (
+        ["alloc", "-N", "2"],
+        ["exec", "-j", "fake:1", "--image", "img", "--", "true"],
+        ["shell", "-j", "fake:1"],
+        ["extend", "-j", "fake:1", "-t", "1:00:00"],
+    ):
+        result = rg(env, *command)
+        assert (result.returncode, "code=UNSUPPORTED" in result.stderr) == (200, True), (
+            command,
+            result.stderr,
+        )
+    assert not (home / "safe/calls").exists()
 
     assert "free=1 " in rg(env, "free").stdout
 
@@ -945,7 +954,11 @@ def test_safe_adapter_allocates_a_workload_runs_in_its_pod_and_deletes_it(env):
     job = re.search(r"job=(fake:\d+) state=PENDING", result.stdout)[1]
     post = json.loads((home / "safe/post.json").read_text())
     assert post["groupVersionKind"]["kind"] == "PyTorchJob"
-    assert (post["workspaceId"], post["images"], post["timeout"]) == ("team-ws", ["registry.invalid/rocm:1"], 7200)
+    assert (post["workspaceId"], post["images"], post["timeout"]) == (
+        "team-ws",
+        ["registry.invalid/rocm:1"],
+        7200,
+    )
     assert post["resources"] == [{"cpu": "96", "memory": "512Gi", "replica": 1, "gpu": "0"}]
     assert post["excludedNodes"] == ["bad-node"]
     assert "ak-test" not in (home / "safe/calls").read_text()
@@ -961,7 +974,9 @@ def test_safe_adapter_allocates_a_workload_runs_in_its_pod_and_deletes_it(env):
         assert "nodes=n0 " in result.stdout
         assert job.split(":")[1] in rg(env, "ls").stdout
 
-        result = rg(env, "exec", "-j", job, "--", "bash", "-c", 'echo "out $1"; echo err >&2; exit 7', "_", "a b")
+        result = rg(
+            env, "exec", "-j", job, "--", "bash", "-c", 'echo "out $1"; echo err >&2; exit 7', "_", "a b"
+        )
         assert (result.returncode, result.stdout) == (7, "out a b\n"), result.stderr
         assert "err" in result.stderr
 
@@ -981,7 +996,33 @@ def test_safe_adapter_allocates_a_workload_runs_in_its_pod_and_deletes_it(env):
         result = rg(env, "release", "-j", job)
         assert "OK released" in result.stdout, result.stderr
         assert (home / "safe/deleted").exists()
-        assert pod.wait(timeout=30) == 0   # the entry point ends, so the workload does
+        assert pod.wait(timeout=30) == 0  # the entry point ends, so the workload does
     finally:
         stop_holder(pod)
     assert rg(env, "exec", "-j", job, "--", "true").returncode == 203
+
+
+def test_a_cluster_sh_redefines_one_hook_of_its_scheduler_type(env):
+    cluster = Path(env["HOME"]) / ".remote-gpu/clusters/fake"
+    with (cluster / "cluster.env").open("a") as manifest:
+        manifest.write("SCHEDULER=slurm\n")
+    (cluster / "cluster.sh").write_text(
+        "read -r -d '' CLUSTER_RLIB <<'EOF'\nscheduler_capacity() { echo \"OK cluster=$C free=7 site=1\"; }\nEOF\n"
+    )
+    result = rg(env, "free")
+    assert "free=7 site=1" in result.stdout, result.stderr
+
+
+def test_spur_is_slurm_with_its_own_submit_and_history(env):
+    script = r"""
+C=fake REL=$HOME B=$HOME/work HOME_FULL=0 DOCKER_FLAGS='' GPUS_PER_NODE=8
+source "$1"; eval "$CLUSTER_RLIB"
+squeue() { :; }
+spur() { printf '%s\n' "$@" >"$HOME/spur_args.$1"; case $1 in submit) echo 42 ;; history) echo COMPLETED ;; esac; }
+scheduler_submit 1 1:00:00 name part acct qos /holder 5 && scheduler_query 42
+"""
+    spur = str(RG.parents[1] / "schedulers/spur.sh")
+    result = subprocess.run(["bash", "-c", script, "_", spur], env=env, capture_output=True, text=True)
+    assert result.stdout.split() == ["42", "COMPLETED|||||||||||||"], result.stderr
+    submitted = (Path(env["HOME"]) / "spur_args.submit").read_text().split("\n")
+    assert "--exclusive" in submitted and "--no-requeue" not in submitted

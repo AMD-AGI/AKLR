@@ -29,19 +29,18 @@ Where `${CLAUDE_SKILL_DIR}` is not expanded, it is `harness/skills/remote-gpu` f
 ## Clusters
 
 Each cluster is `~/.remote-gpu/clusters/<name>/`, shared by every clone on this machine: `cluster.env`
-(login, scheduler, accounts, and what a node is: `GPU_MODEL`, `GPU_ARCH`, `GPUS_PER_NODE`,
-`MAX_TIME`, `EXTEND`, `PREEMPTION`) and `cluster.sh` (the scheduler adapter). `$RG help` lists
-them. Choose by the manifests, not by guessing:
+(login, scheduler type, accounts, and what a node is: `GPU_MODEL`, `GPU_ARCH`, `GPUS_PER_NODE`,
+`MAX_TIME`, `EXTEND`, `PREEMPTION`). `SCHEDULER` picks the adapter in `schedulers/`: `slurm`,
+`spur`, or `safe` (a Primus-SaFE workspace). `$RG help` lists them. Choose by the manifests, not by guessing:
 
 ```bash
 grep -H -E '^(DESCRIPTION|SCHEDULER|GPU_ARCH|GPUS_PER_NODE|MAX_TIME|PREEMPTION)=' ~/.remote-gpu/clusters/*/cluster.env
 ```
 
-`SCHEDULER=safe` is a Primus-SaFE workspace. The same commands drive it, within these limits: one
-node per job; every command runs as root in the manifest's `SAFE_IMAGE`, so `--image` and `--mount`
-fail (rc 127); no `shell` or `extend`. `free=0` there can still start: the workspace may add a node
-for a pending job, and `reason=` says so. With `SAFE_KIND=Deployment` an idle job is not released
-before its time limit, so release it yourself.
+The same commands drive every type. What a type cannot do is refused at once with
+`ERR code=UNSUPPORTED` (rc 200): on `safe`, `alloc -N 2`+, `--image`, `shell` and `extend`, and
+every command runs as root in the manifest's `SAFE_IMAGE`. `free=0` there can still start: the
+workspace may add a node for a pending job, and `reason=` says so.
 
 If there is none, the user names one not listed, or none has the `GPU_ARCH` the task needs, run
 the `remote-gpu-setup` skill. Never write `~/.remote-gpu/clusters/` yourself.
@@ -133,7 +132,7 @@ rc, remote-gpu's own codes are 200–210 and 255:
 
 | rc | code | what to do |
 |---|---|---|
-| 200 | USAGE / UNSUPPORTED | Bad flags, a bare job ID without `--cluster`, `-w` not in the job, a reused task name, or `extend` where `EXTEND=0`. Read `msg`. |
+| 200 | USAGE / UNSUPPORTED | Bad flags, a bare job ID without `--cluster`, `-w` not in the job, a reused task name, or something this cluster's type cannot do (`extend` where `EXTEND=0`; on `safe` also `--image`, `-N 2`+, `shell`). Read `msg`. |
 | 201 | QUOTA_FULL | A per-user job limit (`ls`, release what you don't need), or every team cap is full: wait and retry, or ask about `--preemptible`. |
 | 202 | PENDING_TIMEOUT | Didn't start within `--wait`; cancelled. Use `--no-wait` + `ready`. |
 | 203 | JOB_GONE | Time limit, idle release, preemption, or released. `alloc` again and re-run. |
