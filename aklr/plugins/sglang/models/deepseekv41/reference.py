@@ -191,7 +191,7 @@ def deepseekv41_mono_k1_reference(
     exponent = exponent - (mantissa == 0.5).int()
     k_nope = (blocks * torch.exp2(-exponent.float())[..., None]).clamp(-448.0, 448.0).flatten(1)
     k_nope = k_nope.to(torch.float8_e4m3fn).float()
-    return q, streams, pre, post, comb, normed, q_latent, k_nope, (exponent + 127).to(torch.uint8), k_rope
+    return q, streams, pre, post, comb, normed, q_latent, k_nope, (exponent + 127).float(), k_rope
 
 
 def deepseekv41_mono_k2_attention_reference(
