@@ -145,6 +145,18 @@ def test_an_accurate_kernel_is_timed_against_the_baseline(repo: _Repo, isolate: 
     assert bench["evaluations"][path]["m=4"]["speedup"] == comparison["speedup"]
 
 
+@pytest.mark.parametrize("switch", ["ROCPROFILER_REGISTER_FORCE_LOAD", "ROCPROFILER_REGISTER_LIBRARY"])
+def test_a_runner_times_under_an_inherited_rocprofiler_registration(repo: _Repo, switch: str) -> None:
+    """What a parent whose rocprofiler-sdk configured hands its children: they still register their tracer."""
+    value = "1"
+    if switch.endswith("LIBRARY"):
+        with open("/proc/self/maps") as maps:
+            value = next(line.split()[-1] for line in maps if "librocprofiler-sdk.so" in line)
+    bench = repo.validate("--devices", "0", repo.write(_GEMM), **{switch: value})
+    (record,) = bench["records"]
+    assert record["verdict"] in ("passed", "regressed")
+
+
 @pytest.mark.parametrize(("source", "code"), [(_WRONG, "outputs_mismatch"), (_RAISING, "candidate_raised")])
 def test_an_inaccurate_kernel_is_demoted_untimed(repo: _Repo, source: str, code: str) -> None:
     path = repo.write(source)

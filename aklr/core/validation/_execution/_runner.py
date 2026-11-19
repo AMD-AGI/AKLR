@@ -205,12 +205,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                     raise TaskCancelled(f"runner {self._runner_id} was closed while starting")
                 self._channels = [channel for channel, _ in pairs]
                 self._processes = processes
-                # rocprofiler-register exports these as the SDK configures, which a torch that links it does
-                # at GPU init; a child inheriting them configures the SDK as it starts, before its kernel
-                # tracer registers
-                for name in ("ROCPROFILER_REGISTER_FORCE_LOAD", "ROCPROFILER_REGISTER_LIBRARY"):
-                    os.environ.pop(name, None)
-                    os.unsetenv(name)
                 for process in processes:
                     process.start()
             for _, endpoint in pairs:
@@ -476,6 +470,8 @@ class ProcessExecutionRunner(ExecutionRunner):
         is_device_ready = False
         # torchrun's names: the initializer and the task read their rank from them
         os.environ.update(RANK=str(rank), WORLD_SIZE=str(len(devices)), LOCAL_RANK=str(rank))
+        for name in ("ROCPROFILER_REGISTER_FORCE_LOAD", "ROCPROFILER_REGISTER_LIBRARY"):
+            os.environ.pop(name, None)
         try:
             os.setsid()  # its pid becomes a group id: the parent kills the group, subprocesses included
 
