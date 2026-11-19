@@ -136,6 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          root=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["execution"]["state_dir"])' "$CONFIG")
+          # Expanded as the helpers expand it.
+          root=$(USER=$(id -un) python3 -c 'import os, sys, yaml; print(os.path.expanduser(os.path.expandvars(yaml.safe_load(open(sys.argv[1]))["execution"]["state_dir"])))' "$CONFIG")
           python3 -I "$SCRIPTS/state.py" --root "$root" show > "$RUNNER_TEMP/ledger.json"
           python3 -I "$SCRIPTS/request.py" progress --config "$CONFIG" --ledger "$RUNNER_TEMP/ledger.json"
