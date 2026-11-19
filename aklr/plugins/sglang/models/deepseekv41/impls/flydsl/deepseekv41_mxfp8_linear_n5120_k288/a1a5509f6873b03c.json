@@ -2,7 +2,7 @@
   "schema_version": 5,
   "name": "deepseekv41_mxfp8_linear_n5120_k288",
   "contract_id": "deepseekv41_mxfp8_linear@1.0",
-  "description": "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear), before any bias: x @ weight.T, weight fp8 e4m3 at an e8m0 scale per 32 x 32 block. A bf16 x is first rounded to fp8 e4m3 at an e8m0 scale per 32 values of a row, the scale 2**ceil(log2(amax / 448)) of the block's largest magnitude, never below 1e-30; an fp8 x comes with those scales.",
+  "description": "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear, and each group of the wo_a projection's BMM), before any bias: x @ weight.T, weight fp8 e4m3 at an e8m0 scale per 32 x 32 block. A bf16 x is first rounded to fp8 e4m3 at an e8m0 scale per 32 values of a row, the scale 2**ceil(log2(amax / 448)) of the block's largest magnitude, never below 1e-30; an fp8 x comes with those scales.",
   "op_type": "deepseekv41",
   "axes": {
     "m": {
@@ -571,7 +571,13 @@
     "by_name": {
       "row_major": {
         "layouts": {},
-        "detect_facts": []
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "weight_layout",
+            "expected_value": "row_major"
+          }
+        ]
       }
     }
   },

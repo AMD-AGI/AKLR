@@ -2,7 +2,7 @@
   "schema_version": 5,
   "name": "deepseekv41_mxfp8_linear_n1536_k5120",
   "contract_id": "deepseekv41_mxfp8_linear@1.0",
-  "description": "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear), before any bias: x @ weight.T, weight fp8 e4m3 at an e8m0 scale per 32 x 32 block. A bf16 x is first rounded to fp8 e4m3 at an e8m0 scale per 32 values of a row, the scale 2**ceil(log2(amax / 448)) of the block's largest magnitude, never below 1e-30; an fp8 x comes with those scales.",
+  "description": "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear, and each group of the wo_a projection's BMM), before any bias: x @ weight.T, weight fp8 e4m3 at an e8m0 scale per 32 x 32 block. A bf16 x is first rounded to fp8 e4m3 at an e8m0 scale per 32 values of a row, the scale 2**ceil(log2(amax / 448)) of the block's largest magnitude, never below 1e-30; an fp8 x comes with those scales.",
   "op_type": "deepseekv41",
   "axes": {
     "m": {
@@ -168,6 +168,11 @@
     },
     {
       "axes": {
+        "m": 98
+      }
+    },
+    {
+      "axes": {
         "m": 108
       }
     },
@@ -183,12 +188,22 @@
     },
     {
       "axes": {
+        "m": 130
+      }
+    },
+    {
+      "axes": {
         "m": 132
       }
     },
     {
       "axes": {
         "m": 135
+      }
+    },
+    {
+      "axes": {
+        "m": 138
       }
     },
     {
@@ -233,6 +248,11 @@
     },
     {
       "axes": {
+        "m": 166
+      }
+    },
+    {
+      "axes": {
         "m": 167
       }
     },
@@ -244,6 +264,11 @@
     {
       "axes": {
         "m": 175
+      }
+    },
+    {
+      "axes": {
+        "m": 176
       }
     },
     {
@@ -269,6 +294,11 @@
     {
       "axes": {
         "m": 224
+      }
+    },
+    {
+      "axes": {
+        "m": 226
       }
     },
     {
@@ -323,7 +353,17 @@
     },
     {
       "axes": {
+        "m": 278
+      }
+    },
+    {
+      "axes": {
         "m": 285
+      }
+    },
+    {
+      "axes": {
+        "m": 286
       }
     },
     {
@@ -334,6 +374,11 @@
     {
       "axes": {
         "m": 302
+      }
+    },
+    {
+      "axes": {
+        "m": 306
       }
     },
     {
@@ -363,7 +408,22 @@
     },
     {
       "axes": {
+        "m": 375
+      }
+    },
+    {
+      "axes": {
         "m": 384
+      }
+    },
+    {
+      "axes": {
+        "m": 385
+      }
+    },
+    {
+      "axes": {
+        "m": 395
       }
     },
     {
@@ -383,7 +443,22 @@
     },
     {
       "axes": {
+        "m": 417
+      }
+    },
+    {
+      "axes": {
         "m": 441
+      }
+    },
+    {
+      "axes": {
+        "m": 446
+      }
+    },
+    {
+      "axes": {
+        "m": 458
       }
     },
     {
@@ -508,6 +583,11 @@
     },
     {
       "axes": {
+        "m": 811
+      }
+    },
+    {
+      "axes": {
         "m": 827
       }
     },
@@ -558,6 +638,11 @@
     },
     {
       "axes": {
+        "m": 998
+      }
+    },
+    {
+      "axes": {
         "m": 1024
       }
     },
@@ -574,6 +659,11 @@
     {
       "axes": {
         "m": 1182
+      }
+    },
+    {
+      "axes": {
+        "m": 1198
       }
     },
     {
@@ -616,7 +706,13 @@
     "by_name": {
       "row_major": {
         "layouts": {},
-        "detect_facts": []
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "weight_layout",
+            "expected_value": "row_major"
+          }
+        ]
       }
     }
   },

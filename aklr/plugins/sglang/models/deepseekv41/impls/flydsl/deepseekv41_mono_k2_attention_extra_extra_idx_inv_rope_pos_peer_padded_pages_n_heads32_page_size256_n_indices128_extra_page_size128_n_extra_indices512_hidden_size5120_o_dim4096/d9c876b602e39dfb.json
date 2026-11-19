@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "deepseekv41_mono_k2_attention_extra_extra_idx_inv_rope_pos_peer_padded_pages_n_heads32_page_size256_n_indices128_extra_page_size256_n_extra_indices512_hidden_size5120_o_dim4096",
+  "name": "deepseekv41_mono_k2_attention_extra_extra_idx_inv_rope_pos_peer_padded_pages_n_heads32_page_size256_n_indices128_extra_page_size128_n_extra_indices512_hidden_size5120_o_dim4096",
   "contract_id": "deepseekv41_mono_k2_attention@1.0",
   "description": "The attention back of a DeepSeek-V4.1 layer and its FFN boundary on one rank, as one launch (the K2 of sglang's AMD monokernel up to the MoE's input; under data-parallel attention the MoE's rows are gathered from the other ranks first). deepseekv41_sparse_mla's attention with the rotation back, rounded to bf16; each group of 8 heads times its rows of wo_a, rounded to bf16; that, to fp8 e4m3 at an e8m0 scale per 32 values, times wo_b, rounded to bf16: x, the attention's output on a rank holding every head. A rank of a TP group holds its share of the heads, of wo_a's groups and of wo_b's columns: x is then its wo_b output plus peer_x, the sum of the other ranks', which the caller's collective brings, rounded to bf16. Then the mHC boundary into the FFN and its RMSNorm, ffn_input: residual_out[j] = x * post_mix[j] + sum_i comb_mix[i, j] * residual[i], rounded to bf16; the layer input is sum_j mix[j] * residual_out[j] under the previous boundary's pre mix, rounded to bf16, then times rsqrt(mean square + norm_eps) and norm_weight. This boundary's mixes come of the 24 logits hc_fn @ flatten(residual_out) * rsqrt(mean square + hc_rms_eps): sigmoid(logits[:4] * hc_scale[0] + hc_base[:4]) + hc_eps the pre mix, twice the sigmoid of the next 4 at hc_scale[1] the post mix, and the last 16 at hc_scale[2] as a 4 x 4 softmax over its rows plus hc_eps, normalized over columns, then sinkhorn_iters - 1 times over rows and columns (each sum plus hc_eps), the combination mix. An fp8 wo_a comes with wo_a_scale, an e8m0 scale per 32 x 32 block, no block over two groups: the attended values are then rounded to fp8 e4m3 at an e8m0 scale per 32 values before it.",
   "op_type": "deepseekv41",
@@ -34,7 +34,7 @@
     },
     "extra_page_size": {
       "type": "const",
-      "value": 256,
+      "value": 128,
       "description": "Slots per page of the extra KV pool."
     },
     "n_extra_indices": {
@@ -400,7 +400,7 @@
       "axes": {
         "n_tokens": 6,
         "n_pages": 332,
-        "n_extra_pages": 96257,
+        "n_extra_pages": 96258,
         "n_positions": 1048576
       },
       "scalars": {
@@ -415,7 +415,7 @@
       "axes": {
         "n_tokens": 6,
         "n_pages": 341,
-        "n_extra_pages": 96128,
+        "n_extra_pages": 96129,
         "n_positions": 1048576
       },
       "scalars": {
@@ -430,7 +430,7 @@
       "axes": {
         "n_tokens": 6,
         "n_pages": 519,
-        "n_extra_pages": 93577,
+        "n_extra_pages": 93578,
         "n_positions": 1048576
       },
       "scalars": {
@@ -445,7 +445,7 @@
       "axes": {
         "n_tokens": 6,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 87096,
         "n_positions": 1048576
       },
       "scalars": {
@@ -460,7 +460,7 @@
       "axes": {
         "n_tokens": 6,
         "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_extra_pages": 146792,
         "n_positions": 1048576
       },
       "scalars": {
@@ -475,7 +475,22 @@
       "axes": {
         "n_tokens": 6,
         "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_extra_pages": 124422,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
         "n_positions": 1048576
       },
       "scalars": {
@@ -490,7 +505,7 @@
       "axes": {
         "n_tokens": 12,
         "n_pages": 332,
-        "n_extra_pages": 96257,
+        "n_extra_pages": 96258,
         "n_positions": 1048576
       },
       "scalars": {
@@ -505,7 +520,7 @@
       "axes": {
         "n_tokens": 12,
         "n_pages": 341,
-        "n_extra_pages": 96128,
+        "n_extra_pages": 96129,
         "n_positions": 1048576
       },
       "scalars": {
@@ -520,7 +535,7 @@
       "axes": {
         "n_tokens": 12,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 87096,
         "n_positions": 1048576
       },
       "scalars": {
@@ -535,7 +550,7 @@
       "axes": {
         "n_tokens": 12,
         "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_extra_pages": 146792,
         "n_positions": 1048576
       },
       "scalars": {
@@ -550,7 +565,22 @@
       "axes": {
         "n_tokens": 12,
         "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_extra_pages": 124422,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
         "n_positions": 1048576
       },
       "scalars": {
@@ -565,7 +595,7 @@
       "axes": {
         "n_tokens": 18,
         "n_pages": 341,
-        "n_extra_pages": 96128,
+        "n_extra_pages": 96129,
         "n_positions": 1048576
       },
       "scalars": {
@@ -580,7 +610,7 @@
       "axes": {
         "n_tokens": 18,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 87096,
         "n_positions": 1048576
       },
       "scalars": {
@@ -595,7 +625,7 @@
       "axes": {
         "n_tokens": 18,
         "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_extra_pages": 146792,
         "n_positions": 1048576
       },
       "scalars": {
@@ -610,7 +640,22 @@
       "axes": {
         "n_tokens": 18,
         "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_extra_pages": 124422,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
         "n_positions": 1048576
       },
       "scalars": {
@@ -625,7 +670,7 @@
       "axes": {
         "n_tokens": 24,
         "n_pages": 341,
-        "n_extra_pages": 96128,
+        "n_extra_pages": 96129,
         "n_positions": 1048576
       },
       "scalars": {
@@ -640,7 +685,7 @@
       "axes": {
         "n_tokens": 24,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 87096,
         "n_positions": 1048576
       },
       "scalars": {
@@ -655,7 +700,7 @@
       "axes": {
         "n_tokens": 24,
         "n_pages": 1685,
-        "n_extra_pages": 146791,
+        "n_extra_pages": 146792,
         "n_positions": 1048576
       },
       "scalars": {
@@ -670,7 +715,22 @@
       "axes": {
         "n_tokens": 24,
         "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_extra_pages": 124422,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
         "n_positions": 1048576
       },
       "scalars": {
@@ -685,7 +745,7 @@
       "axes": {
         "n_tokens": 30,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 87096,
         "n_positions": 1048576
       },
       "scalars": {
@@ -700,7 +760,22 @@
       "axes": {
         "n_tokens": 30,
         "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_extra_pages": 124422,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
         "n_positions": 1048576
       },
       "scalars": {
@@ -715,7 +790,7 @@
       "axes": {
         "n_tokens": 36,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 87096,
         "n_positions": 1048576
       },
       "scalars": {
@@ -730,7 +805,22 @@
       "axes": {
         "n_tokens": 36,
         "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_extra_pages": 124422,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
         "n_positions": 1048576
       },
       "scalars": {
@@ -745,7 +835,7 @@
       "axes": {
         "n_tokens": 42,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 87096,
         "n_positions": 1048576
       },
       "scalars": {
@@ -760,7 +850,22 @@
       "axes": {
         "n_tokens": 42,
         "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_extra_pages": 124422,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
         "n_positions": 1048576
       },
       "scalars": {
@@ -775,7 +880,7 @@
       "axes": {
         "n_tokens": 48,
         "n_pages": 971,
-        "n_extra_pages": 87095,
+        "n_extra_pages": 87096,
         "n_positions": 1048576
       },
       "scalars": {
@@ -790,7 +895,22 @@
       "axes": {
         "n_tokens": 48,
         "n_pages": 3239,
-        "n_extra_pages": 124515,
+        "n_extra_pages": 124422,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "hc_rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
         "n_positions": 1048576
       },
       "scalars": {
