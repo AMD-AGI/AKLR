@@ -255,6 +255,9 @@ FlyDSL's `Vector.load` passes no alignment, so the read carries only its element
   ISA for what its barrier waits on. A bare `s_barrier` skips that wait, and then the LDS reads it no longer waits
   for must stay off the slots refilled after it (one spare ring slot): *(field, E9)* on a bf16 GEMM (N=6144, K=1536,
   LDS DMA rings) that was 0.7% faster at m=128 and within 0.2% at m = 16, 32 and 64.
+- A ring barrier written as one `llvm.InlineAsmOp` string, `f"s_waitcnt vmcnt({n})\n\ts_barrier"`, waits for the DMA
+  only: where the next `issue` after it refills the slot the waves just read, write
+  `f"s_waitcnt vmcnt({n}) lgkmcnt(0)\n\ts_barrier"` (`../gemm/datapath.md` §4, where the race it fixes is measured).
 - `cdna4.BufferLoadAsyncLDS*` with `rocdl.asyncmark()` / `wait_asyncmark(n)` is the in-DSL alternative (A16
   uses it).
 

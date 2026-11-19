@@ -80,8 +80,10 @@ def dsa_indexer_writer_prepare(
 ): ...
 
 
-@sglang_route("sglang.srt.layers.attention.dsa.dsa_indexer.Indexer.forward_cuda", versions=("0.5.22",))
-def _forward_cuda(self, x, q_lora, positions, forward_batch, layer_id, return_indices=True):
+@sglang_route("sglang.srt.layers.attention.dsa.dsa_indexer.Indexer.forward_cuda", versions=("0.5.23",))
+def _forward_cuda(
+    self, x, q_lora, positions, forward_batch, layer_id, return_indices=True, use_cuda_graph=True
+):
     """forward_cuda's standard path with its preparation (_get_q_k_bf16, act_quant,
     _store_index_k_cache, _get_logits_head_gate) as the op, then sglang's scores and top-k.
     sglang keeps every other branch: the key-only one (routed on _forward_cuda_k_only), its
@@ -145,7 +147,7 @@ def _forward_cuda(self, x, q_lora, positions, forward_batch, layer_id, return_in
 
 @sglang_route(
     "sglang.srt.layers.attention.dsa.dsa_indexer.Indexer._forward_cuda_k_only",
-    versions=("0.5.22",),
+    versions=("0.5.22", "0.5.23"),
 )
 def _forward_cuda_k_only(
     self,
@@ -322,7 +324,7 @@ def _gfx950_fused_decode_may_serve(module, mode, hidden) -> bool:
     declines."""
     if not module.use_gfx950_fused_indexer or not (mode.is_decode_or_idle() or mode.is_target_verify()):
         return False
-    from sglang.kernels.ops.attention.dsa.hip_gfx950 import MAX_ROWS
+    from sglang.srt.layers.attention.dsa.gfx950_fused_indexer import MAX_ROWS
 
     return hidden.shape[0] <= MAX_ROWS
 

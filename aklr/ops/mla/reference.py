@@ -13,6 +13,7 @@ __all__ = [
     "flash_mla_with_kvcache_reference",
     "fp8_paged_mqa_logits_reference",
     "fp8_paged_mqa_logits_verify_reference",
+    "mla_decode_fwd_cprr_reference",
     "mla_decode_fwd_reference",
 ]
 
@@ -212,5 +213,52 @@ def mla_decode_fwd_reference(
         # normalized directly: subtracting lse would carry its rounding at large logits
         weights = logits.softmax(dim=-1).masked_fill(empty[..., None], 0)
         o[requests] = weights @ keys[..., :512]
+        lse[requests] = logits.logsumexp(dim=-1).masked_fill(empty, -torch.inf)
+    return o, lse
+
+
+def mla_decode_fwd_cprr_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> tuple[Tensor, Tensor]:
+    """Query i of a request of G global tokens attends over the rows of its shard here whose global
+    position, local row j * cp_world_size + cp_rank, is at most G - query_length + i."""
+    import torch
+
+    args, dtypes = row_major_args, point.dtypes
+    world, rank = point.attrs["cp_world_size"], args["cp_rank"]
+    q = decode(args["q"], dtypes["q"]) * decode(args["q_scale"], dtypes["q_scale"]).reshape(())
+    kv_scale = decode(args["kv_scale"], dtypes["kv_scale"]).reshape(())
+    query_length = q.shape[1]
+    pool = args["kv_buffer"].flatten(0, 2)
+    offsets = args["kv_indptr"].long()
+    lengths = offsets.diff()
+    positions = torch.arange(max(1, int(lengths.max())), device=q.device)
+    # entries past a shard's length read entry 0, hidden by ``visible``
+    rows = args["kv_indices"].long()[
+        (offsets[:-1, None] + positions).clamp(max=args["kv_indices"].numel() - 1)
+    ]
+    rows = rows.where(positions < lengths[:, None], 0)
+    # (request, query, local row)
+    query_positions = (
+        args["g_kv_indptr"].long().diff()[:, None]
+        - query_length
+        + torch.arange(query_length, device=q.device)
+    )
+    visible = (positions < lengths[:, None, None]) & (positions * world + rank <= query_positions[..., None])
+    o = q.new_zeros(*q.shape[:-1], 512)
+    lse = q.new_full(q.shape[:-1], -torch.inf)
+    n_requests = max(1, _CHUNK_ELEMENTS // (positions.numel() * q.shape[-1]))
+    for start in range(0, q.shape[0], n_requests):
+        requests = slice(start, start + n_requests)
+        keys = decode(pool[rows[requests]], dtypes["kv_buffer"]) * kv_scale
+        seen = visible[requests][:, :, None]
+        logits = torch.einsum("rqhd,rkd->rqhk", q[requests], keys) * args["sm_scale"]
+        logits = logits.masked_fill(~seen, -torch.inf)
+        empty = ~seen.any(dim=-1)
+        # normalized directly: subtracting lse would carry its rounding at large logits
+        weights = logits.softmax(dim=-1).masked_fill(empty[..., None], 0)
+        o[requests] = torch.einsum("rqhk,rkd->rqhd", weights, keys[..., :512])
         lse[requests] = logits.logsumexp(dim=-1).masked_fill(empty, -torch.inf)
     return o, lse

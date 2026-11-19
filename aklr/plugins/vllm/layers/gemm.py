@@ -18,9 +18,9 @@ __all__: list[str] = []
 @vllm_route(
     "vllm.model_executor.layers.utils.rocm_unquantized_gemm_impl",
     "aiter.tuned_gemm.tgemm.mm",
-    versions=("0.33.0",),
+    versions=("0.34.0",),
 )
-def _tgemm_mm(inp, weights, bias=None, otype=None, scale_a=None, scale_b=None, scale_c=None):
+def _tgemm_mm(inp, weights, bias=None, otype=None, scale_a=None, scale_b=None, scale_c=None, out=None):
     return aklr_aiter.mm(
-        inp, weights, bias=bias, otype=otype, scale_a=scale_a, scale_b=scale_b, scale_c=scale_c
+        inp, weights, bias=bias, otype=otype, scale_a=scale_a, scale_b=scale_b, scale_c=scale_c, out=out
     )

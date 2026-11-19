@@ -126,6 +126,8 @@ workspaces) must be warmed before a probe starts counting.
   of time; a mask that kept memory operations in place and let ALU/MFMA cross (`0x40F`) made it worse on one token
   distribution (6/11 bad, against 1/15 for the clean tree), so the cause of that race is not known.
 - `s_barrier` does not drain `vmcnt`; `lgkmcnt` is 4 bits (max 15), `vmcnt` 6 bits (max 63).
+- **A ring barrier that lets a DMA refill a slot the waves have read must also wait `lgkmcnt(0)`**; without it a
+  served GEMM gave wrong output only while another process shared the GPU (`datapath.md` §4).
 - **No result may depend on a workgroup that may not have started.** A spin on another workgroup's flag or data
   assumes that workgroup is running; on a stream limited to part of the CUs, or beside another process, it may not
   be, and a capped spin that then writes anyway returns garbage. *(field, E22)* A split-K GEMM in which every split
@@ -133,7 +135,7 @@ workspaces) must be warmed before a probe starts counting.
   16- to 128-CU streams, and with only the split dispatched last waiting for the earlier ones, it and AKLR's
   `gemm_n6144_k7168` (built that way) returned none *(field, E27)*. Fold split-K by arrival instead (`small_m.md`
   §4), or bound the wait and hand the share to the split that arrives last (`../attention/split_kv.md` §2, Bounded
-  wait; not measured on a GEMM fold).
+  wait; on a GEMM fold, `wait_free_fold.md` § Counter-signals).
 - **Read another workgroup's data with a load that misses the CU cache: `sc1` (aux=16), `nt` (aux=2) or `sc0 sc1`.**
   A default or `sc0` load hits the CU's stale copy (`../hardware/gfx950/memory_and_sync.md` §2.4), even when both workgroups
   are on one XCD; `buffer_inv sc0` is a no-op outside TG-split mode.

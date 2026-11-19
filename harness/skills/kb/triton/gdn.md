@@ -70,7 +70,7 @@ token's decay to the chunk end, G(last, j), W and U solve the triangular system,
 | Qwen3-Next `qwen3_next_gdn_prefill_group_fp8_quant@1.0` | 11 | 13: 1024–16384 tokens in 1–16 sequences | 5–8 | `normalized`, `values`, `scales` |
 
 - All five also update `conv_state` and `delta_state` in place (S2, S48). Bench fills the outputs with NaN, so a skipped
-  row fails ([authoring.md](authoring.md) §8; a `4f25` copy skipping half its `scales`: 64 mismatches *(field, E16)*).
+  row fails ([authoring.md](authoring.md) §8; a `4f25` copy skipping half its `scales`: 64 mismatches *(field, E16)*). Bench replays the state in place, so a kernel that stores only the state segments that changed (#75's 64-row BF16 file `caa6bfbe`) times faster there than in a step with new tokens ([state_kept_across_calls.md](../pitfalls/state_kept_across_calls.md), form 3).
 - Qwen3.5 has 16 value heads and 4 key heads, Qwen3-Next 8 and 4; key and value width is 128; value head h reads key
   head h // (value heads / key heads). Qwen3.5's projections are contiguous: `projected_qkvz` holds every Q, every K,
   every V, then every Z, `projected_ba` every B, then every A. Qwen3-Next's are grouped by key head: its q, its k, then

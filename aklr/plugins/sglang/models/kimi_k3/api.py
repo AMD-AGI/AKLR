@@ -43,7 +43,7 @@ def kimi_k3_mla_vc_output_gate(latent, vc_weight, gate, output=None): ...
 def kimi_k3_mla_prefill_gate(q, k, v, gate, qo_indptr, sm_scale=192**-0.5, max_seq_len=8192, output=None): ...
 
 
-@sglang_route("sglang.srt.models.kimi_k3.KimiK3MoE._forward_fused", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.kimi_k3.KimiK3MoE._forward_fused", versions=("0.5.22", "0.5.23"))
 def _forward_fused(self, hidden_states, *, prefix_sum):
     """The front, routing, routed and shared experts as one op writing both partial sums into
     the buffer sglang all-reduces; then sglang's all-reduce, latent norm, up projection and
@@ -165,7 +165,9 @@ def _experts_fall_back(experts) -> bool:
     )
 
 
-@sglang_route("sglang.srt.models.kimi_k3.KimiK3MLAAttention.forward_absorb_rocm_core", versions=("0.5.22",))
+@sglang_route(
+    "sglang.srt.models.kimi_k3.KimiK3MLAAttention.forward_absorb_rocm_core", versions=("0.5.22", "0.5.23")
+)
 def _forward_absorb_rocm_core(
     self,
     q_pe,
@@ -235,7 +237,9 @@ def _absorb_core_falls_back(attn, forward_batch, llama_4_scaling, q_nope_unabsor
     )
 
 
-@sglang_route("sglang.srt.models.kimi_k3.KimiK3MLAAttention.forward_normal_core", versions=("0.5.22",))
+@sglang_route(
+    "sglang.srt.models.kimi_k3.KimiK3MLAAttention.forward_normal_core", versions=("0.5.22", "0.5.23")
+)
 def _forward_normal_core(self, q, k, v, forward_batch, gate=None, key_value_num_tokens=None):
     """A Kimi-K3 prefill without cached prefix on the triton backend: the attention and the
     output gate as one op in place of attn_mha and the o_proj wrapper's gate, then o_proj."""

@@ -505,6 +505,9 @@ mhc_post_hidden_size#
 mhc_pre_hidden_size#
 mhc_pre_has_norm_weight_hidden_size#
 mla_decode_fwd_n_heads#
+mla_decode_fwd_cprr_query_length#_n_heads#
+mla_decode_fwd_cprr_cp2_query_length#_n_heads#
+mla_decode_fwd_cprr_cp4_query_length#_n_heads#
 mla_prefill_varlen_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_no_fp8_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_prefix_n_heads#_qk_head_dim#_v_head_dim#
