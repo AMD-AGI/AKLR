@@ -86,7 +86,9 @@ def _fused_moe(
         num_local_tokens=num_local_tokens,
         dtype=dtype,
         hidden_pad=hidden_pad,
-        intermediate_pad=intermediate_pad,
+        # sglang names an activation dtype only for DeepSeek-V4.1's FP4 experts, whose loader pads the
+        # intermediate with zeros: the sum over the stored width, the op's, is aiter's over the real one
+        intermediate_pad=0 if quant_dtype_a is not None else intermediate_pad,
         bias1=bias1,
         bias2=bias2,
         swiglu_limit=swiglu_limit,

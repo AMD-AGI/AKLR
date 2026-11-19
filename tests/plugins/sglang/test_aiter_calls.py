@@ -37,3 +37,21 @@ def test_an_mla_decode_on_another_kv_layout_stays_on_aiter(mla_decode, layout):
 def test_an_mla_decode_on_the_token_major_page_pool_reaches_aklr(mla_decode):
     aiter_calls._mla_decode_fwd(*[None] * 8)
     assert len(mla_decode) == 1
+
+
+@pytest.fixture
+def fused_moe(monkeypatch):
+    """AKLR's route on aiter's fused_moe, its calls recorded."""
+    calls = []
+    monkeypatch.setattr(aiter_calls.aklr_aiter, "fused_moe", lambda *args, **kwargs: calls.append(kwargs))
+    return calls
+
+
+def test_the_zero_padded_intermediate_of_fp8_activation_experts_is_computed_as_stored(fused_moe):
+    aiter_calls._fused_moe(*[None] * 5, intermediate_pad=64, quant_dtype_a=object())
+    assert fused_moe[0]["intermediate_pad"] == 0
+
+
+def test_any_other_padded_intermediate_reaches_aklr_as_sglang_names_it(fused_moe):
+    aiter_calls._fused_moe(*[None] * 5, intermediate_pad=64)
+    assert fused_moe[0]["intermediate_pad"] == 64
