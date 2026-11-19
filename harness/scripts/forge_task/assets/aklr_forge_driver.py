@@ -3,7 +3,7 @@
 
 """KernelForge driver for one AKLR schema. Correctness is what ``python -m aklr validate`` returns for the kernel's
 sources (``kernel.py`` and the modules it imports relatively) published as the schema's kernel; timing is AKLR's own
-graph timer on AKLR's timing inputs, the candidate alone. ``forge_task.workspace`` fills the placeholders below.
+graph timer on the inputs of validate's first trial, the candidate alone. ``forge_task.workspace`` fills the placeholders below.
 """
 
 from __future__ import annotations
@@ -34,23 +34,21 @@ KERNEL = WORKSPACE / "kernel.py"
 # The package the candidate's sources are imported into, as AKLR imports a kernel's: a package made in memory.
 CANDIDATE_PACKAGE = "forge_candidate"
 
-# Findings that mean a workload's output cannot be trusted; NOT_FASTER and REGRESSED only grade speed.
+# Findings that mean a workload's output cannot be trusted; not_faster and regressed only grade speed.
 INCORRECT_CODES = frozenset(
     {
         "schema_invalid",
-        "kernel_missing",
         "source_rejected",
         "build_failed",
-        "candidate_crash",
-        "candidate_timeout",
-        "capture_unsafe",
-        "input_mutation",
-        "numeric_mismatch",
-        "output_caching",
-        "nondeterministic",
-        "post_timing_mismatch",
+        "task_crashed",
+        "task_timeout",
+        "candidate_raised",
+        "wrong_outputs",
+        "outputs_mismatch",
     }
 )
+# A workload's verdicts that mean AKLR checked nothing on it.
+UNCHECKED_CODES = frozenset({"platform_fault", "baseline_unbound"})
 
 
 def _aklr():
@@ -134,9 +132,7 @@ def _publish() -> Path:
 
 
 def _platform_failed(report: dict) -> bool:
-    return any(
-        f["code"] == "platform_failure" for stage in report["stages"] for f in stage.get("findings", [])
-    )
+    return any(f["code"] == "platform_fault" for stage in report["stages"] for f in stage.get("findings", []))
 
 
 def _report() -> dict:
@@ -190,44 +186,43 @@ def _stage(report: dict, name: str) -> dict:
     return next((stage for stage in report["stages"] if stage["stage_name"] == name), {})
 
 
-def _case_id(axes: dict) -> str:
-    return ",".join(f"{name}={value}" for name, value in axes.items())
-
-
 def _outcomes(report: dict) -> dict[str, dict]:
-    """Per workload: whether AKLR found its output wrong, and the baseline's graph time."""
+    """Per workload, by its key's text: whether AKLR found its output wrong, and the baseline's graph time."""
+    _aklr()
+    from aklr.core.validation.stages.workload_key import WorkloadKey
+
     workloads = json.loads(SCHEMA_JSON.read_text(encoding="utf-8"))["workloads"]
-    outcomes = {_case_id(w["axes"]): {"incorrect": [], "baseline_ms": None} for w in workloads}
+    outcomes = {str(WorkloadKey(w["axes"])): {"incorrect": [], "baseline_ms": None} for w in workloads}
     for stage in ("audit", "bench"):
         # A workload's own finding is filed under the stage's demotions: AKLR serves the schema's other workloads.
         found = _stage(report, stage)
         for finding in (*found.get("findings", []), *found.get("demotions", [])):
             # An audit finding names no workload: it rejects the kernel everywhere.
-            cases = [_case_id(finding["axes"])] if finding.get("axes") else list(outcomes)
+            cases = [str(WorkloadKey(**finding["workload"]))] if finding.get("workload") else list(outcomes)
             for case_id in cases:
                 if finding["code"] in INCORRECT_CODES:
                     outcomes[case_id]["incorrect"].append(finding["code"])
                 else:
-                    # Why a workload went uncompared (a platform failure), so the caller sees its cause. One short
+                    # Why a workload went uncompared (a platform fault), so the caller sees its cause. One short
                     # line: the detail may quote the candidate's own output, which must not forge a verdict line.
                     detail = " ".join(str(finding.get("detail", "")).split())[:300]
                     outcomes[case_id].setdefault("other", []).append(f"{finding['code']}: {detail}")
-    for record in _stage(report, "bench").get("workload_records", []):
-        outcome = outcomes[_case_id(record["axes"])]
-        outcome["violation"] = record.get("worst_violation_fraction")
-        for timing in record["timings"]:
-            if timing["mode"] == "graph" and timing["versus"] == "baseline":
-                outcome["baseline_ms"] = statistics.median(timing["versus_milliseconds"])
+    for record in _stage(report, "bench").get("records", []):
+        outcome = outcomes[str(WorkloadKey(**record["workload"]))]
+        outcome["checked"] = record["verdict"] not in UNCHECKED_CODES
+        comparison = record.get("comparison")
+        if comparison and record.get("versus") == "baseline":
+            outcome["baseline_ms"] = statistics.median(comparison["opponent_ms"])
     for outcome in outcomes.values():
         # An aborted run compares nothing; a workload AKLR did not compare is not shown correct.
-        if outcome.get("violation") is None and not outcome["incorrect"]:
+        if not outcome.get("checked") and not outcome["incorrect"]:
             outcome["incorrect"].append("not_compared")
     return outcomes
 
 
 def _run_correctness() -> int:
     """Report AKLR's findings per workload; KernelForge gates on ``allclose``, which holds only when AKLR passes
-    every workload. AKLR grades a fraction of elements outside its error bound, not an SNR.
+    every workload. AKLR grades by the schema's error bounds, not an SNR.
     """
     outcomes = _outcomes(_report())
     for case_id, outcome in outcomes.items():
@@ -270,39 +265,25 @@ def _write_baseline(path: Path) -> int:
     return 0
 
 
-def graph_reading(bench, call, budget: float, is_fault) -> float:
-    """One reading of AKLR's graph timer, measured again once in place when the profiler, not the kernel, failed it
-    (validate's tracer fault policy)."""
-    try:
-        return bench(call, rep=budget)
-    except RuntimeError as error:
-        if not is_fault(str(error)):
-            raise
-    return bench(call, rep=budget)
-
-
 def _aklr_timer():
-    """AKLR's graph timer as validate's bench reads it: the budget of one reading, the clock, and whether an error
-    is the profiler's rather than the kernel's."""
+    """AKLR's graph timer as validate's bench reads it: the budget of one reading, and the clock."""
     _aklr()
-    from aklr.core.validation.stages._measure import (
-        GRAPH_BUDGET_MILLISECONDS,
-        bind_clock,
-        is_tracer_fault,
-    )
+    from aklr.core.utils.testing import bench_cudagraph
+    from aklr.core.validation import BenchStage
 
-    return GRAPH_BUDGET_MILLISECONDS, bind_clock, is_tracer_fault
+    return BenchStage(devices=()).profile.graph_budget_ms, bench_cudagraph
 
 
 def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
     """Per workload, the candidate's median time over ``rounds`` readings of AKLR's graph timer on the call
     validate's bench times."""
-    budget, bind_clock, is_tracer_fault = _aklr_timer()
-    clock = bind_clock()  # imports the timer's module before the candidate's first GPU call
+    import torch
+
+    # imports the timer's module before the candidate's first GPU call
+    budget, bench_cudagraph = _aklr_timer()
     candidate = _load_candidate()
     times = {}
-    profiler_warm = False
-    for case_id, call in _calls("cuda").items():
+    for index, (case_id, call) in enumerate(_calls("cuda").items()):
 
         def call_once(call=call) -> None:
             candidate.run(**call)
@@ -310,14 +291,10 @@ def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
         # At least once, as a model's warm-up does: a per-tensor cache fills here, not in a timed graph.
         for _ in range(max(1, warmup)):
             call_once()
-        clock.synchronize()
-        if not profiler_warm:
-            # Validate's profiler warm-up: one unrecorded profile before the first recorded one in the process.
-            graph_reading(clock.bench_cudagraph, call_once, budget, is_tracer_fault)
-            profiler_warm = True
-        readings = [
-            graph_reading(clock.bench_cudagraph, call_once, budget, is_tracer_fault) for _ in range(rounds)
-        ]
+        torch.cuda.synchronize()
+        if index == 0:
+            bench_cudagraph(call_once, rep=budget)  # the process's first profile, not recorded
+        readings = [bench_cudagraph(call_once, rep=budget) for _ in range(rounds)]
         times[case_id] = statistics.median(readings)
     return times
 
@@ -333,40 +310,34 @@ def _run_bench(warmup: int, iterations: int) -> int:
 
 
 def _calls(device: str) -> dict[str, dict]:
-    """Per workload, the call validate's bench times, on AKLR's timing inputs, built by AKLR's own trial code:
-    inputs from another draw describe a call nobody scores. The call holds the schema's call keys only, as AKLR's
-    builder hands the kernel: a trial call also carries API parameters an attr hides from the kernel. The outputs
-    dispatch would allocate are allocated here, since the candidate is called directly.
+    """Per workload, by its key's text, the call validate's bench times, on the inputs of its first trial, built
+    by AKLR's own bench code: inputs from another draw describe a call nobody scores. The call holds the schema's
+    call keys only, as AKLR's builder hands the kernel: an api call also carries API parameters an attr hides from
+    the kernel. The outputs dispatch would allocate are allocated here, since the candidate is called directly.
     """
     import torch
 
     registry, *_ = _aklr()
     from aklr.core.contract import semantics
-    from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
+    from aklr.core.validation.stages.bench import InputSampler
+    from aklr.core.validation.stages.bench._measure._contract_workload import ContractWorkload
+    from aklr.core.validation.stages.workload_key import WorkloadKey
 
     text, _ = _candidate_text()
     schema = registry.parse_schema(text.encode(), str(SCHEMA_JSON))
-    contract = registry.get(schema.contract_id)
     calls = {}
-    for workload in schema.workloads:
-        request = TrialRequest.of_workload(
-            str(SCHEMA_JSON),
-            schema,
-            contract,
-            workload,
-            thresholds={},
-            incumbent=None,
-            baseline=None,
-        )
-        assembled = request.assemble_call(request.compose_inputs(None, device), device)
-        call = {key: assembled[key] for key in schema.kernel_call_keys if key in assembled}
-        for name in contract.allocated_outputs:
+    for spec in schema.workloads:
+        key = WorkloadKey.from_workload(spec)
+        workload = ContractWorkload.of(schema, key.axes)
+        assembled = workload.assemble_call(InputSampler(schema, key.axes).draw(0, 0, device), device)
+        call = {name: assembled[name] for name in schema.kernel_call_keys if name in assembled}
+        for name in workload.contract.allocated_outputs:
             call[name] = torch.empty(
-                contract.storage_shape_of(name, request.point),
-                dtype=semantics.torch_dtypes(request.point.dtypes[name])[0],
+                workload.contract.storage_shape_of(name, workload.point),
+                dtype=semantics.torch_dtypes(workload.point.dtypes[name])[0],
                 device=device,
             )
-        calls[_case_id(workload.axes)] = call
+        calls[str(key)] = call
     return calls
 
 

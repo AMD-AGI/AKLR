@@ -26,6 +26,6 @@ possible, keeping every one of them correct: a candidate that wins on time and l
 ## Where the numbers come from
 
 `driver.py` judges correctness with `python -m aklr validate` and times the candidate with AKLR's graph
-timer on AKLR's timing inputs. It is the measurement boundary and is not editable.
+timer on the inputs of validate's first trial. It is the measurement boundary and is not editable.
 
 @ANCHOR@
