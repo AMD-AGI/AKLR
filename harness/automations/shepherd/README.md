@@ -29,12 +29,15 @@ The round reuses the optimization, GPU, validation, PR and reporting skills in `
 on the `aklr-gpu` runner (the `ci:gpu-direct` machine), with that host's own GPUs as a
 [local pool](./skills/optimize-and-deliver-kernels/references/local.md) and no `remote-gpu`.
 
-- An allowed user opens an issue with the shepherd form, or labels one `shepherd`: the schema paths in
-  its text are frozen as a [request](./skills/optimize-and-deliver-kernels/references/requests.md).
-  Later edits, by anyone, change nothing.
+- Once, and to change the configuration later, an allowed user labels an issue `shepherd-setup`: an agent
+  on the runner follows [`setup-shepherd`](./skills/setup-shepherd/SKILL.md#github-actions-host) with the
+  issue's text as the owner's choices (budget and its authorization, GPUs, model), and comments the result.
+- An allowed user opens an issue with the shepherd form, or labels one `shepherd`: its text is frozen
+  as a [request](./skills/optimize-and-deliver-kernels/references/requests.md) and tells the rounds
+  what to optimize. Later edits, by anyone, change nothing.
 - Each PR says `Refs #<issue>`; one comment on the issue shows every campaign, and becomes the final
   report when shepherd closes the issue. An allowed user closing it first stops the request.
 - Allowed users are the logins in the repository variable `SHEPHERD_ALLOWED_USERS` (a JSON list). Events
   from anyone else start no job.
 
-[`setup-shepherd`](./skills/setup-shepherd/SKILL.md#github-actions-host) lists what the runner needs.
+Nobody logs in to the runner for any of this.

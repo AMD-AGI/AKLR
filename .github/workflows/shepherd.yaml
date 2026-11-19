@@ -2,6 +2,7 @@ name: shepherd
 
 # One shepherd round on the GPU host (harness/automations/shepherd), begun by the schedule or by an
 # allowed user's event: labeling an issue `shepherd` freezes its request, closing it stops the request.
+# Labeling one `shepherd-setup` sets the host up instead, with the issue's text as the owner's choices.
 # issues and schedule events run main's copy of this file; nothing here reads a pull request.
 on:
   issues:
@@ -16,6 +17,7 @@ env:
   PYTHONDONTWRITEBYTECODE: '1'
   SCRIPTS: harness/automations/shepherd/skills/optimize-and-deliver-kernels/scripts
   CONFIG: .shepherd/configuration.yaml
+  SETUP: ${{ github.event.action == 'labeled' && github.event.label.name == 'shepherd-setup' }}
 
 defaults:
   run:
@@ -32,7 +34,7 @@ jobs:
       contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.event.sender.login) &&
       contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.triggering_actor) &&
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' ||
-       github.event.action == 'labeled' && github.event.label.name == 'shepherd' ||
+       github.event.action == 'labeled' && contains(fromJSON('["shepherd", "shepherd-setup"]'), github.event.label.name) ||
        github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'shepherd'))
     # Exactly one runner may carry this label: the ledger lives on its disk, and its lease serializes rounds.
     runs-on: aklr-gpu
@@ -55,22 +57,35 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Link the host's configuration
-        # Uncommitted and outside the workspace, which checkout cleans.
-        env:
-          HOST_CONFIG: ${{ vars.SHEPHERD_CONFIG }}
+        # Uncommitted and outside the workspace, which checkout cleans; setup writes it through the link.
         run: |
-          test -f "$HOST_CONFIG" || { echo "::error::SHEPHERD_CONFIG names no file on this runner; see setup-shepherd"; exit 1; }
-          mkdir -p .shepherd && ln -sfn "$HOST_CONFIG" "$CONFIG"
+          host="$HOME/.shepherd/$GITHUB_REPOSITORY/configuration.yaml"
+          mkdir -p "$(dirname "$host")" .shepherd && ln -sfn "$host" "$CONFIG"
+      - name: Set up shepherd on this host
+        # The text is the event's own copy of the issue, as the allowed user labeled it.
+        if: env.SETUP == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          claude -p "$(cat harness/automations/shepherd/templates/actions-setup-prompt.md)
+          #$ISSUE of $GITHUB_REPOSITORY, labeled by $GITHUB_TRIGGERING_ACTOR:
+          $(jq -r '.issue.body // ""' "$GITHUB_EVENT_PATH")" --dangerously-skip-permissions --disallowedTools 'Skill(aklr:remote-gpu)' 'Skill(remote-gpu)' < /dev/null
+      - name: Check the configuration
+        if: env.SETUP != 'true'
+        run: |
+          test -f "$CONFIG" || { echo "::error::this host is not set up: label an issue shepherd-setup (see setup-shepherd)"; exit 1; }
           python3 -c 'import yaml' || { echo '::error::the runner python3 needs PyYAML'; exit 1; }
       - name: Freeze or stop the issue's request
         # From the event's own copy of the issue, as the allowed user saw it; later edits are never read.
-        if: github.event_name == 'issues'
+        if: env.SETUP != 'true' && github.event_name == 'issues'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           ACTION: ${{ github.event.action == 'labeled' && 'freeze' || 'stop' }}
         run: python3 -I "$SCRIPTS/request.py" "$ACTION" --config "$CONFIG" --event "$GITHUB_EVENT_PATH"
       - name: Begin a round
         id: begin
+        if: env.SETUP != 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           NOW: ${{ github.event_name != 'schedule' && '--now' || '' }}

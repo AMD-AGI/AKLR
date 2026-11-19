@@ -1,12 +1,14 @@
 """A kernel optimization request frozen from a GitHub issue, at `<execution.state_dir>/requests/<issue>.json`.
 
-Only schema paths leave the issue's text, read once from the event that an allowed user caused; the
-issue is never read again, so editing it changes nothing. `candidate.py list` admits an open request's
-schemas through the `issue` strategy. One comment on the issue shows the request's campaigns and
-becomes its final report. `gh` needs a token that may comment on and close issues.
+The issue's text and the schema paths in it are read once, from the event that an allowed user caused;
+the issue is never read again, so editing it changes nothing. `candidate.py list` admits an open
+request's schemas through the `issue` strategy. One comment on the issue shows the request's campaigns
+and becomes its final report. `gh` needs a token that may comment on and close issues.
 
 `request.py freeze --config <file> --event <issues event JSON>` freezes the labeled issue's request and
-prints it (`null` when the text names no schema); an issue that has an open request keeps it.
+prints it (`null` when the issue is empty); an issue that has an open request keeps it.
+`request.py admit --config <file> --issue <n> --schema <path>...` adds schemas the round resolved from
+the request's text, up to `policy.batch_size` in all.
 `request.py stop --config <file> --event <file>` stops the closed issue's request: nothing more is admitted.
 `request.py list --config <file>` prints the open requests.
 `request.py progress --config <file> --ledger <state.py show's output>` rewrites each open request's comment.
@@ -38,6 +40,7 @@ class Request:
     by: str
     at: str
     body_sha256: str
+    text: str = ""
     dropped: int = 0
     comment: int | None = None
     stopped_at: str | None = None
@@ -45,10 +48,10 @@ class Request:
 
     @classmethod
     def frozen(cls, event, limit):
-        """The request in an `issues` event's payload, None when its text names no schema."""
+        """The request in an `issues` event's payload, None when the issue is empty."""
         body = event["issue"].get("body") or ""
         schemas = tuple(dict.fromkeys(SCHEMA_PATH.findall(body)))
-        if not schemas:
+        if not body.strip():
             return None
         return cls(
             issue=int(event["issue"]["number"]),
@@ -56,6 +59,7 @@ class Request:
             by=event["sender"]["login"],
             at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             body_sha256=hashlib.sha256(body.encode()).hexdigest(),
+            text=body,
             dropped=len(schemas[limit:]),
         )
 
@@ -118,7 +122,7 @@ class RequestBoard:
         return request
 
     def freeze(self, event, limit):
-        """The issue's open request, or the one frozen now from the event with its comment; None without a schema."""
+        """The issue's open request, or the one frozen now from the event with its comment; None when it is empty."""
         issue = int(event["issue"]["number"])
         comments = f"repos/{self.repository}/issues/{issue}/comments"
         request = self.opened().get(issue)
@@ -126,8 +130,7 @@ class RequestBoard:
             return request
         request = Request.frozen(event, limit)
         if request is None:
-            nothing = "shepherd: no schema path (`aklr/.../impls/<language>/<name>/<file>.json`) in this issue; nothing was requested."
-            self.gh("api", comments, "-f", f"body={nothing}")
+            self.gh("api", comments, "-f", "body=shepherd: this issue is empty; nothing was requested.")
             return None
         # The file comes first: a lost comment only loses the progress display.
         self.save(request)
@@ -156,14 +159,16 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("freeze", "stop", "list", "progress", "close"):
+    for name in ("freeze", "admit", "stop", "list", "progress", "close"):
         command = sub.add_parser(name)
         command.add_argument("--config", required=True)
         if name in ("freeze", "stop"):
             command.add_argument("--event", required=True, help="the `issues` event payload")
         if name in ("progress", "close"):
             command.add_argument("--ledger", required=True, help="file holding `state.py show`'s output")
-    sub.choices["close"].add_argument("--issue", required=True, type=int)
+    for name in ("admit", "close"):
+        sub.choices[name].add_argument("--issue", required=True, type=int)
+    sub.choices["admit"].add_argument("--schema", required=True, nargs="+")
     sub.choices["close"].add_argument("--listed", help="file holding `candidate.py list`'s output")
     args = parser.parse_args()
     try:
@@ -186,6 +191,17 @@ def main():
         if args.command == "freeze":
             request = board.freeze(event, int(config["policy"]["batch_size"]))
             print(json.dumps(request and asdict(request)))
+        elif args.command == "admit":
+            request = board.opened()[args.issue]
+            wrong = [path for path in args.schema if not SCHEMA_PATH.fullmatch(path)]
+            if wrong or request.stopped_at:
+                raise ValueError(f"not a schema path: {wrong}" if wrong else "the request is stopped")
+            schemas = tuple(dict.fromkeys([*request.schemas, *args.schema]))
+            limit = int(config["policy"]["batch_size"])
+            request = board.save(
+                request, schemas=schemas[:limit], dropped=request.dropped + len(schemas[limit:])
+            )
+            print(json.dumps(asdict(request)))
         elif args.command == "stop":
             request = board.opened().get(int(event["issue"]["number"]))
             if request and not request.stopped_at:
