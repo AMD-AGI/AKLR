@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on HIP for the DSA indexer's prefill logits: aiter's fp8_mqa_logits
+"""What sglang 0.5.23 runs on HIP for the DSA indexer's prefill logits: aiter's fp8_mqa_logits
 without the -inf fill, as Indexer._get_topk_ragged calls it."""
 
 from __future__ import annotations

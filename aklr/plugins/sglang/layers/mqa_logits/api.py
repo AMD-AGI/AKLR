@@ -16,7 +16,7 @@ def fp8_mqa_logits(q, kv, kv_scales, weights, cu_starts, cu_ends, logits, no_val
 
 # sglang imports it under aiter's compatibility name inside Indexer._get_topk_ragged, the
 # prefill (extend without speculation) logits of the DSA indexer
-@sglang_route("aiter.ops.triton.fp8_mqa_logits.fp8_mqa_logits", versions=("0.5.22",))
+@sglang_route("aiter.ops.triton.fp8_mqa_logits.fp8_mqa_logits", versions=("0.5.22", "0.5.23"))
 def _fp8_mqa_logits(Q, KV, kv_scales, weights, cu_starts, cu_ends, clean_logits=True):
     """The logits as one op call into the [rows, keys rounded up to 256] float32 buffer aiter
     allocates, returned as aiter returns it: its first keys columns; a call asking for -inf
