@@ -165,6 +165,7 @@ def test_resolution_failure_fails_after_saving_the_report(case):
     html = (site / "index.html").read_text()
     assert escape(error) in html
     assert error not in html
+    assert "../index.html" not in html
     assert case.check(site, download_outcome="skipped") == 1
 
 
@@ -265,13 +266,12 @@ def test_unselected_history_does_not_repeat_an_old_failure(case):
     assert case.check(site, download_outcome="skipped") == 0
 
 
-def test_outcome_check_follows_uploads_and_pages_accepts_a_failed_report_job(case):
+def test_outcome_check_follows_the_upload_and_publish_accepts_a_failed_report_job(case):
     steps = case.workflow["jobs"]["report"]["steps"]
-    for action in ("actions/upload-artifact@v4", "actions/upload-pages-artifact@v3"):
-        upload = next(i for i, step in enumerate(steps) if step.get("uses") == action)
-        assert upload < len(steps) - 1
-    publish_condition = case.workflow["jobs"]["pages"]["if"]
+    upload = next(i for i, step in enumerate(steps) if step.get("id") == "site_artifact")
+    assert upload < len(steps) - 1
+    publish_condition = case.workflow["jobs"]["publish"]["if"]
     assert "!cancelled()" in publish_condition
-    assert "needs.report.outputs.publish_ready == 'true'" in publish_condition
+    assert "needs.report.outputs.site_ready == 'true'" in publish_condition
     assert "success()" not in publish_condition
     assert "needs.report.result" not in publish_condition
