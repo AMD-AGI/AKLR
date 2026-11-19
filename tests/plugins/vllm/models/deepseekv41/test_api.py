@@ -123,6 +123,13 @@ def test_a_decode_steps_sparse_mla_is_asked_for_at_vllms_pools_and_index_widths(
     assert call["extra_kv_cache"].stride() == (3 * 64 * 584, 584, 584, 1)
 
 
+def test_a_steps_positions_reach_sparse_mla_on_the_16_bytes_dispatch_requires(asked, step):
+    # vLLM passes the positions past a first row: int64, so 8 bytes past a boundary
+    sparse_mla(attention(), step, positions=torch.arange(65)[1:])
+    (call,) = asked["deepseekv41_sparse_mla"]
+    assert call["positions"].tolist() == list(range(1, 65)) and call["positions"].data_ptr() % 16 == 0
+
+
 def test_a_prefills_sparse_mla_is_asked_for_at_the_prefill_index_width(asked, step):
     step.num_prefill_tokens = 16
     step.prefill_swa_ragged_indices = torch.zeros(7, dtype=torch.int32)
