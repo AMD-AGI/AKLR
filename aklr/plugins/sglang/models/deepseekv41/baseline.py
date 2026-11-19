@@ -9,6 +9,7 @@ from __future__ import annotations
 __all__ = [
     "deepseekv41_mono_k1_baseline",
     "deepseekv41_mono_k2_attention_baseline",
+    "deepseekv41_mono_k2_ffn_baseline",
     "deepseekv41_mxfp8_linear_baseline",
     "deepseekv41_sparse_mla_baseline",
 ]
@@ -232,3 +233,80 @@ def deepseekv41_mono_k2_attention_baseline(
     _, ffn_input = rmsnorm_with_sinkhorn(layer_input, norm_weight, norm_eps, coefficients, fake_quant=False)
     pre, post, comb = coefficients.tensors()
     return ffn_input, streams, pre, post, comb
+
+
+def deepseekv41_mono_k2_ffn_baseline(
+    hidden_states,
+    router_weight,
+    correction_bias,
+    w1,
+    w1_scale,
+    w2,
+    w2_scale,
+    topk=6,
+    routed_scaling_factor=1.5,
+    swiglu_limit=10.0,
+    output=None,
+):
+    """DeepseekV2MoE.forward_normal on one rank with the shared expert fused last: up to the
+    rows its split-K router serves (64 of V4.1's 384 experts), rocm_router_gemv_split_k and
+    rocm_router_gate on the fp32 partials; past them aiter's bf16 router GEMM, its sqrtsoftplus
+    topk_gating and sglang's shared-slot append; then aiter's fused_moe as AiterRunnerCore.run
+    calls it for V4.1's FP4 experts: clamped SwiGLU on interleaved gate and up rows, the
+    activations in MXFP8."""
+    import torch
+    from aiter import ActivationType, QuantType, dtypes
+    from aiter.fused_moe import fused_moe
+    from aiter.ops.flydsl.moe_common import GateMode
+    from sglang.kernels.ops.gemm.router_gemv_hip import rocm_router_gemv_split_k
+    from sglang.kernels.ops.moe.rocm_router_gate import rocm_router_gate, rocm_router_max_tokens
+    from sglang.srt.layers.moe.moe_runner.aiter import _MOE_SORTING_DISPATCH_POLICY
+
+    tokens, n_routed = hidden_states.shape[0], router_weight.shape[0]
+    split_k_rows = rocm_router_max_tokens(
+        num_experts=n_routed, hidden_size=hidden_states.shape[1], topk=topk, weight_dtype=router_weight.dtype
+    )
+    if tokens <= split_k_rows:
+        logits = hidden_states.new_empty((tokens, n_routed), dtype=torch.float32)
+        weights, ids = rocm_router_gate(
+            logits,
+            correction_bias,
+            topk,
+            True,
+            routed_scaling_factor,
+            partials=rocm_router_gemv_split_k(hidden_states, router_weight),
+            num_shared=1,
+        )
+    else:
+        from aiter import topk_gating
+        from aiter.tuned_gemm import tgemm
+        from sglang.kernels.ops.moe.fused_moe_triton_kernels import fused_append_shared_experts
+
+        logits = tgemm.mm(hidden_states, router_weight, otype=hidden_states.dtype)
+        weights = logits.new_empty((tokens, topk), dtype=torch.float32)
+        ids = logits.new_empty((tokens, topk), dtype=torch.int32)
+        topk_gating(
+            weights, ids, logits, correction_bias, True, routed_scaling_factor, score_func="sqrtsoftplus"
+        )
+        ids, weights = fused_append_shared_experts(ids, weights, 1, 1.0, n_routed)
+    # as Fp8MoEMethod hands FP4 experts to the runner: float4_e2m1fn_x2 views, as shuffled
+    fp4 = []
+    for weight in (w1, w2):
+        view = weight.view(torch.float4_e2m1fn_x2)
+        view.is_shuffled = getattr(weight, "is_shuffled", False)
+        fp4.append(view)
+    return fused_moe(
+        hidden_states,
+        fp4[0],
+        fp4[1],
+        weights,
+        ids,
+        quant_type=QuantType.per_1x32,
+        activation=ActivationType.Silu,
+        w1_scale=w1_scale.view(torch.uint8),
+        w2_scale=w2_scale.view(torch.uint8),
+        gate_mode=GateMode.INTERLEAVE.value,
+        swiglu_limit=swiglu_limit,
+        quant_dtype_a=dtypes.fp8,
+        moe_sorting_dispatch_policy=_MOE_SORTING_DISPATCH_POLICY,
+    )

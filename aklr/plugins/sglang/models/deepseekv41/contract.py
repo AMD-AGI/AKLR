@@ -16,6 +16,8 @@ from aklr.core.contract.semantics import (
     DeterminismLevel,
     DType,
     FiniteDistribution,
+    GateUpInterleavedScales,
+    GateUpInterleavedWeight,
     IntRangeDistribution,
     LecunNormalDistribution,
     LogUniformDistribution,
@@ -40,6 +42,7 @@ __all__ = [
     "CONTRACTS",
     "DEEPSEEKV41_MONO_K1",
     "DEEPSEEKV41_MONO_K2_ATTENTION",
+    "DEEPSEEKV41_MONO_K2_FFN",
     "DEEPSEEKV41_MXFP8_LINEAR",
     "DEEPSEEKV41_SPARSE_MLA",
     "GROUP_HEADS",
@@ -626,9 +629,142 @@ DEEPSEEKV41_MONO_K2_ATTENTION = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
+_FP4 = DTypeSpec(any_of=(DType.FLOAT4_E2M1,))
+
+
+def _ffn_layout_facts(shuffled: bool, scale_rank: int) -> tuple[LayoutFact, ...]:
+    facts = {"w1.is_shuffled": shuffled, "w2.is_shuffled": shuffled, "w1_scale.ndim": scale_rank}
+    return tuple(LayoutFact(location="tensor_attr", name=n, expected_value=v) for n, v in facts.items())
+
+
+DEEPSEEKV41_MONO_K2_FFN = OpContract(
+    contract_id="deepseekv41_mono_k2_ffn@1.0",
+    description=(
+        "The MoE of a DeepSeek-V4.1 layer on one rank, as the monokernel's K2 runs it after the "
+        "FFN seam and sglang's DeepseekV2MoE.forward_normal runs it where no monokernel takes the "
+        "step: on hidden_states (the rows of every rank under DP attention), the router's "
+        "logits in fp32; each token's topk experts by sqrt(softplus(logit)) plus correction_bias, "
+        "weighed by the unbiased scores over their sum times routed_scaling_factor, and the "
+        "shared expert, the last slot, at weight 1; each expert down(silu(min(gate(x), limit)) "
+        "* clamp(up(x), -limit, limit)) of its MXFP4 weights, both linears' inputs in MXFP8 "
+        "(e4m3 at an e8m0 scale per 32), as aiter's a8w4 experts take them; output is their sum "
+        "on this rank, before sglang sums the ranks'."
+    ),
+    op_type="deepseekv41",
+    axes={
+        "n_tokens": axis("Rows in this call.", 1, 65536, is_var=True),
+        "model_dim": axis("Hidden size.", 128, 16384, multiple_of=128),
+        "n_routed": axis("Routed experts: the router's rows.", 1, 1024),
+        "inter_dim": axis("Expert intermediate size on this rank.", 128, 16384, multiple_of=128),
+        "n_experts": derived_axis("Expert slots: the routed experts, then the shared one.", "n_routed + 1"),
+        "gate_up_rows": derived_axis("w1 rows: gate and up concatenated.", "2 * inter_dim"),
+        "model_blocks": derived_axis("w1 scale columns.", "model_dim // 32"),
+        "inter_blocks": derived_axis("w2 scale columns.", "inter_dim // 32"),
+    },
+    # the target's 6 of 384, and the DSpark draft's 3 of 128
+    attrs={"topk": attr("Routed experts per token.", 6, 3, param_name="topk")},
+    constraints=("topk <= n_routed",),
+    inputs={
+        "hidden_states": TensorSpec(
+            description="The MoE's input: the FFN seam's normed rows.",
+            shape=("n_tokens", "model_dim"),
+            dtype=_BF16,
+            distribution=_FINITE,
+        ),
+        "router_weight": TensorSpec(
+            description="Router projection.",
+            shape=("n_routed", "model_dim"),
+            dtype=_BF16,
+            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            lifetime="weight",
+        ),
+        "correction_bias": TensorSpec(
+            description="Added to the scores to pick experts; never weighs them.",
+            shape=("n_routed",),
+            # bf16, as sglang holds it for aiter's sqrtsoftplus gate
+            dtype=_BF16,
+            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            lifetime="weight",
+        ),
+        "w1": TensorSpec(
+            description="Gate-up projection per expert: gate rows, then up rows.",
+            shape=("n_experts", "gate_up_rows", "model_dim"),
+            dtype=_FP4,
+            distribution=_FINITE,
+            lifetime="weight",
+        ),
+        "w1_scale": TensorSpec(
+            description="Per 1 x 32 block of w1.",
+            shape=("n_experts", "gate_up_rows", "model_blocks"),
+            dtype=_E8M0,
+            distribution=LogUniformDistribution(
+                log2_lo="-5 - bit_length(model_dim) // 2", log2_hi="1 - bit_length(model_dim) // 2"
+            ),
+            lifetime="weight",
+        ),
+        "w2": TensorSpec(
+            description="Down projection per expert.",
+            shape=("n_experts", "model_dim", "inter_dim"),
+            dtype=_FP4,
+            distribution=_FINITE,
+            lifetime="weight",
+        ),
+        "w2_scale": TensorSpec(
+            description="Per 1 x 32 block of w2.",
+            shape=("n_experts", "model_dim", "inter_blocks"),
+            dtype=_E8M0,
+            distribution=LogUniformDistribution(
+                log2_lo="-5 - bit_length(inter_dim) // 2", log2_hi="1 - bit_length(inter_dim) // 2"
+            ),
+            lifetime="weight",
+        ),
+        "routed_scaling_factor": ScalarSpec(
+            description="Multiplies the routed weights only: DeepSeek-V4.1's.",
+            dtype=DType.FLOAT32,
+            values=(1.5,),
+            default=1.5,
+        ),
+        "swiglu_limit": ScalarSpec(
+            description="The gate is at most this, the up projection within +/- this.",
+            dtype=DType.FLOAT32,
+            values=(10.0,),
+            default=10.0,
+        ),
+    },
+    outputs={
+        "output": TensorSpec(
+            description="The experts' output on this rank, before sglang sums the ranks'.",
+            shape=("n_tokens", "model_dim"),
+            dtype=_BF16,
+            # sglang at 35 dB up to the 64 rows its split-K router serves; past them its bf16
+            # router GEMM re-routes about 5 rows in a hundred of the bench's inputs: 22 dB
+            error_bounds=SqnrBound(min_sqnr_db=18.0),
+        ),
+    },
+    # row-major, or as sglang holds the experts for aiter's a8w4 path: gate and up rows
+    # interleaved and shuffled, the scales flat
+    layout_variants=LayoutVariantsSpec(
+        by_name={
+            "row_major": LayoutVariant(layouts={}, detect_facts=_ffn_layout_facts(False, 3)),
+            "gate_up_interleaved": LayoutVariant(
+                layouts={
+                    "w1": GateUpInterleavedWeight(gate_up=True),
+                    "w2": GateUpInterleavedWeight(gate_up=False),
+                    "w1_scale": GateUpInterleavedScales(gate_up=True),
+                    "w2_scale": GateUpInterleavedScales(gate_up=False),
+                },
+                detect_facts=_ffn_layout_facts(True, 2),
+            ),
+        }
+    ),
+    # a near-tie in the top-k routes a token to another expert
+    compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+)
+
 CONTRACTS = (
     DEEPSEEKV41_MONO_K1,
     DEEPSEEKV41_MONO_K2_ATTENTION,
+    DEEPSEEKV41_MONO_K2_FFN,
     DEEPSEEKV41_MXFP8_LINEAR,
     DEEPSEEKV41_SPARSE_MLA,
 )

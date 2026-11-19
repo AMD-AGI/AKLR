@@ -10,6 +10,7 @@ from aklr.plugins.sglang.models.deepseek_v2.contract import (
     DEEPSEEK_V2_FP8_MOE,
     DEEPSEEK_V2_MXFP4_MOE,
 )
+from aklr.plugins.sglang.models.deepseekv41 import api as deepseekv41
 
 __all__ = ["deepseek_v2_fp8_moe", "deepseek_v2_mxfp4_moe"]
 
@@ -50,7 +51,10 @@ def deepseek_v2_fp8_moe(
 ): ...
 
 
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
+# the release, and the InferenceX cookbook's image for DeepSeek-V4.1
+@sglang_route(
+    "sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23", "0.5.23.dev20261111")
+)
 def _moe_forward_normal(
     self,
     hidden_states,
@@ -64,6 +68,11 @@ def _moe_forward_normal(
 ):
     """The MoE's router, top-k and experts, the shared one last, as one op call; then
     forward_normal's all-reduce unless a later step sums the ranks."""
+    # DeepSeek-V4.1's layers, whose FP4 experts sglang runs on MXFP8 activations, are its own op
+    if getattr(self.experts, "fp8_activations", False):
+        return deepseekv41.moe_forward_normal(
+            self, hidden_states, skip_shared_experts, use_vision_topk, return_moe_output or leave_output_sum
+        )
     if _forward_normal_falls_back(
         self, skip_shared_experts, use_vision_topk, return_moe_output or leave_output_sum
     ):

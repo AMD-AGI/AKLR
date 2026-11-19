@@ -5,9 +5,11 @@ from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins.sglang.models import moe_blocks
 from aklr.plugins.sglang.models.deepseekv41.contract import (
     DEEPSEEKV41_MONO_K1,
     DEEPSEEKV41_MONO_K2_ATTENTION,
+    DEEPSEEKV41_MONO_K2_FFN,
     DEEPSEEKV41_MXFP8_LINEAR,
     DEEPSEEKV41_SPARSE_MLA,
 )
@@ -15,8 +17,10 @@ from aklr.plugins.sglang.models.deepseekv41.contract import (
 __all__ = [
     "deepseekv41_mono_k1",
     "deepseekv41_mono_k2_attention",
+    "deepseekv41_mono_k2_ffn",
     "deepseekv41_mxfp8_linear",
     "deepseekv41_sparse_mla",
+    "moe_forward_normal",
 ]
 
 # The release, and the InferenceX cookbook's image for DeepSeek-V4.1: the targets are the same text in both
@@ -290,3 +294,93 @@ def _forward_hc_pre_from_prev_fused_boundary(
     # is left to sglang; run them here (the KV store and an index source's indexer between
     # them) once a kernel serves both
     return front or back or FallbackReason.OUT_OF_CONTRACT
+
+
+@api(DEEPSEEKV41_MONO_K2_FFN)
+def deepseekv41_mono_k2_ffn(
+    hidden_states,
+    router_weight,
+    correction_bias,
+    w1,
+    w1_scale,
+    w2,
+    w2_scale,
+    topk=6,
+    routed_scaling_factor=1.5,
+    swiglu_limit=10.0,
+    output=None,
+): ...
+
+
+def moe_forward_normal(moe, hidden_states, skip_shared_experts, use_vision_topk, leave_output):
+    """DeepseekV2MoE.forward_normal for a DeepSeek-V4.1 layer, which deepseek_v2's route on it
+    hands here: the router, top-k and experts, the fused shared one last, as one op call; then
+    what forward_normal does with the experts' output: handed on unsummed with leave_output
+    (a later step sums the ranks), else its all-reduce."""
+    if skip_shared_experts or use_vision_topk or _moe_falls_back(moe):
+        return FallbackReason.OUT_OF_CONTRACT
+    experts, routing = moe.experts, moe.topk.topk_config
+    out = deepseekv41_mono_k2_ffn(
+        hidden_states=hidden_states,
+        router_weight=moe.gate.weight,
+        correction_bias=routing.correction_bias,
+        w1=experts.w13_weight,
+        w1_scale=experts.w13_weight_scale_inv,
+        w2=experts.w2_weight,
+        w2_scale=experts.w2_weight_scale_inv,
+        topk=routing.top_k - 1,
+        routed_scaling_factor=moe.routed_scaling_factor,
+        swiglu_limit=experts.moe_runner_config.swiglu_limit,
+    )
+    if isinstance(out, FallbackReason):
+        return out
+    if leave_output:
+        from sglang.srt.models.deepseek_v2 import MoEOutput
+
+        return MoEOutput(
+            routed=out,
+            shared=None,
+            experts=experts,
+            routed_scaling_factor=moe.routed_scaling_factor,
+            shared_is_replicated=False,
+        )
+    return moe._finalize_normal_output(out, None)
+
+
+def _moe_falls_back(moe) -> bool:
+    """Whether ``moe`` runs other than as deepseekv41_mono_k2_ffn takes it: DeepSeek-V4.1's
+    ungrouped sqrtsoftplus routing with a bias, renormalized and scaled in the top-k, one shared
+    expert fused as the last slot, and FP4 experts with interleaved gate and up rows on aiter's
+    runner at MXFP8 activations, clamped, unpadded, at sglang's standard dispatch."""
+    experts, routing = moe.experts, moe.topk.topk_config
+    method = experts.quant_method
+    runner = getattr(method, "runner", None)
+    return (
+        moe_blocks.runtime_falls_back()
+        or moe.is_hash
+        or moe.num_fused_shared_experts != 1
+        or moe._fuse_shared_experts_inside_sbo
+        or not moe.routed_scaling_factor_fused_in_topk
+        or routing.use_grouped_topk
+        or routing.custom_routing_function is not None
+        or routing.scoring_func != "sqrtsoftplus"
+        or routing.correction_bias is None
+        or not routing.renormalize
+        or routing.num_shared_topk_slots != 1
+        or moe.topk.waterfill_balancer is not None
+        or type(experts).__name__ != "FusedMoE"
+        or type(experts.dispatcher).__name__ != "StandardDispatcher"
+        or experts.dispatcher.expert_mask_gpu is not None
+        or type(method).__name__ != "Fp8MoEMethod"
+        or not method.is_fp4_expert
+        or not getattr(experts, "fp8_activations", False)
+        or not getattr(experts.w13_weight, "is_shuffled", False)
+        or runner is None
+        or not runner.runner_backend.is_aiter()
+        or runner.config.activation != "silu"
+        or not runner.config.gate_up_interleaved
+        or not runner.config.swiglu_limit
+        or runner.config.no_combine
+        or getattr(experts, "hidden_pad", 0)
+        or getattr(experts, "intermediate_pad", 0)
+    )

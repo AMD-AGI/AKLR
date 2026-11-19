@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 __all__ = [
     "deepseekv41_mono_k1_reference",
     "deepseekv41_mono_k2_attention_reference",
+    "deepseekv41_mono_k2_ffn_reference",
     "deepseekv41_mxfp8_linear_reference",
     "deepseekv41_sparse_mla_reference",
 ]
@@ -211,3 +212,54 @@ def deepseekv41_mono_k2_attention_reference(
     projected = rounded_to_bfloat16(projected).float().flatten(1)
     x = rounded_to_bfloat16(_mxfp8_linear(projected, args, point, "wo_b", decode)).float()
     return _boundary(point, args, decode, x, "pre_mix")
+
+
+def _mxfp8(x: Tensor) -> Tensor:
+    """``x`` in fp8 e4m3 at an e8m0 scale per 1 x 32, the scale 2**ceil(log2(amax / 448))."""
+    import torch
+
+    blocks = x.unflatten(-1, (-1, MXFP8_BLOCK))
+    amax = blocks.abs().amax(dim=-1, keepdim=True).clamp(min=1e-10)
+    mantissa, exponent = torch.frexp(amax / 448.0)
+    scale = torch.exp2((exponent - (mantissa == 0.5).int()).clamp(-126, 127).to(x.dtype))
+    return ((blocks / scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).to(x.dtype) * scale).flatten(-2)
+
+
+def deepseekv41_mono_k2_ffn_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> Tensor:
+    """Each token's routed experts and the shared one (the last slot) at weight 1. Rounding
+    points: the router's logits, exact products summed in float64, round once to fp32;
+    each expert linear's input goes to MXFP8 per 1 x 32, the clamped SwiGLU product to bf16
+    first."""
+    import torch
+    import torch.nn.functional as F
+
+    args = row_major_args
+
+    def f(name: str, index: Any = None) -> Tensor:
+        tensor = args[name] if index is None else args[name][index]
+        return decode(tensor, point.dtypes[name]).float()
+
+    hidden = f("hidden_states")
+    scores = F.softplus((hidden.double() @ f("router_weight").double().T).float()).sqrt()
+    ids = (scores + f("correction_bias")).topk(point.attrs["topk"], dim=-1).indices
+    weights = scores.gather(-1, ids)
+    weights = weights / weights.sum(dim=-1, keepdim=True) * args["routed_scaling_factor"]
+    ids = torch.cat([ids, torch.full_like(ids[:, :1], point.axes["n_routed"])], dim=-1)
+    weights = torch.cat([weights, torch.ones_like(weights[:, :1])], dim=-1)
+
+    def weight(name: str, e: int) -> Tensor:
+        return f(name, e) * f(f"{name}_scale", e).repeat_interleave(MXFP8_BLOCK, dim=-1)
+
+    limit = args["swiglu_limit"]
+    x = _mxfp8(hidden)
+    output = torch.zeros_like(hidden)
+    for e in ids.unique().tolist():
+        tokens, slots = (ids == e).nonzero(as_tuple=True)
+        gate, up = (x[tokens] @ weight("w1", e).T).chunk(2, dim=-1)
+        gated = rounded_to_bfloat16(F.silu(gate.clamp(max=limit)) * up.clamp(-limit, limit))
+        output.index_add_(0, tokens, weights[tokens, slots, None] * (_mxfp8(gated) @ weight("w2", e).T))
+    return output

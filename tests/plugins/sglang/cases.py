@@ -216,6 +216,41 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"topk": 16},
         layout_variant_name="gate_up_interleaved",
     ),
+    # DeepSeek-V4.1's MoE after the FFN seam, shrunk: the router, 6 routed experts a token and
+    # the shared expert fused last, in aiter's gate-up-interleaved layout on its a8w4 path
+    PointSpec(
+        contract_id="deepseekv41_mono_k2_ffn@1.0",
+        axes={"n_tokens": 4, "model_dim": 512, "n_routed": 16, "inter_dim": 128},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "bfloat16",
+            "w1": "float4_e2m1",
+            "w1_scale": "float8_e8m0",
+            "w2": "float4_e2m1",
+            "w2_scale": "float8_e8m0",
+            "output": "bfloat16",
+        },
+        attrs={"topk": 6},
+        layout_variant_name="gate_up_interleaved",
+    ),
+    # the same past the 64 rows sglang's split-K router serves: its bf16 router GEMM
+    PointSpec(
+        contract_id="deepseekv41_mono_k2_ffn@1.0",
+        axes={"n_tokens": 96, "model_dim": 512, "n_routed": 16, "inter_dim": 128},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "bfloat16",
+            "w1": "float4_e2m1",
+            "w1_scale": "float8_e8m0",
+            "w2": "float4_e2m1",
+            "w2_scale": "float8_e8m0",
+            "output": "bfloat16",
+        },
+        attrs={"topk": 6},
+        layout_variant_name="gate_up_interleaved",
+    ),
     # Kimi-K3's MLA decode: two heads over a small latent cache
     PointSpec(
         contract_id="kimi_k3_mla_decode@1.0",
@@ -929,11 +964,14 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
     ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
-# tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
+# tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU; sglang's split-K
+# router is built for DeepSeek-V4.1's 384 experts, run here at its TP2 shapes
+_BACKEND_AXES = {
+    "kimi_k3_latent_moe@1.0": {"latent_dim": 3584, "n_routed": 896, "inter_dim": 384},
+    "deepseekv41_mono_k2_ffn@1.0": {"model_dim": 5120, "n_routed": 384, "inter_dim": 1152},
+}
 BACKEND_POINTS: tuple[PointSpec, ...] = tuple(
-    point.model_copy(update={"axes": {**point.axes, "latent_dim": 3584, "n_routed": 896, "inter_dim": 384}})
-    if point.contract_id == "kimi_k3_latent_moe@1.0"
-    else point
+    point.model_copy(update={"axes": {**point.axes, **_BACKEND_AXES.get(point.contract_id, {})}})
     for point in SMALL_POINTS
 )
 # whose baseline runs only on gfx950
@@ -945,6 +983,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "deepseek_v2_mxfp4_moe@1.0",
         "deepseekv41_mono_k1@1.0",
         "deepseekv41_mono_k2_attention@1.0",
+        "deepseekv41_mono_k2_ffn@1.0",
         "deepseekv41_mxfp8_linear@1.0",
         "deepseekv41_sparse_mla@1.0",
         "dsa_indexer_key_prepare@1.0",
