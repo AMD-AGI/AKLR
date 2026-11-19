@@ -616,3 +616,17 @@ def test_aiter_routes_a_call_aklr_serves_to_aklrs_kernel(monkeypatch, aiter_plug
     assert (decision.route, decision.provider, decision.kernel_id) == ("provider", "aklr", KERNEL.kernel_ref)
     monkeypatch.setattr(norm.rms_norm, "serving", lambda *a: FallbackReason.NO_WORKLOAD)
     assert aiter_plugin.explain("rmsnorm", *_args("rmsnorm")).decision.route == "native"
+
+
+def test_a_call_in_declining_is_never_offered_to_aklr(monkeypatch):
+    """A framework route that asked AKLR and fell back runs aiter's own kernel inside ``declining()``."""
+    asked = []
+    monkeypatch.setitem(
+        base.SELECTORS, "rmsnorm", (2, lambda args, kwargs: asked.append(args) or "candidate")
+    )
+    monkeypatch.setattr(provider, "ready", lambda: True)
+    op = SimpleNamespace(name="rmsnorm")
+    with provider.declining():
+        assert provider.provider.select(op, (), {}) is None
+    assert asked == []
+    assert provider.provider.select(op, (), {}) == "candidate"
