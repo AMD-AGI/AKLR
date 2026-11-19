@@ -18,7 +18,7 @@ flowchart TD
     B -->|"kernel-less schema<br/>（sources = []，uuid 临时）"| D["2. 开发 kernel<br/>填 sources / requires / author"]
     D --> R["2. 重新执行 1. B 脚本<br/>写出带 kernel 的 schema（新 uuid）"]
     R --> V["3. 本地验证<br/>validate --base origin/main --stages audit,bench"]
-    V -->|"no_qualifying_workload：失败"| D
+    V -->|"no_admitted_workload：失败"| D
     V -->|"demoted（性能或正确性不过）：删掉这些 workload"| R
     V -->|"通过：report.md / report.json"| P["4. 开 PR + ci:gpu<br/>CI：code-lint（含 audit）→ aiter-test → sglang-test → vllm-test"]
     P -->|"合入 main"| M["4. main 的 push CI 重新测量<br/>publish-measurement bot 更新 aklr-perf/main PR"]
@@ -42,7 +42,7 @@ flowchart TD
 1. `contract.py`：定义 `OpContract` 和 `CONTRACTS`（registry 会自动发现）；`op_type` 取目录名 `<op>`；按数学含义命名；多输出时不能有叫 `out` 的；每个输出给出 `error_bounds`，contract 给出 `determinism`。
 2. `reference.py`：float64 的 `<contract>_reference(point, row_major_args, to_float64)`。
 3. `api.py`：`@api(<CONTRACT>)` 存根（函数体只能是 `...`）。
-4. `baseline.py`：每个有基线的 contract 一个 `<contract>_baseline`，接收 api 的参数（以调用的关键字参数传入），在函数内部 import AITER 或 SGLang，像 api 一样返回输出；不支持的调用抛 `NotImplementedError`（bench 报 `baseline_failed`）。没有这个函数时算子以自己为基线，kernel 没有要超过的对象。
+4. `baseline.py`：每个有基线的 contract 一个 `<contract>_baseline`，接收 api 的参数（以调用的关键字参数传入），在函数内部 import AITER 或 SGLang，像 api 一样返回输出；不支持的调用抛 `NotImplementedError`（bench 报 `baseline_unbound`）。没有这个函数时算子以自己为基线，kernel 没有要超过的对象。
 5. `__init__.py`：导出 api。
 6. 在 `tests/ops/cases.py` 的 `SMALL_POINTS` 中按 contract 顺序加入各 contract 的 base 小 Point，然后运行 `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` 重新生成 `tests/ops/names.txt` 并一起提交。
 
@@ -102,9 +102,9 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - **audit**：检查文本是否等于 `schema_text()`、命名、与 contract 的一致性、路径/uuid、domain、标量、重复项、测量字段，以及源码审计
 - **bench**：
   - 正确性：对每个 workload 用分布采样的输入，参考实现进行比较；
-  - 性能：在 CUDA graph 下与基线多轮对比。
+  - 性能：用同样的每组输入，在 CUDA graph 下与基线（或已服务该 Point 的 kernel）对比计时。
 
-**门槛**：新 kernel 的每个 Point 相对基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`）要 ≥ **1.05**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
+**门槛**：base 尚未服务的 kernel 要对比今天正在服务的实现：已服务该 Point 的 kernel（≥ **1.05**，Entry），否则对比基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`；≥ **1.05**，首次发布时 ≥ **0.99**，Retain）；base 已在服务的 kernel 相对基线保持 ≥ **0.99**。运行时服务要求存储的 speedup ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标或计算错误（`outputs_mismatch`、`wrong_outputs`、`candidate_raised`、`build_failed`、`task_crashed`、`task_timeout`，写成 `accuracy: failed`）的 Point 只记进 report 的 demotions，不会让 validate 失败，两类都要处理。只有没有一个 workload 既正确、发布的 speedup 又 ≥ 1.05 时，schema 才报 `no_admitted_workload`。
 
 ## 4. PR 与 CI
 

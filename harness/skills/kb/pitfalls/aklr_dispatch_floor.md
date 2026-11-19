@@ -30,7 +30,7 @@ profiling, which held it at 4.1–4.3 µs, one kernel per call *(field, E3)*; wi
 bmm read 1.70 against 2.59 µs *(field, E2)*. The 4 µs was those rulers' reading, not a cost a deployment pays per
 kernel.
 Current main (profile 19) reads kernel times from AKLR's own rocprofiler-sdk tracer, `aklr_kernel_tracer`, and no
-longer forces queue profiling (`aklr/core/validation/stages/_measure.py`, `aklr/core/utils/testing.py`), and short
+longer forces queue profiling (`aklr/core/validation/stages/bench/_measure/_op_bench.py`, `aklr/core/utils/testing.py`), and short
 kernels still sit at a floor under it: spin kernels of 1.8–3.5 µs back to back read 4.40–4.56 µs, from about 5.4 µs
 up within 0.08 µs of their back-to-back time *(field, E4)*. The bmm against aiter's baseline read 1.13× where
 back-to-back timing gives 1.50× *(field, E5)*.

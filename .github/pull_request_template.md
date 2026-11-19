@@ -45,7 +45,7 @@ $ python -m aklr export check
 
 <!-- Required when the PR adds or changes a kernel; delete otherwise.
 One row per contract. Measured: workloads benched / all (a timeout is not measured).
-Accuracy: passing / measured, and the bound. Speedup: lower bound over the baseline, lowest – highest.
+Accuracy: passing / measured, and the bound. Speedup: over the baseline, lowest – highest.
 Each kernel file needs one workload at 1.05 or more (docs/acceptance_criteria.md). -->
 
 | contract | baseline | measured | accuracy (bound) | speedup |

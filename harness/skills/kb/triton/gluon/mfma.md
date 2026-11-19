@@ -464,7 +464,7 @@ Compile errors of matrix calls, each reproduced with Triton 3.8.0 for gfx950. An
 | `LLVM ERROR: Dimensions must match, ignoring order, but they don't`, then an abort | `mfma_scaled` (e4m3, `None` scales, [16,16,128]) on a rank-3 layout: the scale layout builder makes a 2-D tile (S13) | rank 2, or plain `mfma` (§4) |
 | `unhashable type: 'list'` at launch, not in `triton.compile` | a list constexpr such as `INSTR=[16, 16, 32]` *(field, E10)* | a tuple ([../debugging.md](../debugging.md) §4) |
 
-A compiler crash kills the process without a Python traceback: validate reports `candidate_crash`, exit −11 for
+A compiler crash kills the process without a Python traceback: validate reports `task_crashed`, exit −11 for
 SIGSEGV or −6 for an abort (§8); compile the launch alone ([../debugging.md](../debugging.md) §6). The silent ones:
 
 1. **Scale layouts are not checked, nor is a transposed scale when M (or N) = K/32** (2.2): derive them with

@@ -113,9 +113,8 @@ wins. Check a plan against this table before writing code.
   `aklr/ops` kernel runs in a model only where such a route or the engine calls its api.
 - **Workflow** (`aklr/ops/README.md` § Workflow): export the Points, fill `kernel.sources`, then
   `python -m aklr export check` and `python -m aklr validate --base origin/main`. The local result does not
-  count; CI measures. A `platform_failure` whose message names rocprofiler-sdk or the graph replays, or says "the
-  kernel tracer failed" or "calibration could not restore", is a tracer fault, already measured again in fresh
-  processes: rerun (`aklr/core/validation/stages/_measure.py`, `pitfalls/profiler_misses_kernels.md`).
+  count; CI measures. A `platform_fault` whose detail says `tracer:` is a tracer fault, already read once
+  more: rerun (`aklr/core/validation/stages/bench/_measure/_op_bench.py`, `pitfalls/profiler_misses_kernels.md`).
 - **A short kernel sits on AKLR's timing floor.** Up to measurement profile 18 (Kineto, with
   `GPU_FORCE_QUEUE_PROFILING` forced) AKLR read about 4 µs per kernel however little it did, so a short kernel and
   its baseline read about the same. Main's profile 19 (its own rocprofiler-sdk tracer, queue profiling not forced)

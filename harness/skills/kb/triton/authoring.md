@@ -20,7 +20,7 @@ linked, not restated (`aklr/ops/README.md` § The kernel section and ABI is the 
   `aklr/plugins/sglang/`), or port one into a schema file, or your op has no contract yet (§3).
 - You choose between plain `tl.*` and Gluon, or are about to add a launch.
 - `python -m aklr validate` reports `schema_invalid` (`not at ...`), `source_rejected` (SA0–SA4), `build_failed`,
-  `capture_unsafe`, `input_mutation` or `no_qualifying_workload`, or demotes a Point.
+  `candidate_raised` or `no_admitted_workload`, or demotes a Point.
 - A kernel works eagerly and fails under graph capture or replay.
 
 Elsewhere: layouts [gluon/layouts.md](gluon/layouts.md), data movement [gluon/memory.md](gluon/memory.md), the matrix
@@ -166,8 +166,9 @@ The audit's rules SA0–SA4 are stated in `aklr/ops/README.md` § The kernel sec
 - SA3 rejects its I/O names in device code too (S12): a kernel parameter called `input` is rejected at its first use,
   and so is a `print` in a `@gluon.jit` body; `gl.device_print` passes.
 - SA2 rejected `x.add_(1)` in `run` and `weight.add_(1)` in a helper whose parameter carries the input's name; the same
-  write through a helper parameter renamed `buf` passed the audit, and bench reported `input_mutation` at
-  `first_capture/0` *(field, E10)*, since it compares read-only inputs byte for byte (S14).
+  write through a helper parameter renamed `buf` passed the audit, and the bench of that time, which compared
+  read-only inputs byte for byte, reported `input_mutation` *(field, E10)*; today's bench does not compare them (S14),
+  so nothing reports such a write.
 - Reading `os.environ[...]`, `os.environ.get`, `os.getenv`, `time.time`, `time.monotonic`, `time.monotonic_ns`,
   `time.process_time`, `time.perf_counter_ns` and `datetime.datetime.now` passed the audit; SA3 rejected
   `time.perf_counter`, `torch.cuda.Event` and `elapsed_time` *(field, E10)*. Passing the audit does not make a call safe
@@ -241,8 +242,9 @@ and the workload's scalars (S14): put an int that may change within a Point in `
 - **Nothing carries from one call to the next.** `run` keeps nothing derived from an argument across calls, a compile
   function only compiled code, constants (§5) and per-shape scratch rewritten whole before every read (same README
   section). The audit rejects a `global` statement (SA1) but not a module-level dict written in `run` *(field, E10)*: a
-  `run` that kept its first output in one and copied it into later outputs passed the audit and failed bench with
-  `numeric_mismatch` (`first_capture/0`, `numeric/0`, `determinism/0`) and `post_timing_mismatch` *(field, E8)*
+  `run` that kept its first output in one and copied it into later outputs passed the audit and failed the bench of
+  that time with `numeric_mismatch` and `post_timing_mismatch` *(field, E8)*; today's bench checks each trial's new
+  inputs after the earlier trials' calls and reports a wrong output as `outputs_mismatch` (S32)
   ([../pitfalls/state_kept_across_calls.md](../pitfalls/state_kept_across_calls.md)).
 - **Reuse a region within a call in stream order**, as MoE files overlay short-lived scratch on a later buffer (S26):
   launched on the same stream before the region's next writer, its last reader saw the values from before the
@@ -296,17 +298,17 @@ with `q.to(torch.bfloat16)` there add a kernel per call (S31).
 ## 8. CUDA-graph capture
 
 SGLang captures its one-token-per-sequence (decode) batches, and AKLR's routes for them run inside its graphs; the GDN prefill routes return `out_of_contract`
-while a capture runs, "a capture would replay this call's lengths" (S29). Bench captures every check step — a first
-capture replayed twice with new values copied into the same buffers, fresh captures per input set, a repeat under
-`bitwise`, the post-timing checks (S32) — and fills the outputs with NaN (0xFF bytes for integer and sub-byte dtypes)
-before the call (S14). Leaving a float element unwritten violates the contract: in one run, a copy of the fp8 GEMM
-`f3970dec` that left 8 of its 16 rows unwritten failed at `first_capture/0` with 24576 = 8 × 3072 non-finite values
-*(field, E8)*.
+while a capture runs, "a capture would replay this call's lengths" (S29). Bench checks each trial with one eager
+call on newly drawn inputs, into new output buffers it does not fill, then times that trial's call in a CUDA graph
+whose outputs it does not check (S32, S14). Leaving a float element unwritten violates the contract: the bench of
+that time filled the outputs with NaN (0xFF bytes for integer and sub-byte dtypes) before the call, and in one run a
+copy of the fp8 GEMM `f3970dec` that left 8 of its 16 rows unwritten failed with 24576 = 8 × 3072 non-finite values
+*(field, E8)*; today's bench catches an unwritten element only when what the buffer held is outside the bound.
 
 | Breaks | Why | Do |
 |---|---|---|
 | The Point's first call inside a capture | dispatch serves the fallback (`not_warmed`), and the graph keeps it in every replay (S33) | call every Point once eagerly first, as SGLang does (`aklr/ops/README.md` § The kernel section and ABI) |
-| A JIT key that changes after the Point's first call (§5) | Triton compiles at a call that may be captured, which AKLR rules out | make every key a function of the Point: a constexpr warmed at 16 and launched at 32 inside a capture compiled there (one `_do_compile` call), which bench's tripwire on `JITFunction._do_compile` reports as "compiled in the capture" (S14) *(field, E9)*. Validate demoted every Point of an RMSNorm copy and of a GEMM copy whose key changed per call as `capture_unsafe` with that detail, listed under "demoted:" in the report, and failed the file with `no_qualifying_workload` *(field, E23)*: read the demoted list, not only the findings (§11). A warm `TRITON_CACHE_DIR` does not help: every in-process miss calls `_do_compile`, which reads the disk cache (S17), as each of two fresh processes sharing a warm cache did once *(field, E9)* |
+| A JIT key that changes after the Point's first call (§5) | Triton compiles at a call that may be captured, which AKLR rules out | make every key a function of the Point: a constexpr warmed at 16 and launched at 32 inside a capture compiled there (one `_do_compile` call), *(field, E9)*. The bench of that time had a tripwire on `JITFunction._do_compile` that reported it as `capture_unsafe`, "compiled in the capture": it demoted every Point of an RMSNorm copy and of a GEMM copy whose key changed per call and failed the file *(field, E23)*. Today's bench has no tripwire: it checks eager calls and captures only to time (S14), so nothing reports a compile in a capture; read the demotions, not only the findings (§11). A warm `TRITON_CACHE_DIR` does not help: every in-process miss calls `_do_compile`, which reads the disk cache (S17), as each of two fresh processes sharing a warm cache did once *(field, E9)* |
 | `.item()`, `.cpu()`, `.tolist()`, `torch.cuda.synchronize()`; a torch op whose output size depends on data: `torch.nonzero`, `x[mask]`, `torch.argwhere`, `repeat_interleave` without `output_size` | each failed a capture with `capture_error_mode="global"`, as bench captures (S14), and `repeat_interleave` with `output_size` captured *(field, E10)*: no synchronization is allowed while a stream captures, and the torch ops synchronize to size their output (S44) | SA3 rejects the first four in `run` but passes the four data-dependent-size ops, which only the capture catches *(field, E10)*: compute indices in a kernel into a worst-case buffer (below) |
 | A host decision on device data: a grid or a branch from a count the GPU computed | it needs a synchronization, and a replay keeps the captured decision | size the grid from shapes for the worst case and exit early on a count read on the device (below) |
 | State written once and assumed afterwards | a replay reruns only the kernels, never `run`'s Python | write counters, sentinels and padding in every call: "Padding is rewritten every invocation, including graph replay" (S34) |
@@ -464,23 +466,25 @@ python -m aklr validate --base origin/main --stages audit,bench --devices 0 <sch
 
 `--stages` is `audit` or `audit,bench`; `--devices` takes `0-7` or `0,2,5`; the report goes to
 `aklr_validation/report.md` and `aklr_validation/report.json` unless `--out` says otherwise (S39). `--stages audit`
-alone needs no GPU. Without `--base` the committed `f3970dec` was timed against the baseline alone, at the retain
-threshold; a copy with `--base origin/main` against the baseline at the entry threshold and the serving file
-(`incumbent`) at the retain one. A Point that stores less than `AKLR_MIN_SPEEDUP` is not served (`not_qualified`): the
+alone needs no GPU. Without `--base` a file is timed against the baseline alone, at the retain threshold; with
+`--base origin/main`, a copy of a kernel the base serves at the Point is timed against that serving file
+(`incumbent`) alone, at the entry threshold, and a kernel for a Point nothing serves against the baseline at the entry
+threshold (`harness/skills/read-validation/references/ruler.md` § Timing). A Point that stores less than `AKLR_MIN_SPEEDUP` is not served (`not_qualified`): the
 committed RMSNorm `cf637bff0784c454` stored 1.023–1.029 at its 7 Points of 3–18 tokens at d908d01, none served at the default then, 1.03,
 and 1.04 or more at the others, all served *(field, E17)*. Tune past the dispatch threshold (`aklr/ops/README.md` §
 Environment variables; `harness/skills/read-validation/references/ruler.md` § Judging; reading a report: its
 `SKILL.md`).
 
-**Demoted Points.** Validate fails only on a file-wide finding or when no Point qualifies (`no_qualifying_workload`); a
-Point qualifies when it has no correctness finding and its ratio to the baseline beats the entry threshold (S47). A
-finding at one Point — `not_faster`, `regressed`, the correctness codes, `build_failed`, `candidate_crash` or
-`candidate_timeout` there — demotes that Point (S41). `not_faster` and `regressed` are recorded as measured, not failed
-(S47), so a file whose only Point regressed against the incumbent still passes, exit 0, when that Point beats the
-baseline. A `numeric_mismatch` planted at one Point of three (1024 tokens) was listed under "demoted:" in
-`aklr_validation/report.md` (`demotions` in `report.json`, with its `post_timing_mismatch` and `regressed`), and the run
-printed `validation passed` and exited 0; a one-Point file that computes wrong failed as `no_qualifying_workload`, exit
-1, the cause in the demoted list *(field, E8)*. Fix each demoted Point or delete it from `workloads` (the file takes a
+**Demoted Points.** Validate fails only on a file-wide finding or when no Point is admitted (`no_admitted_workload`); a
+Point admits its file when it has no accuracy finding and its speedup over what it was timed against, to 3 decimals,
+reaches the entry threshold (S47). A finding at one Point — `not_faster`, `regressed`, the accuracy codes
+(`outputs_mismatch`, `wrong_outputs`, `candidate_raised`), or its task's `build_failed`, `task_crashed` or
+`task_timeout` — demotes that Point (S41). `not_faster` and `regressed` are written back as accurate with the measured
+speedup, not as failed (S47), and such a Point does not admit its file. Under the former bench a `numeric_mismatch`
+planted at one Point of three (1024 tokens) was listed under "demoted:" in `aklr_validation/report.md` (`demotions` in
+`report.json`), and the run printed `validation passed` and exited 0; a one-Point file that computes wrong failed, exit
+1, the cause in the demoted list *(field, E8)*. Today the codes are `outputs_mismatch` and `no_admitted_workload`, and
+`report.md` lists the demotions under "Demotions". Fix each demoted Point or delete it from `workloads` (the file takes a
 new uuid, §3), then validate again (`docs/ops_tutorial.md` § 3).
 
 What bites:
@@ -494,28 +498,29 @@ What bites:
 
 Correctness: bench compares every output with the contract's reference under the schema's `compare` block —
 `determinism` `bitwise` (the default: the plain-Triton GEMMs and norms, DSA, Qwen3.5, Qwen3-Next) or `bounded` (the
-MoE plugins and the fp8 block-scaled GEMMs), and each output's error bound — at the steps of §8 (`aklr/ops/README.md`
+MoE plugins and the fp8 block-scaled GEMMs; the bench no longer repeats a call to check it), and each output's error
+bound — on each trial of §8 (`aklr/ops/README.md`
 § Schema fields; [numerics.md](numerics.md) §1, §8). What a finding usually means here (at one Point, a demotion):
 
 | Finding | Usually | § |
 |---|---|---|
 | `schema_invalid` | not at the uuid path, not the exact schema text, workloads half measured | 3, 11 |
 | `source_rejected` | SA0–SA4 | 4 |
-| `build_failed` | an import error, an entry wrapped so that it cannot take the call keys (a `run` missing a key is `source_rejected` already, SA4), a compile error at the first call, a first call over 16 GiB | 3, 6, 10 |
-| `candidate_crash` | a memory fault or segfault, an output of the wrong shape or dtype | 6, 10 |
-| `candidate_timeout` | a hang: a workgroup waiting inside a launch for another (§7), a device loop on a value never written (§6); reported after 900 s plus 300 s per Point of the batch (S41) | 6, 7 |
-| `capture_unsafe` | compiled in the capture, synchronized, or a replay with new inputs gave another result | 8 |
-| `input_mutation` | a read-only input written | 4 |
-| `numeric_mismatch`, `nondeterministic`, `post_timing_mismatch` | the math ([numerics.md](numerics.md)), also an arrival-order sum moved past its bound (`numeric_mismatch`, not `nondeterministic`); `post_timing_mismatch`: state kept across calls. Planted math, reduction-order and kept-state errors were reported as `numeric_mismatch` or `post_timing_mismatch`, none as `nondeterministic` *(field, E8)* | 6, 8 |
+| `build_failed` | an import error, an entry wrapped so that it cannot take the call keys (a `run` missing a key is `source_rejected` already, SA4) | 3, 6, 10 |
+| `task_crashed` | a memory fault or segfault; every Point of the task gets it | 6, 10 |
+| `wrong_outputs` | an output of the wrong shape or dtype | 6, 10 |
+| `candidate_raised` | the kernel's call raised: in a trial's check (a compile error at the first call is at `trial 0`), or in the timing's capture (a synchronization or a host read of a device value in `run`; detail `timing against …`) | 6, 8 |
+| `task_timeout` | a hang: a workgroup waiting inside a launch for another (§7), a device loop on a value never written (§6); reported after 900 s plus 300 s per Point of the task (S41), at every Point of it | 6, 7 |
+| `outputs_mismatch` | the math ([numerics.md](numerics.md)), also an arrival-order sum moved past its bound; at a trial after the first, also state kept across calls. Under the former bench, planted math, reduction-order and kept-state errors were reported as `numeric_mismatch` or `post_timing_mismatch` *(field, E8)* | 6, 8 |
 | `not_faster`, `regressed` | the speed ([tuning.md](tuning.md)) | — |
-| `no_qualifying_workload` | no Point passed its checks and the entry threshold: the demoted list gives each Point's cause | 11 |
-| `no_matching_device` | the GPU is not in `targets` (a Triton that misses `requires` skips the schema instead) | 3 |
+| `no_admitted_workload` | no Point passed its checks and reached the entry threshold: the demotions give each Point's cause | 11 |
+| `platform_fault` | the GPU is not in `targets` (a Triton that misses `requires` skips the schema instead); also a Baseline, Incumbent or Reference that raised, or a tracer fault: the stage aborts, exit 3 | 3 |
 
 **A/B a variant** as a copy with the one change, at its own uuid path. Against the committed kernel of its Point,
-validate the copy with `--base origin/main`: the two are timed in the same rounds. Alternate two uncommitted variants on
+validate the copy with `--base origin/main`: the two are timed on the same trials' inputs. Alternate two uncommitted variants on
 one idle GPU (A, B, A, B, at least four runs per arm) and compare the candidate times in each `report.json`: a file and
 its comment-only copy read mean times 0.987–1.011 of each other on four Points over three sessions. The same file validated three times
-moved its baseline speedup (exp of `log_ratio_mean`) by 0.4–3.2% in three sessions of four files (fp8 GEMM `f3970dec`
+moved its baseline speedup (then exp of `log_ratio_mean`) by 0.4–3.2% in three sessions of four files (fp8 GEMM `f3970dec`
 m = 16, GDN decode `29913388`, MoE `d3bbbce5`, router `c3889614`), and `f3970dec`'s copy under `--base` by 1.8–4.0%; which file moved most was not the same in every session *(field, E19)*;
 [tuning.md](tuning.md) §2.
 
@@ -561,9 +566,9 @@ bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33).
 - S9 aklr/core/contract/registry.py:101 a schema whose text is not its `schema_text()` is rejected; the writer is `json_file_text` (aklr/core/contract/expr.py:108)
 - S10 aklr/core/contract/fastkey/_fast_key_fn.py:284 the storage checks: stored layout, not negated, `data_ptr() % 16 == 0` (:40), device; output overlap at :239
 - S11 aklr/plugins/sglang/models/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim512/7e9c13e0f2d58a3b.json#kernel.py:695 the entry; the launch plan in the docstring (:11–14), the launches at :621–692; `routed_scaling_factor` declared `values=(2.5,)` (aklr/plugins/sglang/models/deepseek_v2/contract.py:158)
-- S12 aklr/core/validation/stages/_audit/_rules.py:57 SA0 (:57), SA1 (:65), SA2 (:87), SA3 (:154, its lists at :136–152), SA4 (:192); SA3's I/O names (:142) are rejected wherever a name reads them, device code included (:167)
-- S13 aklr/core/validation/stages/_audit/_stage.py:134 device decorators `triton.jit` and `triton.experimental.gluon.jit`, recognized only as a def's single decorator (:392); `perf_edited` against the base (:90)
-- S14 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:263 the compile tripwire on `JITFunction._do_compile`, "compiled in the capture" (:502); the first calls, before any capture, use the default inputs and the workload's own scalars (:357–359); inputs rewritten through `.data.copy_` (:481); `capture_error_mode="global"` (:496) and outputs poisoned in the capture (:499, :567–579); read-only inputs byte-compared, `input_mutation` (:527–532); `MAX_FIRST_CALL_BYTES = 16 << 30` (:36), `build_failed` (:207)
+- S12 aklr/core/validation/stages/audit/_rules.py:57 SA0 (:57), SA1 (:65), SA2 (:87), SA3 (:154, its lists at :136–152), SA4 (:192); SA3's I/O names (:142) are rejected wherever a name reads them, device code included (:167)
+- S13 aklr/core/validation/stages/audit/_stage.py:139 device decorators `triton.jit` and `triton.experimental.gluon.jit`, recognized only as a def's single decorator (:401); `perf_edited` against the base (:112)
+- S14 aklr/core/validation/stages/bench/_measure/_op_bench.py:107 `trials`: each trial's check is one eager call of the Candidate through dispatch (:130–131), into output buffers from `torch.empty` (_contract_workload.py:112), unfilled; the only captures are the timing's, in `bench_cudagraph` (:211–219; `torch.cuda.graph`'s default `capture_error_mode="global"`, aklr/core/utils/testing.py:127), whose outputs are not checked; no compile tripwire, no comparison of read-only inputs, no first-call memory limit
 - S15 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads8_kv_dim576_topk2048/fbe6ddab5dac5958.json#kernel.py:95 `_SOFTMAX = gl.constexpr(gl.BlockedLayout(...))` at module level
 - S16 triton-lang/triton@c01b677:python/triton/compiler/code_generator.py:387 the globals a JIT body may read; `NameError` at :411
 - S17 triton-lang/triton@c01b677:python/triton/runtime/jit.py:593 the key `(tuple(specialization), str(options))`, a constexpr entering it as `("constexpr", value)` (:409); caches per device (:738); an in-process miss calls `_do_compile` (:757), which reads the disk cache inside (:877); unknown launch keyword `KeyError` (:715); changed globals `RuntimeError` (:761); `ConstexprFunction.__call__` returns the raw value outside JIT, a constexpr inside (:1153); `Autotuner.run` times every config at a key's first call (python/triton/runtime/autotuner.py:240)
@@ -581,7 +586,7 @@ bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33).
 - S29 aklr/plugins/sglang/models/qwen3_next/api.py:145 prefill returns `OUT_OF_CONTRACT` while capturing; `op.fallback_reason(...)` before the projections (:164); decode "Graph capture too" (:176)
 - S30 aklr/plugins/sglang/models/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_n_v_heads8_key_dim128_value_dim128_conv_dim2048/f44007374038041f.json#gdn_decode_config.py:302 `LAUNCH_ATTRS` built once at import
 - S31 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/0bb2f7cbe49d1be3.json#kernel.py:939 `q.to(torch.bfloat16)` on the fp8 `q` in `run`
-- S32 aklr/core/validation/stages/_bench/_evaluation/_request.py:131 the check steps: first capture and two replays, numeric captures, workload scalars, large magnitude, determinism, post-timing; a scalar takes its default in every input set but the workload's (aklr/core/contract/semantics/_workloads.py:81)
+- S32 aklr/core/validation/stages/bench/_measure/_op_bench.py:93 `measure`: `--num-trials` trials (3), each drawn anew as input set `trial <n>` (_contract_workload.py:80), checked (:107) and, when it passes, timed (:144) before the next trial is drawn; a scalar takes its default in every input set but one named `workload` (aklr/core/contract/semantics/_workloads.py:81), which the bench does not draw
 - S33 aklr/core/runtime/dispatch/_dispatcher.py:51 `FallbackReason`; `not_warmed` for a Point not yet run outside a capture (:162); a hit runs `run` and re-raises its exception after logging the `AKLR_DISABLE` hint (:212)
 - S34 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_fp8_router_experts_shuffled_16x16_model_dim4096_n_routed512_inter_dim256/7d7e54597a7e11bd.json#kernel.py:131 "Padding is rewritten every invocation, including graph replay"
 - S35 aklr/plugins/sglang/models/qwen3_5/impls/triton/gated_attention_decode_group_fp8_quant_qkv_dim4608_n_kv_heads1_head_dim256/f5ba496e04f8e989.json#attention.py:5 live lengths, slots and KV scales read on the GPU; "max_context is capacity, never a live loop bound" (:152); the same schema's kernel.py:19 `@functools.cache` `_unit_scale(device)` returns `torch.ones(1, dtype=torch.float32, device=device)` (:22), passed to both launches (:42, :54–55, :68–69)
@@ -590,10 +595,10 @@ bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33).
 - S38 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/_layouts.py:34 `AMDMFMALayout` version 4 is gfx950
 - S39 aklr/core/validation/command.py:31 `PATH`, `--base`, `--stages`, `--devices`, `--out`; validate asks git for the repository root and `HEAD` (aklr/core/validation/stages/validation_scope.py:40, :43) and takes only paths in it (:55)
 - S40 .github/workflows/ci.yaml:232 the image's Triton read before the baseline aiter is installed with `AITER_USE_SYSTEM_TRITON=1` (:233), and the job fails if it changed (:236); aiter-test's image and the aiter at stack.json:3, :4; aiter's setup.py otherwise replaces the installed Triton (ROCm/aiter@dbd8bf5:setup.py:124, :131–139)
-- S41 aklr/core/validation/stages/_bench/_report.py:40 `_MEASURED_AS`: the correctness codes, `build_failed`, `candidate_crash`, `candidate_timeout`, `not_faster`, `regressed`; a finding located at a workload with one of them is a demotion (:131–139), and a schema with no qualified workload gets `no_qualifying_workload` (:140–153); bench locates every finding of a batch, a failed build included, at each of its workloads (aklr/core/validation/stages/_bench/_stage.py:360–365) and gives a candidate 900 s plus 300 s per workload (:50–51, :300); the run concludes `passed`, exit 0, unless a stage fails or aborts (aklr/core/validation/pipeline.py:155–164)
+- S41 aklr/core/validation/stages/report/_finding.py:56 the accuracy codes (`build_failed`, `task_crashed`, `task_timeout`, `candidate_raised`, `wrong_outputs`, `outputs_mismatch`) and the performance ones (`regressed`, `not_faster`) are demotions (:73); a schema with no admitted workload gets `no_admitted_workload` (aklr/core/validation/stages/bench/_judge/_verdict.py:177–184); a failed build, a crash and a timeout stand for every workload of their task (aklr/core/validation/stages/bench/_measure/_task.py:58–65), which gets 900 s plus 300 s per workload (_schedule.py:27–28, :69); the run concludes `passed`, exit 0, unless a stage fails or aborts (aklr/core/validation/pipeline.py:151–154)
 - S42 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072/0a07f9f9342c6cf1.json#kernel.py:1262 `gl.static_assert(NORM_STRIDE == (8 + HEADS) * 128)` (and `CORE_STRIDE == NORM_STRIDE`, :1261) in `_norm_quant_large`, launched only when `m > 4096` (:1332, :1449) with `NORM_STRIDE=normalized.stride(0)` (:1469); the file's Points are 2049 and 4096 tokens; `normalized` is `[n_tokens, n_v_heads, value_dim]` (aklr/plugins/sglang/models/qwen3_5/contract.py:171)
 - S43 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_max_seq_len10000_n_v_heads16_key_dim128_value_dim128_conv_dim3072/3b99d19659746a36.json#kernel.py:72 `for candidate in gl.static_range(1, BATCH)`; `gl.static_range(1, BATCH)` in 10 more of the 15 Qwen3.5 GDN prefill files, `gl.static_range(BATCH)` in 2 others (aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_max_seq_len8192_n_v_heads16_key_dim128_value_dim128_conv_dim3072/5ead04831eb8048c.json#kernel.py:84); `n_sequences` 1–2047 (aklr/plugins/sglang/models/qwen3_5/contract.py:73)
 - S44 torch==2.12.0+rocm7.14.0a20260608:torch/_torch_docs.py:8242 `torch.nonzero` on a CUDA tensor "causes host-device synchronization", `torch.argwhere` too (:6861); `repeat_interleave`'s `output_size` "will avoid stream synchronization" (:13248); a bool index goes through `nonzero` (torch/_meta_registrations.py:3634); the same notes in the public docs, https://docs.pytorch.org/docs/stable/generated/torch.nonzero.html, torch.argwhere.html, torch.repeat_interleave.html
 - S45 aklr/core/contract/op.py:257 a layout variant may name only the contract's tensor inputs (:215), else "layout ... names unknown tensors" (:258), and "an output is never a 4-bit dtype" (:214); a tensor a variant does not list is `RowMajor` (aklr/core/contract/spec/_layouts.py:33); `per_group_quant_mxfp8@1.0` (aklr/ops/quant/contract.py:55) outputs E4M3FN `quantized` `[n_tokens, hidden_size]` (:38, reused at :68) and uint8 `scales`, "E8M0 exponent bytes at [row, group]" (:70), in its one `row_major` variant (:75); `per_group_quant_fp8@1.0` declares its fp32 scales `[n_groups, n_tokens]` (:46)
 - S46 AMD-AGI/AKLR@0e02a81:aklr/core/utils/testing.py:164 `bench_cudagraph` since #33: as many calls as fit `rep` = 20 ms, each behind `flush_l2_cache()` and inside its own profiler scope (:202–210), the graph replayed 10 times (:212–217), a call's time the sum of its scope's kernel durations over the replays divided by 10 (:222–224), the median over calls returned (:245); AKLR's rocprofiler-sdk collector (`kernel_tracer`, :42) records the durations; `graph_kernel_timing_environment` sets `ROCP_TOOL_ATTACH=1` and unsets `GPU_FORCE_QUEUE_PROFILING` (:25–31)
-- S47 aklr/core/validation/stages/_bench/_report.py:51 `not_faster` and `regressed` are measured as `passed` (:50–52); a workload qualifies its schema when it has no other finding and `beats_baseline` (:119–126), its graph ratio lower bound against the baseline above the entry threshold (:73–82), 1.02 (aklr/core/validation/stages/_measure.py:44–47)
+- S47 aklr/core/validation/stages/bench/_judge/_verdict.py:113 a workload with no accuracy finding is written back `accuracy: passed` with its speedup, `not_faster` and `regressed` included; it admits its schema when it has no accuracy finding and its speedup over its opponent, to 3 decimals, is at least the entry threshold (:109–111; _plan/_opponent.py:48–51), 1.05 (_plan/_threshold.py:32)
