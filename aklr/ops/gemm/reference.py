@@ -60,16 +60,31 @@ def gemm_reference(
     )
 
 
+def _int8_product(a: Tensor, b: Tensor) -> Tensor:
+    """a b^T of int8 values, summed exactly: a float32 sum of 1024 products (each at most 2**14
+    in size) is an exact integer, and so is the int32 sum of those while k < 2**17."""
+    import torch
+
+    k = a.shape[-1]
+    parts = ((a[:, s : s + 1024] @ b[:, s : s + 1024].mT).to(torch.int32) for s in range(0, k, 1024))
+    return sum(parts).float()
+
+
 def gemm_a8w8_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
 ) -> Tensor:
-    """Per-row scales; a squeezed ``(rows,)`` scale reads as ``(rows, 1)``."""
-    a_scale = _decoded(point, row_major_args, "a_scale")
-    b_scale = _decoded(point, row_major_args, "b_scale")
-    a = _decoded(point, row_major_args, "a") * a_scale.reshape(-1, 1)
-    b = _weight(point, row_major_args) * b_scale.reshape(-1, 1)
-    return _out(a @ b.mT, _decoded(point, row_major_args, "bias"))
+    """Per-row scales; a squeezed ``(rows,)`` scale reads as ``(rows, 1)``. int8 operands sum
+    exactly in int32, then take the scales."""
+    a_scale = _decoded(point, row_major_args, "a_scale").reshape(-1, 1)
+    b_scale = _decoded(point, row_major_args, "b_scale").reshape(1, -1)
+    a = _decoded(point, row_major_args, "a")
+    b = _weight(point, row_major_args)
+    if point.dtypes["a"] == "int8":
+        product = _int8_product(a, b) * a_scale * b_scale
+    else:
+        product = (a * a_scale) @ (b * b_scale.mT).mT
+    return _out(product, _decoded(point, row_major_args, "bias"))
 
 
 def gemm_a8w8_blockwise_scaled_reference(

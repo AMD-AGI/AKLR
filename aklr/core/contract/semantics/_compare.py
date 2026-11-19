@@ -94,6 +94,12 @@ def _norm(x: Tensor) -> float:
     return peak * unit.norm().item()
 
 
+def _fraction(mask: Tensor) -> float:
+    """The fraction of ``mask`` set, as the count over the size: a float32 mean misses the
+    exact ratio a threshold compares with."""
+    return int(mask.sum()) / mask.numel() if mask.numel() else 0.0
+
+
 def _byte_rows(tensor: Tensor) -> Tensor:
     import torch
 
@@ -106,7 +112,7 @@ def run_to_run_fraction(a: Tensor, b: Tensor) -> float:
         raise ValueError(f"runs differ in shape or dtype: {a.shape}, {b.shape}")
     if a.numel() == 0:
         return 0.0
-    return (_byte_rows(a) != _byte_rows(b)).any(-1).float().mean().item()
+    return _fraction((_byte_rows(a) != _byte_rows(b)).any(-1))
 
 
 def mutable_tensor_declarations(schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -199,7 +205,7 @@ def _exact_compare(
     differs = actual != rounded
     if id_scores is not None and bool(differs.any()):
         differs = differs & ~_same_score(actual, rounded, id_scores)
-    violation_fraction = differs.float().mean().item() if differs.numel() else 0.0
+    violation_fraction = _fraction(differs)
     a, y = actual.float(), rounded.float()
     errors = torch.where(differs, (a - y).masked_fill(a == y, 1.0), 0.0)
     is_unbiased, bias_z_score = OutputRoundingBound().bias(
@@ -288,7 +294,7 @@ class ElementwiseBound(ErrorBound):
         limit = self.allowed_error(reference_out, out_unit_roundoff, magnitude_out, baseline_out)[is_finite]
         violation_fraction = peak_bound_multiple = 0.0
         if error.numel():
-            violation_fraction = (error.abs() > limit).float().mean().item()
+            violation_fraction = _fraction(error.abs() > limit)
             multiples = (error.abs() / limit).masked_fill(error == 0, 0.0)
             peak_bound_multiple = multiples.max().item()
         is_unbiased, bias_z_score = self.bias(
@@ -436,8 +442,12 @@ class SqnrBound(ErrorBound):
         magnitude_out,
         baseline_out,
     ):
+        import torch
+
         kept = rounded.isfinite() & a.isfinite()  # a non-finite one is a mismatch
-        noise = _norm((a - rounded)[kept])
+        # both over one peak first: the difference of two large values can pass float32's range
+        peak, _ = _scaled(torch.cat((a[kept], rounded[kept])))
+        noise = peak * _norm((a[kept] / peak) - (rounded[kept] / peak))
         allowed = _norm(rounded[kept]) * 10 ** (-self.min_sqnr_db / 20)
         if not noise:
             peak_bound_multiple = 0.0

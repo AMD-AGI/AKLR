@@ -71,6 +71,23 @@ def test_mqa_logits_reference_is_the_same_in_chunks(
     assert torch.equal(case.reference_outputs(args)["logits"], whole)
 
 
+def test_int8_gemm_sums_its_products_exactly() -> None:
+    """An int8 dot of 0 (3 * 5 + 5 * -3) scaled by 0.7 and 0.9 is 0: the int32 sum, then the
+    scales, not a sum of scaled products."""
+    from aklr.ops.gemm.reference import gemm_a8w8_reference
+
+    point = SimpleNamespace(
+        dtypes={"a": "int8", "b": "int8", "a_scale": "float32", "b_scale": "float32"},
+        attrs={"trans_b": True},
+    )
+    a = torch.zeros(1, 128, dtype=torch.int8)
+    b = torch.zeros(1, 128, dtype=torch.int8)
+    a[0, :2] = torch.tensor([3, 5], dtype=torch.int8)
+    b[0, :2] = torch.tensor([5, -3], dtype=torch.int8)
+    args = {"a": a, "b": b, "a_scale": torch.tensor([[0.7]]), "b_scale": torch.tensor([[0.9]])}
+    assert gemm_a8w8_reference(point, args).tolist() == [[0.0]]
+
+
 def test_biased_grouped_topk_ranks_tied_experts_lower_first() -> None:
     """Equal biased scores: the lower expert ranks first, whatever torch.topk's algorithm does."""
     from aklr.ops.topk.reference import biased_grouped_topk_reference

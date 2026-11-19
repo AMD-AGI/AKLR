@@ -178,6 +178,18 @@ class TestErrorBounds:
         result = self._ids_of_scores(2.0, 0, [0, 0])
         assert not result.is_passed
 
+    def test_violations_at_the_allowed_fraction_pass(self) -> None:
+        """2 of 2000 elements past B under ``max_violation_fraction`` 1e-3: exactly the fraction
+        allowed, which a float32 mean would put above it."""
+        y = torch.zeros(2000)
+        actual = y.clone()
+        actual[:2] = 1.0
+        schema = _schema("float32", {"kind": "tolerance", "absolute_tolerance": 0.5, "relative_tolerance": 0})
+        schema["compare"]["max_violation_fraction"] = 1e-3
+        result = semantics.compare_outputs(schema, {"out": actual}, {"out": y})["out"]
+        assert result.violation_fraction == 1e-3
+        assert not result.is_bound_exceeded
+
     @pytest.mark.parametrize(
         "error_bound",
         [
@@ -244,6 +256,14 @@ class TestSqnrBound:
         assert result.is_passed is is_passed
         assert result.violation_fraction == float(not is_passed)
         assert result.bias_z_score == 0.0
+
+    def test_noise_past_float32_keeps_its_sqnr(self) -> None:
+        """4096 values of 2**127, one turned to -2**127: the difference 2**128 is past float32's
+        range, the SQNR about 30 dB."""
+        y = torch.full((4096,), 2.0**127)
+        actual = y.bfloat16()
+        actual[0] = -(2.0**127)
+        assert semantics.compare_outputs(_SQNR_SCHEMA, {"out": actual}, {"out": y})["out"].is_passed
 
     def test_large_values_keep_their_sqnr(self) -> None:
         """Values near 2**100, whose squares are past float32's range: an offset of 2**-10 of
