@@ -211,7 +211,6 @@ def _forward_hc_pre_from_prev_fused_boundary(
         or not linears
         or attn.q_head_norm
         or attn.attn_tp_size != 1
-        or attn.wo_a.weight.dtype != torch.bfloat16
         or any(getattr(linear, "mxfp8_aiter_preshuffled", False) for linear in linears)
         or any(getattr(linear, "weight_scale_mx_e8m0", None) is None for linear in linears)
         or len({layer.input_layernorm.variance_epsilon, attn.q_norm.variance_epsilon, attn.eps}) != 1
@@ -250,6 +249,12 @@ def _forward_hc_pre_from_prev_fused_boundary(
         comb_mix=comb,
         prev_pre_mix=prev_pre,
     )
+
+    if attn.wo_a.weight.dtype != torch.bfloat16:
+        # shortcut: sglang keeps wo_a in fp8 on gfx950 unless a monokernel backend loads the
+        # layer, and the back launch's contract has a bf16 wo_a: only the front is asked for;
+        # ask for the back too once its contract has the MXFP8 wo_a
+        return front or FallbackReason.OUT_OF_CONTRACT
 
     def pages(buffer, page_size):
         # the pool's rows are pages padded to 576 bytes; the op takes each page's slots
