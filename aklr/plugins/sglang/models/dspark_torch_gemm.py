@@ -17,7 +17,7 @@ from aklr.plugins.sglang.hook import sglang_route
 __all__: list[str] = []
 
 
-@sglang_route("sglang.srt.models.dspark.project_through_lm_head", versions=("0.5.22", "0.5.23"))
+@sglang_route("sglang.srt.models.dspark.project_through_lm_head", versions=("0.5.22", "0.5.23", "0.5.23.dev20261111"))
 def _project_through_lm_head(hidden, lm_head):
     import importlib
 

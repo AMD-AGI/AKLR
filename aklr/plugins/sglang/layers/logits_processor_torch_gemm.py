@@ -13,7 +13,7 @@ from aklr.plugins.sglang.hook import sglang_route
 __all__: list[str] = []
 
 
-@sglang_route("sglang.srt.layers.logits_processor.LogitsProcessor._compute_lm_head", versions=("0.5.23",))
+@sglang_route("sglang.srt.layers.logits_processor.LogitsProcessor._compute_lm_head", versions=("0.5.23", "0.5.23.dev20261111"))
 def _compute_lm_head(self, hidden_states, lm_head, embedding_bias=None, *, out=None):
     from sglang.srt.layers.logits_processor import should_apply_lm_head_quant_method
     from sglang.srt.utils.common import use_intel_amx_backend

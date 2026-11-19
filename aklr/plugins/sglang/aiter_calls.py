@@ -27,7 +27,7 @@ from aklr.plugins.sglang.hook import sglang_route
 __all__: list[str] = []
 
 
-@sglang_route("aiter.fused_moe.fused_moe", versions=("0.5.22", "0.5.23"))
+@sglang_route("aiter.fused_moe.fused_moe", versions=("0.5.22", "0.5.23", "0.5.23.dev20261111"))
 def _fused_moe(
     hidden_states,
     w1,
@@ -104,7 +104,7 @@ def _fused_moe(
     )
 
 
-@sglang_route("aiter.tuned_gemm.tgemm.mm", versions=("0.5.22", "0.5.23"))
+@sglang_route("aiter.tuned_gemm.tgemm.mm", versions=("0.5.22", "0.5.23", "0.5.23.dev20261111"))
 def _tgemm_mm(inp, weights, bias=None, otype=None, scale_a=None, scale_b=None, scale_c=None):
     return aklr_aiter.mm(
         inp, weights, bias=bias, otype=otype, scale_a=scale_a, scale_b=scale_b, scale_c=scale_c
