@@ -41,7 +41,7 @@ jobs:
           python3 -c 'import json, os; e = json.load(open(os.path.expanduser("~/.claude/settings.json"))).get("env", {}); print("claude settings keys:", sorted(k for k in e if k.startswith("ANTHROPIC")))'
           gh auth status 2>&1 | grep -c 'Logged in' | sed 's/^/gh logins: /'
           git config --global user.name > /dev/null && echo 'git identity set' || echo 'git identity MISSING'
-          docker info --format 'docker {{.ServerVersion}}' 
+          docker info --format 'docker {{.ServerVersion}}'
           ls /dev/dri | grep -c renderD | sed 's/^/render nodes: /'
           df -h --output=avail,target /var/tmp "$HOME" | sed 's/^/disk: /'
           curl -s -o /dev/null -m 10 -w 'llm endpoint http %{http_code}\n' https://llm-api.amd.com/
