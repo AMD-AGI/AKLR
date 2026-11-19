@@ -38,6 +38,6 @@ on the `aklr-gpu` runner (the `ci:gpu-direct` machine), with that host's own GPU
 - Each PR says `Refs #<issue>`; one comment on the issue shows every campaign, and becomes the final
   report when shepherd closes the issue. An allowed user closing it first stops the request.
 - Allowed users are the logins in the repository variable `SHEPHERD_ALLOWED_USERS` (a JSON list). Events
-  from anyone else start no job.
+  from anyone else, and on issues anyone else wrote, start no job.
 
 Nobody logs in to the runner for any of this.
