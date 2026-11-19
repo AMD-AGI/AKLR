@@ -153,7 +153,7 @@ python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_
 python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/04c178722f7060b8.json
 ```
 
-and the same for the other three paths under `sources`. Each runs the audit and bench stages and writes
+and the same for the other six paths under `sources`. Each runs the audit and bench stages and writes
 `aklr_validation/report.md` with the per-Point speedup (`aklr/ops/README.md` § Commands). Add `--base origin/main`
 only on a branch that edits the file: with the base set, bench measures only schemas that are not at the base, so on
 an unchanged checkout it skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). The

@@ -45,9 +45,10 @@ sources:
 ## Applies when
 
 - **Two files per kernel since #280.** A kernel whose file listed m on both sides of 512 is now in two files with the
-  same `kernel.py`, m ≤ 512 and m ≥ 1024; § Reproduce names both. The numbers on this page were measured on the
-  one-file layout. n4096_k1024's m ≤ 512 Points are a kernel-less definition now: the kernel reached 1.05 at
-  none of them (Counter-signals).
+  same `kernel.py`, m ≤ 512 and m ≥ 1024; `sources` lists both. The numbers on this page were measured on the
+  one-file layout. n4096_k1024's m ≤ 512 Points are a kernel-less definition now: in the measurements main held at
+  the split (a897641f, aiter v0.1.29) the kernel was below 1.05 at each of them, so what this page says of its
+  m 4, 8, 16 path (S4, E15) no longer reproduces with `validate`; the kernel text is in the m ≥ 1024 file.
 - Contract `gemm_a8w8_blockwise_scaled@1.0`, layout variant `b_shuffled` (`operand_format` `none:preshuffled`,
   `a_scale.is_row_major` false): a and b fp8 e4m3fn, b in aiter's 16×16 `shuffle_weight` order, one fp32 a-scale
   per 1×128 of a in the raw column-major payload (`S_a[i, kb] = a_scale_flat[kb·m + i]`), one fp32 b-scale per
@@ -316,7 +317,7 @@ fraction 0). The kernels of the local rows take 5.17–5.61 µs (n16384_k1536), 
 ## Reproduce
 
 On an MI355X, in a checkout of main at 0e02a81, with the three K 1536 and K 384 files added for those, one schema at
-a time:
+a time (there each kernel is one file; the paths below and under `sources` are the files since #280):
 
 ```
 python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024/11443e0f4f7cd0e8.json
