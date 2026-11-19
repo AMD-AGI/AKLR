@@ -20,7 +20,7 @@ linked, not restated (`aklr/ops/README.md` § The kernel section and ABI is the 
   `aklr/plugins/sglang/`), or port one into a schema file, or your op has no contract yet (§3).
 - You choose between plain `tl.*` and Gluon, or are about to add a launch.
 - `python -m aklr validate` reports `schema_invalid` (`not at ...`), `source_rejected` (SA0–SA4), `build_failed`,
-  `candidate_raised` or `no_admitted_workload`, or demotes a Point.
+  `candidate_raised` or `no_qualifying_workload`, or demotes a Point.
 - A kernel works eagerly and fails under graph capture or replay.
 
 Elsewhere: layouts [gluon/layouts.md](gluon/layouts.md), data movement [gluon/memory.md](gluon/memory.md), the matrix
@@ -475,7 +475,7 @@ and 1.04 or more at the others, all served *(field, E17)*. Tune past the dispatc
 Environment variables; `harness/skills/read-validation/references/ruler.md` § Judging; reading a report: its
 `SKILL.md`).
 
-**Demoted Points.** Validate fails only on a file-wide finding or when no Point is admitted (`no_admitted_workload`); a
+**Demoted Points.** Validate fails only on a file-wide finding or when no Point is admitted (`no_qualifying_workload`); a
 Point admits its file when it has no accuracy finding and its speedup over what it was timed against, to 3 decimals,
 reaches the entry threshold (S47). A finding at one Point — `not_faster`, `regressed`, the accuracy codes
 (`outputs_mismatch`, `wrong_outputs`, `candidate_raised`), or its task's `build_failed`, `task_crashed` or
@@ -483,7 +483,7 @@ reaches the entry threshold (S47). A finding at one Point — `not_faster`, `reg
 speedup, not as failed (S47), and such a Point does not admit its file. Under the former bench a `numeric_mismatch`
 planted at one Point of three (1024 tokens) was listed under "demoted:" in `aklr_validation/report.md` (`demotions` in
 `report.json`), and the run printed `validation passed` and exited 0; a one-Point file that computes wrong failed, exit
-1, the cause in the demoted list *(field, E8)*. Today the codes are `outputs_mismatch` and `no_admitted_workload`, and
+1, the cause in the demoted list *(field, E8)*. Today the codes are `outputs_mismatch` and `no_qualifying_workload`, and
 `report.md` lists the demotions under "Demotions". Fix each demoted Point or delete it from `workloads` (the file takes a
 new uuid, §3), then validate again (`docs/ops_tutorial.md` § 3).
 
@@ -513,7 +513,7 @@ bound — on each trial of §8 (`aklr/ops/README.md`
 | `task_timeout` | a hang: a workgroup waiting inside a launch for another (§7), a device loop on a value never written (§6); reported after 900 s plus 300 s per Point of the task (S41), at every Point of it | 6, 7 |
 | `outputs_mismatch` | the math ([numerics.md](numerics.md)), also an arrival-order sum moved past its bound; at a trial after the first, also state kept across calls. Under the former bench, planted math, reduction-order and kept-state errors were reported as `numeric_mismatch` or `post_timing_mismatch` *(field, E8)* | 6, 8 |
 | `not_faster`, `regressed` | the speed ([tuning.md](tuning.md)) | — |
-| `no_admitted_workload` | no Point passed its checks and reached the entry threshold: the demotions give each Point's cause | 11 |
+| `no_qualifying_workload` | no Point passed its checks and reached the entry threshold: the demotions give each Point's cause | 11 |
 | `platform_fault` | the GPU is not in `targets` (a Triton that misses `requires` skips the schema instead); also a Baseline, Incumbent or Reference that raised, or a tracer fault: the stage aborts, exit 3 | 3 |
 
 **A/B a variant** as a copy with the one change, at its own uuid path. Against the committed kernel of its Point,
@@ -595,7 +595,7 @@ bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33).
 - S38 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/_layouts.py:34 `AMDMFMALayout` version 4 is gfx950
 - S39 aklr/core/validation/command.py:31 `PATH`, `--base`, `--stages`, `--devices`, `--out`; validate asks git for the repository root and `HEAD` (aklr/core/validation/stages/validation_scope.py:40, :43) and takes only paths in it (:55)
 - S40 .github/workflows/ci.yaml:232 the image's Triton read before the baseline aiter is installed with `AITER_USE_SYSTEM_TRITON=1` (:233), and the job fails if it changed (:236); aiter-test's image and the aiter at stack.json:3, :4; aiter's setup.py otherwise replaces the installed Triton (ROCm/aiter@dbd8bf5:setup.py:124, :131–139)
-- S41 aklr/core/validation/stages/report/_finding.py:56 the accuracy codes (`build_failed`, `task_crashed`, `task_timeout`, `candidate_raised`, `wrong_outputs`, `outputs_mismatch`) and the performance ones (`regressed`, `not_faster`) are demotions (:73); a schema with no admitted workload gets `no_admitted_workload` (aklr/core/validation/stages/bench/_judge/_verdict.py:177–184); a failed build, a crash and a timeout stand for every workload of their task (aklr/core/validation/stages/bench/_measure/_task.py:58–65), which gets 900 s plus 300 s per workload (_schedule.py:27–28, :69); the run concludes `passed`, exit 0, unless a stage fails or aborts (aklr/core/validation/pipeline.py:151–154)
+- S41 aklr/core/validation/stages/report/_finding.py:56 the accuracy codes (`build_failed`, `task_crashed`, `task_timeout`, `candidate_raised`, `wrong_outputs`, `outputs_mismatch`) and the performance ones (`regressed`, `not_faster`) are demotions (:73); a schema with no admitted workload gets `no_qualifying_workload` (aklr/core/validation/stages/bench/_judge/_verdict.py:177–184); a failed build, a crash and a timeout stand for every workload of their task (aklr/core/validation/stages/bench/_measure/_task.py:58–65), which gets 900 s plus 300 s per workload (_schedule.py:27–28, :69); the run concludes `passed`, exit 0, unless a stage fails or aborts (aklr/core/validation/pipeline.py:151–154)
 - S42 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072/0a07f9f9342c6cf1.json#kernel.py:1262 `gl.static_assert(NORM_STRIDE == (8 + HEADS) * 128)` (and `CORE_STRIDE == NORM_STRIDE`, :1261) in `_norm_quant_large`, launched only when `m > 4096` (:1332, :1449) with `NORM_STRIDE=normalized.stride(0)` (:1469); the file's Points are 2049 and 4096 tokens; `normalized` is `[n_tokens, n_v_heads, value_dim]` (aklr/plugins/sglang/models/qwen3_5/contract.py:171)
 - S43 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_max_seq_len10000_n_v_heads16_key_dim128_value_dim128_conv_dim3072/3b99d19659746a36.json#kernel.py:72 `for candidate in gl.static_range(1, BATCH)`; `gl.static_range(1, BATCH)` in 10 more of the 15 Qwen3.5 GDN prefill files, `gl.static_range(BATCH)` in 2 others (aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_max_seq_len8192_n_v_heads16_key_dim128_value_dim128_conv_dim3072/5ead04831eb8048c.json#kernel.py:84); `n_sequences` 1–2047 (aklr/plugins/sglang/models/qwen3_5/contract.py:73)
 - S44 torch==2.12.0+rocm7.14.0a20260608:torch/_torch_docs.py:8242 `torch.nonzero` on a CUDA tensor "causes host-device synchronization", `torch.argwhere` too (:6861); `repeat_interleave`'s `output_size` "will avoid stream synchronization" (:13248); a bool index goes through `nonzero` (torch/_meta_registrations.py:3634); the same notes in the public docs, https://docs.pytorch.org/docs/stable/generated/torch.nonzero.html, torch.argwhere.html, torch.repeat_interleave.html

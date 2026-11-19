@@ -179,14 +179,14 @@ class SchemaVerdict:
             detail = f"no workload passed accuracy and cleared Entry ({Threshold.ENTRY.bar})"
             deciding.append(
                 Finding(
-                    code=FindingCode.NO_ADMITTED_WORKLOAD, schema_path=plan.path, workload=None, detail=detail
+                    code=FindingCode.NO_QUALIFYING_WORKLOAD, schema_path=plan.path, workload=None, detail=detail
                 )
             )
         is_written = (
             plan.is_timed
             and plan.skipped is None
             and all(j.is_measured for j in judgements)
-            and all(f.code == FindingCode.NO_ADMITTED_WORKLOAD for f in deciding)
+            and all(f.code == FindingCode.NO_QUALIFYING_WORKLOAD for f in deciding)
         )
         kernel_hash = plan.schema.kernel.content_hash
         workloads = {str(WorkloadKey.from_workload(w)): w for w in plan.schema.workloads}

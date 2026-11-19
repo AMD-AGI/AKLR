@@ -61,7 +61,7 @@ class FindingCode(StrEnum):
     OUTPUTS_MISMATCH = "outputs_mismatch", Fault.CANDIDATE, Outcome.ACCURACY_FAILED
     REGRESSED = "regressed", Fault.CANDIDATE, Outcome.PERFORMANCE_FAILED
     NOT_FASTER = "not_faster", Fault.CANDIDATE, Outcome.PERFORMANCE_FAILED
-    NO_ADMITTED_WORKLOAD = "no_admitted_workload", Fault.CANDIDATE, Outcome.NOT_MEASURED
+    NO_QUALIFYING_WORKLOAD = "no_qualifying_workload", Fault.CANDIDATE, Outcome.NOT_MEASURED
     BASELINE_UNBOUND = "baseline_unbound", Fault.SCHEMA, Outcome.NOT_MEASURED
     PLATFORM_FAULT = "platform_fault", Fault.PLATFORM, Outcome.NOT_MEASURED
 

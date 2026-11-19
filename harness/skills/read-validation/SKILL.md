@@ -22,7 +22,7 @@ Read [references/ruler.md](references/ruler.md) (how a Point is timed and judged
    (sglang's plugins) or `validation-report-vllm-test-<attempt>` (vLLM's); the `aiter-test`, `sglang-test` and
    `vllm-test` jobs' `Validate` step logs end with the findings, and `Enforce the overall CI result` only names the job that failed.
 2. **Separate findings from demotions.** The bench stage's `findings` decide it: `failed` on a
-   candidate's or schema's fault (`no_admitted_workload`: no Point is correct and clears Entry;
+   candidate's or schema's fault (`no_qualifying_workload`: no Point is correct and clears Entry;
    `baseline_unbound`: the baseline declines a Point), `aborted` on the platform's
    (`platform_fault`: a Baseline, Incumbent or Reference that raised, a tracer fault, an unreadable
    base file, a GPU not in the kernel's `targets`). `demotions` are Points that failed accuracy

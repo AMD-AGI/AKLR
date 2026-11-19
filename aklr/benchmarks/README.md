@@ -11,7 +11,7 @@ Other workloads may fail correctness or performance without rejecting a kernel
 that qualifies elsewhere. Their findings and individual measurements remain in
 the report and measured schemas; correctness failures are written as
 `accuracy: failed` and cannot qualify for runtime dispatch. A kernel with no
-admitted workload fails with `no_admitted_workload`, including when every
+qualifying workload fails with `no_qualifying_workload`, including when every
 workload is correct but too slow. Candidate build failures, crashes, and timeouts
 also exclude only the affected workloads, even when a whole batch stops.
 Platform failures and invalid evaluations still block the stage.

@@ -18,7 +18,7 @@ flowchart TD
     B -->|"kernel-less schema<br/>（sources = []，uuid 临时）"| D["2. 开发 kernel<br/>填 sources / requires / author"]
     D --> R["2. 重新执行 1. B 脚本<br/>写出带 kernel 的 schema（新 uuid）"]
     R --> V["3. 本地验证<br/>validate --base origin/main --stages audit,bench"]
-    V -->|"no_admitted_workload：失败"| D
+    V -->|"no_qualifying_workload：失败"| D
     V -->|"demoted（性能或正确性不过）：删掉这些 workload"| R
     V -->|"通过：report.md / report.json"| P["4. 开 PR + ci:gpu<br/>CI：code-lint（含 audit）→ aiter-test → sglang-test → vllm-test"]
     P -->|"合入 main"| M["4. main 的 push CI 重新测量<br/>publish-measurement bot 更新 aklr-perf/main PR"]
@@ -104,7 +104,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - 正确性：对每个 workload 用分布采样的输入，参考实现进行比较；
   - 性能：用同样的每组输入，在 CUDA graph 下与基线（或已服务该 Point 的 kernel）对比计时。
 
-**门槛**：base 尚未服务的 kernel 要对比今天正在服务的实现：已服务该 Point 的 kernel（≥ **1.05**，Entry），否则对比基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`；≥ **1.05**，首次发布时 ≥ **0.99**，Retain）；base 已在服务的 kernel 相对基线保持 ≥ **0.99**。运行时服务要求存储的 speedup ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标或计算错误（`outputs_mismatch`、`wrong_outputs`、`candidate_raised`、`build_failed`、`task_crashed`、`task_timeout`，写成 `accuracy: failed`）的 Point 只记进 report 的 demotions，不会让 validate 失败，两类都要处理。只有没有一个 workload 既正确、发布的 speedup 又 ≥ 1.05 时，schema 才报 `no_admitted_workload`。
+**门槛**：base 尚未服务的 kernel 要对比今天正在服务的实现：已服务该 Point 的 kernel（≥ **1.05**，Entry），否则对比基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`；≥ **1.05**，首次发布时 ≥ **0.99**，Retain）；base 已在服务的 kernel 相对基线保持 ≥ **0.99**。运行时服务要求存储的 speedup ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标或计算错误（`outputs_mismatch`、`wrong_outputs`、`candidate_raised`、`build_failed`、`task_crashed`、`task_timeout`，写成 `accuracy: failed`）的 Point 只记进 report 的 demotions，不会让 validate 失败，两类都要处理。只有没有一个 workload 既正确、发布的 speedup 又 ≥ 1.05 时，schema 才报 `no_qualifying_workload`。
 
 ## 4. PR 与 CI
 

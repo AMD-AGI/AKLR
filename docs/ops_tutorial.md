@@ -18,7 +18,7 @@ flowchart TD
     B -->|"kernel-less schema<br/>(sources = [], temporary uuid)"| D["2. Develop the kernel<br/>fill in sources / requires / author"]
     D --> R["2. Rerun the 1. B script<br/>write the schema with the kernel (new uuid)"]
     R --> V["3. Local validation<br/>validate --base origin/main --stages audit,bench"]
-    V -->|"no_admitted_workload: fail"| D
+    V -->|"no_qualifying_workload: fail"| D
     V -->|"demoted (performance or correctness fails): delete those workloads"| R
     V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → aiter-test → sglang-test → vllm-test"]
     P -->|"merged into main"| M["4. main's push CI remeasures<br/>publish-measurement bot updates the aklr-perf/main PR"]
@@ -104,7 +104,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - Correctness: for each workload, compares against the reference implementation on inputs sampled from the declared distributions;
   - Performance: times each of those input sets against the baseline, or the kernel already serving the Point, under CUDA graph.
 
-**Thresholds**: a kernel the base does not serve is timed against what serves today: the kernel already serving a Point (≥ **1.05**, Entry), else the baseline (`<contract>_baseline` in `aklr/ops/<op>/baseline.py`; ≥ **1.05**, or ≥ **0.99**, Retain, on a first release); a kernel the base already serves keeps its Points at ≥ **0.99** over the baseline. Runtime serving requires a stored speedup ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses its bar, or computes wrong (`outputs_mismatch`, `wrong_outputs`, `candidate_raised`, `build_failed`, `task_crashed`, `task_timeout`, written as `accuracy: failed`), is only recorded in the report's demotions and does not fail validate; both kinds need handling. Only when no workload is correct with a published speedup ≥ 1.05 does the schema report `no_admitted_workload`.
+**Thresholds**: a kernel the base does not serve is timed against what serves today: the kernel already serving a Point (≥ **1.05**, Entry), else the baseline (`<contract>_baseline` in `aklr/ops/<op>/baseline.py`; ≥ **1.05**, or ≥ **0.99**, Retain, on a first release); a kernel the base already serves keeps its Points at ≥ **0.99** over the baseline. Runtime serving requires a stored speedup ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses its bar, or computes wrong (`outputs_mismatch`, `wrong_outputs`, `candidate_raised`, `build_failed`, `task_crashed`, `task_timeout`, written as `accuracy: failed`), is only recorded in the report's demotions and does not fail validate; both kinds need handling. Only when no workload is correct with a published speedup ≥ 1.05 does the schema report `no_qualifying_workload`.
 
 ## 4. PR and CI
 

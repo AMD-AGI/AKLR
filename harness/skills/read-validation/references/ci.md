@@ -18,7 +18,7 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 ## Where the result is
 
 - The test jobs' `Run unit tests ... and validation on a GPU node` steps, whose log ends with the validation (`aiter-test`: `aklr/ops`; `sglang-test` and `vllm-test`: their plugins, then `aklr/ops` untimed): a line per batch (schema, Points, speedup range, accuracy),
-  then the stage's findings, e.g. `no_admitted_workload <schema>: no workload passed accuracy and cleared Entry (1.05)`,
+  then the stage's findings, e.g. `no_qualifying_workload <schema>: no workload passed accuracy and cleared Entry (1.05)`,
   and its count of demotions. A finding names the schema; a demotion's Point is in the report.
 - The run's artifacts `validation-report-<job>-<attempt>` for each of the three jobs, and
   `validation-check-sglang-test-<attempt>` and `validation-check-vllm-test-<attempt>` (`aklr/ops` built and checked

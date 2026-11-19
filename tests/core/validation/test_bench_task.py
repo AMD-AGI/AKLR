@@ -153,7 +153,7 @@ def test_an_inaccurate_kernel_is_demoted_untimed(repo: _Repo, source: str, code:
     assert (record["verdict"], record["is_demoted"], record["comparison"]) == (code, True, None)
     assert record["workload"] == {"axes": {"m": 4}}
     assert [f["workload"] for f in bench["demotions"]] == [{"axes": {"m": 4}}]
-    assert [f["code"] for f in bench["findings"]] == ["no_admitted_workload"]
+    assert [f["code"] for f in bench["findings"]] == ["no_qualifying_workload"]
     assert bench["evaluations"][path]["m=4"] == {"axes": {"m": 4}, "accuracy": "failed"}
 
 

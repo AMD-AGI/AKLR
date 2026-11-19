@@ -13,7 +13,7 @@
 
 - CI 会测量每个 workload，把相对 baseline 的加速比写进 kernel 文件。
 - 一个 kernel 文件至少有一个 workload 结果正确、且快 5% 或以上，才能合入。否则 validation 报
-  `no_admitted_workload`，不通过。
+  `no_qualifying_workload`，不通过。
 - 运行时，AKLR 只在快 5% 或以上的 workload 上使用这个 kernel，其他 workload 运行原来的代码。
 - baseline 写在算子的 `baseline.py` 里。`aklr/ops/` 下的算子，baseline 通常是 AITER 的算子；插件算子的 baseline 是
   SGLang 或 vLLM 原来的代码。

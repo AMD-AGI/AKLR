@@ -392,7 +392,7 @@ class TestVerdict:
         evaluation = _written(report)["m=1"]
         assert (evaluation.accuracy, evaluation.speedup) == ("passed", ratio)
 
-    @pytest.mark.parametrize(("speedup", "codes"), [(1.049, ["no_admitted_workload"]), (1.05, [])])
+    @pytest.mark.parametrize(("speedup", "codes"), [(1.049, ["no_qualifying_workload"]), (1.05, [])])
     def test_a_workload_admits_at_a_published_speedup_of_five_percent(
         self, repo: _Repo, speedup: float, codes: list[str]
     ) -> None:
@@ -403,7 +403,7 @@ class TestVerdict:
     def test_passing_retain_without_clearing_entry_admits_nothing(self, repo: _Repo) -> None:
         report = repo.run(_Tasks({1: _timed(1.0)}), None, repo.write(_schema(), "2"))
         assert report.demotions == ()
-        assert _codes(report.findings) == ["no_admitted_workload"]
+        assert _codes(report.findings) == ["no_qualifying_workload"]
         assert report.evaluations != {}  # its Demotions are still written back
 
     @pytest.mark.usefixtures("no_baseline")

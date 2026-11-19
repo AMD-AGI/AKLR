@@ -122,7 +122,7 @@ for index, workload in enumerate(candidate["workloads"]):
     records.append({{"workload": key, "verdict": verdict, "versus": "baseline", "versus_name": "aiter",
                     "comparison": comparison}})
 if demotions and not aborted:
-    findings.append({{"code": "no_admitted_workload", "workload": None, "detail": "no workload passes"}})
+    findings.append({{"code": "no_qualifying_workload", "workload": None, "detail": "no workload passes"}})
 out.mkdir(parents=True, exist_ok=True)
 report = {{"stages": [{{"stage_name": "audit", "findings": []}},
                       {{"stage_name": "bench", "findings": findings, "demotions": demotions,
