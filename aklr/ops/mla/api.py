@@ -9,9 +9,16 @@ from aklr.ops.mla.contract import (
     FP8_PAGED_MQA_LOGITS,
     FP8_PAGED_MQA_LOGITS_VERIFY,
     MLA_DECODE_FWD,
+    MLA_DECODE_FWD_CPRR,
 )
 
-__all__ = ["flash_mla_with_kvcache", "fp8_paged_mqa_logits", "fp8_paged_mqa_logits_verify", "mla_decode_fwd"]
+__all__ = [
+    "flash_mla_with_kvcache",
+    "fp8_paged_mqa_logits",
+    "fp8_paged_mqa_logits_verify",
+    "mla_decode_fwd",
+    "mla_decode_fwd_cprr",
+]
 
 
 @api(FLASH_MLA_WITH_KVCACHE)
@@ -75,6 +82,23 @@ def mla_decode_fwd(
     q_scale,
     kv_scale,
     sm_scale=None,
+    o=None,
+    lse=None,
+): ...
+
+
+@api(MLA_DECODE_FWD_CPRR)
+def mla_decode_fwd_cprr(
+    q,
+    kv_buffer,
+    kv_indptr,
+    kv_indices,
+    g_kv_indptr,
+    q_scale,
+    kv_scale,
+    cp_world_size=None,
+    sm_scale=None,
+    cp_rank=0,
     o=None,
     lse=None,
 ): ...

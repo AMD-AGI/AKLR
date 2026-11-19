@@ -20,9 +20,8 @@ SDK = "/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel"
 
 
 class EnvironmentCase:
-    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch, gpus_idle: mock.Mock) -> None:
+    def __init__(self, root: Path, gpus_idle: mock.Mock) -> None:
         self.root = root
-        self.monkeypatch = monkeypatch
         self.gpus_idle = gpus_idle
         self.inspection_path = self.root / "execution.json"
         self.defaults = {
@@ -106,11 +105,8 @@ class EnvironmentCase:
         }
 
     def use_environ(self, environ=None):
-        """Make the process environment exactly ``environ`` until the test ends."""
-        for name in list(os.environ):
-            self.monkeypatch.delenv(name)
-        for name, value in (self.environ if environ is None else environ).items():
-            self.monkeypatch.setenv(name, value)
+        """The process environment as exactly ``environ``, for the ``with`` block only."""
+        return mock.patch.dict(os.environ, self.environ if environ is None else environ, clear=True)
 
     def write_inspection(self, inspection=None):
         self.inspection_path.write_text(json.dumps(self.inspection if inspection is None else inspection))
@@ -126,8 +122,7 @@ class EnvironmentCase:
             "devices": [{"name": "Fixture", "arch": "gfx950", "total_memory": 1024}],
             "peer_access": [[True]],
         }
-        self.use_environ()
-        with pytest.MonkeyPatch.context() as patch:
+        with self.use_environ(), pytest.MonkeyPatch.context() as patch:
             patches = {
                 "aklr_sha": "2" * 40,
                 "source_dirty": False,
@@ -162,7 +157,7 @@ class EnvironmentCase:
 def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     gpus_idle = mock.Mock(return_value=0.0)
     monkeypatch.setattr(runtime, "wait_gpus_idle", gpus_idle)
-    return EnvironmentCase(tmp_path, monkeypatch, gpus_idle)
+    return EnvironmentCase(tmp_path, gpus_idle)
 
 
 @pytest.mark.parametrize("failed_mode", [0, 1], ids=["disabled", "enabled"])
@@ -283,9 +278,8 @@ def test_client_cleanup_failure_is_distinct_from_a_measurement_failure():
 
 def test_verified_defaults_are_read_once_and_not_taken_from_ambient_values(case):
     case.write_inspection()
-    case.use_environ()
     reader = mock.Mock(wraps=runtime.read_json)
-    with pytest.MonkeyPatch.context() as patch:
+    with case.use_environ(), pytest.MonkeyPatch.context() as patch:
         patch.setattr(runtime, "read_json", reader)
         identity, defaults = runtime.execution_identity(case.serving)
         reader.assert_called_once_with(str(case.inspection_path))
@@ -305,9 +299,8 @@ def test_server_overrides_and_client_environment_stay_separate(case):
     out = case.root / "point"
     out.mkdir()
     (out / "tp1-c1.json").write_text(json.dumps(case.aggregate))
-    case.use_environ()
     server, client = mock.Mock(), mock.Mock(return_value=0)
-    with pytest.MonkeyPatch.context() as patch:
+    with case.use_environ(), pytest.MonkeyPatch.context() as patch:
         patch.setattr(runtime, "port_free", mock.Mock(return_value=True))
         patch.setattr(runtime.subprocess, "Popen", server)
         patch.setattr(runtime, "wait_ready", mock.Mock())
@@ -332,9 +325,8 @@ def test_server_overrides_and_client_environment_stay_separate(case):
 
 
 def test_trace_preparation_and_package_inspection_keep_original_environment(case):
-    case.use_environ()
     prepare, packages = mock.Mock(return_value=0), mock.Mock(return_value="{}")
-    with pytest.MonkeyPatch.context() as patch:
+    with case.use_environ(), pytest.MonkeyPatch.context() as patch:
         patch.setattr(runtime, "run_client", prepare)
         patch.setattr(runtime.subprocess, "check_output", packages)
         patch.setattr(runtime, "verify_trace_loaders", mock.Mock())
@@ -375,8 +367,7 @@ def test_trace_loaders_must_replay_the_recorded_trace_dataset(case, loader, mess
 def test_exact_model_ref_keeps_pinned_offline_tokenizer(case):
     revision = case.serving["weights"]["revision"].encode()
     hub, model_dir, snapshot, main, args = case.prepare_model_hub(revision)
-    case.use_environ({"HF_HUB_CACHE": str(hub)})
-    with pytest.MonkeyPatch.context() as patch:
+    with case.use_environ({"HF_HUB_CACHE": str(hub)}), pytest.MonkeyPatch.context() as patch:
         patch.setattr(runtime, "fetch_inferencex", mock.Mock(return_value=case.root / "inferencex"))
         host = runtime.host_settings(args, case.serving)
     assert main.stat().st_size == 40
@@ -388,9 +379,9 @@ def test_exact_model_ref_keeps_pinned_offline_tokenizer(case):
 
 def test_model_ref_trailing_newline_is_rejected_before_client_setup(case):
     hub, _, _, main, args = case.prepare_model_hub(case.serving["weights"]["revision"].encode() + b"\n")
-    case.use_environ({"HF_HUB_CACHE": str(hub)})
     fetch = mock.Mock()
     with (
+        case.use_environ({"HF_HUB_CACHE": str(hub)}),
         pytest.MonkeyPatch.context() as patch,
         pytest.raises(RuntimeError, match="must contain exactly the pinned revision"),
     ):
@@ -449,8 +440,8 @@ def test_mismatched_image_is_rejected_before_environment_and_gpu_use(case):
 )
 def test_empty_environment_and_values_with_equals(case, entries, expected):
     case.write_inspection({**case.inspection, "Config": {"Env": entries}})
-    case.use_environ()
-    _, defaults = runtime.execution_identity(case.serving)
+    with case.use_environ():
+        _, defaults = runtime.execution_identity(case.serving)
     assert defaults == expected
 
 
@@ -467,8 +458,8 @@ def test_evidence_redacts_image_credentials_and_excludes_live_credentials(case):
     }
     case.inspection["Config"]["Env"].extend(f"{key}={value}" for key, value in image_credentials.items())
     case.write_inspection()
-    case.use_environ()
-    identity, defaults = runtime.execution_identity(case.serving)
+    with case.use_environ():
+        identity, defaults = runtime.execution_identity(case.serving)
     for key, value in image_credentials.items():
         assert defaults[key] == value
         assert identity["server_environment"]["defaults"][key] == "<redacted>"
