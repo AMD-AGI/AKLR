@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k16384",
+  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k3072",
   "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
   "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
   "op_type": "gemm",
@@ -16,7 +16,7 @@
     },
     "k": {
       "type": "const",
-      "value": 16384,
+      "value": 3072,
       "description": "Reduction length."
     },
     "scale_rows": {
@@ -26,7 +26,7 @@
     },
     "scale_columns": {
       "type": "const",
-      "value": 128,
+      "value": 24,
       "description": "Scale columns."
     }
   },
@@ -98,7 +98,32 @@
   "workloads": [
     {
       "axes": {
-        "m": 256
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 32
       }
     }
   ],

@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n6144_k7168",
+  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k4096",
   "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
   "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
   "op_type": "gemm",
@@ -11,22 +11,22 @@
     },
     "n": {
       "type": "const",
-      "value": 6144,
+      "value": 7168,
       "description": "Output columns."
     },
     "k": {
       "type": "const",
-      "value": 7168,
+      "value": 4096,
       "description": "Reduction length."
     },
     "scale_rows": {
       "type": "const",
-      "value": 48,
+      "value": 56,
       "description": "Weight-scale rows."
     },
     "scale_columns": {
       "type": "const",
-      "value": 56,
+      "value": 32,
       "description": "Scale columns."
     }
   },
@@ -108,87 +108,12 @@
     },
     {
       "axes": {
-        "m": 3
-      }
-    },
-    {
-      "axes": {
         "m": 4
       }
     },
     {
       "axes": {
-        "m": 5
-      }
-    },
-    {
-      "axes": {
-        "m": 6
-      }
-    },
-    {
-      "axes": {
-        "m": 7
-      }
-    },
-    {
-      "axes": {
-        "m": 8
-      }
-    },
-    {
-      "axes": {
-        "m": 9
-      }
-    },
-    {
-      "axes": {
-        "m": 10
-      }
-    },
-    {
-      "axes": {
-        "m": 11
-      }
-    },
-    {
-      "axes": {
-        "m": 12
-      }
-    },
-    {
-      "axes": {
-        "m": 13
-      }
-    },
-    {
-      "axes": {
-        "m": 14
-      }
-    },
-    {
-      "axes": {
-        "m": 15
-      }
-    },
-    {
-      "axes": {
         "m": 16
-      }
-    },
-    {
-      "axes": {
-        "m": 20
-      }
-    },
-    {
-      "axes": {
-        "m": 24
-      }
-    },
-    {
-      "axes": {
-        "m": 28
       }
     },
     {
