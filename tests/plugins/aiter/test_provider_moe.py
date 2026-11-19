@@ -481,14 +481,14 @@ def aiter_plugin():
 
 @pytest.fixture
 def aiter_routes(monkeypatch, aiter_plugin, stand_in_aiter):
-    """aiter's plugin interface routing both ops to a native of aiter's signature, which, for the fused MoE,
-    consumes the registered sort as aiter's does; AKLR enabled. Yields the routed ops and the ops aiter
-    computed."""
+    """aiter's plugin interface with AKLR enabled. An op aiter routes itself keeps aiter's route and contract,
+    asked with explain() and never run (aiter's would build its kernels); each other is routed to a native of
+    this file's contract, which, for the fused MoE, consumes the registered sort as aiter's does. Yields
+    aiter's own routed ops, the test's routes and the ops their natives computed."""
     plugin = aiter_plugin
     stand_in_aiter.package.plugin = plugin
     plugin._reset_for_testing()
-    if set(AITER_CONTRACTS) & set(plugin._routed_ops):
-        pytest.skip("this aiter routes the ops itself")
+    installed = {op: plugin._routed_ops[op] for op in AITER_CONTRACTS if op in plugin._routed_ops}
     ran = []
 
     def native(op):
@@ -500,12 +500,24 @@ def aiter_routes(monkeypatch, aiter_plugin, stand_in_aiter):
     routed = {
         op: plugin.route(op=op, version=version)(_native(op, native))
         for op, (version, _) in AITER_CONTRACTS.items()
+        if op not in installed
     }
     monkeypatch.setattr(plugin, "_entry_points", lambda: (_EntryPoint("aklr", provider.provider),))
     monkeypatch.setattr(provider, "ready", lambda: True)
     provider.enable("test")
-    yield SimpleNamespace(plugin=plugin, routed=routed, ran=ran)
+    yield SimpleNamespace(plugin=plugin, installed=installed, routed=routed, ran=ran)
     plugin._reset_for_testing()
+
+
+def test_this_files_contracts_are_those_of_the_aiter_routing_them(aiter_routes):
+    """The positional parameters and version of each op aiter routes itself are this file's, and so the
+    provider's: aiter hands run the call by them."""
+    for op, routed_op in aiter_routes.installed.items():
+        version, names = AITER_CONTRACTS[op]
+        positional = tuple(
+            p.name for p in routed_op.contract.parameters.values() if p.kind is p.POSITIONAL_OR_KEYWORD
+        )
+        assert (routed_op.op.version, positional) == (version, names), op
 
 
 def test_aiter_routes_the_calls_aklr_serves_to_aklr(monkeypatch, aiter_routes, stand_in_aiter):
@@ -517,21 +529,37 @@ def test_aiter_routes_the_calls_aklr_serves_to_aklr(monkeypatch, aiter_routes, s
     plugin, routed = aiter_routes.plugin, aiter_routes.routed
     stand_in_aiter.register({"M": 4})
 
-    decision = plugin.explain("fused_moe", *_args("fused_moe")).decision
-    assert (decision.route, decision.provider, decision.kernel_id) == ("provider", "aklr", KERNEL.kernel_ref)
+    for op in AITER_CONTRACTS:
+        decision = plugin.explain(op, *_args(op)).decision
+        assert (decision.route, decision.provider, decision.kernel_id) == (
+            "provider",
+            "aklr",
+            KERNEL.kernel_ref,
+        )
     assert stand_in_aiter.registered() == {"M": 4}  # explain runs nothing
 
-    call = dict(zip(AITER_CONTRACTS["fused_moe"][1], _args("fused_moe")))
-    assert routed["fused_moe"](**call) == "y"
-    assert routed["biased_grouped_topk"](*_args("biased_grouped_topk")[:7]) is None
-    assert calls == ["fused_moe", "biased_grouped_topk"] and aiter_routes.ran == []
-    assert stand_in_aiter.registered() is None
+    if "fused_moe" in routed:
+        call = dict(zip(AITER_CONTRACTS["fused_moe"][1], _args("fused_moe")))
+        assert routed["fused_moe"](**call) == "y"
+        assert stand_in_aiter.registered() is None
+    if "biased_grouped_topk" in routed:
+        assert routed["biased_grouped_topk"](*_args("biased_grouped_topk")[:7]) is None
+    assert calls == [op for op in AITER_CONTRACTS if op in routed] and aiter_routes.ran == []
 
 
 def test_aiter_computes_the_calls_aklr_declines(monkeypatch, aiter_routes, stand_in_aiter):
     monkeypatch.setattr(moe, "fused_moe", _api(lambda *a, **k: pytest.fail("AKLR ran a declined call")))
+    plugin, routed = aiter_routes.plugin, aiter_routes.routed
+    declined = {
+        "fused_moe": _args("fused_moe", deterministic=True),
+        "biased_grouped_topk": _args("biased_grouped_topk", num_valid_rows=torch.ones(1)),
+    }
+    for op, args in declined.items():
+        assert plugin.explain(op, *args).decision.route == "native"
     stand_in_aiter.register({"M": 4})
-    assert aiter_routes.routed["fused_moe"](*_args("fused_moe", deterministic=True)) == "aiter"
-    aiter_routes.routed["biased_grouped_topk"](*_args("biased_grouped_topk", num_valid_rows=torch.ones(1)))
-    assert aiter_routes.ran == ["fused_moe", "biased_grouped_topk"]
-    assert stand_in_aiter.registered() is None
+    if "fused_moe" in routed:
+        assert routed["fused_moe"](*declined["fused_moe"]) == "aiter"
+        assert stand_in_aiter.registered() is None
+    if "biased_grouped_topk" in routed:
+        routed["biased_grouped_topk"](*declined["biased_grouped_topk"])
+    assert aiter_routes.ran == [op for op in declined if op in routed]
