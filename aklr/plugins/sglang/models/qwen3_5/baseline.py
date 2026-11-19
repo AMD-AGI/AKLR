@@ -352,12 +352,12 @@ def _verify_core(
     scale,
     draft_tokens,
 ):
-    """SGLang 0.5.22's ROCm chain verify up to its gated norm: unpack, the indexed conv update
+    """SGLang 0.5.23's ROCm chain verify up to its gated norm: unpack, the indexed conv update
     writing the deduplicated window through its overlapping view, and the recurrence writing
     each draft token's state (gdn_backend.forward_extend, TritonGDNKernel.target_verify), without
     the index comparison select_verify_intermediate_state_indices launches for nothing. Returns
     the core and Z."""
-    from sglang.kernels.ops.attention.fla.fused_sigmoid_gating_recurrent import (
+    from sglang.kernels.ops.attention.linear.fused_sigmoid_gating_recurrent import (
         fused_sigmoid_gating_delta_rule_update,
     )
     from sglang.kernels.ops.attention.triton_gdn_fused_proj import (
