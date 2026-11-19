@@ -320,6 +320,39 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         },
         layout_variant_name="padded_pages",
     ),
+    # the same sparse MLA over vLLM's pools: 32-slot window pages, each a block's row apart
+    PointSpec(
+        contract_id="deepseekv41_sparse_mla@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_heads": 32,
+            "n_pages": 2,
+            "page_size": 32,
+            "n_indices": 64,
+            "n_extra_pages": 2,
+            "extra_page_size": 64,
+            "n_extra_indices": 64,
+            "n_positions": 16,
+        },
+        dtypes={
+            "q": "bfloat16",
+            "kv_cache": "uint8",
+            "indices": "int32",
+            "sinks": "float32",
+            "extra_kv_cache": "uint8",
+            "extra_indices": "int32",
+            "rope_freqs": "float32",
+            "positions": "int64",
+            "output": "bfloat16",
+        },
+        attrs={
+            "has_extra_kv_cache": True,
+            "has_extra_indices": True,
+            "has_rope_freqs": True,
+            "has_positions": True,
+        },
+        layout_variant_name="strided_pages",
+    ),
     # a DeepSeek-V4.1 MXFP8 linear shrunk: a bf16 input sglang quantizes, then one it holds quantized
     PointSpec(
         contract_id="deepseekv41_mxfp8_linear@1.0",

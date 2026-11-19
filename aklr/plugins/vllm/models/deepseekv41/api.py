@@ -22,7 +22,7 @@ from aklr.plugins.vllm.hook import vllm_route
 
 __all__: list[str] = []
 
-# The InferenceX cookbook's nightly (4fab5a07) reports this release
+# The InferenceX cookbook's nightly (4fab5a07) reports 0.33.0rc1.dev910
 _VLLM = ("0.33.0rc1.dev910", "0.34.0")
 # An fp8_ds_mla record: 576 data bytes, 8 scale bytes
 _RECORD = 584
@@ -61,12 +61,14 @@ def _aiter_sparse_mla(
         return FallbackReason.OUT_OF_CONTRACT
 
     def pool(cache, page_size):
-        # a block's records (payloads, then scale words) lie in a row vLLM pads to 576 bytes
-        if cache.element_size() != 1 or cache.stride(0) < page_size * _RECORD:
+        # a page of 584-byte records in each block's row, which the layer's other caches share
+        if (
+            cache.dtype != torch.uint8
+            or cache.shape[1:] != (page_size, _RECORD)
+            or cache.stride()[1:] != (_RECORD, 1)
+        ):
             return None
-        return cache.view(torch.uint8).as_strided(
-            (cache.shape[0], page_size, 1, _RECORD), (cache.stride(0), _RECORD, _RECORD, 1)
-        )
+        return cache.unsqueeze(2)
 
     pools = {"kv_cache": pool(swa_k_cache, swa.block_size)}
     arguments = {
@@ -84,15 +86,11 @@ def _aiter_sparse_mla(
         arguments["positions"] = positions
     if any(cache is None for cache in pools.values()):
         return FallbackReason.OUT_OF_CONTRACT
-    padded = {cache.stride(0) != cache.shape[1] * _RECORD for cache in pools.values()}
-    if len(padded) != 1:
-        return FallbackReason.OUT_OF_CONTRACT
-    layout = "padded_pages" if padded.pop() else "row_major"
     # shortcut: the op is asked for, which records the call, and the attention is left to
     # vLLM, whose kernel stores the rows as MXFP8 on gfx950 (the op's are bf16) and reads
     # ragged indices and a cos-then-sin RoPE table (they stand in by shape here); run the op
     # with both converted and vLLM's quantization after it once a kernel serves it
-    reason = deepseekv41_sparse_mla.fallback_reason(**arguments, **pools, kv_cache_layout=layout)
+    reason = deepseekv41_sparse_mla.fallback_reason(**arguments, **pools, kv_cache_layout="strided_pages")
     return reason or FallbackReason.OUT_OF_CONTRACT
 
 
@@ -134,8 +132,14 @@ def _mono_decode(
         return FallbackReason.OUT_OF_CONTRACT
     owed = {}
     if residual is None:
-        # the embedding, or a pipeline stage's streams: nothing owed, stream 0 the input
-        residual = x if x.dim() == 3 else x.unsqueeze(1).expand(-1, layer.hc_mult, -1)
+        # the embedding in every stream (stream 0 the input), or a pipeline stage's streams
+        # under the pre-mix carried in: no post is owed
+        if x.dim() == 3:
+            residual = x
+            if pre_mix is not None:
+                owed["prev_pre_mix"] = pre_mix.reshape(tokens, -1)
+        else:
+            residual = x.unsqueeze(1).expand(-1, layer.hc_mult, -1).contiguous()
     else:
         owed["prev_pre_mix"] = pre_mix.reshape(tokens, -1)
         if layer.engram is None or engram_hashes is None:
