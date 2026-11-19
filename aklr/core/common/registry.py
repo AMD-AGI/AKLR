@@ -10,12 +10,6 @@ T = TypeVar("T")
 
 
 class ClassRegistry(Generic[T]):
-    """Named implementation classes; construction and lifetime belong to the caller.
-
-    ``T`` can also be a structural Protocol: registration does not require nominal
-    inheritance. Each registry instance provides an independent namespace.
-    """
-
     def __init__(self, namespace: str) -> None:
         self._namespace = namespace
         self._classes: dict[str, type[T]] = {}
@@ -42,13 +36,6 @@ class ClassRegistry(Generic[T]):
 
 
 class Registrable:
-    """Each direct subclass owns a registry shared by its descendants.
-
-    Declare implementations with ``class Concrete(Interface, name="choice")``.
-    Descendants without an explicit name do not register or overwrite their parent.
-    Registration happens when the defining module is imported; no modules are discovered.
-    """
-
     _registry: ClassVar[ClassRegistry[Any]]
 
     def __init_subclass__(cls, *, name: str | None = None, **kwargs: Any) -> None:
