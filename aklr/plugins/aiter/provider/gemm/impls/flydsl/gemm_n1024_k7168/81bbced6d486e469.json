@@ -80,7 +80,7 @@
         "m": 1024
       },
       "accuracy": "passed",
-      "speedup": 1.107,
+      "speedup": 1.114,
       "microseconds": 24.9
     }
   ],

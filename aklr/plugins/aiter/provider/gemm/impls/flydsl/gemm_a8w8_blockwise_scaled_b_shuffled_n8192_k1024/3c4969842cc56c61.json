@@ -99,74 +99,47 @@
     {
       "axes": {
         "m": 1
-      },
-      "accuracy": "passed",
-      "speedup": 1.579,
-      "microseconds": 4.65
+      }
     },
     {
       "axes": {
         "m": 2
-      },
-      "accuracy": "passed",
-      "speedup": 1.57,
-      "microseconds": 4.68
+      }
     },
     {
       "axes": {
         "m": 4
-      },
-      "accuracy": "passed",
-      "speedup": 1.572,
-      "microseconds": 4.68
+      }
     },
     {
       "axes": {
         "m": 8
-      },
-      "accuracy": "passed",
-      "speedup": 1.558,
-      "microseconds": 4.71
+      }
     },
     {
       "axes": {
         "m": 16
-      },
-      "accuracy": "passed",
-      "speedup": 1.544,
-      "microseconds": 4.78
+      }
     },
     {
       "axes": {
         "m": 32
-      },
-      "accuracy": "passed",
-      "speedup": 1.473,
-      "microseconds": 5.03
+      }
     },
     {
       "axes": {
         "m": 64
-      },
-      "accuracy": "passed",
-      "speedup": 1.406,
-      "microseconds": 5.15
+      }
     },
     {
       "axes": {
         "m": 128
-      },
-      "accuracy": "passed",
-      "speedup": 1.385,
-      "microseconds": 5.43
+      }
     },
     {
       "axes": {
         "m": 256
-      },
-      "accuracy": "passed",
-      "speedup": 1.411,
-      "microseconds": 6.17
+      }
     },
     {
       "axes": {
@@ -180,10 +153,7 @@
         "layouts": {
           "b": {
             "kind": "preshuffle",
-            "tile": [
-              16,
-              16
-            ]
+            "tile": [16, 16]
           },
           "a_scale": {
             "kind": "column_major"

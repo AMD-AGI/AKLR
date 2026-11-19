@@ -44,9 +44,11 @@ are in that file. "m" is the Point's M.
 
 ## Applies when
 
-- **Two files per name since #280,** split between m = 256 and 512, and a half where the kernel reached 1.05 at no
-  Point is a kernel-less definition: n1024 and n2048 keep their kernel at m ≤ 256 only, n512's four-wave kernel
-  (`9a0fc315…`, was `b88f9602…`) at m ≥ 512 only. The numbers on this page were measured on the one-file layout.
+- **n1024, n2048 and n512's four-wave file are split between m = 256 and 512 since #280,** and a half where the
+  kernel was below 1.05 at every Point in the measurements main held at the split (a897641f, aiter v0.1.29) is a
+  kernel-less definition: n1024 and n2048 keep their kernel at m ≤ 256 only, n512's four-wave kernel
+  (`9a0fc315…`, was `b88f9602…`) at m ≥ 512 only, although it read 1.20–1.21 at m 128 and 256 before that aiter.
+  n256 and n64 are not split. The numbers on this page were measured on the one-file layout.
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise: `determinism: bitwise`
   (`CompareSpec` defaults, `GEMM` in `aklr/plugins/aiter/provider/gemm/contract.py`). Every reduction these kernels run at a served
