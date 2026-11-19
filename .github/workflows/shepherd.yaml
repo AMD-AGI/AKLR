@@ -26,13 +26,15 @@ defaults:
 jobs:
   round:
     # Allowed users are the logins in the SHEPHERD_ALLOWED_USERS variable (a JSON list; unset allows
-    # nobody), until a team replaces it. Both who caused the event and who started this run or re-run
-    # must be allowed, so no job reaches the runner for anyone else.
+    # nobody), until a team replaces it. Who caused the event, who started this run or re-run, and who
+    # wrote the issue must all be allowed, so no job reaches the runner for anyone else or their text.
     if: >-
       github.event_name == 'schedule' && vars.SHEPHERD_SCHEDULE_ENABLED == 'true' ||
       github.event_name != 'schedule' &&
       contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.event.sender.login) &&
       contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.triggering_actor) &&
+      (github.event_name != 'issues' ||
+       contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.event.issue.user.login)) &&
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' ||
        github.event.action == 'labeled' && contains(fromJSON('["shepherd", "shepherd-setup"]'), github.event.label.name) ||
        github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'shepherd'))
