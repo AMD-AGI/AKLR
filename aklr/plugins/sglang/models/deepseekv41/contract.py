@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""DeepSeek-V4.1's calls on one rank of its TP group, where sglang serves them without a
-monokernel: every prefill, and the decode and verify steps a monokernel does not take.
+"""DeepSeek-V4.1's calls on one rank of its TP group: sglang's own where it serves them without
+a monokernel (every prefill, and the decode and verify steps a monokernel does not take), and
+the launches of its AMD monokernel, on the steps it takes too.
 
 A model is a scenario: DeepSeek-V4.1-Flash at TP2 is 32 query heads on a rank."""
 
@@ -405,7 +406,7 @@ DEEPSEEKV41_MONO_K1 = OpContract(
     contract_id="deepseekv41_mono_k1@1.0",
     description=(
         "The attention front of a DeepSeek-V4.1 layer on one rank, as one launch (the K1 of "
-        "sglang's AMD monokernel, for the steps it does not take): the mHC boundary into the "
+        "sglang's AMD monokernel, on this rank's query heads): the mHC boundary into the "
         "attention, the input RMSNorm, wqkv_a, the query through q_norm, wq_b and RoPE, and the "
         "token's KV record. " + _SEAM + " Without x no post is owed; without prev_pre_mix (the "
         "first layer) the layer input is stream 0. The normed input, rounded to bf16 then to fp8 "
@@ -557,16 +558,26 @@ DEEPSEEKV41_MONO_K1 = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
+# vLLM's wo_a (its monokernel's K2, and its unfused chain): additive to the launch below
+_MXFP8_WO_A = (
+    " An fp8 wo_a comes with wo_a_scale, an e8m0 scale per 32 x 32 block, no block over two "
+    "groups: the attended values are then rounded to fp8 e4m3 at an e8m0 scale per 32 values "
+    "before it."
+)
+
 DEEPSEEKV41_MONO_K2_ATTENTION = OpContract(
     contract_id="deepseekv41_mono_k2_attention@1.0",
     description=(
-        "The attention back of a DeepSeek-V4.1 layer and its FFN boundary on one rank holding "
-        "every head, as one launch (the K2 of sglang's AMD monokernel up to the MoE's input, for "
-        "the steps it does not take: under data-parallel attention the MoE's rows are gathered "
-        "from the other ranks first). deepseekv41_sparse_mla's attention with the rotation back, "
-        "rounded to bf16; each group of 8 heads times its rows of wo_a, rounded to bf16; "
-        "that, to fp8 e4m3 at an e8m0 scale per 32 values, times wo_b, rounded to bf16: x, the "
-        "attention's output. Then the mHC boundary into the FFN and its RMSNorm, ffn_input: " + _SEAM
+        "The attention back of a DeepSeek-V4.1 layer and its FFN boundary on one rank, as one "
+        "launch (the K2 of sglang's AMD monokernel up to the MoE's input; under data-parallel "
+        "attention the MoE's rows are gathered from the other ranks first). "
+        "deepseekv41_sparse_mla's attention with the rotation back, rounded to bf16; each group "
+        "of 8 heads times its rows of wo_a, rounded to bf16; that, to fp8 e4m3 at an e8m0 scale "
+        "per 32 values, times wo_b, rounded to bf16: x, the attention's output on a rank holding "
+        "every head. A rank of a TP group holds its share of the heads, of wo_a's groups and of "
+        "wo_b's columns: x is then its wo_b output plus peer_x, the sum of the other ranks', "
+        "which the caller's collective brings, rounded to bf16. Then the mHC boundary into the "
+        "FFN and its RMSNorm, ffn_input: " + _SEAM + _MXFP8_WO_A
     ),
     op_type="deepseekv41",
     axes={
@@ -580,20 +591,36 @@ DEEPSEEKV41_MONO_K2_ATTENTION = OpContract(
         ),
         "o_blocks": derived_axis("MXFP8 blocks of wo_b's reduction.", f"o_dim // {MXFP8_BLOCK}"),
     },
-    attrs=DEEPSEEKV41_SPARSE_MLA.attrs,
+    attrs={
+        **DEEPSEEKV41_SPARSE_MLA.attrs,
+        "has_wo_a_scale": _presence("wo_a_scale", "wo_a_scale"),
+        "has_peer_x": _presence("peer_x", "peer"),
+    },
     constraints=(
         *DEEPSEEKV41_SPARSE_MLA.constraints,
         "has_rope_freqs",
         f"n_heads % {GROUP_HEADS} == 0",
         f"o_dim % (n_heads // {GROUP_HEADS}) == 0",
+        "(wo_a.dtype == 'float8_e4m3fn') == has_wo_a_scale",
+        f"(not has_wo_a_scale) or o_dim % ({MXFP8_BLOCK} * (n_heads // {GROUP_HEADS})) == 0",
+        # with byte pools, as vLLM's and sglang's layers hold theirs: the variants' names fit a file name
+        "(not has_wo_a_scale) or (kv_cache.dtype == 'uint8' and extra_kv_cache.dtype != 'float8_e4m3fn')",
     ),
     inputs={
         **DEEPSEEKV41_SPARSE_MLA.inputs,
         "wo_a": TensorSpec(
             description="wo_a's weight over a group's 8 heads.",
             shape=("o_dim", GROUP_HEADS * HEAD_DIM),
-            dtype=_BF16,
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16, DType.FLOAT8_E4M3FN)),
             distribution=LecunNormalDistribution(fan_in=GROUP_HEADS * HEAD_DIM),
+            lifetime="weight",
+        ),
+        "wo_a_scale": TensorSpec(
+            description="Per 32 x 32 block of an fp8 wo_a.",
+            shape=("o_blocks", GROUP_HEADS * HEAD_DIM // MXFP8_BLOCK),
+            dtype=_E8M0,
+            present_when="has_wo_a_scale",
+            distribution=LogUniformDistribution(log2_lo="-1", log2_hi="1"),
             lifetime="weight",
         ),
         "wo_b": TensorSpec(
@@ -604,6 +631,13 @@ DEEPSEEKV41_MONO_K2_ATTENTION = OpContract(
             lifetime="weight",
         ),
         "wo_b_scale": _weight_scale("hidden_blocks", "o_blocks", "Per 32 x 32 block of wo_b."),
+        "peer_x": TensorSpec(
+            description="The other ranks' wo_b outputs of these tokens, each in bf16, summed.",
+            shape=("n_tokens", "hidden_size"),
+            dtype=_FLOAT32,
+            present_when="has_peer_x",
+            distribution=_FINITE,
+        ),
         "residual": _STREAMS,
         "post_mix": TensorSpec(
             description="The attention boundary's post mix, of x into each stream.",
@@ -649,15 +683,19 @@ def _ffn_layout_facts(shuffled: bool, scale_rank: int) -> tuple[LayoutFact, ...]
 DEEPSEEKV41_MONO_K2_FFN = OpContract(
     contract_id="deepseekv41_mono_k2_ffn@1.0",
     description=(
-        "The MoE of a DeepSeek-V4.1 layer on one rank, as the monokernel's K2 runs it after the "
-        "FFN seam and sglang's DeepseekV2MoE.forward_normal runs it where no monokernel takes the "
-        "step: on hidden_states (the rows of every rank under DP attention), the router's "
+        "The MoE of a DeepSeek-V4.1 layer on one rank, as sglang's DeepseekV2MoE.forward_normal "
+        "runs it where no monokernel takes the step, and the monokernel's K2 after the FFN seam "
+        "but for the shared expert, which K2 reads from the checkpoint's FP8 weights: on "
+        "hidden_states (the rows of every rank under DP attention), the router's "
         "logits in fp32; each token's topk experts by sqrt(softplus(logit)) plus correction_bias, "
         "weighed by the unbiased scores over their sum times routed_scaling_factor, and the "
         "shared expert, the last slot, at weight 1; each expert down(silu(min(gate(x), limit)) "
         "* clamp(up(x), -limit, limit)) of its MXFP4 weights, both linears' inputs in MXFP8 "
         "(e4m3 at an e8m0 scale per 32), as aiter's a8w4 experts take them; output is their sum "
-        "on this rank, before sglang sums the ranks'."
+        "on this rank, before sglang sums the ranks'. With shared_w1 (a vLLM TP rank's MoE) no "
+        "slot is the shared expert: it is an MXFP8 MLP beside the routed ones, down(silu(min("
+        "gate(x), limit)) * clamp(up(x), -limit, limit)) of fp8 e4m3 weights at an e8m0 scale per "
+        "32 x 32 block, both linears' inputs in MXFP8, added at weight 1."
     ),
     op_type="deepseekv41",
     axes={
@@ -665,14 +703,35 @@ DEEPSEEKV41_MONO_K2_FFN = OpContract(
         "model_dim": axis("Hidden size.", 128, 16384, multiple_of=128),
         "n_routed": axis("Routed experts: the router's rows.", 1, 1024),
         "inter_dim": axis("Expert intermediate size on this rank.", 128, 16384, multiple_of=128),
-        "n_experts": derived_axis("Expert slots: the routed experts, then the shared one.", "n_routed + 1"),
+        "shared_inter_dim": axis(
+            "The shared MLP's intermediate size on this rank.", MXFP8_BLOCK, 16384, multiple_of=MXFP8_BLOCK
+        ),
+        "n_experts": derived_axis(
+            "Expert slots: the routed experts, then the shared one unless it is an MLP.",
+            "n_routed if has_shared_w1 else n_routed + 1",
+        ),
         "gate_up_rows": derived_axis("w1 rows: gate and up concatenated.", "2 * inter_dim"),
         "model_blocks": derived_axis("w1 scale columns.", "model_dim // 32"),
         "inter_blocks": derived_axis("w2 scale columns.", "inter_dim // 32"),
+        "shared_gate_up_rows": derived_axis("shared_w1 rows: gate, then up.", "2 * shared_inter_dim"),
+        "shared_gate_up_blocks": derived_axis("shared_w1 scale rows.", "shared_inter_dim // 16"),
+        "shared_inter_blocks": derived_axis("shared_w2 scale columns.", "shared_inter_dim // 32"),
     },
-    # the target's 6 of 384, and the DSpark draft's 3 of 128
-    attrs={"topk": attr("Routed experts per token.", 6, 3, param_name="topk")},
-    constraints=("topk <= n_routed",),
+    attrs={
+        # the target's 6 of 384, and the DSpark draft's 3 of 128
+        "topk": attr("Routed experts per token.", 6, 3, param_name="topk"),
+        "has_shared_w1": _presence("shared_w1", "shared_w1"),
+        "has_shared_w1_scale": _presence("shared_w1_scale", "shared_w1_scale"),
+        "has_shared_w2": _presence("shared_w2", "shared_w2"),
+        "has_shared_w2_scale": _presence("shared_w2_scale", "shared_w2_scale"),
+    },
+    constraints=(
+        "topk <= n_routed",
+        # the shared MLP comes whole
+        "has_shared_w1 == has_shared_w1_scale",
+        "has_shared_w1 == has_shared_w2",
+        "has_shared_w1 == has_shared_w2_scale",
+    ),
     inputs={
         "hidden_states": TensorSpec(
             description="The MoE's input: the FFN seam's normed rows.",
@@ -690,8 +749,8 @@ DEEPSEEKV41_MONO_K2_FFN = OpContract(
         "correction_bias": TensorSpec(
             description="Added to the scores to pick experts; never weighs them.",
             shape=("n_routed",),
-            # bf16, as sglang holds it for aiter's sqrtsoftplus gate
-            dtype=_BF16,
+            # bf16, as sglang holds it for aiter's sqrtsoftplus gate; vLLM's is fp32
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16, DType.FLOAT32)),
             distribution=LecunNormalDistribution(fan_in="model_dim"),
             lifetime="weight",
         ),
@@ -724,6 +783,43 @@ DEEPSEEKV41_MONO_K2_FFN = OpContract(
             dtype=_E8M0,
             distribution=LogUniformDistribution(
                 log2_lo="-5 - bit_length(inter_dim) // 2", log2_hi="1 - bit_length(inter_dim) // 2"
+            ),
+            lifetime="weight",
+        ),
+        "shared_w1": TensorSpec(
+            description="The shared MLP's gate-up projection: gate rows, then up rows.",
+            shape=("shared_gate_up_rows", "model_dim"),
+            dtype=_FP8,
+            present_when="has_shared_w1",
+            distribution=_FINITE,
+            lifetime="weight",
+        ),
+        "shared_w1_scale": TensorSpec(
+            description="Per 32 x 32 block of shared_w1.",
+            shape=("shared_gate_up_blocks", "model_blocks"),
+            dtype=_E8M0,
+            present_when="has_shared_w1_scale",
+            distribution=LogUniformDistribution(
+                log2_lo="-5 - bit_length(model_dim) // 2", log2_hi="1 - bit_length(model_dim) // 2"
+            ),
+            lifetime="weight",
+        ),
+        "shared_w2": TensorSpec(
+            description="The shared MLP's down projection.",
+            shape=("model_dim", "shared_inter_dim"),
+            dtype=_FP8,
+            present_when="has_shared_w2",
+            distribution=_FINITE,
+            lifetime="weight",
+        ),
+        "shared_w2_scale": TensorSpec(
+            description="Per 32 x 32 block of shared_w2.",
+            shape=("model_blocks", "shared_inter_blocks"),
+            dtype=_E8M0,
+            present_when="has_shared_w2_scale",
+            distribution=LogUniformDistribution(
+                log2_lo="-5 - bit_length(shared_inter_dim) // 2",
+                log2_hi="1 - bit_length(shared_inter_dim) // 2",
             ),
             lifetime="weight",
         ),

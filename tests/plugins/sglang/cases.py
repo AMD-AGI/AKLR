@@ -220,7 +220,7 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
     # the shared expert fused last, in aiter's gate-up-interleaved layout on its a8w4 path
     PointSpec(
         contract_id="deepseekv41_mono_k2_ffn@1.0",
-        axes={"n_tokens": 4, "model_dim": 512, "n_routed": 16, "inter_dim": 128},
+        axes={"n_tokens": 4, "model_dim": 512, "n_routed": 16, "inter_dim": 128, "shared_inter_dim": 32},
         dtypes={
             "hidden_states": "bfloat16",
             "router_weight": "bfloat16",
@@ -229,15 +229,25 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
             "w1_scale": "float8_e8m0",
             "w2": "float4_e2m1",
             "w2_scale": "float8_e8m0",
+            "shared_w1": None,
+            "shared_w1_scale": None,
+            "shared_w2": None,
+            "shared_w2_scale": None,
             "output": "bfloat16",
         },
-        attrs={"topk": 6},
+        attrs={
+            "topk": 6,
+            "has_shared_w1": False,
+            "has_shared_w1_scale": False,
+            "has_shared_w2": False,
+            "has_shared_w2_scale": False,
+        },
         layout_variant_name="gate_up_interleaved",
     ),
     # the same past the 64 rows sglang's split-K router serves: its bf16 router GEMM
     PointSpec(
         contract_id="deepseekv41_mono_k2_ffn@1.0",
-        axes={"n_tokens": 96, "model_dim": 512, "n_routed": 16, "inter_dim": 128},
+        axes={"n_tokens": 96, "model_dim": 512, "n_routed": 16, "inter_dim": 128, "shared_inter_dim": 32},
         dtypes={
             "hidden_states": "bfloat16",
             "router_weight": "bfloat16",
@@ -246,9 +256,46 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
             "w1_scale": "float8_e8m0",
             "w2": "float4_e2m1",
             "w2_scale": "float8_e8m0",
+            "shared_w1": None,
+            "shared_w1_scale": None,
+            "shared_w2": None,
+            "shared_w2_scale": None,
             "output": "bfloat16",
         },
-        attrs={"topk": 6},
+        attrs={
+            "topk": 6,
+            "has_shared_w1": False,
+            "has_shared_w1_scale": False,
+            "has_shared_w2": False,
+            "has_shared_w2_scale": False,
+        },
+        layout_variant_name="gate_up_interleaved",
+    ),
+    # a vLLM TP rank's: the shared expert an MXFP8 MLP beside the routed slots, an fp32 bias
+    PointSpec(
+        contract_id="deepseekv41_mono_k2_ffn@1.0",
+        axes={"n_tokens": 4, "model_dim": 512, "n_routed": 16, "inter_dim": 128, "shared_inter_dim": 64},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "float32",
+            "w1": "float4_e2m1",
+            "w1_scale": "float8_e8m0",
+            "w2": "float4_e2m1",
+            "w2_scale": "float8_e8m0",
+            "shared_w1": "float8_e4m3fn",
+            "shared_w1_scale": "float8_e8m0",
+            "shared_w2": "float8_e4m3fn",
+            "shared_w2_scale": "float8_e8m0",
+            "output": "bfloat16",
+        },
+        attrs={
+            "topk": 6,
+            "has_shared_w1": True,
+            "has_shared_w1_scale": True,
+            "has_shared_w2": True,
+            "has_shared_w2_scale": True,
+        },
         layout_variant_name="gate_up_interleaved",
     ),
     # Kimi-K3's MLA decode: two heads over a small latent cache
@@ -426,22 +473,24 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         )
         for owed, has_prev in ((True, True), (False, True), (False, False))
     ),
-    # its attention back and FFN seam: the window pool and the compressed one, then the window alone
+    # its attention back and FFN seam: the window pool and the compressed one, then the window
+    # alone, then a TP4 rank's 16 heads and 2 of wo_a's groups with the other ranks' wo_b outputs
+    # (sglang's), then a vLLM TP2 rank's: an MXFP8 wo_a too, on vLLM's pools
     *(
         PointSpec(
             contract_id="deepseekv41_mono_k2_attention@1.0",
             axes={
                 "n_tokens": 6,
-                "n_heads": 32,
+                "n_heads": 16 if has_peers and not vllm_rank else 32,
                 "n_pages": 2,
-                "page_size": 64,
+                "page_size": 32 if vllm_rank else 64,
                 "n_indices": 64,
                 "n_extra_pages": 2 if has_extra else 1,
                 "extra_page_size": 64 if has_extra else 2,
                 "n_extra_indices": 64 if has_extra else 1,
                 "n_positions": 4096,
                 "hidden_size": 5120,
-                "o_dim": 4096,
+                "o_dim": 2048 if has_peers and not vllm_rank else 4096,
             },
             dtypes={
                 "q": "bfloat16",
@@ -452,9 +501,11 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
                 "extra_indices": "int32" if has_extra else None,
                 "rope_freqs": "float32",
                 "positions": "int64",
-                "wo_a": "bfloat16",
+                "wo_a": "float8_e4m3fn" if vllm_rank else "bfloat16",
+                "wo_a_scale": "float8_e8m0" if vllm_rank else None,
                 "wo_b": "float8_e4m3fn",
                 "wo_b_scale": "float8_e8m0",
+                "peer_x": "float32" if has_peers else None,
                 "residual": "bfloat16",
                 "post_mix": "float32",
                 "comb_mix": "float32",
@@ -474,10 +525,17 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
                 "has_extra_indices": has_extra,
                 "has_rope_freqs": True,
                 "has_positions": True,
+                "has_wo_a_scale": vllm_rank,
+                "has_peer_x": has_peers,
             },
-            layout_variant_name="padded_pages",
+            layout_variant_name="strided_pages" if vllm_rank else "padded_pages",
         )
-        for has_extra in (True, False)
+        for has_extra, has_peers, vllm_rank in (
+            (True, False, False),
+            (False, False, False),
+            (True, True, False),
+            (True, True, True),
+        )
     ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
@@ -1003,9 +1061,13 @@ _BACKEND_AXES = {
     "kimi_k3_latent_moe@1.0": {"latent_dim": 3584, "n_routed": 896, "inter_dim": 384},
     "deepseekv41_mono_k2_ffn@1.0": {"model_dim": 5120, "n_routed": 384, "inter_dim": 1152},
 }
+# shortcut: vLLM's DeepSeek-V4.1 Points (an MXFP8 wo_a, the shared expert an MLP) are left out,
+# sglang's chain being no backend of theirs (its baseline raises NotImplementedError); time them
+# in vllm-test once vLLM's kernels are
 BACKEND_POINTS: tuple[PointSpec, ...] = tuple(
     point.model_copy(update={"axes": {**point.axes, **_BACKEND_AXES.get(point.contract_id, {})}})
     for point in SMALL_POINTS
+    if not (point.attrs.get("has_wo_a_scale") or point.attrs.get("has_shared_w1"))
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
