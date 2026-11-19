@@ -85,7 +85,7 @@ jobs:
       - name: TEMPORARY probe of the host (remove before merge)
         continue-on-error: true
         env:
-          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.SHEPHERD_LLM_KEY }}'
+          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.ANTHROPIC_API_KEY }}'
         run: |
           set +e
           echo "user $(id -un) home $HOME"; df -h "$HOME" /var/tmp | tail -2
@@ -95,7 +95,7 @@ jobs:
           docker ps --format '{{.Names}}' | head -20; echo "docker exit $?"
           ls /dev/dri | tr '\n' ' '; echo; ls /dev/kfd
           python3 -c 'import json, os; p = os.path.expanduser("~/.claude/settings.json"); print("claude settings env keys:", sorted(json.load(open(p)).get("env", {})) if os.path.exists(p) else "no file")'
-          echo "base url: $ANTHROPIC_BASE_URL model: $ANTHROPIC_MODEL key set: ${{ secrets.SHEPHERD_LLM_KEY != '' }}"
+          echo "base url: $ANTHROPIC_BASE_URL model: $ANTHROPIC_MODEL key set: ${{ secrets.ANTHROPIC_API_KEY != '' }}"
           for url in "$ANTHROPIC_BASE_URL" https://api.anthropic.com https://claude.ai; do echo "$url -> $(curl -s -o /dev/null -m 8 -w '%{http_code}' "$url")"; done
           timeout 120 claude -p 'Reply with the single word: ok' < /dev/null; echo "claude exit $?"
       - name: Link the host's configuration
@@ -126,7 +126,7 @@ jobs:
         if: github.event.action == 'labeled' || inputs.issue != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.SHEPHERD_LLM_KEY }}'
+          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.ANTHROPIC_API_KEY }}'
           ISSUE: ${{ github.event.issue.number || inputs.issue }}
         run: |
           claude -p "$(cat harness/automations/shepherd/templates/actions-setup-prompt.md)
@@ -162,7 +162,7 @@ jobs:
         if: steps.begin.outputs.begun != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.SHEPHERD_LLM_KEY }}'
+          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.ANTHROPIC_API_KEY }}'
           BEGUN: ${{ steps.begin.outputs.begun }}
           # Pushes use the App token through gh, without writing a credential to disk.
           GIT_CONFIG_COUNT: '1'
