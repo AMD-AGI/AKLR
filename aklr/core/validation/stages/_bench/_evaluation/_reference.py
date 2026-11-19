@@ -114,7 +114,7 @@ class WorkloadEvaluation:
             for rank in ranks:
                 compare_kwargs = {
                     "reference_outputs": contract.reference_outputs(point, group_args, rank),
-                    "tie_scores": contract.tie_scores(point, group_args, rank),
+                    "id_scores": contract.id_scores(point, group_args, rank),
                 }
                 if request.has_error_bound("dot_product"):
                     compare_kwargs["magnitude_outputs"] = contract.reference_outputs(point, magnitudes, rank)

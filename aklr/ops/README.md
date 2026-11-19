@@ -108,7 +108,7 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
 - A mutable tensor's `error_bounds` (in `contract.py`, not in the schema file; narrowing to the scenario
   picks one) is one of `dot_product`, `output_rounding`, `baseline_relative`, `tolerance`, `sqnr` (whole-output
   SQNR against the reference rounded to the output dtype); each formula is an `ErrorBound` kind in
-  `semantics/_compare.py`. An integer one has none: it must equal the reference, but where `tie_scores` ties it. `baseline_relative` needs
+  `semantics/_compare.py`. An integer one has none: it must equal the reference, but where `id_scores` scores the two alike. `baseline_relative` needs
   the baseline's output: outside the repository, call the contract's `<contract>_baseline` yourself.
 - `compare.element_order` is `fixed` (element by element) or `any_in_full_rows` (integer outputs only: a row
   holding no padding may list its entries in any order); each is an `ElementOrder` member.
@@ -134,11 +134,11 @@ several: the mutable tensors in order, each mutable input as the call leaves it)
   validation), reads only `point.axes`, `point.attrs` and `point.dtypes`, and never writes an input
   (`to_float32` may return the very tensor it was given).
 
-An integer output must equal the reference's, unless `reference.py` also has `<contract>_tie_scores(point,
-row_major_args) -> {output: (scores, tie)}`: per row, each candidate's score and how close two scores must be to
-tie. An id that differs from the reference's then passes if its score ties the reference id's, it is in range, and
-its row has no repeated id. Ids chosen by a summed score need this, as two engines' sums can round a score either
-way (`qwen2_moe_router`: its bf16 logits, within one bf16 step).
+An integer output must equal the reference's, unless `reference.py` also has `<contract>_id_scores(point,
+row_major_args) -> {output: scores}`: each row's candidate scores in their float dtype. An id that differs from the
+reference's then passes if its score equals the reference id's or is the next value of that dtype above or below
+it, the id is in range, and its row has no repeated id. Ids chosen by a summed score need this, as two engines'
+sums can round a score to either of two adjacent values (`qwen2_moe_router`: its bf16 logits).
 
 The baseline, `baseline.py`'s `<contract>_baseline`:
 

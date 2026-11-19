@@ -137,47 +137,45 @@ class TestErrorBounds:
         assert not result.is_passed
 
     @staticmethod
-    def _ids_of_scores(step: float, actual_ids: list[int]) -> semantics.CompareResult:
-        """Candidates 0 and 1 scored 2 + step and 2 (bf16 steps 2**-6 apart there), the
-        reference picking [0, 1]; ``actual_ids`` compared under a tie of one step."""
-        scores = torch.tensor([[2 + step, 2.0, 1.0, 0.5]])
+    def _ids_of_scores(base: float, steps: int, actual_ids: list[int]) -> semantics.CompareResult:
+        """Candidate 0 scored bf16 ``base``, candidate 1 ``steps`` bf16 values from it; the
+        reference picks [0, 1]."""
+        score = torch.tensor([base], dtype=torch.bfloat16)
+        other = (score.view(torch.int16) + steps).view(torch.bfloat16)
+        scores = torch.cat((score, other, torch.tensor([-8.0, -9.0], dtype=torch.bfloat16)))[None]
         y = torch.tensor([[0, 1]], dtype=torch.int32)
         actual = torch.tensor([actual_ids], dtype=torch.int32)
         return semantics.compare_outputs(
-            _schema("int32"),
-            {"out": actual},
-            {"out": y},
-            tie_scores={"out": (scores, torch.full_like(scores, 2.0**-6))},
+            _schema("int32"), {"out": actual}, {"out": y}, id_scores={"out": scores}
         )["out"]
 
-    def test_integral_swap_of_tied_scores_passes(self) -> None:
-        """Two ids whose scores are one tie apart may come in either order."""
-        result = self._ids_of_scores(2.0**-6, [1, 0])
+    @pytest.mark.parametrize("base", [2.0, -2.0])
+    def test_integral_swap_of_adjacent_scores_passes(self, base: float) -> None:
+        """Two ids whose scores are adjacent bf16 values may come in either order."""
+        result = self._ids_of_scores(base, 1, [1, 0])
         assert result.violation_fraction == 0
         assert result.is_passed
 
-    def test_integral_swap_past_the_tie_fails(self) -> None:
-        """Two ids whose scores are two ties apart must come in the reference's order."""
-        result = self._ids_of_scores(2.0**-5, [1, 0])
+    @pytest.mark.parametrize("base", [2.0, -2.0])
+    def test_integral_swap_two_values_apart_fails(self, base: float) -> None:
+        """Two ids whose scores are two bf16 values apart must come in the reference's order."""
+        result = self._ids_of_scores(base, 2, [1, 0])
         assert result.violation_fraction == 1
         assert not result.is_passed
 
-    def test_integral_tied_ids_are_no_bias(self) -> None:
-        """Every row choosing the higher of two tied ids: ties, so no error to be biased."""
-        scores = torch.tensor([[3.0, 2.0, 2.0]]).expand(64, 3)
+    def test_integral_equal_score_ids_are_no_bias(self) -> None:
+        """Every row choosing the higher of two equal-score ids: no error to be biased."""
+        scores = torch.tensor([[3.0, 2.0, 2.0]], dtype=torch.bfloat16).expand(64, 3)
         y = torch.tensor([[0, 1]], dtype=torch.int32).expand(64, 2)
         actual = torch.tensor([[0, 2]], dtype=torch.int32).expand(64, 2)
         result = semantics.compare_outputs(
-            _schema("int32"),
-            {"out": actual},
-            {"out": y},
-            tie_scores={"out": (scores, torch.full_like(scores, 2.0**-6))},
+            _schema("int32"), {"out": actual}, {"out": y}, id_scores={"out": scores}
         )["out"]
         assert result.is_passed
 
-    def test_integral_repeated_tied_id_fails(self) -> None:
-        """A tied score does not let an id come twice in a row."""
-        result = self._ids_of_scores(0.0, [0, 0])
+    def test_integral_repeated_id_fails(self) -> None:
+        """An equal score does not let an id come twice in a row."""
+        result = self._ids_of_scores(2.0, 0, [0, 0])
         assert not result.is_passed
 
     @pytest.mark.parametrize(

@@ -287,12 +287,12 @@ class OpCase:
         compare_kwargs = {
             kind: {o: t.cpu() for o, t in tensors.items()} for kind, tensors in compare_kwargs.items()
         }
-        tie_scores = self.contract.tie_scores(self.point, [row_major_args], 0)
+        id_scores = self.contract.id_scores(self.point, [row_major_args], 0)
         return semantics.compare_outputs(
             self.request.schema_json,
             {o: t.cpu() for o, t in actual_outputs.items()},
             **compare_kwargs,
-            tie_scores={o: (s.cpu(), t.cpu()) for o, (s, t) in tie_scores.items()},
+            id_scores={o: s.cpu() for o, s in id_scores.items()},
         )
 
     def check_backend_matches_reference(self) -> None:

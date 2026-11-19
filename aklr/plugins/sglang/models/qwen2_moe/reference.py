@@ -24,7 +24,7 @@ __all__ = [
     "qwen2_moe_fp8_router_experts_reference",
     "qwen2_moe_mxfp4_moe_reference",
     "qwen2_moe_router_reference",
-    "qwen2_moe_router_tie_scores",
+    "qwen2_moe_router_id_scores",
 ]
 
 _BLOCK = 128  # the FP8 scheme's block: 128 x 128 of a weight, 1 x 128 of an input
@@ -114,19 +114,16 @@ def qwen2_moe_router_reference(
     return weights, ids.to(torch_dtypes(point.dtypes["topk_ids"])[0])
 
 
-def qwen2_moe_router_tie_scores(
+def qwen2_moe_router_id_scores(
     point: Any,
     row_major_args: Mapping[str, Any],
-) -> dict[str, tuple[Tensor, Tensor]]:
-    """topk_ids' tie scores (``compare_outputs``): the bf16 logits, two of them tied within
-    one bf16 step. A kernel sums the projection in another order than the reference's, so a
-    logit at a rounding midpoint lands on the next bf16 value, and two experts a step apart
-    come in the other order."""
+) -> dict[str, Tensor]:
+    """topk_ids' scores (``compare_outputs``): the bf16 logits. A kernel sums the projection in
+    another order than the reference's, so a logit at a rounding midpoint lands on the next
+    bf16 value, and two experts one value apart come in the other order."""
     import torch
 
-    logits = _router_logits(point, row_major_args)
-    away = (logits.to(torch.bfloat16).view(torch.int16) + 1).view(torch.bfloat16).float()
-    return {"topk_ids": (logits, (away - logits).abs())}
+    return {"topk_ids": _router_logits(point, row_major_args).to(torch.bfloat16)}
 
 
 def qwen2_moe_fp8_experts_reference(

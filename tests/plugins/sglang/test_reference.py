@@ -14,8 +14,8 @@ def test_backend_matches_reference(op_case: OpCase) -> None:
     op_case.check_backend_matches_reference()
 
 
-def test_router_ids_of_tied_logits_may_swap() -> None:
-    """qwen2_moe_router: experts 0 and 1 share a router row, so their bf16 logits tie and
+def test_router_ids_of_equal_logits_may_swap() -> None:
+    """qwen2_moe_router: experts 0 and 1 share a router row, so their bf16 logits are equal and
     either may come first; swapping a row's first and last chosen experts still fails."""
     case = OpCase.of("qwen2_moe_router@1.0")
     args = case.inputs()
@@ -29,9 +29,8 @@ def test_router_ids_of_tied_logits_may_swap() -> None:
         swapped[r][ids[r] == 0], swapped[r][ids[r] == 1] = 1, 0
     assert case.compare({**reference, "topk_ids": swapped}, args)["topk_ids"].is_passed
 
-    scores, tie = case.contract.tie_scores(case.point, [args], 0)["topk_ids"]
-    first, last = ids[0, 0].item(), ids[0, -1].item()
-    assert scores[0, first] - scores[0, last] > tie[0, first] + tie[0, last]
+    scores = case.contract.id_scores(case.point, [args], 0)["topk_ids"].float()
+    assert scores[0, ids[0, 0]] - scores[0, ids[0, -1]] > 0.25  # more than two bf16 values below 16
     far = ids.clone()
     far[0, [0, -1]] = ids[0, [-1, 0]]
     assert not case.compare({**reference, "topk_ids": far}, args)["topk_ids"].is_passed

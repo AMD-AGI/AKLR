@@ -123,16 +123,16 @@ def compare_outputs(
     *,
     magnitude_outputs: Mapping[str, Tensor] | None = None,
     baseline_outputs: Mapping[str, Tensor] | None = None,
-    tie_scores: Mapping[str, tuple[Tensor, Tensor]] | None = None,
+    id_scores: Mapping[str, Tensor] | None = None,
 ) -> dict[str, CompareResult]:
     """Each mutable tensor of the schema json (``mutable_tensor_declarations``) against its
     reference, on the tensors' device, under its one ``error_bounds`` item (an integer one
-    must be exact, but where ``tie_scores`` ties it: ``_tied``); keyed in that order."""
+    must be exact, but where ``id_scores`` gives it scores: ``_same_score``); keyed in that order."""
     compare = schema["compare"]
     element_order = ElementOrder(compare["element_order"])
     magnitude_outputs = magnitude_outputs or {}
     baseline_outputs = baseline_outputs or {}
-    tie_scores = tie_scores or {}
+    id_scores = id_scores or {}
     results = {}
     for name, declaration in mutable_tensor_declarations(schema).items():
         out_dtype = declaration["dtype"]["any_of"][0]
@@ -145,7 +145,7 @@ def compare_outputs(
                 actual,
                 reference_out.to(actual.dtype),
                 compare["max_violation_fraction"],
-                tie_scores.get(name),
+                id_scores.get(name),
             )
             continue
         a = actual.float()
@@ -163,19 +163,22 @@ def compare_outputs(
     return results
 
 
-def _tied(actual: Tensor, rounded: Tensor, scores: Tensor, tie: Tensor) -> Tensor:
-    """Where an id output's ``actual`` may stand for ``rounded``: ids into the last dim of
-    ``scores`` (its leading dims the output's), each candidate's score; ``tie`` (``scores``'
-    shape) how far apart two candidates' scores may be and still tie. An id in range, in a
-    row without a repeated id, scored within the larger of its tie and the reference id's."""
+def _same_score(actual: Tensor, rounded: Tensor, scores: Tensor) -> Tensor:
+    """Where an id output's ``actual`` may stand for ``rounded``: ``scores`` holds each
+    candidate's score in its float dtype, the ids indexing its last dim. An id in range, in a
+    row without a repeated id, whose score equals the reference id's or is the next value of
+    that dtype above or below it."""
     import torch
 
     n = scores.shape[-1]
     a, y = actual.long(), rounded.long()  # gather's index dtype
     in_range = (a >= 0) & (a < n)
     a = a.clamp(0, n - 1)
-    gap = (scores.gather(-1, a) - scores.gather(-1, y)).abs()
-    within = gap <= torch.maximum(tie.gather(-1, a), tie.gather(-1, y))
+    # sign and magnitude to one integer line, +0 and -0 one value: adjacent values differ by 1
+    bits = scores.view({2: torch.int16, 4: torch.int32}[scores.element_size()]).long()
+    magnitude = bits & (2 ** (8 * scores.element_size() - 1) - 1)
+    order = torch.where(bits < 0, -magnitude, magnitude)
+    within = (order.gather(-1, a) - order.gather(-1, y)).abs() <= 1
     ordered = a.sort(-1).values
     distinct = (ordered[..., 1:] != ordered[..., :-1]).all(-1, keepdim=True)
     return in_range & distinct & within
@@ -185,16 +188,17 @@ def _exact_compare(
     actual: Tensor,
     rounded: Tensor,
     max_violation_fraction: float,
-    tie_scores: tuple[Tensor, Tensor] | None = None,
+    id_scores: Tensor | None = None,
 ) -> CompareResult:
     """An integral output against its reference in the same dtype, element by element as
-    integers (float32 holds an int exactly only up to 2**24), an element that differs
-    where ``tie_scores`` ties it (``_tied``) counted equal; the bias test on the errors."""
+    integers (float32 holds an int exactly only up to 2**24), an element that differs where
+    ``id_scores`` scores the two alike (``_same_score``) counted equal; the bias test on the
+    errors."""
     import torch
 
     differs = actual != rounded
-    if tie_scores is not None and bool(differs.any()):
-        differs = differs & ~_tied(actual, rounded, *tie_scores)
+    if id_scores is not None and bool(differs.any()):
+        differs = differs & ~_same_score(actual, rounded, id_scores)
     violation_fraction = differs.float().mean().item() if differs.numel() else 0.0
     a, y = actual.float(), rounded.float()
     errors = torch.where(differs, (a - y).masked_fill(a == y, 1.0), 0.0)

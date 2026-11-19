@@ -186,8 +186,8 @@ QWEN2_MOE_ROUTER = OpContract(
             # which moves the weights by up to that
             error_bounds=ToleranceBound(absolute_tolerance=1e-6, relative_tolerance=2**-4),
         ),
-        # exact, but two experts whose logits are one bf16 step apart may swap, for the
-        # same rounding (qwen2_moe_router_tie_scores)
+        # exact, but two experts whose logits are adjacent bf16 values may swap, for the
+        # same rounding (qwen2_moe_router_id_scores)
         "topk_ids": TensorSpec(
             description="The chosen experts, by descending logit.",
             shape=("n_tokens", "topk"),
