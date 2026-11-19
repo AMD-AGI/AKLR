@@ -1,0 +1,3319 @@
+{
+  "schema_version": 5,
+  "name": "deepseekv41_sparse_mla_extra_extra_idx_inv_rope_pos_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_n_heads32_page_size256_n_indices128_extra_page_size128_n_extra_indices512",
+  "contract_id": "deepseekv41_sparse_mla@1.0",
+  "description": "sglang's sparse MLA of a DeepSeek-V4.1 layer on gfx950 (aiter_sparse_decode_fwd): each head of each token attends the slots its indices name (-1: none) in the layer's KV pool and in the optional extra one, with scores q . row * sm_scale; sinks join the normalisation only; the output is the softmax-weighted sum of the rows, 0 for a token that reads no row. With rope_freqs, the last 64 values of every head are then rotated back in pairs (a, b) by the pair's (c, s) at the token's position: (a c + b s, b c - a s).",
+  "op_type": "deepseekv41",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Query heads on this rank."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the KV pool."
+    },
+    "page_size": {
+      "type": "const",
+      "value": 256,
+      "description": "Slots per page of the KV pool."
+    },
+    "n_indices": {
+      "type": "const",
+      "value": 128,
+      "description": "Indices per token into the KV pool."
+    },
+    "n_extra_pages": {
+      "type": "var",
+      "description": "Pages of the extra KV pool."
+    },
+    "extra_page_size": {
+      "type": "const",
+      "value": 128,
+      "description": "Slots per page of the extra KV pool."
+    },
+    "n_extra_indices": {
+      "type": "const",
+      "value": 512,
+      "description": "Indices per token into the extra KV pool."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the RoPE table."
+    }
+  },
+  "attrs": {
+    "has_extra_kv_cache": true,
+    "has_extra_indices": true,
+    "has_rope_freqs": true,
+    "has_positions": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head, the RoPE part last."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        1,
+        584
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "deepseekv4_fp8_kv_cache"
+      },
+      "description": "The layer's KV pool: DeepSeek-V4's packed fp8 slots."
+    },
+    "indices": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_pages * page_size - 1",
+        "distinct": false
+      },
+      "description": "Slots of the KV pool each token reads; negative: skipped."
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head logit added to the normalisation only."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    },
+    "extra_kv_cache": {
+      "shape": [
+        "n_extra_pages",
+        "extra_page_size",
+        1,
+        584
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "deepseekv4_fp8_kv_cache"
+      },
+      "description": "The extra KV pool, the same packed slots."
+    },
+    "extra_indices": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_extra_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_extra_pages * extra_page_size - 1",
+        "distinct": false
+      },
+      "description": "Slots of the extra KV pool each token reads; negative: skipped."
+    },
+    "rope_freqs": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The RoPE table: a (c, s) per pair of each position."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's row of the RoPE table."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's attended values, the RoPE part rotated back with rope_freqs."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 38,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 38,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 38,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 38,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 38,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 38,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 72,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 84,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 96,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 152,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 152,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 154,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 154,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 155,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 159,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 160,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 161,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 170,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 176,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 177,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 178,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 186,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 191,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 198,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 204,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 217,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 218,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 230,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 239,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 253,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 259,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 268,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 270,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 273,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 283,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 285,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 285,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 288,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 290,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 290,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 291,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 293,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 297,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 299,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 299,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 300,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 300,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 300,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 301,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 301,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 302,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 303,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 303,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 304,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 305,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 307,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 307,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 309,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 313,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 324,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 328,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 330,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 334,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 334,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 339,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 340,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 345,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 346,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 348,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 348,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 349,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 355,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 359,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 361,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 363,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 367,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 369,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 370,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 383,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 383,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 385,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 387,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 391,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 392,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 397,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 398,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 399,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 402,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 402,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 406,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 409,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 410,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 410,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 411,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 412,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 412,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 414,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 417,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 422,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 423,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 427,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 435,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 437,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 439,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 443,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 451,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 456,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 458,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 461,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 469,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 469,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 477,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 478,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 478,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 487,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 489,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 489,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 489,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 491,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 492,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 494,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 499,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 499,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 500,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 501,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 507,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 507,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 522,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 524,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 526,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 533,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 535,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 536,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 537,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 539,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 542,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 545,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 550,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 556,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 557,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 559,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 562,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 563,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 563,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 566,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 570,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 572,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 572,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 573,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 579,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 580,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 584,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 589,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 594,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 597,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 597,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 610,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 611,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 612,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 621,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 623,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 625,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 630,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 631,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 631,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 646,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 649,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 655,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 660,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 667,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 667,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 670,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 671,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 675,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 676,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 679,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 681,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 683,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 683,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 689,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 692,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 702,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 707,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 712,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 715,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 722,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 726,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 729,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 736,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 738,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 741,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 749,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 750,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 752,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 753,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 755,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 759,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 769,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 780,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 783,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 786,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 787,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 791,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 792,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 793,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 794,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 801,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 804,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 806,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 810,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 815,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 816,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 821,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 841,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 845,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 857,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 860,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 866,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 885,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 889,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 893,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 896,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 900,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 908,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 931,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 940,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 940,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 945,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 951,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 962,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 993,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 998,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 999,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1001,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1002,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1003,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1004,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1005,
+        "n_pages": 341,
+        "n_extra_pages": 96129,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1008,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1013,
+        "n_pages": 332,
+        "n_extra_pages": 96258,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1015,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1018,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1019,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1609,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1761,
+        "n_pages": 519,
+        "n_extra_pages": 93578,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2503,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3145,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3743,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4346,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4457,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4474,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5021,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5153,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5403,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6475,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7721,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8076,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8137,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8835,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 9477,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 9607,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 11525,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12701,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 13219,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 14263,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 14441,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 14556,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 14907,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 15105,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 15381,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16382,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16384,
+        "n_pages": 971,
+        "n_extra_pages": 87096,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16384,
+        "n_pages": 1685,
+        "n_extra_pages": 146792,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16384,
+        "n_pages": 3239,
+        "n_extra_pages": 124516,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "padded_pages": {
+        "layouts": {
+          "kv_cache": {
+            "kind": "deepseekv4_kv_pages"
+          },
+          "extra_kv_cache": {
+            "kind": "deepseekv4_kv_pages"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "kv_cache_layout",
+            "expected_value": "padded_pages"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}
