@@ -620,6 +620,14 @@ def test_a_noted_target_verify_is_scored_by_request_into_aiters_out_logits(logit
     assert len(logits_ops.rows.calls) == 1 and len(logits_ops.verify.calls) == 1
 
 
+def test_a_select_that_runs_nothing_leaves_the_note_to_the_call_that_runs(logits_ops):
+    call = _verify_call()
+    mla.note_target_verify(VERIFY_ROWS, DRAFT_TOKENS)
+    _select("fp8_paged_mqa_logits", call)  # as aiter's explain() asks
+    assert _run_logits(call) is None
+    assert logits_ops.rows.calls == [] and len(logits_ops.verify.calls) == 1
+
+
 @pytest.mark.parametrize(
     "note",
     [None, (VERIFY_ROWS + DRAFT_TOKENS, DRAFT_TOKENS), (VERIFY_ROWS, 3), (VERIFY_ROWS, 1)],

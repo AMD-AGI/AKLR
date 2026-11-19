@@ -271,7 +271,8 @@ def _context_lens(context_lens):
 # (query rows, draft tokens a request) of the target verify whose logits the framework asks next. Under
 # decode context parallelism sglang's indexer hands a verify's rows to fp8_paged_mqa_logits as rows of
 # their own, each with its request's block table row, as a decode batch's rows come, so only the
-# framework's forward mode tells the two apart. Taken by the next call.
+# framework's forward mode tells the two apart. Select only reads it (aiter's explain() asks select too and
+# runs nothing); the call that runs takes it, and the framework's next paged top-k notes it afresh.
 _TARGET_VERIFY: list[tuple[int, int] | None] = [None]
 
 
@@ -336,6 +337,7 @@ def _verify_run(draft_tokens):
         SplitKV,
         PersistentSchedule,
     ):
+        _TARGET_VERIFY[0] = None
         tables, kwargs = _verify_call(
             q_fp8,
             kv_cache,
@@ -371,7 +373,7 @@ def _select_fp8_paged_mqa_logits(args, kwargs):
         _SplitKV,
         PersistentSchedule,
     ) = args
-    note, _TARGET_VERIFY[0] = _TARGET_VERIFY[0], None
+    note = _TARGET_VERIFY[0]
     lens = _context_lens(context_lens)
     # one query a request into whole pages of preshuffled keys, AKLR's logits as wide as the block
     # table and as the bound aiter stores within; a precomputed schedule carries lengths of its own.
@@ -425,6 +427,7 @@ def _run_fp8_paged_mqa_logits(
     SplitKV,
     PersistentSchedule,
 ):
+    _TARGET_VERIFY[0] = None
     served(
         fp8_paged_mqa_logits(
             q_fp8,
