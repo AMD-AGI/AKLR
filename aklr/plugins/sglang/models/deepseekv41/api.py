@@ -6,11 +6,18 @@ from __future__ import annotations
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models.deepseekv41.contract import (
+    DEEPSEEKV41_MONO_K1,
+    DEEPSEEKV41_MONO_K2_ATTENTION,
     DEEPSEEKV41_MXFP8_LINEAR,
     DEEPSEEKV41_SPARSE_MLA,
 )
 
-__all__ = ["deepseekv41_mxfp8_linear", "deepseekv41_sparse_mla"]
+__all__ = [
+    "deepseekv41_mono_k1",
+    "deepseekv41_mono_k2_attention",
+    "deepseekv41_mxfp8_linear",
+    "deepseekv41_sparse_mla",
+]
 
 # The release, and the InferenceX cookbook's image for DeepSeek-V4.1: the targets are the same text in both
 _SGLANG = ("0.5.23", "0.5.23.dev20261111")
@@ -98,3 +105,74 @@ def _aiter_mxfp8_blockscaled_linear(
     if bias is not None:
         out = out + bias
     return out.view(*input.shape[:-1], weight.shape[0])
+
+
+@api(DEEPSEEKV41_MONO_K1)
+def deepseekv41_mono_k1(
+    residual,
+    hc_fn,
+    hc_scale,
+    hc_base,
+    norm_weight,
+    wqkv,
+    wqkv_scale,
+    q_norm_weight,
+    kv_norm_weight,
+    wq_b,
+    wq_b_scale,
+    rope_freqs,
+    positions,
+    x=None,
+    post_mix=None,
+    comb_mix=None,
+    prev_pre_mix=None,
+    hc_rms_eps=1e-6,
+    hc_eps=1e-6,
+    norm_eps=1e-6,
+    sinkhorn_iters=20,
+    q=None,
+    residual_out=None,
+    pre_mix_out=None,
+    post_mix_out=None,
+    comb_mix_out=None,
+    normed=None,
+    q_latent=None,
+    k_nope=None,
+    k_nope_scale=None,
+    k_rope=None,
+): ...
+
+
+@api(DEEPSEEKV41_MONO_K2_ATTENTION)
+def deepseekv41_mono_k2_attention(
+    q,
+    kv_cache,
+    indices,
+    sinks,
+    sm_scale,
+    wo_a,
+    wo_b,
+    wo_b_scale,
+    residual,
+    post_mix,
+    comb_mix,
+    pre_mix,
+    hc_fn,
+    hc_scale,
+    hc_base,
+    norm_weight,
+    extra_kv_cache=None,
+    extra_indices=None,
+    rope_freqs=None,
+    positions=None,
+    kv_cache_layout="row_major",
+    hc_rms_eps=1e-6,
+    hc_eps=1e-6,
+    norm_eps=1e-6,
+    sinkhorn_iters=20,
+    ffn_input=None,
+    residual_out=None,
+    pre_mix_out=None,
+    post_mix_out=None,
+    comb_mix_out=None,
+): ...
