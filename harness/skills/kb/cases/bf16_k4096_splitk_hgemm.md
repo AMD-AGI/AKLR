@@ -26,10 +26,10 @@ sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/1ceb094e60e8e93a.json
   - aklr/ops/gemm/impls/flydsl/gemm_n128_k6144/c58e9c0252303d4c.json
   - aklr/ops/gemm/impls/flydsl/gemm_n256_k6144/e144986609f2bd34.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n2048_k4096/87d35e92dce4692c.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n1024_k4096/8558eb8e9b001462.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n2048_k4096/1314ac336355d83c.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n1024_k4096/02f1e349bc6c1e7b.json
   - aklr/ops/gemm/impls/flydsl/gemm_n256_k4096/1daaac73309632cb.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/b88f9602c806937b.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/9a0fc31596c1eb2a.json
   - aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/2b317e922d5da7e6.json
   - aklr/ops/gemm/impls/flydsl/gemm_n2048_k2048/340a6d0c546989bc.json
 ---
@@ -44,6 +44,11 @@ are in that file. "m" is the Point's M.
 
 ## Applies when
 
+- **n1024, n2048 and n512's four-wave file are split between m = 256 and 512 since #280,** and a half where the
+  kernel was below 1.05 at every Point in the measurements main held at the split (a897641f, aiter v0.1.29) is a
+  kernel-less definition: n1024 and n2048 keep their kernel at m ≤ 256 only, n512's four-wave kernel
+  (`9a0fc315…`, was `b88f9602…`) at m ≥ 512 only, although it read 1.20–1.21 at m 128 and 256 before that aiter.
+  n256 and n64 are not split. The numbers on this page were measured on the one-file layout.
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise: `determinism: bitwise`, `max_violation_fraction` 0.0
   (`CompareSpec` defaults, `GEMM` in `aklr/ops/gemm/contract.py`). Every reduction these kernels run at a served
@@ -222,10 +227,10 @@ own path.
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root:
 
 ```
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n2048_k4096/87d35e92dce4692c.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n1024_k4096/8558eb8e9b001462.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n2048_k4096/1314ac336355d83c.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n1024_k4096/02f1e349bc6c1e7b.json
 python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n256_k4096/1daaac73309632cb.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/b88f9602c806937b.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/9a0fc31596c1eb2a.json
 ```
 
 The report goes to `aklr_validation/report.md`; a run outside CI checks the file, the served numbers are CI's
@@ -243,7 +248,7 @@ example after a FlyDSL or LLVM upgrade, or a split-K counter left non-zero by an
 
 ## N 512 at m 1–64: both operands in registers, K split over two waves
 
-`gemm_n512_k4096/2b317e922d5da7e6.json` lists m 1–64 of the same name, where `b88f9602…` (16×16 tiles, four waves
+`gemm_n512_k4096/2b317e922d5da7e6.json` lists m 1–64 of the same name, where the kernel now in `9a0fc315…` (16×16 tiles, four waves
 splitting K through LDS rings, 32–128 workgroups) stays below aiter (§ Counter-signals). CI reads 1.139–1.269 at
 the seven Points (#125), so dispatch serves all seven. Its `run` sends an m outside `_PTABLE` to `torch.matmul`; no
 listed Point reaches that.
@@ -273,7 +278,7 @@ Points, highest at m = 32 *(field, E5)*. At m 1–8 the kernel read 4.20–4.38 
 *(field, E6)*; whether profile 19 has a floor near there was not measured (`../pitfalls/aklr_dispatch_floor.md`).
 Under stress every listed Point gave the output of the call alone *(field, E8)*. Reproduce with
 `python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/2b317e922d5da7e6.json` (§ Reproduce). To roll
-back, delete that file: m 1–64 are then served by no file, since `b88f9602…` is below the threshold there, and the
+back, delete that file: m 1–64 are then served by no file, since the four-wave kernel was below the threshold there and no longer lists them, and the
 caller runs its own path.
 
 ## N 2048 × K 2048 at m 1–128: n2048's in-workgroup K split at K 2048
