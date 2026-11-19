@@ -26,6 +26,7 @@ from aklr.core.validation import (
     Pipeline,
     PipelineReport,
     ValidationScope,
+    traffic,
 )
 from aklr.core.validation.pipeline import PlatformRecord
 from aklr.core.validation.stages import BenchReport, StageReport
@@ -34,6 +35,7 @@ from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
     CandidateWorkloadResult,
     ReferenceWorkloadResult,
+    TrialRequest,
     TrialResult,
     run_trial,
 )
@@ -801,6 +803,95 @@ class TestSpeedupMeasures:
         assert [f.code for f in report.findings] == [FindingCode.PLATFORM_FAILURE]
         schema = ContractRegistry.default().parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
         assert report.measurements(_SCHEMA, schema) is None
+
+
+def _judged_on_recorded_calls(times: dict[str, tuple[float, float]]) -> tuple[list[Finding], WorkloadRecord]:
+    """The gemm schema's first workload judged on a recorded call per ``times`` entry: its label, and the
+    baseline's and the kernel's milliseconds in each of 16 rounds."""
+    scope = ValidationScope(Path.cwd(), "", None, (), ())
+    batch, *_ = BenchStage(["cpu"])._workloads_to_run(scope, Path(_SCHEMA), ContractRegistry.default())
+    request = batch[0]
+    samples = tuple(
+        replace(
+            request,
+            axes_text=request.axes_text + label,
+            recorded={"recording": "x", "rows_per_request": 6, "kv": [100 + i], "axes": {}},
+        )
+        for i, label in enumerate(times)
+    )
+    candidate = CandidateResult(
+        findings=(),
+        workload_results=tuple(
+            CandidateWorkloadResult(
+                axes_text=s.axes_text,
+                findings=(),
+                rounds=tuple(
+                    RoundTimes(
+                        mode="graph",
+                        round_index=i,
+                        order=("baseline", "candidate"),
+                        milliseconds={"baseline": b, "candidate": c},
+                    )
+                    for i in range(16)
+                ),
+                output_keys=(),
+            )
+            for s, (b, c) in zip(samples, times.values(), strict=True)
+        ),
+    )
+    reference = tuple(
+        ReferenceWorkloadResult(axes_text=s.axes_text, findings=(), is_compared=True, is_complete=True)
+        for s in samples
+    )
+    findings, (record,) = BenchStage(["cpu"])._judged_findings(scope, samples, [], candidate, reference)
+    assert record.axes == request.workload.axes
+    return findings, record
+
+
+def test_a_workload_on_recorded_calls_is_judged_on_their_total_time_and_records_each() -> None:
+    """The kernel 2x on one call (2 ms against 1) and even on the other: the workload is 1.5x (3 ms
+    against 2), and its record keeps each call and its own speedup."""
+    _, record = _judged_on_recorded_calls({"#0": (2.0, 1.0), "#1": (1.0, 1.0)})
+    assert record.speedup == pytest.approx(1.5)
+    assert [(s.kv, s.speedup) for s in record.recorded] == [
+        ((100,), pytest.approx(2.0)),
+        ((101,), pytest.approx(1.0)),
+    ]
+    assert record.inputs_cell() == "recorded x2: 2.00 1.00"
+    assert record.model_copy(update={"recorded": ()}).inputs_cell() == "drawn"
+
+
+@pytest.mark.usefixtures("_requires_met")
+def test_of_workload_on_each_sample_makes_the_requests_bench_makes() -> None:
+    """A caller outside bench (forge's driver) measures the inputs bench measures: the same labels, axes,
+    recorded calls and so seeds, for every workload, recorded or drawn."""
+    topk = Path(
+        "aklr/plugins/sglang/layers/dsa_backend/impls/hip/dsa_topk_transform_topk2048/1a5994b58e0a84ae.json"
+    )
+    scope = ValidationScope(Path.cwd(), "", None, (), ())
+    registry = ContractRegistry.default()
+    benched = [r for b in BenchStage(["cpu"])._workloads_to_run(scope, topk, registry) for r in b]
+    schema = registry.parse_schema(topk.read_bytes(), str(topk))
+    contract = registry.get(schema.contract_id)
+    made = [
+        TrialRequest.of_workload(
+            str(topk.resolve()), schema, contract, w, thresholds={}, incumbent=None, sample=s
+        )
+        for w in schema.workloads
+        for s in traffic.samples(scope.root, schema, contract, w.axes)
+    ]
+    assert len(made) == len(benched) > len(schema.workloads)
+
+    def facts(r):
+        return r.axes_text, r.point, r.workload_json, r.recorded
+
+    assert [facts(r) for r in made] == [facts(r) for r in benched]
+
+
+def test_a_recorded_call_with_unusable_rounds_is_a_finding_not_a_crash() -> None:
+    findings, record = _judged_on_recorded_calls({"#0": (2.0, 1.0), "#1": (math.inf, 1.0)})
+    assert [f.code for f in findings] == [FindingCode.CANDIDATE_CRASH]
+    assert record.inputs_cell() == "recorded x2: 2.00 -"
 
 
 class TestBaseline:

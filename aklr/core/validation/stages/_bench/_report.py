@@ -31,9 +31,8 @@ if TYPE_CHECKING:
 
 __all__ = ["BenchReport", "WorkloadRecord"]
 
-_WORKLOAD_COLUMNS: Final = (
-    "schema", "axes", "verdict", "graph/baseline", "graph/incumbent",
-)  # fmt: skip
+_RATIO_COLUMNS: Final = ("graph/baseline", "graph/incumbent")
+_WORKLOAD_COLUMNS: Final = ("schema", "axes", "verdict", *_RATIO_COLUMNS, "inputs")
 
 # Workload findings remain measurements even when another workload admits the kernel.
 _MEASURED_AS: Final[Mapping[FindingCode, Literal["passed", "failed"]]] = {
@@ -52,6 +51,28 @@ _MEASURED_AS: Final[Mapping[FindingCode, Literal["passed", "failed"]]] = {
 }
 
 
+class RecordedSample(FrozenModel):
+    """A recorded serving call a workload was measured on (``validation.traffic``)."""
+
+    recording: str
+    rows_per_request: int
+    kv: tuple[int, ...]
+    # the axes the call set, as it was measured (the record's own axes are the workload's)
+    axes: dict[str, int]
+    # its own graph speedup over the baseline, as the workload's is reckoned; None: not timed
+    speedup: float | None
+
+    @classmethod
+    def of(cls, call: Mapping[str, Any], speedup: float | None) -> Self:
+        return cls(
+            recording=call["recording"],
+            rows_per_request=call["rows_per_request"],
+            kv=tuple(call["kv"]),
+            axes=call["axes"],
+            speedup=speedup,
+        )
+
+
 class WorkloadRecord(FrozenModel):
     """One workload of a head schema: facts only."""
 
@@ -65,6 +86,8 @@ class WorkloadRecord(FrozenModel):
     timings: tuple[TimingRecord, ...]
     # a batch finding (build, task crash or timeout) stands for its findings
     batch_stopped: bool
+    # the recorded calls it was measured on, its timings their total time's; none: drawn inputs
+    recorded: tuple[RecordedSample, ...] = ()
 
     @property
     def beats_baseline(self) -> bool:
@@ -100,8 +123,15 @@ class WorkloadRecord(FrozenModel):
             schema_short_name(self.schema_path),
             axes_cell(self.axes),
             verdict,
-            *(ratios.get(column, "-") for column in _WORKLOAD_COLUMNS[3:]),
+            *(ratios.get(column, "-") for column in _RATIO_COLUMNS),
+            self.inputs_cell(),
         )
+
+    def inputs_cell(self) -> str:
+        if not self.recorded:
+            return "drawn"
+        each = " ".join("-" if s.speedup is None else f"{s.speedup:.2f}" for s in self.recorded)
+        return f"recorded x{len(self.recorded)}: {each}"
 
 
 class BenchReport(StageReport):

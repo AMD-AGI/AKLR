@@ -17,7 +17,7 @@ from aklr.core.contract.locate import committed_schema_paths
 
 __all__ = ["PathKind", "ValidationScope"]
 
-PathKind = Literal["schema_data", "core", "other"]
+PathKind = Literal["schema_data", "core", "traffic", "other"]
 
 _SCHEMA_PATH_PATTERN: Final = re.compile(locate.REPOSITORY_SCHEMA_PATH_PATTERN)
 
@@ -49,6 +49,10 @@ class ValidationScope:
         )
         kinds = {p: scope.path_kind(p) for p in scope.changed_paths()}
         is_schema_only = scope.base_sha is not None and "core" not in kinds.values()
+        # schemas measured on recorded traffic that changed: benched though their files did not
+        recorded = (
+            scope._traffic_changed_schemas(kinds) if is_schema_only and "traffic" in kinds.values() else ()
+        )
         if schema_paths is not None:
             for path in schema_paths:
                 if not path.is_file() or not path.resolve().is_relative_to(root):
@@ -56,15 +60,23 @@ class ValidationScope:
             paths = tuple(p.resolve() for p in schema_paths)
         elif is_schema_only:
             changed = (root / p for p, kind in kinds.items() if kind == "schema_data")
-            paths = tuple(sorted(p for p in changed if p.is_file()))
+            paths = tuple(sorted({p for p in changed if p.is_file()} | set(recorded)))
         else:
-            op_dirs = [p.parent for p in (root / "aklr/plugins").rglob("contract.py")]
-            paths = tuple(p for op_dir in sorted(op_dirs) for p in committed_schema_paths(op_dir))
+            paths = _all_schema_paths(root)
         bench_paths = paths
         if is_schema_only:
             at_base = set(scope.paths_at_schema_roots())
-            bench_paths = tuple(p for p in paths if scope.relative_path(p) not in at_base)
+            bench_paths = tuple(p for p in paths if scope.relative_path(p) not in at_base or p in recorded)
         return replace(scope, schema_paths=paths, bench_paths=bench_paths)
+
+    def _traffic_changed_schemas(self, changed: Sequence[str]) -> tuple[Path, ...]:
+        """The schema files whose recorded inputs differ from the base's (``validation.traffic``)."""
+        from aklr.core.validation import traffic
+
+        listing = "traffic/schemas.json"
+        base_text = self.text_at_base(listing) if listing in self.paths_at_base("traffic") else None
+        names = traffic.changed_schemas(self.root, changed, base_text)
+        return tuple(p for p in _all_schema_paths(self.root) if p.parent.name in names)
 
     def relative_path(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.root.resolve()).as_posix()
@@ -132,11 +144,20 @@ class ValidationScope:
 
     @staticmethod
     def path_kind(path: str) -> PathKind:
-        """aklr/core's code and stack.json are the only changes that re-bench every schema."""
+        """aklr/core's code and stack.json are the only changes that re-bench every schema; traffic/'s
+        re-bench the schemas measured on what changed."""
         match = _SCHEMA_PATH_PATTERN.fullmatch(path)
         is_schema_json = match is not None and match["language"] in spec.LANGUAGES
         if is_schema_json:
             return "schema_data"
         if path == "stack.json" or (path.startswith("aklr/core/") and not path.endswith(".md")):
             return "core"
+        if path.startswith("traffic/"):
+            return "traffic"
         return "other"
+
+
+def _all_schema_paths(root: Path) -> tuple[Path, ...]:
+    """Every committed schema file of the repository at ``root``."""
+    op_dirs = [p.parent for p in (root / "aklr/plugins").rglob("contract.py")]
+    return tuple(p for op_dir in sorted(op_dirs) for p in committed_schema_paths(op_dir))
