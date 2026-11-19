@@ -153,10 +153,11 @@ def _situv2_a4w4_kwargs(
     scale per 32); why AKLR declines such a call; or ``None`` for any other call."""
     from aiter import ActivationType, QuantType, dtypes
 
+    # aiter's enums are pybind11's: each lookup is a new object, equal by value only
     activation, quant_type = ActivationType(activation), QuantType(quant_type)
     if (
-        activation is not ActivationType.Situv2
-        or quant_type is not QuantType.per_1x32
+        activation != ActivationType.Situv2
+        or quant_type != QuantType.per_1x32
         or attr_value(gate_mode) != "separated"
     ):
         return None

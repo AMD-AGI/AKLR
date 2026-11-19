@@ -352,6 +352,31 @@ def test_situv2_on_mxfp4_activations_is_served_by_situv2_a4w4_moe(monkeypatch, a
     inspect.signature(situv2_a4w4_moe).bind(*tensors, **kwargs)
 
 
+class _PybindEnum:
+    """aiter's enums are pybind11's: each lookup a new object, equal by value, never the same object."""
+
+    def __init__(self, value):
+        self.value = int(value)
+
+    def __eq__(self, other):
+        return getattr(other, "value", other) == self.value
+
+    def __hash__(self):
+        return hash(self.value)
+
+
+def test_situv2_on_mxfp4_activations_is_told_by_value_from_aiters_pybind_enums(monkeypatch, aklr_serves):
+    activation, quant = type("ActivationType", (_PybindEnum,), {}), type("QuantType", (_PybindEnum,), {})
+    activation.Situv2, quant.per_1x32 = activation(ActivationType.Situv2), quant(QuantType.per_1x32)
+    monkeypatch.setattr(aklr_serves.package, "ActivationType", activation)
+    monkeypatch.setattr(aklr_serves.package, "QuantType", quant)
+    aklr_serves.picked = FP4
+    monkeypatch.setattr(moe, "situv2_a4w4_moe", _api(lambda *a, **k: "y"))
+    monkeypatch.setattr(moe, "fused_moe", _api(lambda *a, **k: pytest.fail("fused_moe asked")))
+    kernel, run = _select("fused_moe", **SITUV2_A4W4)
+    assert kernel is KERNEL and run(*_args("fused_moe", **SITUV2_A4W4)) == "y"
+
+
 @pytest.mark.parametrize(
     "changes",
     [
