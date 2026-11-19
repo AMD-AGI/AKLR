@@ -393,13 +393,14 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         )
         for owed, has_prev in ((True, True), (False, True), (False, False))
     ),
-    # its attention back and FFN seam: the window pool and the compressed one, then the window alone
+    # its attention back and FFN seam: the window pool and the compressed one, then the window
+    # alone, then a TP4 rank's 16 heads and 2 of wo_a's groups with the other ranks' wo_b outputs
     *(
         PointSpec(
             contract_id="deepseekv41_mono_k2_attention@1.0",
             axes={
                 "n_tokens": 6,
-                "n_heads": 32,
+                "n_heads": 16 if has_peers else 32,
                 "n_pages": 2,
                 "page_size": 64,
                 "n_indices": 64,
@@ -408,7 +409,7 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
                 "n_extra_indices": 64 if has_extra else 1,
                 "n_positions": 4096,
                 "hidden_size": 5120,
-                "o_dim": 4096,
+                "o_dim": 2048 if has_peers else 4096,
             },
             dtypes={
                 "q": "bfloat16",
@@ -422,6 +423,7 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
                 "wo_a": "bfloat16",
                 "wo_b": "float8_e4m3fn",
                 "wo_b_scale": "float8_e8m0",
+                "peer_x": "float32" if has_peers else None,
                 "residual": "bfloat16",
                 "post_mix": "float32",
                 "comb_mix": "float32",
@@ -441,10 +443,11 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
                 "has_extra_indices": has_extra,
                 "has_rope_freqs": True,
                 "has_positions": True,
+                "has_peer_x": has_peers,
             },
             layout_variant_name="padded_pages",
         )
-        for has_extra in (True, False)
+        for has_extra, has_peers in ((True, False), (False, False), (True, True))
     ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter

@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""DeepSeek-V4.1's calls on one rank of its TP group, where sglang serves them without a
-monokernel: every prefill, and the decode and verify steps a monokernel does not take.
+"""DeepSeek-V4.1's calls on one rank of its TP group: sglang's own where it serves them without
+a monokernel (every prefill, and the decode and verify steps a monokernel does not take), and
+the launches of its AMD monokernel, on the steps it takes too.
 
 A model is a scenario: DeepSeek-V4.1-Flash at TP2 is 32 query heads on a rank."""
 
@@ -396,7 +397,7 @@ DEEPSEEKV41_MONO_K1 = OpContract(
     contract_id="deepseekv41_mono_k1@1.0",
     description=(
         "The attention front of a DeepSeek-V4.1 layer on one rank, as one launch (the K1 of "
-        "sglang's AMD monokernel, for the steps it does not take): the mHC boundary into the "
+        "sglang's AMD monokernel, on this rank's query heads): the mHC boundary into the "
         "attention, the input RMSNorm, wqkv_a, the query through q_norm, wq_b and RoPE, and the "
         "token's KV record. " + _SEAM + " Without x no post is owed; without prev_pre_mix (the "
         "first layer) the layer input is stream 0. The normed input, rounded to bf16 then to fp8 "
@@ -551,13 +552,16 @@ DEEPSEEKV41_MONO_K1 = OpContract(
 DEEPSEEKV41_MONO_K2_ATTENTION = OpContract(
     contract_id="deepseekv41_mono_k2_attention@1.0",
     description=(
-        "The attention back of a DeepSeek-V4.1 layer and its FFN boundary on one rank holding "
-        "every head, as one launch (the K2 of sglang's AMD monokernel up to the MoE's input, for "
-        "the steps it does not take: under data-parallel attention the MoE's rows are gathered "
-        "from the other ranks first). deepseekv41_sparse_mla's attention with the rotation back, "
-        "rounded to bf16; each group of 8 heads times its rows of wo_a, rounded to bf16; "
-        "that, to fp8 e4m3 at an e8m0 scale per 32 values, times wo_b, rounded to bf16: x, the "
-        "attention's output. Then the mHC boundary into the FFN and its RMSNorm, ffn_input: " + _SEAM
+        "The attention back of a DeepSeek-V4.1 layer and its FFN boundary on one rank, as one "
+        "launch (the K2 of sglang's AMD monokernel up to the MoE's input; under data-parallel "
+        "attention the MoE's rows are gathered from the other ranks first). "
+        "deepseekv41_sparse_mla's attention with the rotation back, rounded to bf16; each group "
+        "of 8 heads times its rows of wo_a, rounded to bf16; that, to fp8 e4m3 at an e8m0 scale "
+        "per 32 values, times wo_b, rounded to bf16: x, the attention's output on a rank holding "
+        "every head. A rank of a TP group holds its share of the heads, of wo_a's groups and of "
+        "wo_b's columns: x is then its wo_b output plus peer_x, the sum of the other ranks', "
+        "which the caller's collective brings, rounded to bf16. Then the mHC boundary into the "
+        "FFN and its RMSNorm, ffn_input: " + _SEAM
     ),
     op_type="deepseekv41",
     axes={
@@ -571,7 +575,7 @@ DEEPSEEKV41_MONO_K2_ATTENTION = OpContract(
         ),
         "o_blocks": derived_axis("MXFP8 blocks of wo_b's reduction.", f"o_dim // {MXFP8_BLOCK}"),
     },
-    attrs=DEEPSEEKV41_SPARSE_MLA.attrs,
+    attrs={**DEEPSEEKV41_SPARSE_MLA.attrs, "has_peer_x": _presence("peer_x", "peer")},
     constraints=(
         *DEEPSEEKV41_SPARSE_MLA.constraints,
         "has_rope_freqs",
@@ -595,6 +599,13 @@ DEEPSEEKV41_MONO_K2_ATTENTION = OpContract(
             lifetime="weight",
         ),
         "wo_b_scale": _weight_scale("hidden_blocks", "o_blocks", "Per 32 x 32 block of wo_b."),
+        "peer_x": TensorSpec(
+            description="The other ranks' wo_b outputs of these tokens, each in bf16, summed.",
+            shape=("n_tokens", "hidden_size"),
+            dtype=_FLOAT32,
+            present_when="has_peer_x",
+            distribution=_FINITE,
+        ),
         "residual": _STREAMS,
         "post_mix": TensorSpec(
             description="The attention boundary's post mix, of x into each stream.",
@@ -640,9 +651,10 @@ def _ffn_layout_facts(shuffled: bool, scale_rank: int) -> tuple[LayoutFact, ...]
 DEEPSEEKV41_MONO_K2_FFN = OpContract(
     contract_id="deepseekv41_mono_k2_ffn@1.0",
     description=(
-        "The MoE of a DeepSeek-V4.1 layer on one rank, as the monokernel's K2 runs it after the "
-        "FFN seam and sglang's DeepseekV2MoE.forward_normal runs it where no monokernel takes the "
-        "step: on hidden_states (the rows of every rank under DP attention), the router's "
+        "The MoE of a DeepSeek-V4.1 layer on one rank, as sglang's DeepseekV2MoE.forward_normal "
+        "runs it where no monokernel takes the step, and the monokernel's K2 after the FFN seam "
+        "but for the shared expert, which K2 reads from the checkpoint's FP8 weights: on "
+        "hidden_states (the rows of every rank under DP attention), the router's "
         "logits in fp32; each token's topk experts by sqrt(softplus(logit)) plus correction_bias, "
         "weighed by the unbiased scores over their sum times routed_scaling_factor, and the "
         "shared expert, the last slot, at weight 1; each expert down(silu(min(gate(x), limit)) "

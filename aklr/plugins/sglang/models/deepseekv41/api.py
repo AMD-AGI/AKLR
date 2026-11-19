@@ -171,6 +171,7 @@ def deepseekv41_mono_k2_attention(
     extra_indices=None,
     rope_freqs=None,
     positions=None,
+    peer_x=None,
     kv_cache_layout="row_major",
     hc_rms_eps=1e-6,
     hc_eps=1e-6,

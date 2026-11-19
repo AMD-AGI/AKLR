@@ -194,6 +194,7 @@ def deepseekv41_mono_k2_attention_baseline(
     extra_indices=None,
     rope_freqs=None,
     positions=None,
+    peer_x=None,
     kv_cache_layout="row_major",
     hc_rms_eps=1e-6,
     hc_eps=1e-6,
@@ -207,8 +208,8 @@ def deepseekv41_mono_k2_attention_baseline(
 ):
     """The decode chain the monokernel's K2 stands in for, up to the MoE: the sparse attention
     with the rotation back, wo_a's bf16 grouped product as a verify step runs it, wo_b on
-    aiter's blockscale GEMM, the fused boundary and the post-attention norm hosting its
-    Sinkhorn."""
+    aiter's blockscale GEMM, the other ranks' outputs added, the fused boundary and the
+    post-attention norm hosting its Sinkhorn."""
     import torch
     from sglang.kernels.ops.gemm.mxfp8_aiter_gfx95 import aiter_mxfp8_blockscaled_linear
     from sglang.kernels.ops.layernorm.mhc_boundary_hip import rmsnorm_with_sinkhorn
@@ -227,6 +228,8 @@ def deepseekv41_mono_k2_attention_baseline(
     x = aiter_mxfp8_blockscaled_linear(
         input=projected.reshape(tokens, -1), weight=wo_b, weight_scale_ue8m0=wo_b_scale.view(torch.uint8)
     )
+    if peer_x is not None:
+        x = (x + peer_x).to(x.dtype)
     streams, layer_input, coefficients = _boundary(
         x, residual, post_mix, comb_mix, pre_mix, hc_fn, hc_scale, hc_base, sinkhorn_iters, hc_rms_eps, hc_eps
     )

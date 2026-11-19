@@ -200,7 +200,8 @@ def deepseekv41_mono_k2_attention_reference(
     decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, ...]:
     """The outputs in the contract's order. Rounding points, past the boundary's: the attended
-    values, wo_a's output and wo_b's round to bf16; wo_b rounds its input to fp8."""
+    values, wo_a's output and wo_b's round to bf16; wo_b rounds its input to fp8; the ranks'
+    wo_b outputs round once more, summed."""
     import torch
 
     args = row_major_args
@@ -211,6 +212,8 @@ def deepseekv41_mono_k2_attention_reference(
     projected = torch.einsum("tgd,grd->tgr", grouped, wo_a.unflatten(0, (n_groups, -1)))
     projected = rounded_to_bfloat16(projected).float().flatten(1)
     x = rounded_to_bfloat16(_mxfp8_linear(projected, args, point, "wo_b", decode)).float()
+    if point.attrs["has_peer_x"]:
+        x = rounded_to_bfloat16(x + decode(args["peer_x"], point.dtypes["peer_x"]).float()).float()
     return _boundary(point, args, decode, x, "pre_mix")
 
 
