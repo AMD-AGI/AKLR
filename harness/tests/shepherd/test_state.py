@@ -146,6 +146,21 @@ def test_init_creates_missing_private_parents(tmp_path):
     assert (tmp_path / "user" / "shepherd").stat().st_mode & 0o777 == 0o700
 
 
+def test_init_takes_a_directory_that_holds_no_ledger(tmp_path):
+    made_ahead = tmp_path / "state"
+    made_ahead.mkdir(mode=0o700)
+    assert call(made_ahead, "show").returncode != 0  # leaves `.guard` behind
+    (made_ahead / "runs").mkdir()
+    assert success(made_ahead, "init")["revision"] == 0
+    used = tmp_path / "used"
+    used.mkdir(mode=0o700)
+    (used / "runs" / "shp1").mkdir(parents=True)
+    result = call(used, "init")
+    assert result.returncode != 0
+    assert "runs" in result.stderr
+    assert not (used / "state.json").exists()
+
+
 @pytest.mark.parametrize("mode", [0o777, 0o770])
 def test_root_under_a_shared_directory_is_refused(tmp_path, mode):
     shared = tmp_path / "shared"

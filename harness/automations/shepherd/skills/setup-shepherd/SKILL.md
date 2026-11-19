@@ -95,9 +95,11 @@ Do not use undocumented integration endpoints.
 
 ## 5. Initialize state
 
-Read [state.md](../optimize-and-deliver-kernels/references/state.md). Initialize a new state directory once with the helper; it creates missing private parents.
+Read [state.md](../optimize-and-deliver-kernels/references/state.md). Most setups are the first on their host: when the state directory is missing or holds no ledger, initialize it with the helper and go on, without asking. It creates missing private parents and takes a directory made ahead.
 
-Setup cannot `save`; only a running round can. The configuration keeps the repository, authorization and caps. An existing directory, or one missing after use, needs investigation, not a new `init`.
+The helper refuses a directory that holds a ledger or its remains, and names what it found. With a valid ledger (`show` prints it), keep it and skip `init`. Otherwise stop and ask the user: only they can say whether a ledger was lost.
+
+Setup cannot `save`; only a running round can. The configuration keeps the repository, authorization and caps.
 
 Record the passing checks of step 4 and the budget authorization in `readiness.md` in the state directory. If a check has not run, leave paid mode off.
 

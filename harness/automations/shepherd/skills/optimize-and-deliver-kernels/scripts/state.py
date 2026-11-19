@@ -430,13 +430,19 @@ class StateDir:
 
     def init(self):
         # A fresh host has no `/var/tmp/$USER/shepherd` yet. Every directory made here is private,
-        # whatever the umask; exclusive creation of the root also rejects a lost ledger.
-        for directory in [*reversed([p for p in self.root.parents if not p.exists()]), self.root]:
-            try:
-                directory.mkdir(mode=0o700)
-            except FileExistsError as exc:
-                raise StateError("directory already exists; never initialize over existing state") from exc
+        # whatever the umask.
+        for directory in reversed([p for p in (self.root, *self.root.parents) if not p.exists()]):
+            directory.mkdir(mode=0o700)
             directory.chmod(0o700)
+        # A first setup often finds the directory made ahead; `.guard` is left by any earlier command and
+        # an empty `runs/` holds nothing. Anything else is a ledger or its remains.
+        held = sorted(
+            path.name
+            for path in self.root.iterdir()
+            if path.name != ".guard" and not (path.name == "runs" and not any(path.iterdir()))
+        )
+        if held:
+            raise StateError(f"directory holds {', '.join(held)}; never initialize over existing state")
         value = {"schema": SCHEMA, "revision": 0, "state": {"campaigns": [], "last_main_sha": None}}
         atomic_json(self.root / "state.json", value)
         sync_directory(self.root.parent)

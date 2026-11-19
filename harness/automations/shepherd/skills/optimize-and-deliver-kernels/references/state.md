@@ -100,6 +100,7 @@ fingerprint then skips until that `wake_at`.
 ## Ledger contents
 
 `init` creates `campaigns: []` and `last_main_sha: null`, and any missing parent directories (mode 700).
+It takes a directory that holds no ledger (nothing but `.guard` and an empty `runs/`) and refuses any other.
 The envelope records the layout's `schema`. `begin` migrates an older ledger before the round starts,
 keeping the files it replaces in `schema-<old>/`, and refuses to start if the result would break a rule
 above; a ledger written by a newer helper is refused. This happens in every mode, `observe` included.
@@ -187,8 +188,9 @@ run limit, so a round the runner kills is taken over soon after.
 
 A round that hangs stays busy until its lease expires. Never delete `owner.json` or add a force-unlock.
 
-An empty, missing or corrupt directory does not mean nothing is running. Restore a consistent backup
-while paused and reconcile resources created since it; never initialize over a lost ledger.
+For a round, an empty, missing or corrupt directory does not mean nothing is running: it stops, and
+never initializes. When a ledger was lost, restore a consistent backup while paused and reconcile
+resources created since it; never initialize over a lost ledger.
 
 Back up `state.json`, `owner.json`, `last_round.json`, `runs/` and the evidence while paused, to another machine as well. Recovery
 covers one host, not multi-host availability.
