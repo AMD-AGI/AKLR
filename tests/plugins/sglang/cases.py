@@ -216,9 +216,9 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"topk": 16},
         layout_variant_name="gate_up_interleaved",
     ),
-    # Kimi-K3's MLA decode: two heads over a small latent cache
+    # absorbed MLA decode: two heads over a small latent cache
     PointSpec(
-        contract_id="kimi_k3_mla_decode@1.0",
+        contract_id="mla_decode@1.0",
         axes={"n_seqs": 4, "n_heads": 2, "n_slots": 64, "n_offsets": 5, "n_kv_tokens": 40},
         dtypes={
             "q": "bfloat16",
@@ -791,9 +791,9 @@ GFX950_CONTRACT_IDS = frozenset(
         "gdn_prefill_group_fp8_quant@1.0",
         "gdn_prefill@1.0",
         "kimi_k3_latent_moe@1.0",
-        "kimi_k3_mla_decode@1.0",
         "kimi_k3_mla_prefill_gate@1.0",
         "kimi_k3_mla_vc_output_gate@1.0",
+        "mla_decode@1.0",
         "minimax_m2_fp8_moe@1.0",
         "minimax_m2_mxfp4_moe@1.0",
         "qwen2_moe_fp8_experts@1.0",

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""sglang's TritonAttnBackend.forward_decode on one rank: Kimi-K3's absorbed MLA decode."""
+"""sglang's TritonAttnBackend.forward_decode on one rank: an absorbed MLA decode."""
 
 from __future__ import annotations
 
@@ -25,15 +25,15 @@ from aklr.core.contract.spec import (
     axis,
 )
 
-__all__ = ["CONTRACTS", "KIMI_K3_MLA_DECODE"]
+__all__ = ["CONTRACTS", "MLA_DECODE"]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 
-KIMI_K3_MLA_DECODE = OpContract(
-    contract_id="kimi_k3_mla_decode@1.0",
+MLA_DECODE = OpContract(
+    contract_id="mla_decode@1.0",
     description=(
-        "sglang's TritonAttnBackend.forward_decode for Kimi-K3's MLA layers past its KV write, "
+        "sglang's TritonAttnBackend.forward_decode for an absorbed MLA layer past its KV write, "
         "one query per sequence: each query head attends the slots "
         "kv_indices[kv_indptr[r]:kv_indptr[r + 1]] of the latent cache (page size 1, no RoPE), "
         "scores q . row * sm_scale over all 576 values, and output is the softmax-weighted sum "
@@ -75,7 +75,7 @@ KIMI_K3_MLA_DECODE = OpContract(
             distribution=IntRangeDistribution(lo=0, hi="n_slots - 1"),
         ),
         "sm_scale": ScalarSpec(
-            description="Multiplies every score: Kimi-K3's 192**-0.5.",
+            description="Multiplies every score: 192**-0.5 for a 128 + 64 query head.",
             dtype=DType.FLOAT32,
             interval=_POSITIVE_FLOAT32,
             default=192**-0.5,
@@ -93,4 +93,4 @@ KIMI_K3_MLA_DECODE = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
-CONTRACTS = (KIMI_K3_MLA_DECODE,)
+CONTRACTS = (MLA_DECODE,)
