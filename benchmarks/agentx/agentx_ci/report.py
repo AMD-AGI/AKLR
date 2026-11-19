@@ -12,7 +12,14 @@ from html import escape
 from pathlib import Path
 
 from agentx_ci.git_history import landed
-from agentx_ci.performance_analysis import X, Y, compare, compare_aklr, frontier, frontiers, measured
+from agentx_ci.performance_analysis import (
+    X,
+    Y,
+    compare,
+    compare_aklr,
+    frontiers,
+    measured,
+)
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
     REPO_ROOT,
@@ -25,13 +32,16 @@ from agentx_ci.utils import (
 )
 
 ARM_COLORS = ("#2563eb", "#ea580c", "#16a34a", "#9333ea", "#0891b2")
-COMBINED_COLOR = "#111827"
 BASELINE_COLOR = "#9ca3af"
 # Keep the published InferenceX CSV labels in both report languages.
 X_LABEL = "P90 Interactivity (tok/s/user)"
 Y_LABEL = "Throughput/Chip (tok/s)"
 # Highlight threshold, not a significance test.
 NOTABLE = 0.03
+# TEMPORARILY DISABLED: hides the "Week over week" and "AKLR changes since the previous run"
+# sections, plus the notice text that refers to them. The comparison and history are still
+# computed and written to report.json; set this back to True to restore them.
+SHOW_BASELINE_SECTIONS = False
 LANGS = ("en", "zh")
 ZH_MESSAGES = [
     (r"no valid successful measurement points to compare", "没有可用于比较的有效成功测量点"),
@@ -79,9 +89,12 @@ ZH_MESSAGES = [
     (r"concurrency grid changed", "并发网格已变化"),
     (r"execution identity is missing or unverified", "执行身份缺失或未经验证"),
     (
-        r"execution image, InferenceX source, dependencies or hardware changed",
-        "执行镜像、InferenceX 源码、依赖或硬件已变化",
+        r"execution image, client source, dependencies or hardware changed",
+        "执行镜像、客户端源码、依赖或硬件已变化",
     ),
+    (r"point selection policy or selected recipes changed", "选点策略或所选 recipe 已变化"),
+    (r"baseline predates recipe files", "基线来自 recipe 文件格式切换之前"),
+    (r"combined frontier", "合并前沿"),
 ]
 
 
@@ -124,8 +137,44 @@ def nice_ticks(high: float, count: int = 5) -> list[float]:
     return [i * step for i in range(int(high / step) + 2)]
 
 
+def _monotone_slope(x0: float, y0: float, x1: float, y1: float, x2: float, y2: float) -> float:
+    """Interior tangent of d3.curveMonotoneX (Steffen), including its zero-width handling."""
+    h0, h1 = x1 - x0, x2 - x1
+
+    def secant(dy: float, h: float, other: float) -> float:
+        if h:
+            return dy / h
+        return math.nan if dy == 0 else math.copysign(math.inf, dy) * (-1 if other < 0 else 1)
+
+    s0, s1 = secant(y1 - y0, h0, h1), secant(y2 - y1, h1, h0)
+    p = (s0 * h1 + s1 * h0) / (h0 + h1) if h0 + h1 else math.nan
+    sign = (-1 if s0 < 0 else 1) + (-1 if s1 < 0 else 1)
+    bound = min(abs(s0), abs(s1), 0.5 * abs(p)) if not math.isnan(p + s0 + s1) else math.nan
+    slope = sign * bound
+    return 0.0 if math.isnan(slope) or not slope else slope
+
+
+def monotone_path(points: list[tuple[float, float]]) -> str:
+    """SVG path equivalent to d3.line().curve(d3.curveMonotoneX), as drawn by InferenceX."""
+    points = [p for i, p in enumerate(points) if i == 0 or p != points[i - 1]]
+    path = f"M{points[0][0]:.1f},{points[0][1]:.1f}"
+    if len(points) < 3:
+        return path + "".join(f"L{x:.1f},{y:.1f}" for x, y in points[1:])
+    tangents = (
+        [0.0] + [_monotone_slope(*a, *b, *c) for a, b, c in zip(points, points[1:], points[2:])] + [0.0]
+    )
+    for i, end in ((0, 1), (-1, -2)):
+        (xa, ya), (xb, yb) = points[i], points[i + (1 if i == 0 else -1)]
+        h = abs(xb - xa)
+        tangents[i] = (3 * (yb - ya) / (xb - xa) - tangents[end]) / 2 if h else tangents[end]
+    for (x0, y0), (x1, y1), t0, t1 in zip(points, points[1:], tangents, tangents[1:]):
+        dx = (x1 - x0) / 3
+        path += f"C{x0 + dx:.1f},{y0 + dx * t0:.1f} {x1 - dx:.1f},{y1 - dx * t1:.1f} {x1:.1f},{y1:.1f}"
+    return path
+
+
 def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, height: int = 380) -> str:
-    """Render scatter points and Pareto frontiers."""
+    """Render scatter points and the monotone curve through each series."""
     left, right, bottom = 64, 16, 52
     legend_rows: list[list[tuple[dict, float]]] = [[]]
     row_x = 0.0
@@ -141,7 +190,7 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
     extent = [
         point
         for chart_series in series
-        for point in [*chart_series["points"], *(chart_series.get("frontier") or [])]
+        for point in [*chart_series["points"], *(chart_series.get("line") or [])]
     ]
     xs = [point[X] for point in extent] or [1.0]
     ys = [point[Y] for point in extent] or [1.0]
@@ -176,17 +225,12 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
         f"{Y_LABEL}</text>"
     )
     for s in series:
-        line = s.get("frontier") or []
+        line = s.get("line") or []
         if len(line) > 1:
-            path = " ".join(f"{sx(p[X]):.1f},{sy(p[Y]):.1f}" for p in line)
+            path = monotone_path([(sx(p[X]), sy(p[Y])) for p in line])
             dash = ' stroke-dasharray="6 4"' if s.get("dashed") else ""
-            out.append(
-                f'<polyline points="{path}" fill="none" stroke="{s["color"]}" stroke-width="2"{dash}/>'
-            )
+            out.append(f'<path d="{path}" fill="none" stroke="{s["color"]}" stroke-width="2"{dash}/>')
         for p in s["points"]:
-            pareto_coordinates = s.get("pareto_coordinates")
-            off_frontier = pareto_coordinates is not None and (p[X], p[Y]) not in pareto_coordinates
-            out.append('<g class="non-pareto-point">' if off_frontier else "<g>")
             fill = "white" if s.get("hollow") else s["color"]
             mode = {
                 "enabled": tr(lang, "AKLR enabled", "开启 AKLR"),
@@ -204,7 +248,6 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
                 f'stroke="{s["color"]}" stroke-width="1.6" tabindex="0" role="img" '
                 f'aria-label="{escape(tip)}" aria-describedby="point-tooltip" data-point-tooltip="{escape(tip)}"/>'
             )
-            out.append("</g>")
     for i, row in enumerate(legend_rows):
         y = 44 + i * 18
         for s, offset in row:
@@ -236,14 +279,18 @@ def short(sha: str) -> str:
     return sha[:10]
 
 
+def through_all(points: list[dict]) -> list[dict]:
+    """Every point in interactivity order, so the curve connects them all as InferenceX does."""
+    return sorted(points, key=lambda p: (p[X], p[Y]))
+
+
 def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) -> str:
     control = results.get("control")
     if control is not None:
-        title = tr(lang, "AKLR enabled vs disabled · Pareto frontiers", "开启与关闭 AKLR · Pareto 前沿")
+        title = tr(lang, "AKLR enabled vs disabled", "开启与关闭 AKLR")
         series = []
         for data, enabled in ((control, False), (results, True)):
             points = measured(data)
-            line = frontier(points)
             series.append(
                 {
                     "label": tr(lang, "AKLR enabled", "开启 AKLR")
@@ -251,64 +298,50 @@ def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) ->
                     else tr(lang, "AKLR disabled", "关闭 AKLR"),
                     "color": "#16a34a" if enabled else "#64748b",
                     "points": points,
-                    "frontier": line,
+                    "line": through_all(points),
                     "dashed": not enabled,
                     "hollow": not enabled,
-                    "pareto_coordinates": {(p[X], p[Y]) for p in line},
                 }
             )
     else:
-        title = tr(lang, "All arms · combined Pareto frontier", "全部实验组 · 合并 Pareto 前沿")
-        current = frontiers(results)
-        pareto_coordinates = {(p[X], p[Y]) for p in current["combined"]}
-        arms = sorted(current["arms"])
+        title = tr(lang, "All arms", "全部实验组")
+        arms = sorted({p["arm"] for p in results["points"]})
         series = [
             {
                 "label": tr(lang, f"{arm} (this run)", f"{arm}（本次）"),
                 "color": arm_color(arm, arms),
                 "aklr_mode": results["run"].get("aklr_mode"),
                 "points": measured(results, arm),
-                "pareto_coordinates": pareto_coordinates,
+                "line": through_all(measured(results, arm)),
             }
             for arm in arms
         ]
-        series.append(
-            {
-                "label": tr(lang, "combined frontier", "合并前沿"),
-                "color": COMBINED_COLOR,
-                "points": [],
-                "frontier": current["combined"],
-            }
-        )
-    previous_points = [
-        row["baseline"]
-        for view in comparison["arms"].values()
-        for row in view.get("points", [])
-        if row.get("tput_ratio") is not None
-    ]
-    if baseline is not None and comparison["status"] == "ok" and previous_points:
+    previous_frontier = (comparison.get("combined") or {}).get("baseline_frontier") or []
+    curve = comparison.get("method") in ("curve", "mixed")
+    if baseline is not None and comparison["status"] == "ok" and previous_frontier:
         series.append(
             {
                 "label": tr(
                     lang,
-                    "AKLR enabled · previous run (matched points)",
-                    "开启 AKLR · 上次运行（匹配点）",
+                    "AKLR enabled · previous run frontier"
+                    if curve
+                    else "AKLR enabled · previous run (matched points)",
+                    "开启 AKLR · 上次前沿" if curve else "开启 AKLR · 上次运行（匹配点）",
                 )
                 if control is not None
-                else tr(lang, "previous run frontier (matched points)", "上次前沿（匹配点）"),
+                else tr(
+                    lang,
+                    "previous run frontier" if curve else "previous run frontier (matched points)",
+                    "上次前沿" if curve else "上次前沿（匹配点）",
+                ),
                 "color": BASELINE_COLOR,
                 "points": [],
-                "frontier": frontier(previous_points),
+                "line": previous_frontier,
                 "dashed": True,
             }
         )
     chart = svg_chart(title, series, lang, width=1000, height=380)
-    toggle = (
-        '<label class="chart-toggle"><input type="checkbox" data-show-non-pareto checked> '
-        + tr(lang, "Show non-Pareto points", "显示非 Pareto 点")
-        + "</label>"
-    )
-    return f'<div class="card">{toggle}{chart}</div>'
+    return f'<div class="card">{chart}</div>'
 
 
 def aklr_section(results: dict, lang: str) -> str:
@@ -391,6 +424,44 @@ def aklr_section(results: dict, lang: str) -> str:
     return "\n".join(out)
 
 
+def curve_table(view: dict, lang: str) -> str:
+    """Render a frontier comparison: throughput ratios at shared interactivity positions."""
+    if view["status"] != "curve":
+        return (
+            '<p class="muted">'
+            + tr(
+                lang,
+                "The two frontiers share no interactivity range; only the chart compares them.",
+                "两条前沿的交互速度区间没有重叠，只在图上对比。",
+            )
+            + "</p>"
+        )
+    rows = "".join(
+        f"<tr><td>{num(row['intvty'])}</td><td>{num(row['current'])}</td><td>{num(row['baseline'])}</td>"
+        f"<td class='{delta_class(row['tput_ratio'])}'>{pct(row['tput_ratio'])}</td></tr>"
+        for row in view["positions"]
+    )
+    low, high = view["overlap"]
+    geo, worst, best = view["tput_geomean_ratio"], view["tput_ratio_min"], view["tput_ratio_max"]
+    previous = tr(lang, "previous", "上次")
+    return (
+        f"<table class='compact'><thead><tr><th>{tr(lang, 'P90 tok/s/user', 'P90 tok/s/user')}</th>"
+        f"<th>{tr(lang, 'Total tok/s/GPU', '总 tok/s/GPU')}</th><th>{previous}</th><th>Δ</th></tr></thead><tbody>"
+        + rows
+        + "</tbody></table><p class='muted'>"
+        + tr(
+            lang,
+            f"Interpolated in log(interactivity) over the shared range {num(low)}–{num(high)} tok/s/user. "
+            "Throughput geomean vs previous: ",
+            f"在共同交互速度区间 {num(low)}–{num(high)} tok/s/user 内按 log(交互速度) 插值。吞吐几何平均相对上次：",
+        )
+        + f"<span class='{delta_class(geo)}'>{pct(geo)}</span>"
+        + tr(lang, " · range ", " · 范围 ")
+        + f"<span class='{delta_class(worst)}'>{pct(worst)}</span> … "
+        + f"<span class='{delta_class(best)}'>{pct(best)}</span></p>"
+    )
+
+
 def comparison_tables(comparison: dict, lang: str) -> str:
     if comparison["status"] != "ok":
         reason = escape(localize(lang, comparison["reason"]))
@@ -403,7 +474,15 @@ def comparison_tables(comparison: dict, lang: str) -> str:
     if comparison["notes"]:
         items = "".join(f"<li>{escape(localize(lang, n))}</li>" for n in comparison["notes"])
         out.append(f'<ul class="notes">{items}</ul>')
-    for arm, view in comparison["arms"].items():
+    curve_note = tr(
+        lang,
+        "frontiers compared at equal interactivity",
+        "在相同交互速度下比较前沿",
+    )
+    views = list(comparison["arms"].items())
+    if comparison.get("combined"):
+        views.append((tr(lang, "Combined frontier", "合并前沿"), comparison["combined"]))
+    for arm, view in views:
         badge_class = view["status"]
         reason = localize(lang, view.get("reason", ""))
         badge = {
@@ -411,7 +490,8 @@ def comparison_tables(comparison: dict, lang: str) -> str:
                 tr(lang, "comparable", "可比"),
                 tr(lang, "comparing successful points with matching settings", "比较成功完成且配置匹配的点"),
             ),
-            "new-segment": (tr(lang, "new segment", "新分段"), reason),
+            "curve": (tr(lang, "curve comparison", "曲线比较"), f"{curve_note} · {reason}"),
+            "curve-no-overlap": (tr(lang, "curve comparison", "曲线比较"), f"{curve_note} · {reason}"),
             "new-arm": (tr(lang, "new arm", "新实验组"), reason),
         }[view["status"]]
         if view["status"] == "comparable" and not any(
@@ -427,18 +507,16 @@ def comparison_tables(comparison: dict, lang: str) -> str:
                 ),
             )
         head = f'<h3>{escape(arm)} <span class="badge {badge_class}">{badge[0]}</span> <span class="muted">{escape(badge[1])}</span></h3>'
-        if view["status"] == "new-segment":
-            changed = ", ".join(f"c{c}" for c in view["changed_concs"]) or tr(lang, "none", "无")
-            out.append(
-                head
-                + '<p class="muted">'
-                + tr(
-                    lang,
-                    f"Points whose serving or measurement settings changed: {changed}. Values are not compared.",
-                    f"服务或测量配置变化的点：{changed}。不做数值比较。",
+        if view["status"] in ("curve", "curve-no-overlap"):
+            changed = ""
+            if view.get("changed_concs"):
+                concs = ", ".join(f"c{c}" for c in view["changed_concs"])
+                changed = (
+                    '<p class="muted">'
+                    + tr(lang, f"Points whose settings changed: {concs}.", f"配置变化的点：{concs}。")
+                    + "</p>"
                 )
-                + "</p>"
-            )
+            out.append(head + changed + curve_table(view, lang))
             continue
         if view["status"] != "comparable":
             out.append(head)
@@ -578,9 +656,6 @@ h2 { font-size:17px; margin:28px 0 12px; }
 h3 { font-size:15px; margin:18px 0 8px; }
 .card { background:white; border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
 .chart { width:100%; height:auto; }
-.chart-toggle { display:flex; align-items:center; gap:6px; width:fit-content; cursor:pointer; margin:2px 0 10px; }
-.chart-toggle input { accent-color:#2563eb; }
-html[data-show-non-pareto="false"] .non-pareto-point { display:none; }
 .chart-title { font-size:14px; font-weight:600; fill:var(--fg); }
 .grid { stroke:#eef0f3; } .tick { font-size:11px; fill:var(--muted); }
 .axis { font-size:12px; fill:#374151; } .legend { font-size:12px; fill:#374151; }
@@ -596,6 +671,7 @@ th { background:#f1f5f9; font-weight:600; font-size:13px; }
 .badge.comparable { background:#dcfce7; color:#166534; } .badge.new-segment { background:#fef3c7; color:#92400e; }
 .badge.new-arm { background:#e0e7ff; color:#3730a3; }
 .badge.no-baseline { background:#f1f5f9; color:#475569; }
+.badge.curve, .badge.curve-no-overlap { background:#e0e7ff; color:#3730a3; }
 .warn { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:8px 12px; }
 .warn li, .notes li { margin:2px 0; }
 code { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
@@ -677,15 +753,6 @@ SCRIPT = """
   });
   window.addEventListener("scroll", hidePoint, true);
   window.addEventListener("resize", hidePoint);
-  document.addEventListener("change", function (event) {
-    if (!event.target.matches("[data-show-non-pareto]")) { return; }
-    hidePoint();
-    var show = event.target.checked;
-    root.dataset.showNonPareto = String(show);
-    document.querySelectorAll("[data-show-non-pareto]").forEach(function (input) {
-      input.checked = show;
-    });
-  });
 })();
 """
 
@@ -728,6 +795,8 @@ def render(
         + results.get("model", {}).get("display_name", "AgentX")
         + " · "
         + results.get("target", {}).get("id", "unknown")
+        + " · "
+        + results.get("framework", {}).get("id", "unknown")
         for lang in LANGS
     }
     pages = "\n".join(
@@ -746,9 +815,9 @@ def page(
     generated: str,
     notice: str | dict[str, str] | None = None,
 ) -> str:
-    run, inferencex = results["run"], results["run"]["inferencex"]
+    run = results["run"]
+    source, client = run["source"], run["client"]
     aklr_link = f'<a href="{repo_url}/commit/{run["aklr_sha"]}">{short(run["aklr_sha"])}</a>'
-    inferencex_link = f'<a href="https://github.com/{inferencex["repo"]}/commit/{inferencex["sha"]}">{short(inferencex["sha"])}</a>'
     message = notice.get(lang) if isinstance(notice, dict) else notice
     warn = f'<div class="warn">{escape(message)}</div>' if message else ""
     arms = "".join(
@@ -758,7 +827,7 @@ def page(
     )
     sources = "".join(
         f"<dt>{escape(path.removeprefix('inferencex-e2e/')).replace('/', '/<wbr>')}</dt><dd><code>{blob[:12]}</code></dd>"
-        for path, blob in inferencex.get("sources", {}).items()
+        for path, blob in (source.get("files") or source.get("sources") or {}).items()
     )
     baseline_line = (
         tr(
@@ -785,21 +854,40 @@ def page(
         control_table = f"<h3>{tr(lang, 'AKLR disabled points', '关闭 AKLR 数据点')}</h3>" + points_table(
             control, lang
         )
+    baseline_sections = ""
+    if SHOW_BASELINE_SECTIONS:
+        baseline_sections = f"""<h2>{tr(lang, "Week over week", "周环比")}</h2>
+<p class="muted">{
+            tr(
+                lang,
+                "Comparisons use only points that succeeded in both runs at the same arm and concurrency "
+                "with matching serving and measurement settings. "
+                f"Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).",
+                "周环比仅比较本次与上次均成功、服务与测量配置一致的相同实验组和并发点。"
+                f"变化超过 ±{NOTABLE * 100:.0f}% 才着色（暂无噪声模型）。",
+            )
+        }</p>
+{comparison_tables(comparison, lang)}
+<h2>{tr(lang, "AKLR changes since the previous run", "上次运行以来的 AKLR 改动")}</h2>
+{history_section(history, run["aklr_sha"], repo_url, lang)}
+"""
     return f"""<div class="page" data-page="{lang}" lang="{tr(lang, "en", "zh-CN")}">
 <header>
 <div class="top"><h1>{tr(lang, "AgentX weekly", "AgentX 周报")} · {
         escape(results.get("model", {}).get("display_name", "AgentX"))
-    } · {escape(results.get("target", {}).get("id", "unknown"))}</h1>
+    } · {escape(results.get("target", {}).get("id", "unknown"))} · {
+        escape(results.get("framework", {}).get("id", "unknown"))
+    }</h1>
 {language_switch(lang)}</div>
 <div class="meta">{tr(lang, "run", "运行")} {escape(run["id"])} · {escape(run["finished_at"])} · {
         tr(lang, "host", "主机")
     } {escape(run["host"])} ·
-AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line}</div>
+AKLR {aklr_link} · {tr(lang, "client", "客户端")} {source_ref(client)} · {progress} · {baseline_line}</div>
 </header>
 <main>
 {warn}
 {selection_section(results, lang)}
-<h2>{tr(lang, "Pareto frontiers", "Pareto 前沿")}</h2>
+<h2>{tr(lang, "Throughput vs interactivity", "吞吐与交互速度")}</h2>
 <p class="muted">{
         tr(
             lang,
@@ -813,21 +901,7 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
     }</p>
 {charts(results, baseline, comparison, lang)}
 {aklr_section(results, lang)}
-<h2>{tr(lang, "Week over week", "周环比")}</h2>
-<p class="muted">{
-        tr(
-            lang,
-            "Comparisons use only points that succeeded in both runs at the same arm and concurrency "
-            "with matching serving and measurement settings. "
-            f"Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).",
-            "周环比仅比较本次与上次均成功、服务与测量配置一致的相同实验组和并发点。"
-            f"变化超过 ±{NOTABLE * 100:.0f}% 才着色（暂无噪声模型）。",
-        )
-    }</p>
-{comparison_tables(comparison, lang)}
-<h2>{tr(lang, "AKLR changes since the previous run", "上次运行以来的 AKLR 改动")}</h2>
-{history_section(history, run["aklr_sha"], repo_url, lang)}
-<h2>{tr(lang, "Points", "数据点")}</h2>
+{baseline_sections}<h2>{tr(lang, "Points", "数据点")}</h2>
 {points_table(results, lang)}
 {control_table}
 <h2>{tr(lang, "Provenance", "来源信息")}</h2>
@@ -836,6 +910,7 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 <dt>{tr(lang, "target id", "测试目标标识")}</dt><dd>{
         escape(results.get("target", {}).get("id", "unknown"))
     }</dd>
+<dt>{tr(lang, "framework", "框架")}</dt><dd>{escape(results.get("framework", {}).get("id", "unknown"))}</dd>
 <dt>{tr(lang, "weights", "权重")}</dt><dd>{escape(run.get("weights", {}).get("repo", "unknown"))} @ {
         escape(run.get("weights", {}).get("revision", "unknown"))
     }</dd>
@@ -843,16 +918,10 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 <dt>{tr(lang, "verified image ID", "已验证镜像 ID")}</dt><dd><code>{
         escape(run.get("execution", {}).get("image_id", tr(lang, "unverified", "未经验证")))
     }</code></dd>
-<dt>{tr(lang, "observed GPUs", "实际 GPU")}</dt><dd>{
-        escape(json.dumps(run.get("hardware", {}), ensure_ascii=False))
+<dt>{tr(lang, "recipe source", "recipe 来源")}</dt><dd>{escape(source.get("kind", ""))} · {
+        source_ref(source)
     }</dd>
-<dt>{tr(lang, "InferenceX image", "InferenceX 镜像")}</dt><dd><code>{
-        escape(run["image"]["inferencex"])
-    }</code></dd>
-<dt>InferenceX</dt><dd>{escape(inferencex["repo"])} {inferencex_link} · {
-        escape(inferencex.get("commit_subject", ""))
-    }</dd>
-<dt>{tr(lang, "config key", "配置键")}</dt><dd><code>{escape(inferencex["config_key"])}</code></dd>
+<dt>{tr(lang, "client", "客户端")}</dt><dd>{source_ref(client)}</dd>
 {sources}{arms}
 <dt>{tr(lang, "generated", "生成时间")}</dt><dd>{generated}</dd>
 </dl></div>
@@ -861,59 +930,49 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 """
 
 
+def source_ref(source: dict) -> str:
+    """Link a repo@sha source, or show its URL and ref, then its config_key."""
+    repo, sha = source.get("repo"), source.get("sha")
+    parts = []
+    if repo and sha:
+        parts.append(
+            f'{escape(repo)} <a href="https://github.com/{escape(repo)}/commit/{escape(sha)}">{short(sha)}</a>'
+        )
+    elif source.get("url") or repo:
+        text = escape(str(source.get("url") or repo))
+        if source.get("ref"):
+            text += f" @ {escape(str(source['ref']))}"
+        parts.append(text)
+    if source.get("config_key"):
+        parts.append(f"<code>{escape(str(source['config_key']))}</code>")
+    return " · ".join(parts) or "-"
+
+
 def selection_section(results: dict, lang: str) -> str:
     selection = results["run"].get("selection")
-    if results["run"].get("point_policy", "all") != "inferencex-pareto" or not selection:
+    if not selection:
         return ""
     selected = len(selection["points"])
     successful = sum(p["status"] == "ok" for p in results["points"])
-    scope = selection["scope"]
-    text = tr(
-        lang,
-        f"InferenceX Pareto selection: {selected} of {selection['candidate_count']} local candidates selected; "
-        f"{successful}/{selected} succeeded. This validates the selected plan, not the full concurrency grid.",
-        f"InferenceX 前沿选点：从 {selection['candidate_count']} 个本地候选点中选中 {selected} 个，"
-        f"成功 {successful}/{selected}。本次验证范围为选点计划，不代表完整并发矩阵已验证。",
-    )
-    source = (
-        tr(lang, "Upstream curve", "上游曲线")
-        + ": "
-        + " / ".join(str(scope[key]) for key in ("model", "hardware", "framework", "precision"))
-        + f" · {selection['curve_date']} · {tr(lang, 'run', '运行')} {selection['curve_workflow_run_id']}"
-    )
-    reasons = {
-        "off-upstream-frontier": tr(lang, "Off upstream frontier", "未进入上游前沿"),
-        "no-matching-upstream-measurement": tr(lang, "No matching upstream measurement", "无匹配的上游测量"),
-    }
-    rows = "".join(
-        f"<tr><td><code>{escape(p['point_id'])}</code></td><td>"
-        + tr(lang, "Not run", "未运行")
-        + f"</td><td>{escape(reasons.get(p['reason'], p['reason']))}</td></tr>"
-        for p in selection["unselected"]
-    )
-    return (
-        f'<div class="card"><p>{escape(text)}</p><p>{escape(source)}</p>'
-        + "<p>"
+    paragraphs = [
+        escape(
+            tr(
+                lang,
+                f"Upstream Pareto frontier: {selected} points selected; {successful}/{selected} succeeded. "
+                "This validates the selected points, not the full grid.",
+                f"上游 Pareto 前沿选点：选中 {selected} 个，成功 {successful}/{selected}。"
+                "本次只验证选中的点，不代表完整并发矩阵。",
+            )
+        ),
+        tr(lang, "Selection", "选点")
+        + f" <code>{escape(selection['selection_sha256'][:12])}</code> · "
         + tr(
             lang,
-            "Upstream selection axes: P90 E2E normalized interactivity × input + output throughput/GPU",
-            "上游选点坐标：P90 端到端归一化交互速度 × 单 GPU 输入+输出吞吐",
-        )
-        + " · "
-        f"<code>{escape(selection['selection_sha256'][:12])}</code></p>"
-        + "<p>"
-        + tr(
-            lang,
-            "The upstream frontier selects candidates using E2E interactivity; the chart below recomputes "
-            "the frontier using this run's full-response interactivity. "
-            "Different hardware or runtime may have a different full frontier.",
-            "上游前沿按端到端交互速度选点；下图按本次实测的完整响应交互速度重新计算前沿。"
-            "硬件或运行环境不同，完整前沿可能不同。",
-        )
-        + "</p><details><summary>"
-        + tr(lang, "Unselected points", "未选中的点")
-        + f"</summary><table><tbody>{rows}</tbody></table></details></div>"
-    )
+            "the chart below connects every successful point of this run by its full-response interactivity.",
+            "下图按本次实测的完整响应交互速度，把每个成功的点连成曲线。",
+        ),
+    ]
+    return '<div class="card">' + "".join(f"<p>{p}</p>" for p in paragraphs) + "</div>"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -986,14 +1045,19 @@ def write_report(
         message = notice.get(lang) if isinstance(notice, dict) else notice
         messages = [message] if message else []
         if not complete_measurement(results):
-            messages.append(
-                tr(
-                    lang,
-                    "Incomplete measurement or failed points; week-over-week comparisons use only points "
-                    "that succeeded in both this run and the baseline with matching settings.",
-                    "测量未完成或有失败点；周环比只对本次与基线中均成功完成且配置一致的点计算。",
+            if SHOW_BASELINE_SECTIONS:
+                messages.append(
+                    tr(
+                        lang,
+                        "Incomplete measurement or failed points; week-over-week comparisons use only points "
+                        "that succeeded in both this run and the baseline with matching settings.",
+                        "测量未完成或有失败点；周环比只对本次与基线中均成功完成且配置一致的点计算。",
+                    )
                 )
-            )
+            else:
+                messages.append(
+                    tr(lang, "Incomplete measurement or failed points.", "测量未完成或有失败点。")
+                )
         if results["run"].get("source_dirty") is not False:
             messages.append(
                 tr(
@@ -1003,10 +1067,6 @@ def write_report(
                 )
             )
         notices[lang] = " ".join(messages)
-    results = {
-        **results,
-        "serving": {key: value for key, value in results["serving"].items() if key != "warnings"},
-    }
     if results["run"].get("mode") != "live":
         raise ValueError("only live measurement results are supported")
     if baseline is not None and baseline["run"].get("mode") != "live":
@@ -1024,6 +1084,7 @@ def write_report(
         {
             "model": results.get("model", {}),
             "target": results.get("target", {}),
+            "framework": results.get("framework", {}),
             "axes": {"x": X, "y": Y},
             "frontiers": frontiers(results),
             "comparison": comparison,

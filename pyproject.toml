@@ -29,6 +29,9 @@ aklr = "aklr.plugins.sglang:register"
 [project.entry-points."vllm.general_plugins"]
 aklr = "aklr.plugins.vllm:register"
 
+[project.entry-points."aiter.plugins"]
+aklr = "aklr.plugins.aiter.provider:provider"
+
 [tool.setuptools.packages.find]
 include = ["aklr", "aklr.*"]
 
@@ -58,6 +61,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+
+[tool.pytest.ini_options]
+# The AgentX tests import the agentx_ci package from benchmarks/agentx.
+pythonpath = ["benchmarks/agentx"]
 
 [tool.coverage.run]
 branch = true

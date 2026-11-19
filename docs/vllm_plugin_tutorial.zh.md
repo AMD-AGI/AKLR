@@ -6,7 +6,7 @@
 
 ## 为什么需要插件
 
-vLLM 在 `MuseSpark1xMoE`（`models/muse_spark/amd/model.py`）中计算 Muse Spark 的 MoE 层，分成多次调用完成。`fused_moe` 只覆盖其中的一部分步骤：
+vLLM 在 `MuseSparkMoE`（`models/muse_spark/amd/model.py`）中计算 Muse Spark 的 MoE 层，分成多次调用完成。`fused_moe` 只覆盖其中的一部分步骤：
 
 | 步骤 | 内容 | `fused_moe` | `muse_spark_moe` |
 |---|---|---|---|
@@ -20,7 +20,7 @@ vLLM 在 `MuseSpark1xMoE`（`models/muse_spark/amd/model.py`）中计算 Muse Sp
 | 8 | 多卡归约、逐路 post-expert norm、乘 router 权重并对各路求和 | — | — |
 | 9 | unpooler | — | — |
 
-vLLM 在调用 `fused_moe` 之前，用 `fused_rmsnorm_expand` 单独执行第 2 步：它把归一化后的行展开 topk 份写出，专家再把它们读回。要把 norm 合进专家读取输入的过程，就需要一个算子接管第 2–7 步；而 vLLM 中没有哪一次调用覆盖这几步：第 2 步在 `MuseSpark1xMoE._pool` 中，第 3–7 步在 `MuseSparkAiterExperts.apply` 中。所以插件替换这两次调用，并把 norm 推迟到专家那一次调用中执行。
+vLLM 在调用 `fused_moe` 之前，用 `fused_rmsnorm_expand` 单独执行第 2 步：它把归一化后的行展开 topk 份写出，专家再把它们读回。要把 norm 合进专家读取输入的过程，就需要一个算子接管第 2–7 步；而 vLLM 中没有哪一次调用覆盖这几步：第 2 步在 `MuseSparkMoE._pool` 中，第 3–7 步在 `MuseSparkAiterExperts.apply` 中。所以插件替换这两次调用，并把 norm 推迟到专家那一次调用中执行。
 
 因此：
 
@@ -37,10 +37,10 @@ vLLM 在调用 `fused_moe` 之前，用 `fused_rmsnorm_expand` 单独执行第 2
 
 即 vLLM 的这两次调用：
 
-- `MuseSpark1xMoE._pool` 调用的 `fused_rmsnorm_expand`（`models/muse_spark/amd/model.py`）：完成上表第 2 步，返回归一化并展开后的行。
+- `MuseSparkMoE._pool` 调用的 `fused_rmsnorm_expand`（`models/muse_spark/amd/model.py`）：完成上表第 2 步，返回归一化并展开后的行。
 - `FusedMoEKernelModularImpl._fused_experts` 调用的 `MuseSparkAiterExperts.apply`（`models/muse_spark/amd/muse_moe_runner.py`）：完成上表第 3–7 步，把逐路的输出交给 vLLM 的后续步骤（第 8 步）。
 
-它们在 vLLM 0.33.0rc1.dev910 中的参数如下，route 要原样照抄，方法要带上 `self`：
+它们在 vLLM 0.34.0 中的参数如下，route 要原样照抄，方法要带上 `self`：
 
 ```python
 def fused_rmsnorm_expand(x, weight, eps, gain_center, input_scale, repeats): ...
@@ -77,9 +77,9 @@ route 写在 `api.py` 中，放在算子入口函数 `muse_spark_moe` 旁边。�
 
 ```python
 @vllm_route(
-    "vllm.models.muse_spark.amd.model.MuseSpark1xMoE._pool",
+    "vllm.models.muse_spark.amd.model.MuseSparkMoE._pool",
     "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
-    versions=("0.33.0rc1.dev910",),
+    versions=("0.34.0",),
     group="muse_spark.norm_experts",
 )
 def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):  # 参数与被替换的函数完全一致
@@ -116,7 +116,7 @@ def _would_serve(x, weight, eps, gain_center, layer):
 @vllm_route(
     "vllm.model_executor.layers.fused_moe.modular_kernel.FusedMoEKernelModularImpl._fused_experts",
     "vllm.models.muse_spark.amd.muse_moe_runner.MuseSparkAiterExperts.apply",
-    versions=("0.33.0rc1.dev910",),
+    versions=("0.34.0",),
     group="muse_spark.norm_experts",
 )
 def _experts_apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, ...):
@@ -213,7 +213,7 @@ VLLM_ROCM_USE_AITER=1 VLLM_ROCM_MUSE_MOE_REDUCE_DTYPE=bf16 VLLM_USE_BREAKABLE_CU
     --language-model-only --attention-backend ROCM_AITER_FA
 ```
 
-完整的启动参数见 [Muse Spark 的 definitions](../aklr/benchmarks/models/muse_spark/DEFINITIONS.md)。日志会报告挂载了哪些调用（`aklr hooks N calls of vLLM 0.33.0rc1.dev910`），模型的回答必须保持正确。
+完整的启动参数见 [Muse Spark 的 definitions](../aklr/benchmarks/models/muse_spark/DEFINITIONS.md)。日志会报告挂载了哪些调用（`aklr hooks N calls of vLLM 0.34.0`），模型的回答必须保持正确。
 
 ## 下一步
 

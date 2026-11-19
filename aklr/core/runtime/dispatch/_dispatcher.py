@@ -31,7 +31,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.spec import TOOLCHAINS, WorkloadSpec, axes_text
 from aklr.core.platform.env import ENV_DISABLE
 from aklr.core.platform.toolchain import toolchain_version
-from aklr.core.runtime.builder import Runnable
+from aklr.core.runtime.builder import Runnable, RunnableMetadata
 from aklr.core.runtime.dispatch._trace import trace
 
 if TYPE_CHECKING:
@@ -242,6 +242,12 @@ class KernelDispatcher:
     def fallback_reason(self, call: CallArgs) -> FallbackReason | None:
         """``None`` if ``dispatch`` would serve ``call``, else its reason, counted as
         ``dispatch`` counts it; nothing runs."""
+        served = self.serving(call)
+        return served if isinstance(served, FallbackReason) else None
+
+    def serving(self, call: CallArgs) -> RunnableMetadata | FallbackReason:
+        """The kernel ``dispatch`` would serve ``call`` with, else its reason, counted as
+        ``dispatch`` counts it; nothing runs."""
         table = self.table
         if table is None:
             if (tracer := trace()) is not None and tracer.is_op:
@@ -249,7 +255,7 @@ class KernelDispatcher:
             return self.closed_reason
         key, _, runnable = table.lookup(call)
         if not isinstance(runnable, FallbackReason):
-            return None
+            return runnable.metadata
         if (tracer := trace()) is not None and tracer.is_op:
             tracer.op(self.contract, key, runnable)
         if self.recorder is not None:
@@ -269,10 +275,11 @@ class KernelDispatcher:
 
     def make_api_fn(self, fn: Callable) -> Callable:
         """``fn`` checked against ``contract`` (``check_api_signature``), and the api function
-        replacing it, whose ``fallback_reason`` asks without serving."""
+        replacing it, whose ``fallback_reason`` and ``serving`` ask without serving."""
         self.contract.check_api_signature(fn)
         api_fn = self._generate(fn, "dispatch")
         api_fn.fallback_reason = self._generate(fn, "fallback_reason")
+        api_fn.serving = self._generate(fn, "serving")
         return api_fn
 
     def _generate(self, fn: Callable, method: str) -> Callable:

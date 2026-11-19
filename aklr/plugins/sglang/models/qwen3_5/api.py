@@ -170,8 +170,15 @@ def gated_attention_prefill(
 ): ...
 
 
-@sglang_route("sglang.srt.models.qwen3_5.Qwen3_5GatedDeltaNet.forward", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.qwen3_5.Qwen3_5GatedDeltaNet.forward", versions=("0.5.22", "0.5.23"))
 def _gdn_forward(self, hidden_states, forward_batch):
+    # sglang 0.5.23 relabels a decode under DP attention a one-token extend, the decode kept as
+    # logical_forward_mode: such a batch stays on sglang (0.5.22 has no logical mode)
+    if (
+        getattr(forward_batch, "logical_forward_mode", forward_batch.forward_mode)
+        != forward_batch.forward_mode
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
     from sglang.srt.model_executor.forward_batch_info import ForwardMode
     from sglang.srt.model_executor.forward_context import get_attn_backend
 
@@ -357,7 +364,9 @@ def _no_bias(size, dtype, device):
     return torch.zeros(size, dtype=dtype, device=device)
 
 
-@sglang_route("sglang.srt.models.qwen3_5.Qwen3_5AttentionDecoderLayer.self_attention", versions=("0.5.22",))
+@sglang_route(
+    "sglang.srt.models.qwen3_5.Qwen3_5AttentionDecoderLayer.self_attention", versions=("0.5.22", "0.5.23")
+)
 def _attention_self_attention(self, positions, hidden_states, forward_batch):
     """Decode as HIP runs it (forward_prepare_fused_gate, the aiter backend's forward_decode,
     fused_sigmoid_mul), graph capture too, and the prefill of fresh sequences (its

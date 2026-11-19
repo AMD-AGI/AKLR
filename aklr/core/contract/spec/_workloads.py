@@ -26,11 +26,15 @@ class WorkloadSpec(FrozenModel):
     accuracy: Literal["passed", "failed"] | None = None
     # over aiter (validation's formula); None: not measured
     speedup: PositiveFloat | None = None
+    # the kernel's time per call under validation's graph timer; None: not measured
+    microseconds: PositiveFloat | None = None
 
     @model_validator(mode="after")
     def _check_measured(self) -> WorkloadSpec:
         if self.speedup is not None and self.accuracy is None:
             raise ValueError(f"speedup {self.speedup} has no accuracy")
+        if self.microseconds is not None and self.accuracy is None:
+            raise ValueError(f"microseconds {self.microseconds} has no accuracy")
         if self.accuracy == "passed" and self.speedup is None:
             raise ValueError("a passed accuracy has no speedup")
         return self
@@ -49,6 +53,8 @@ class WorkloadSpec(FrozenModel):
             data.pop("accuracy", None)
         if self.speedup is None:
             data.pop("speedup", None)
+        if self.microseconds is None:
+            data.pop("microseconds", None)
         return data
 
 

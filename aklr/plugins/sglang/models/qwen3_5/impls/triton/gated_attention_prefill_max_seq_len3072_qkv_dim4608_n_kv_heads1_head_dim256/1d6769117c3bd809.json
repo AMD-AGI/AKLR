@@ -190,7 +190,8 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.168
+      "speedup": 1.162,
+      "microseconds": 136.0
     }
   ],
   "layout_variants": {

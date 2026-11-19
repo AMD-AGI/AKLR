@@ -8,11 +8,11 @@ import pytest
 import torch
 
 from aklr.core.contract import semantics
-from aklr.core.platform.device import DeviceTarget
 from aklr.core.validation.stages._bench._evaluation._comparison import (
     is_reference_comparable,
 )
 from tests.op_case import OpCase
+from tests.ops import cases as ops_cases
 
 
 class TestReference:
@@ -39,39 +39,21 @@ class TestReference:
         )
 
     @pytest.mark.gpu
+    @pytest.mark.parametrize("op_case", OpCase.params(ops_cases.SMALL_POINTS))
     def test_backend_matches_reference(self, op_case: OpCase) -> None:
-        if op_case.needs_gfx950 and DeviceTarget.current().arch != "gfx950":
-            pytest.skip("the backend runs the Point only on gfx950")
-        args = op_case.inputs()
-        call = op_case.call(args, "cuda")
-        outputs = op_case.contract.call_mutable_tensors(op_case.contract.baseline()(**call), call)
-        results = op_case.compare(outputs, args, baseline_outputs=outputs)
-        output_specs = semantics.mutable_tensor_declarations(op_case.request.schema_json)
-        baseline_relative = {
-            o
-            for o, spec in output_specs.items()
-            if spec["error_bounds"] and spec["error_bounds"][0][1]["kind"] == "baseline_relative"
-        }
-        failed = {o: r.detail for o, r in results.items() if not r.is_passed and o not in baseline_relative}
-        assert failed == {}
-        # self-baselined compare is vacuous: check the reference by relative L2 error
-        # shortcut: 0.1 uncalibrated (MI300X skips), set to ~3-5x the gfx950 ratio once measured
-        reference = op_case.reference_outputs(args)
-        for o in baseline_relative:
-            error = (outputs[o].cpu().double() - reference[o]).norm()
-            assert error <= 0.1 * reference[o].norm(), (
-                o,
-                (error / reference[o].norm()).item(),
-            )
+        """``check_backend_matches_reference`` for aklr/ops, on the aiter aiter-test installs; a
+        plugin's contracts in the job that times them (tests/plugins/<framework>/test_reference.py)."""
+        op_case.check_backend_matches_reference()
 
 
+@pytest.mark.parametrize("contract_id", ["fp8_paged_mqa_logits@1.0", "fp8_paged_mqa_logits_verify@1.0"])
 def test_mqa_logits_reference_is_the_same_in_chunks(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, contract_id: str
 ) -> None:
-    """One row a chunk gives fp8_paged_mqa_logits' reference bit for bit."""
+    """One row a chunk gives the paged MQA logits references bit for bit."""
     import aklr.ops.mla.reference as mla_reference
 
-    case = OpCase.of("fp8_paged_mqa_logits@1.0")
+    case = OpCase.of(contract_id)
     args = case.inputs()
     whole = case.reference_outputs(args)["logits"]
     monkeypatch.setattr(mla_reference, "_CHUNK_ELEMENTS", 1)
