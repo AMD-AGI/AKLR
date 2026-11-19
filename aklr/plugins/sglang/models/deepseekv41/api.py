@@ -14,6 +14,7 @@ from aklr.plugins.sglang.models.deepseekv41.contract import (
     DEEPSEEKV41_MONO_K2_FFN,
     DEEPSEEKV41_MXFP8_LINEAR,
     DEEPSEEKV41_SPARSE_MLA,
+    MXFP8_BLOCK,
 )
 
 __all__ = [
@@ -33,7 +34,9 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @api(DEEPSEEKV41_MXFP8_LINEAR)
-def deepseekv41_mxfp8_linear(x, weight, weight_scale, x_scale=None, output=None): ...
+def deepseekv41_mxfp8_linear(
+    x, weight, weight_scale, x_scale=None, weight_layout="row_major", output=None
+): ...
 
 
 @api(DEEPSEEKV41_SPARSE_MLA)
@@ -512,7 +515,13 @@ def moe_forward_normal(moe, hidden_states, skip_shared_experts, use_vision_topk,
             routed_scaling_factor=moe.routed_scaling_factor,
             shared_is_replicated=False,
         )
-    return moe._finalize_normal_output(out, None)
+    if not moe.reduce_results:
+        return out
+    # as forward_normal ends with no shared output apart, on the release and on the cookbook
+    # build (whose _finalize_normal_output the release lacks)
+    from sglang.srt.layers.moe import post_experts_all_reduce
+
+    return post_experts_all_reduce(out)
 
 
 def _ffn_arguments(moe, hidden_states) -> dict:
@@ -577,3 +586,35 @@ def _apply_flydsl_mxfp8(layer, x, bias, input_scale):
     """A linear of 2048 rows or more, which sglang's aiter route runs on its FlyDSL kernel: the same
     linear, on the plain weight and the compact block scales that kernel's own were laid out from."""
     return _aiter_mxfp8_blockscaled_linear(x, layer.weight, layer.weight_scale_mx_e8m0, input_scale, bias)
+
+
+# the nightly's alone: 0.5.23 has no 32-wide wo_a, and runs the 128-wide one without this function
+@sglang_route(
+    "sglang.srt.models.deepseek_common.amd.deepseek_v4_wo_a_fp8._wo_a_bmm", versions=("0.5.23.dev20261111",)
+)
+def _wo_a_bmm(o_fp8, weight, o_scale, weight_scale):
+    """The wo_a projection's BMM as one op call a group, on the group's weight as sglang holds it
+    for aiter, returned as aiter returns it: a token's groups side by side."""
+    import torch
+
+    # V4's 128-wide blocks keep a row-major weight under scales the op does not take
+    if (
+        not (o_fp8.ndim == o_scale.ndim == weight.ndim == weight_scale.ndim == 3)
+        or not o_fp8.shape[0]
+        or weight.shape[-1] != MXFP8_BLOCK * weight_scale.shape[-1]
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    outputs = []
+    for group in range(weight.shape[0]):
+        # a group's rows lie a token apart: copied, as the op takes rows side by side
+        out = deepseekv41_mxfp8_linear(
+            x=o_fp8[:, group].contiguous(),
+            x_scale=o_scale[:, group].contiguous(),
+            weight=weight[group],
+            weight_scale=weight_scale[group],
+            weight_layout="shuffled_16x16",
+        )
+        if isinstance(out, FallbackReason):
+            return out
+        outputs.append(out)
+    return torch.stack(outputs, dim=1)

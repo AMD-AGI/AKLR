@@ -22,6 +22,7 @@ from aklr.core.contract.semantics import (
     IntRangeDistribution,
     LecunNormalDistribution,
     LogUniformDistribution,
+    Preshuffle,
     SqnrBound,
     StridedPages,
     ToleranceBound,
@@ -218,7 +219,8 @@ DEEPSEEKV41_SPARSE_MLA = OpContract(
 DEEPSEEKV41_MXFP8_LINEAR = OpContract(
     contract_id="deepseekv41_mxfp8_linear@1.0",
     description=(
-        "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear), "
+        "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear, and "
+        "each group of the wo_a projection's BMM), "
         "before any bias: x @ weight.T, weight fp8 e4m3 at an e8m0 scale per 32 x 32 block. A bf16 "
         "x is first rounded to fp8 e4m3 at an e8m0 scale per 32 values of a row, the scale "
         "2**ceil(log2(amax / 448)) of the block's largest magnitude, never below 1e-30; an fp8 x "
@@ -233,7 +235,11 @@ DEEPSEEKV41_MXFP8_LINEAR = OpContract(
         "scale_columns": derived_axis("Scale columns.", f"k // {MXFP8_BLOCK}"),
     },
     attrs={"has_x_scale": _presence("x_scale", "x_scale")},
-    constraints=("(x.dtype == 'float8_e4m3fn') == has_x_scale",),
+    constraints=(
+        "(x.dtype == 'float8_e4m3fn') == has_x_scale",
+        # sglang quantizes the wo_a projection's input before the call
+        "layout_variant != 'shuffled_16x16' or has_x_scale",
+    ),
     inputs={
         "x": TensorSpec(
             description="Activations: bf16, or the fp8 values x_scale scales.",
@@ -274,7 +280,20 @@ DEEPSEEKV41_MXFP8_LINEAR = OpContract(
             error_bounds=SqnrBound(min_sqnr_db=30.0),
         ),
     },
-    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    layout_variants=LayoutVariantsSpec(
+        by_name={
+            "row_major": LayoutVariant(
+                detect_facts=(LayoutFact(location="arg", name="weight_layout", expected_value="row_major"),)
+            ),
+            # a group of the wo_a projection: sglang holds its weight as aiter's shuffle_weight stores it
+            "shuffled_16x16": LayoutVariant(
+                layouts={"weight": Preshuffle(tile=(16, 16))},
+                detect_facts=(
+                    LayoutFact(location="arg", name="weight_layout", expected_value="shuffled_16x16"),
+                ),
+            ),
+        }
+    ),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
