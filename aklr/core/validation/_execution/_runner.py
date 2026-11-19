@@ -205,6 +205,12 @@ class ProcessExecutionRunner(ExecutionRunner):
                     raise TaskCancelled(f"runner {self._runner_id} was closed while starting")
                 self._channels = [channel for channel, _ in pairs]
                 self._processes = processes
+                # rocprofiler-register exports these as the SDK configures, which a torch that links it does
+                # at GPU init; a child inheriting them configures the SDK as it starts, before its kernel
+                # tracer registers
+                for name in ("ROCPROFILER_REGISTER_FORCE_LOAD", "ROCPROFILER_REGISTER_LIBRARY"):
+                    os.environ.pop(name, None)
+                    os.unsetenv(name)
                 for process in processes:
                     process.start()
             for _, endpoint in pairs:
