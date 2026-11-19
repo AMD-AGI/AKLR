@@ -7,8 +7,8 @@ A decode step's layer is asked for as a monokernel's launches at what one TP ran
 between the collectives, whether vLLM's mono decode kernels (``--monokernel``: TP 2, 4 or 8,
 at most 48 rows) or its own chain runs the step: the attention front
 (``deepseekv41_mono_k1``), the attention back to the MoE's input
-(``deepseekv41_mono_k2_attention``: an MXFP8 wo_a, the other ranks' wo_b outputs an input
-summed before the FFN seam) and the MoE to this rank's sum (``deepseekv41_mono_k2_ffn``: the
+(``deepseekv41_mono_k2_attention``: an MXFP8 wo_a, the other ranks' wo_b outputs an fp32
+input summed before the FFN seam) and the MoE to this rank's sum (``deepseekv41_mono_k2_ffn``: the
 shared expert an MXFP8 MLP beside the FP4 slots). The chain's kernels are reached one by one
 too: the sparse MLA, the MXFP8 linears and wo_a's groups here, the routed experts through
 aiter's fused_moe."""
@@ -130,7 +130,7 @@ def _mono_decode(
             return FallbackReason.OUT_OF_CONTRACT
         # shortcut: the launches are asked for, which records the layer's calls, and the layer
         # is left to vLLM. What a launch reads of an earlier one or of the other ranks stands
-        # in by shape (the MoE's input and the other ranks' sum: the step's rows; the queries:
+        # in by shape (the MoE's input: the step's rows; the queries and the other ranks' sum:
         # the streams' memory; the attention seam's mixes; an Engram layer's settled streams),
         # and so do vLLM's window lists and cos-then-sin RoPE table. Run the launches here
         # once kernels serve them
@@ -225,7 +225,8 @@ def _mono_decode(
             wo_a_scale=attn.wo_a.weight_scale,
             wo_b=attn.wo_b.weight,
             wo_b_scale=attn.wo_b.weight_scale,
-            peer_x=hidden,
+            # fp32, twice a bf16 row: the first half of the streams' memory
+            peer_x=residual.view(-1)[: 2 * hidden.numel()].view(torch.float32).view(hidden.shape),
             post_mix=mixes.view(-1)[: tokens * 4].view(tokens, 4),
             comb_mix=mixes,
             pre_mix=mixes.view(-1)[-tokens * 4 :].view(tokens, 4),

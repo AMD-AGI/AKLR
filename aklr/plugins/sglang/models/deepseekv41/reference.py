@@ -200,8 +200,8 @@ def deepseekv41_mono_k2_attention_reference(
     decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, ...]:
     """The outputs in the contract's order. Rounding points, past the boundary's: the attended
-    values, wo_a's output and wo_b's round to bf16, and so does x with peer_x; wo_b rounds its
-    input to fp8, and so does an fp8 wo_a."""
+    values, wo_a's output and wo_b's round to bf16; wo_b rounds its input to fp8, and so does an
+    fp8 wo_a; the ranks' wo_b outputs round once more, summed."""
     import torch
 
     args = row_major_args
