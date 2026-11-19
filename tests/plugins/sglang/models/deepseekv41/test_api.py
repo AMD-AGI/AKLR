@@ -303,6 +303,60 @@ def test_a_launch_the_route_cannot_read_stays_the_monokernels(asked, forward_con
     )
 
 
+def test_a_step_no_monokernel_takes_reaches_both_attention_launches(asked, forward_context):
+    """The back launch's mixes, which the front writes, stand in as tensors dispatch takes: both
+    launches are asked at a Point, on a rank holding every head."""
+    fp8, bf16, f32 = torch.float8_e4m3fn, torch.bfloat16, torch.float32
+
+    def linear(rows, columns):
+        return SimpleNamespace(
+            weight=empty(rows, columns).view(fp8), weight_scale_mx_e8m0=empty(rows // 32, columns // 32)
+        )
+
+    def norm(width):
+        return SimpleNamespace(weight=empty(width, dtype=bf16), variance_epsilon=1e-6)
+
+    attn = SimpleNamespace(
+        fuse_wqa_wkv=True,
+        q_head_norm=False,
+        attn_tp_size=1,
+        eps=1e-6,
+        layer_id=3,
+        compress_ratio=4,
+        n_local_heads=64,
+        wqkv_a=linear(1792, HIDDEN),
+        wq_b=linear(64 * 512, 1280),
+        wo_a=SimpleNamespace(weight=empty(8192, 4096, dtype=bf16)),
+        wo_b=linear(HIDDEN, 8192),
+        q_norm=norm(1280),
+        kv_norm=norm(512),
+        attn_sink=empty(64, dtype=f32),
+        freqs_cis=torch.zeros(4096, 32, dtype=torch.complex64),
+    )
+    mixes = {
+        name: empty(*shape, dtype=f32)
+        for name, shape in {"fn": (24, 4 * HIDDEN), "scale": (3,), "base": (24,)}.items()
+    }
+    layer = SimpleNamespace(
+        self_attn=attn,
+        input_layernorm=norm(HIDDEN),
+        post_attention_layernorm=norm(HIDDEN),
+        rms_norm_eps=1e-6,
+        hc_eps=1e-6,
+        hc_sinkhorn_iters=20,
+        **{f"hc_{seam}_{name}": weight for seam in ("attn", "ffn") for name, weight in mixes.items()},
+    )
+    mode = SimpleNamespace(is_decode_or_idle=lambda: True, is_target_verify=lambda: False)
+    pending, pre = owed_post(6)
+    reason = api._forward_hc_pre_from_prev_fused_boundary(
+        layer, torch.arange(6), None, None, SimpleNamespace(forward_mode=mode), None, pre, pending, True
+    )
+    assert reason is FallbackReason.NO_WORKLOAD
+    assert asked["deepseekv41_mono_k1"] is not None
+    back = asked["deepseekv41_mono_k2_attention"]
+    assert back is not None and back.axes["n_tokens"] == 6 and back.axes["n_heads"] == 64
+
+
 @pytest.fixture
 def mxfp8_linear(monkeypatch):
     """The MXFP8 linear op: its calls recorded, each answered with ones of the op's output shape."""
