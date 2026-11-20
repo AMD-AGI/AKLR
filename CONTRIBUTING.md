@@ -61,6 +61,18 @@ Selection is defined in `.github/workflows/ci.yaml`; no repository Actions varia
 needed. Adding or removing a label restarts the PR workflow and cancels its previous run.
 To switch a direct PR run back to SaFE, remove `ci:gpu-direct` and keep `ci:gpu`.
 
+SaFE workloads carry a priority; `aklr-gpu` has none:
+
+| Trigger | SaFE priority |
+| --- | --- |
+| PR with `ci:gpu` | medium |
+| PR with `ci:gpu` and `ci:priority-high` | high |
+| Push to `main` | high: its run takes the published measurements |
+| Manual run | Choose in the `gpu_priority` dropdown; defaults to medium |
+
+`ci:priority-high` alone starts no GPU job. It stays on the PR, so every later push runs at high
+too: remove it once the urgent run is done.
+
 An `aklr-gpu` runner needs Linux, Docker access, ROCm GPU devices (`/dev/kfd` and `/dev/dri`),
 network access to the images in `stack.json`, and enough local disk for image pulls, source
 copies and builds. Docker must run on the runner host. Dedicate the visible GPUs to this
@@ -72,3 +84,10 @@ The local container receives only the test environment variables and a copy of t
 Its per-stage timeout is unchanged, failing tests still upload reports, and the final cleanup
 step removes the job's container. This does not change the separate AgentX workflow.
 There is no automatic fallback between backends when the selected runners are busy or offline.
+
+For PRs changing only kernel schemas under `aklr/ops` (optionally with Markdown case
+notes under `harness/skills/kb/cases/`), AITER's GPU baseline/reference comparison
+runs every small point for the affected contract IDs. A replacement includes the IDs
+from both versions. Unrecognized changes or a contract without a small point use the
+full comparison. The other unit tests and per-image kernel validation keep their usual
+coverage. Pushes and manual runs perform the full unit suite.
