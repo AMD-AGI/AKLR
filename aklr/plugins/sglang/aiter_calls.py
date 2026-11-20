@@ -13,6 +13,10 @@ also rebinds the names other modules imported, as the unquantized linear layers 
 which they call for at most 64 rows where the weight's K is at most 2048 (at most 512 rows where K is at most
 512). Those routes take the parameters of the aiter in the sglang release's image.
 
+sglang's fp8 linear layers with 128 x 128 weight blocks import aiter's ``gemm_a8w8_blockscale_bpreshuffle``,
+which they call on gfx950 with a shuffled weight; the hook registry rebinds that name, so the route reaches
+every call. Its parameters are those of the aiter in the sglang release's image.
+
 sglang's hook registry rebinds aiter's ``mla_decode_fwd`` where sglang's modules imported it, so that route
 reaches every call; its parameters are those of the aiter in the sglang release's image."""
 
@@ -131,6 +135,11 @@ def _triton_gemm_a16w16(
     return aklr_aiter.gemm_a16w16(
         x, w, bias=bias, dtype=dtype, y=y, activation=activation, skip_reduce=skip_reduce
     )
+
+
+@sglang_route("aiter.ops.gemm_op_a8w8.gemm_a8w8_blockscale_bpreshuffle", versions=("0.5.22", "0.5.23"))
+def _gemm_a8w8_blockscale_bpreshuffle(XQ, WQ, x_scale, w_scale, dtype=torch.bfloat16, out=None):
+    return aklr_aiter.gemm_a8w8_blockscale_bpreshuffle(XQ, WQ, x_scale, w_scale, dtype=dtype, out=out)
 
 
 # the MLA decode under decode context parallelism (aiter_backend's DCP decode and DSpark verify)

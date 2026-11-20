@@ -80,19 +80,50 @@ def test_every_route_takes_its_targets_parameters(target, versions, route):
         assert parameters(route) == parameters(pkgutil.resolve_name(target))
         return
     # A newer aiter than the installed one adds parameters at the end, which the route takes too.
-    aiters = pkgutil.resolve_name(target)
-    taken = parameters(aiters, defaults=False)
+    aiters = aiter_parameters(target)
+    taken = [(p.name, p.kind) for p in aiters]
     assert parameters(route, defaults=False)[: len(taken)] == taken
     # Defaults that shape the result match, all but aiter's own types (enums the route modules cannot import) and
     # the scheduling options the routes do not take.
     routes = {p.name: p.default for p in inspect.signature(route).parameters.values()}
-    for p in inspect.signature(aiters).parameters.values():
+    for p in aiters:
         if p.name not in _SCHEDULING_OPTIONS and type(p.default).__module__ in (
             "builtins",
             "torch",
             "inspect",
         ):
             assert routes[p.name] == p.default, p.name
+
+
+def aiter_parameters(target):
+    """An aiter function's parameters; for one aiter registers as a torch op behind
+    ``(*args, **kwargs)``, those of the op's schema, whose ScalarType defaults (kept as ints) are
+    not compared."""
+    found = list(inspect.signature(pkgutil.resolve_name(target)).parameters.values())
+    if [p.kind for p in found] != [inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD]:
+        return found
+    schema = getattr(torch.ops.aiter, target.rsplit(".", 1)[1]).default._schema
+    return [
+        inspect.Parameter(
+            a.name,
+            inspect.Parameter.KEYWORD_ONLY if a.kwarg_only else inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=(
+                _UNCOMPARED
+                if str(a.real_type) == "ScalarType"
+                else a.default_value
+                if a.has_default_value()
+                else inspect.Parameter.empty
+            ),
+        )
+        for a in schema.arguments
+    ]
+
+
+class _Uncompared:
+    """A default the parameter test does not compare."""
+
+
+_UNCOMPARED = _Uncompared()
 
 
 def test_the_fused_moe_route_passes_sglangs_output_to_the_op(monkeypatch):
