@@ -394,6 +394,30 @@ def test_an_uncompressed_layers_kv_projection_is_asked_of_gemm_and_left_to_sglan
 
 
 @pytest.mark.parametrize(
+    ("ratio", "projected", "asks"),
+    [(1, None, 1), (1, object(), 0), (4, None, 0)],
+    ids=["uncompressed", "already_projected", "compressed"],
+)
+def test_a_decode_steps_uncompressed_kv_projection_is_asked_of_gemm_and_left_to_sglang(
+    gemm, ratio, projected, asks
+):
+    wkv = SimpleNamespace(weight=torch.zeros(512, 5120, dtype=torch.bfloat16))
+    layer = SimpleNamespace(compress_ratio=ratio, compressor=SimpleNamespace(wkv=wkv))
+    x = torch.zeros(4, 5120, dtype=torch.bfloat16)
+    # sglang passes the projection it already has, and a compressed layer's reach gemm through its bf16 linear
+    left = api._low_ratio_compress_fused(None, layer, x, None, None, draft_len=3, projected=projected)
+    assert left is FallbackReason.OUT_OF_CONTRACT
+    assert [(asked["a"], asked["b"]) for asked in gemm.asked] == [(x, wkv.weight)] * asks
+    assert gemm.ran == []
+
+
+def test_a_decode_step_on_a_layer_without_a_plain_kv_projection_stays_on_sglang(gemm):
+    layer = SimpleNamespace(compress_ratio=1, compressor=SimpleNamespace())
+    assert api._low_ratio_compress_fused(None, layer, None, None, None) is FallbackReason.OUT_OF_CONTRACT
+    assert gemm.asked == []
+
+
+@pytest.mark.parametrize(
     "reason", [None, FallbackReason.NO_WORKLOAD], ids=["a_kernel_serves", "the_op_declines"]
 )
 def test_the_routers_gemv_is_asked_of_gemm_as_fp32_logits_and_left_to_sglang(gemm, reason):
@@ -404,3 +428,14 @@ def test_the_routers_gemv_is_asked_of_gemm_as_fp32_logits_and_left_to_sglang(gem
     (asked,) = gemm.asked
     assert set(asked) == {"a", "b", "out_dtype"} and asked["out_dtype"] == torch.float32
     assert asked["a"] is hidden and asked["b"] is weight and gemm.ran == []
+
+
+def test_the_hip_radix_backends_own_copy_of_the_compress_step_is_routed():
+    """sglang's HIP backend binds the step as a class attribute of its own, which a patch of the base class leaves."""
+    from aklr.plugins.sglang import hook
+
+    targets = {target for target, _, route in hook._ROUTES if route is api._low_ratio_compress_fused}
+    assert (
+        "sglang.srt.layers.attention.deepseek_v4_backend_hip_radix.DeepseekV4HipRadixBackend._low_ratio_compress_fused"
+        in targets
+    )
