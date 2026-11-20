@@ -1,0 +1,193 @@
+{
+  "schema_version": 5,
+  "name": "topk_transform_paged_page_size64_has_page_tables_topk512",
+  "contract_id": "topk_transform_paged@1.0",
+  "description": "Select each row's topk highest scores among its first seq_lens candidates; write their positions, or their page slots, padded with -1.",
+  "op_type": "topk",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Rows, one per token."
+    },
+    "n_candidates": {
+      "type": "var",
+      "description": "Candidate scores per row, 4-float aligned rows."
+    },
+    "n_plan_rows": {
+      "type": "var",
+      "description": "Plan rows: n_tokens + 1."
+    },
+    "topk": {
+      "type": "const",
+      "value": 512,
+      "description": "Candidates selected per row."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Page table columns."
+    }
+  },
+  "attrs": {
+    "page_size": 64,
+    "has_page_tables": true
+  },
+  "inputs": {
+    "scores": {
+      "shape": [
+        "n_tokens",
+        "n_candidates"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "permutation"
+      },
+      "description": "Candidate scores per row."
+    },
+    "seq_lens": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "min(n_candidates, n_pages * page_size)",
+        "distinct": false
+      },
+      "description": "Valid candidates per row, a prefix the page table covers."
+    },
+    "page_tables": {
+      "shape": [
+        "n_tokens",
+        "n_pages"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_pages - 1",
+        "distinct": true
+      },
+      "description": "Page of each page_size candidates, distinct within a row."
+    },
+    "metadata": {
+      "shape": [
+        "n_plan_rows",
+        2
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "topk_static_plan"
+      },
+      "description": "sglang's top-k metadata (plan_topk_v2), static threshold."
+    }
+  },
+  "outputs": {
+    "out_page_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Selected positions, or page_tables slots when passed; -1 after a short row's entries."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_candidates": 262208,
+        "n_plan_rows": 2,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_candidates": 262208,
+        "n_plan_rows": 3,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_candidates": 262208,
+        "n_plan_rows": 5,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_candidates": 262208,
+        "n_plan_rows": 9,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_candidates": 262208,
+        "n_plan_rows": 17,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32,
+        "n_candidates": 262208,
+        "n_plan_rows": 33,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64,
+        "n_candidates": 262208,
+        "n_plan_rows": 65,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128,
+        "n_candidates": 262208,
+        "n_plan_rows": 129,
+        "n_pages": 4097
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "any_in_full_rows"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Paged top-k page-slot select in FlyDSL: a chunk kernel picks each score chunk's top-k with an exact radix select on\nan order-preserving key, and a merge kernel selects again over the chunks' candidates of rows with several chunks.\nseq_lens is read on the device, so nothing is read back on the host.\n\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl._mlir.dialects import rocdl as _rocdl\nfrom flydsl.expr import const_expr, gpu, range_constexpr\n\nNT = 512  # threads per workgroup\nWAVE = 64\nWAVE_SHIFT = WAVE.bit_length() - 1\nNW = NT // WAVE\nTOPK = 512\nPAGE = 64\nPAGE_SHIFT = PAGE.bit_length() - 1\nCHUNK = 16384  # scores per chunk workgroup\nCHUNK_SHIFT = CHUNK.bit_length() - 1\nVEC = 4  # scores per 16 B load\nVPT = CHUNK // (NT * VEC)  # 16 B loads per thread\nPPC = CHUNK // PAGE  # pages per chunk\nKEY_BITS = 32\nDIGIT_BITS = 8\nBINS = 1 << DIGIT_BITS\nPASSES = KEY_BITS // DIGIT_BITS\nCNT_BITS = 16  # the emit scan packs the greater and equal counts into one word\nINT_MIN = -(2**31)\n\n\ndef _rsrc(tensor, nbytes):\n    return fx.rocdl.get_buffer_rsrc(fx.rocdl.make_buffer_ptr(fx.get_iter(tensor), num_records_bytes=nbytes))\n\n\ndef _load(rsrc, elem_off, vec=1, mask=None):\n    \"\"\"Load vec i32 at element offset elem_off; masked-off lanes read out of bounds (zeros).\"\"\"\n    boff = elem_off * fx.Int32(4)\n    if mask is not None:\n        boff = mask.select(boff, fx.Int32(0x7FFFFFF0))\n    i32 = ir.IntegerType.get_signless(32)\n    ty = i32 if vec == 1 else ir.VectorType.get([vec], i32)\n    return fx.rocdl.raw_ptr_buffer_load(ty, rsrc, boff, 0)\n\n\ndef _store(val, rsrc, elem_off):\n    boff = elem_off * fx.Int32(4)\n    _rocdl.RawPtrBufferStoreOp(val.ir_value(), rsrc, boff.ir_value(), fx.Int32(0).ir_value())\n\n\ndef _lds_add1(ptr):\n    _llvm.AtomicRMWOp(\n        _llvm.AtomicBinOp.add,\n        fx.to_llvm_ptr(ptr),\n        fx.Int32(1).ir_value(),\n        _llvm.AtomicOrdering.monotonic,\n        syncscope=\"workgroup\",\n        alignment=4,\n    )\n\n\ndef _opaque(v):\n    \"\"\"Identity LLVM cannot see through, so a packed bitmask is not unpacked back into per-key lane masks.\"\"\"\n    i32 = ir.IntegerType.get_signless(32)\n    return fx.Int32(_llvm.InlineAsmOp(i32, [v.ir_value()], \"v_mov_b32 $0, $1\", \"=v,v\").result)\n\n\ndef _wave_reduce(v, op):\n    for k in reversed(range(WAVE_SHIFT)):\n        v = op(v, v.shuffle_xor(fx.Int32(1 << k), fx.Int32(WAVE)))\n    return v\n\n\ndef _wave_scan(v, lane):\n    for k in range(WAVE_SHIFT):\n        y = fx.Int32(gpu.shuffle_up(v, 1 << k, WAVE))\n        v = (lane >= fx.Int32(1 << k)).select(v + y, v)\n    return v\n\n\n@functools.cache\ndef _build(n_tokens, n_cand, n_pages):\n    B, NC, NP = n_tokens, n_cand, n_pages\n    NCH = (NC + CHUNK - 1) // CHUNK\n    score_bytes = B * NC * 4\n    pt_bytes = B * NP * 4\n    out_bytes = B * TOPK * 4\n    ws_bytes = B * NCH * TOPK * 4\n    seq_bytes = B * 4\n\n    @fx.struct\n    class Smem:\n        hist: fx.Array[fx.Int32, PASSES * BINS, 16]\n        pt: fx.Array[fx.Int32, PPC, 16]\n        wmin: fx.Array[fx.Int32, NW, 16]\n        wand: fx.Array[fx.Int32, NW, 16]\n        wor: fx.Array[fx.Int32, NW, 16]\n        hscan: fx.Array[fx.Int32, NW, 16]\n        escan: fx.Array[fx.Int32, NW, 16]\n        st: fx.Array[fx.Int32, 2, 16]\n        stk: fx.Array[fx.Int32, TOPK + WAVE, 16]\n        sti: fx.Array[fx.Int32, TOPK + WAVE, 16]\n\n    def make_kernel(MERGE):\n        N = NCH if MERGE else VPT * VEC\n\n        @flyc.kernel(known_block_size=[NT, 1, 1])\n        def topk_kernel(\n            scores: fx.Tensor,\n            seq_lens: fx.Tensor,\n            page_tables: fx.Tensor,\n            out: fx.Tensor,\n            ws_key: fx.Tensor,\n            ws_slot: fx.Tensor,\n        ):\n            tid = fx.Int32(gpu.thread_idx.x)\n            lane = tid & fx.Int32(WAVE - 1)\n            wave = tid >> fx.Int32(WAVE_SHIFT)\n            chunk = fx.Int32(gpu.block_idx.x)\n            row = fx.Int32(gpu.block_idx.y)\n            c0 = fx.Int32(0)\n            c1 = fx.Int32(1)\n            cmin = fx.Int32(INT_MIN)\n\n            lds = fx.SharedAllocator().allocate(Smem).peek()\n            hist = lds.hist.ptr\n            ptl = lds.pt.ptr\n            wmin = lds.wmin.ptr\n            wand = lds.wand.ptr\n            wor = lds.wor.ptr\n            hscan = lds.hscan.ptr\n            escan = lds.escan.ptr\n            st = lds.st.ptr\n            stk = lds.stk.ptr\n            sti = lds.sti.ptr\n\n            seq_r = _rsrc(seq_lens, seq_bytes)\n            out_r = _rsrc(out, out_bytes)\n            wsk_r = _rsrc(ws_key, ws_bytes)\n            wss_r = _rsrc(ws_slot, ws_bytes)\n            sc_r = _rsrc(scores, score_bytes)\n            pt_r = _rsrc(page_tables, pt_bytes)\n\n            L = fx.Int32(_load(seq_r, row))\n            nch = (L + fx.Int32(CHUNK - 1)) >> fx.Int32(CHUNK_SHIFT)\n            if const_expr(MERGE):\n                go = nch > c1\n            else:\n                # a row with at most TOPK candidates keeps them all, in position order\n                if (L <= fx.Int32(TOPK)) & (chunk == c0):\n                    pv = fx.Int32(_load(pt_r, row * fx.Int32(NP) + (tid >> fx.Int32(PAGE_SHIFT))))\n                    sv = (tid < L).select(pv * fx.Int32(PAGE) + (tid & fx.Int32(PAGE - 1)), fx.Int32(-1))\n                    _store(sv, out_r, row * fx.Int32(TOPK) + tid)\n                go = (chunk < nch) & (L > fx.Int32(TOPK))\n\n            if go:\n                # load keys\n                keys = []\n                slots = []\n                if const_expr(MERGE):\n                    for c in range_constexpr(N):\n                        valid = tid < (L - fx.Int32(c * CHUNK))\n                        off = (row * fx.Int32(NCH) + fx.Int32(c)) * fx.Int32(TOPK) + tid\n                        kraw = fx.Int32(_load(wsk_r, off, 1, valid))\n                        sraw = fx.Int32(_load(wss_r, off, 1, valid))\n                        keys.append(valid.select(kraw, cmin))\n                        slots.append(sraw)\n                    nvalid = fx.min(L, fx.Int32(TOPK))\n                else:\n                    base = chunk * fx.Int32(CHUNK)\n                    rowoff = row * fx.Int32(NC)\n                    vecs = []\n                    for i in range_constexpr(VPT):\n                        e0 = base + (fx.Int32(i * NT) + tid) * fx.Int32(VEC)\n                        vecs.append(_load(sc_r, rowoff + e0, VEC, e0 < L))\n                    gp = chunk * fx.Int32(PPC) + tid\n                    pv = fx.Int32(_load(pt_r, row * fx.Int32(NP) + gp, 1, gp < fx.Int32(NP)))\n                    if tid < fx.Int32(PPC):\n                        fx.ptr_store(pv, ptl + tid)\n                    for i in range_constexpr(VPT):\n                        v = fx.Vector(vecs[i])\n                        e0 = base + (fx.Int32(i * NT) + tid) * fx.Int32(VEC)\n                        for j in range_constexpr(VEC):\n                            s = fx.Int32(v[j])\n                            sk = (s < c0).select(s ^ fx.Int32(~INT_MIN), s)\n                            keys.append((e0 + fx.Int32(j) < L).select(sk, cmin))\n                    nvalid = fx.min(fx.max(L - base, c0), fx.Int32(TOPK))\n\n                for i in range_constexpr(PASSES * BINS // NT):\n                    fx.ptr_store(c0, hist + (fx.Int32(i * NT) + tid))\n\n                # prefilter\n                tmax = keys[0]\n                for j in range_constexpr(1, N):\n                    tmax = fx.max(tmax, keys[j])\n                tmin = _wave_reduce(tmax, fx.min)\n                if lane == c0:\n                    fx.ptr_store(tmin, wmin + wave)\n                gpu.barrier()\n                t0 = fx.ptr_load(wmin + c0)\n                for w in range_constexpr(1, NW):\n                    t0 = fx.min(t0, fx.ptr_load(wmin + fx.Int32(w)))\n\n                am = c0\n                aa = fx.Int32(-1)\n                oo = c0\n                for j in range_constexpr(N):\n                    al = (keys[j] >= t0) & (keys[j] != cmin)\n                    am = am | al.select(fx.Int32(1 << j), c0)\n                    u = keys[j] ^ cmin\n                    aa = aa & al.select(u, fx.Int32(-1))\n                    oo = oo | al.select(u, c0)\n                am = _opaque(am)\n                aa = _wave_reduce(aa, lambda a, b: a & b)\n                oo = _wave_reduce(oo, lambda a, b: a | b)\n                if lane == c0:\n                    fx.ptr_store(aa, wand + wave)\n                    fx.ptr_store(oo, wor + wave)\n                gpu.barrier()\n                pa = fx.ptr_load(wand + c0)\n                po = fx.ptr_load(wor + c0)\n                for w in range_constexpr(1, NW):\n                    pa = pa & fx.ptr_load(wand + fx.Int32(w))\n                    po = po | fx.ptr_load(wor + fx.Int32(w))\n                hi = fx.Int32(KEY_BITS) - fx.Int32(fx.math.ctlz(pa ^ po))\n                pre0 = (hi >= fx.Int32(KEY_BITS)).select(\n                    c0, pa & (fx.Int32(-1) << fx.min(hi, fx.Int32(KEY_BITS - 1)))\n                )\n                if tid == c0:\n                    fx.ptr_store(pre0, st + c0)\n                    fx.ptr_store(nvalid, st + c1)\n                gpu.barrier()\n\n                # radix passes\n                for p in range_constexpr(PASSES):\n                    prefix = fx.ptr_load(st + c0)\n                    need = fx.ptr_load(st + c1)\n                    hp = hi - fx.Int32(DIGIT_BITS * p)\n                    active = (hp > c0) & (need > c0)\n                    if active:\n                        sh = fx.max(hp - fx.Int32(DIGIT_BITS), c0)\n                        dmask = (c1 << (hp - sh)) - c1\n                        hmask = (hp >= fx.Int32(KEY_BITS)).select(\n                            c0, fx.Int32(-1) << fx.min(hp, fx.Int32(KEY_BITS - 1))\n                        )\n                        hbase = hist + fx.Int32(p * BINS)\n                        pc = prefix ^ cmin\n                        cdig = (cmin >> sh) & dmask\n                        for j in range_constexpr(N):\n                            alj = ((am >> fx.Int32(j)) & c1) != c0\n                            m = alj & (((keys[j] ^ pc) & hmask) == c0)\n                            if m:\n                                _lds_add1(hbase + (((keys[j] >> sh) & dmask) ^ cdig))\n                        gpu.barrier()\n                        d = fx.Int32(BINS - 1) - (tid & fx.Int32(BINS - 1))\n                        cnt = fx.ptr_load(hbase + d)\n                        sc = _wave_scan(cnt, lane)\n                        if (lane == fx.Int32(WAVE - 1)) & (tid < fx.Int32(BINS)):\n                            fx.ptr_store(sc, hscan + wave)\n                        gpu.barrier()\n                        woff = c0\n                        for w in range_constexpr(BINS // WAVE - 1):\n                            woff = woff + (wave > fx.Int32(w)).select(fx.ptr_load(hscan + fx.Int32(w)), c0)\n                        incl = sc + woff\n                        excl = incl - cnt\n                        hit = (tid < fx.Int32(BINS)) & (excl < need) & (need <= incl)\n                        if hit:\n                            fx.ptr_store(prefix | (d << sh), st + c0)\n                            fx.ptr_store(need - excl, st + c1)\n                    gpu.barrier()\n\n                # emit\n                tu = fx.ptr_load(st + c0)\n                need_eq = fx.ptr_load(st + c1)\n                ts = tu ^ cmin\n                gm = c0\n                em = c0\n                for j in range_constexpr(N):\n                    g = keys[j] > ts\n                    e = (keys[j] == ts) & (ts != cmin)\n                    gm = gm | g.select(fx.Int32(1 << j), c0)\n                    em = em | e.select(fx.Int32(1 << j), c0)\n                gm = _opaque(gm)\n                em = _opaque(em)\n                ngt = fx.Int32(fx.math.ctpop(gm))\n                neq = fx.Int32(fx.math.ctpop(em))\n                packed = ngt + (neq << fx.Int32(CNT_BITS))\n                ps = _wave_scan(packed, lane)\n                if lane == fx.Int32(WAVE - 1):\n                    fx.ptr_store(ps, escan + wave)\n                gpu.barrier()\n                woff = c0\n                tot = c0\n                for w in range_constexpr(NW):\n                    wv = fx.ptr_load(escan + fx.Int32(w))\n                    woff = woff + (wave > fx.Int32(w)).select(wv, c0)\n                    tot = tot + wv\n                exc = ps - packed + woff\n                cnt_mask = fx.Int32((1 << CNT_BITS) - 1)\n                rg = exc & cnt_mask\n                re = exc >> fx.Int32(CNT_BITS)\n                total_gt = tot & cnt_mask\n                dummy = fx.Int32(TOPK) + lane\n                # compact the winners into LDS: no branches, losers write a per-lane dummy word\n                for j in range_constexpr(N):\n                    g = (gm >> fx.Int32(j)) & c1\n                    e = (em >> fx.Int32(j)) & c1\n                    te = (e != c0) & (re < need_eq)\n                    pos = (g != c0).select(rg, te.select(total_gt + re, dummy))\n                    if const_expr(MERGE):\n                        fx.ptr_store(slots[j], sti + pos)\n                    else:\n                        i = j // VEC\n                        jj = j % VEC\n                        fx.ptr_store(keys[j], stk + pos)\n                        fx.ptr_store((fx.Int32(i * NT) + tid) * fx.Int32(VEC) + fx.Int32(jj), sti + pos)\n                    rg = rg + g\n                    re = re + e\n                gpu.barrier()\n                kk = total_gt + need_eq\n                win = tid < kk\n                outrow = row * fx.Int32(TOPK)\n                if const_expr(MERGE):\n                    sv = fx.ptr_load(sti + tid)\n                    _store(win.select(sv, fx.Int32(-1)), out_r, outrow + tid)\n                else:\n                    idx = win.select(fx.ptr_load(sti + tid), c0)\n                    kv = fx.ptr_load(stk + tid)\n                    pg = fx.ptr_load(ptl + (idx >> fx.Int32(PAGE_SHIFT)))\n                    slot = win.select(pg * fx.Int32(PAGE) + (idx & fx.Int32(PAGE - 1)), fx.Int32(-1))\n                    if nch <= c1:\n                        _store(slot, out_r, outrow + tid)\n                    else:\n                        wsrow = (row * fx.Int32(NCH) + chunk) * fx.Int32(TOPK)\n                        _store(win.select(kv, cmin), wsk_r, wsrow + tid)\n                        _store(slot, wss_r, wsrow + tid)\n\n        return topk_kernel\n\n    chunk_kernel = make_kernel(False)\n    merge_kernel = make_kernel(True)\n\n    @flyc.jit\n    def launch(\n        scores: fx.Tensor,\n        seq_lens: fx.Tensor,\n        page_tables: fx.Tensor,\n        out: fx.Tensor,\n        ws_key: fx.Tensor,\n        ws_slot: fx.Tensor,\n        stream: fx.Stream,\n    ):\n        chunk_kernel(scores, seq_lens, page_tables, out, ws_key, ws_slot).launch(\n            grid=(NCH, B, 1), block=(NT, 1, 1), stream=stream\n        )\n        merge_kernel(scores, seq_lens, page_tables, out, ws_key, ws_slot).launch(\n            grid=(1, B, 1), block=(NT, 1, 1), stream=stream\n        )\n\n    return launch, NCH\n\n\ndef run(*, scores, seq_lens, metadata, out_page_indices, page_size, page_tables):\n    B, NC = scores.shape\n    NP = page_tables.shape[1]\n    launch, nch = _build(B, NC, NP)\n    ws = torch.empty((2, B, nch, TOPK), dtype=torch.int32, device=scores.device)\n    launch(\n        scores,\n        seq_lens,\n        page_tables,\n        out_page_indices,\n        ws[0],\n        ws[1],\n        fx.Stream(torch.cuda.current_stream(scores.device)),\n    )\n"
+      }
+    ]
+  }
+}
