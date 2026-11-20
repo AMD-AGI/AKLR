@@ -281,27 +281,25 @@ def _aklr_clock():
 
 
 def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
-    """Per workload, the candidate's median time over ``rounds`` readings of AKLR's graph timer on the call
-    validate's bench times."""
+    """Per workload, the candidate's median over ``rounds`` of a round's time on the calls validate's bench times:
+    one reading of AKLR's graph timer per call, summed, as bench sums a workload's recorded calls."""
     clock = _aklr_clock()  # imports the timer's module before the candidate's first GPU call
     candidate = _load_candidate()
     times = {}
     profiler_warm = False
-    for case_id, call in _calls("cuda").items():
-
-        def call_once(call=call) -> None:
-            candidate.run(**call)
-
+    for case_id, calls in _calls("cuda").items():
+        runs = [lambda call=call: candidate.run(**call) for call in calls]
         # At least once, as a model's warm-up does: a per-tensor cache fills here, not in a timed graph.
-        for _ in range(max(1, warmup)):
-            call_once()
+        for run in runs:
+            for _ in range(max(1, warmup)):
+                run()
         clock.synchronize()
         if not profiler_warm:
             # Validate's profiler warm-up: one unrecorded profile before the first recorded one in the process.
-            clock.graph_reading(call_once)
+            clock.graph_reading(runs[0])
             profiler_warm = True
-        readings = [clock.graph_reading(call_once) for _ in range(rounds)]
-        times[case_id] = statistics.median(readings)
+        totals = [sum(clock.graph_reading(run) for run in runs) for _ in range(rounds)]
+        times[case_id] = statistics.median(totals)
     return times
 
 
@@ -315,40 +313,45 @@ def _run_bench(warmup: int, iterations: int) -> int:
     return 0
 
 
-def _calls(device: str) -> dict[str, dict]:
-    """Per workload, the call validate's bench times, on AKLR's timing inputs, built by AKLR's own trial code:
-    inputs from another draw describe a call nobody scores. The call holds the schema's call keys only, as AKLR's
-    builder hands the kernel: a trial call also carries API parameters an attr hides from the kernel. The outputs
-    dispatch would allocate are allocated here, since the candidate is called directly.
+def _calls(device: str) -> dict[str, list[dict]]:
+    """Per workload, the calls validate's bench times, on AKLR's timing inputs, built by AKLR's own trial code:
+    inputs from another draw describe a call nobody scores. A workload measured on recorded serving traffic
+    (``traffic/schemas.json``) has a call per recorded call it samples, the same calls bench samples; any other
+    workload has one. A call holds the schema's call keys only, as AKLR's builder hands the kernel: a trial call
+    also carries API parameters an attr hides from the kernel. The outputs dispatch would allocate are allocated
+    here, since the candidate is called directly.
     """
     import torch
 
     registry, *_ = _aklr()
     from aklr.core.contract import semantics
+    from aklr.core.validation import traffic
     from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
 
     text, _ = _candidate_text()
     schema = registry.parse_schema(text.encode(), str(SCHEMA_JSON))
     contract = registry.get(schema.contract_id)
-    calls = {}
+    calls: dict[str, list[dict]] = {}
     for workload in schema.workloads:
-        request = TrialRequest.of_workload(
-            str(SCHEMA_JSON),
-            schema,
-            contract,
-            workload,
-            thresholds={},
-            incumbent=None,
-        )
-        assembled = request.assemble_call(request.compose_inputs(None, device), device)
-        call = {key: assembled[key] for key in schema.kernel_call_keys if key in assembled}
-        for name in contract.allocated_outputs:
-            call[name] = torch.empty(
-                contract.storage_shape_of(name, request.point),
-                dtype=semantics.torch_dtypes(request.point.dtypes[name])[0],
-                device=device,
+        for sample in traffic.samples(AKLR_ROOT, schema, contract, workload.axes):
+            request = TrialRequest.of_workload(
+                str(SCHEMA_JSON),
+                schema,
+                contract,
+                workload,
+                thresholds={},
+                incumbent=None,
+                sample=sample,
             )
-        calls[_case_id(workload.axes)] = call
+            assembled = request.assemble_call(request.compose_inputs(None, device), device)
+            call = {key: assembled[key] for key in schema.kernel_call_keys if key in assembled}
+            for name in contract.allocated_outputs:
+                call[name] = torch.empty(
+                    contract.storage_shape_of(name, request.point),
+                    dtype=semantics.torch_dtypes(request.point.dtypes[name])[0],
+                    device=device,
+                )
+            calls.setdefault(_case_id(workload.axes), []).append(call)
     return calls
 
 
@@ -374,7 +377,8 @@ def _run_profile() -> int:
     )
     candidate = _load_candidate()
     for _ in range(6):
-        candidate.run(**calls[largest])
+        for call in calls[largest]:
+            candidate.run(**call)
     torch.cuda.synchronize()
     return 0
 
@@ -511,7 +515,12 @@ def _run_stress(device: str = "cuda") -> int:
     determinism = _determinism()
     conditions = _stress_conditions()
     failed = []
-    for case_id, call in _calls(device).items():
+    labelled = {
+        f"{case_id}#{i}" if len(calls) > 1 else case_id: call
+        for case_id, calls in _calls(device).items()
+        for i, call in enumerate(calls)
+    }
+    for case_id, call in labelled.items():
         candidate.run(**call)
         alone = {name: call[name].clone() for name in outputs if name in call}
         # bounded integer outputs alone (the top-k slot selections): a full row's order is the kernel's choice

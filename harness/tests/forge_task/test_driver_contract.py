@@ -103,7 +103,9 @@ def test_the_driver_builds_validates_calls_with_this_checkouts_aklr(real_run):
     registry, *_ = driver._aklr()
     parsed = registry.parse_schema(driver._candidate_text()[0].encode(), "schema")
     candidate = driver._load_candidate()
-    for call in calls.values():
+    # no recording lists bmm_n128_k512: a call a workload, drawn as bench draws it
+    assert all(len(case) == 1 for case in calls.values())
+    for call in (call for case in calls.values() for call in case):
         assert set(call) <= set(parsed.kernel_call_keys)
         candidate.run(**call)
 
@@ -361,6 +363,27 @@ def test_an_edit_to_any_of_the_kernels_files_is_validated_anew(aklr_root: Path, 
 def test_driver_is_importable_without_a_gpu(run):
     """KernelForge hashes the driver before it ever runs; importing must not need ROCm or AKLR."""
     assert _import_driver(run).SCHEMA_JSON == run.schema_json
+
+
+def test_the_driver_times_each_workload_on_the_samples_bench_measures(real_run, monkeypatch):
+    """A workload measured on recorded traffic is timed on each call bench samples for it, so the candidate's time
+    sums what the baseline anchor sums: here two samples a workload, stood in for recorded ones."""
+    run, schema = real_run
+    driver = _import_driver(run)
+    driver._aklr()  # this checkout's AKLR on the path, as the driver imports it
+    from aklr.core.validation import traffic
+
+    monkeypatch.setattr(
+        traffic,
+        "samples",
+        lambda root, schema, contract, axes: (
+            traffic.Sample("#0", axes, None),
+            traffic.Sample("#1", axes, None),
+        ),
+    )
+    calls = driver._calls("cpu")
+    assert set(calls) == {workload.case_id for workload in schema.workloads}
+    assert all(len(case) == 2 for case in calls.values())
 
 
 def test_stress_passes_one_answer_and_names_the_workload_that_differs(real_run, monkeypatch, capsys):
