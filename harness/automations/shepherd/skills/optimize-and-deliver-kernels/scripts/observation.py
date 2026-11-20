@@ -1,5 +1,5 @@
 """What an idle shepherd round waits on: the base branch's head, the heads of the open pull requests, this
-checkout's commit (the pack and forge_task) and the readiness record.
+checkout's commit (the pack and forge_task), the readiness record and the issue requests.
 
 `observation.py --config .shepherd/configuration.yaml` prints their fingerprint, which `state.py begin
 --observation` compares with the one the last idle round saved. Exit 2: GitHub could not be read; begin
@@ -25,6 +25,8 @@ class Observation:
     checkout: str = ""
     # SHA-256 of `readiness.md` in the state directory, empty when it is missing.
     readiness: str = ""
+    # SHA-256 over the issue requests (`requests/*.json` in the state directory), empty when there is none.
+    requests: str = ""
 
     @classmethod
     def collect(cls, repository, branch, state_dir):
@@ -36,7 +38,9 @@ class Observation:
 
         if "USER" not in os.environ:  # getpwuid fails for a uid without a passwd entry: ask only when needed
             os.environ["USER"] = pwd.getpwuid(os.getuid()).pw_name
-        readiness = Path(os.path.expandvars(state_dir)).expanduser() / "readiness.md"
+        state_dir = Path(os.path.expandvars(state_dir)).expanduser()
+        readiness = state_dir / "readiness.md"
+        requests = [file.read_bytes() for file in sorted(state_dir.glob("requests/*.json"))]
 
         pulls = json.loads(
             gh(
@@ -57,12 +61,15 @@ class Observation:
             pulls=tuple((pull["number"], pull["headRefOid"]) for pull in pulls),
             checkout=run("git", "rev-parse", "HEAD").strip(),
             readiness=hashlib.sha256(readiness.read_bytes()).hexdigest() if readiness.exists() else "",
+            requests=hashlib.sha256(b"\0".join(requests)).hexdigest() if requests else "",
         )
 
     @property
     def fingerprint(self):
         return hashlib.sha256(
-            json.dumps([self.base, sorted(self.pulls), self.checkout, self.readiness]).encode()
+            json.dumps(
+                [self.base, sorted(self.pulls), self.checkout, self.readiness, *filter(None, [self.requests])]
+            ).encode()
         ).hexdigest()
 
 

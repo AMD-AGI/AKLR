@@ -1,7 +1,7 @@
 # Campaign worker
 
 A campaign runs KernelForge in containers on its own GPU of a pool. Workers never run on this host, even
-when it has a free card.
+when it has a free card, unless the pool is [local](local.md).
 
 ## Isolation
 
