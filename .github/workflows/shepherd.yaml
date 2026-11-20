@@ -27,7 +27,6 @@ env:
   # The model gateway of the agents; its key is passed to their steps only, as the gateway's header.
   ANTHROPIC_BASE_URL: ${{ vars.SHEPHERD_LLM_BASE_URL }}
   ANTHROPIC_MODEL: ${{ vars.SHEPHERD_LLM_MODEL }}
-  ANTHROPIC_AUTH_TOKEN: unused
 
 defaults:
   run:
@@ -78,26 +77,22 @@ jobs:
           command -v gh > /dev/null ||
             curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz |
               tar -xz -C "$bin" --strip-components=2 gh_2.63.2_linux_amd64/bin/gh
-          command -v claude > /dev/null || curl -fsSL https://claude.ai/install.sh | bash
           # The helpers run `python3 -I`, which skips the user site: PyYAML goes to a venv first on PATH.
           python3 -I -c 'import yaml' 2> /dev/null || { python3 -m venv "$venv" && "$venv/bin/pip" install -q pyyaml; }
           { echo "$venv/bin"; echo "$bin"; } >> "$GITHUB_PATH"
       - name: TEMPORARY probe of the host (remove before merge)
         continue-on-error: true
-        env:
-          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.ANTHROPIC_API_KEY }}'
         run: |
           set +e
           echo "user $(id -un) home $HOME"; df -h "$HOME" /var/tmp | tail -2
-          for tool in claude gh jq docker python3 node curl git; do echo "$tool: $(command -v $tool || echo MISSING)"; done
+          for tool in gh jq docker python3 curl git; do echo "$tool: $(command -v $tool || echo MISSING)"; done
           python3 -I -c 'import yaml, sys; print("yaml", yaml.__version__, sys.version.split()[0])'
-          claude --version; gh --version | head -1
+          gh --version | head -1
           docker ps --format '{{.Names}}' | head -20; echo "docker exit $?"
           ls /dev/dri | tr '\n' ' '; echo; ls /dev/kfd
           python3 -c 'import json, os; p = os.path.expanduser("~/.claude/settings.json"); print("claude settings env keys:", sorted(json.load(open(p)).get("env", {})) if os.path.exists(p) else "no file")'
           echo "base url: $ANTHROPIC_BASE_URL model: $ANTHROPIC_MODEL key set: ${{ secrets.ANTHROPIC_API_KEY != '' }}"
           for url in "$ANTHROPIC_BASE_URL" https://api.anthropic.com https://claude.ai; do echo "$url -> $(curl -s -o /dev/null -m 8 -w '%{http_code}' "$url")"; done
-          timeout 120 claude -p 'Reply with the single word: ok' < /dev/null; echo "claude exit $?"
       - name: Link the host's configuration
         # Uncommitted and outside the workspace, which checkout cleans; setup writes it through the link.
         run: |
@@ -124,14 +119,33 @@ jobs:
       - name: Set up shepherd on this host
         # The text is the event's own copy of the issue, as the allowed user labeled it.
         if: github.event.action == 'labeled' || inputs.issue != ''
+        uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          # The gateway reads its key from this header.
           ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.ANTHROPIC_API_KEY }}'
-          ISSUE: ${{ github.event.issue.number || inputs.issue }}
-        run: |
-          claude -p "$(cat harness/automations/shepherd/templates/actions-setup-prompt.md)
-          #$ISSUE of $GITHUB_REPOSITORY, labeled by $GITHUB_TRIGGERING_ACTOR:
-          $(jq -r '.issue.body // ""' "$EVENT")" --dangerously-skip-permissions --disallowedTools 'Skill(aklr:remote-gpu)' 'Skill(remote-gpu)' < /dev/null
+          CLAUDE_CODE_TMPDIR: ${{ runner.temp }}
+          # Pushes use the App token through gh, without writing a credential to disk.
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: credential.https://github.com.helper
+          GIT_CONFIG_VALUE_0: '!gh auth git-credential'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.app.outputs.token }}
+          bot_name: aklr-claude[bot]
+          bot_id: '355267095'
+          # The classifier would call api.anthropic.com, bypassing the gateway.
+          classify_inline_comments: 'false'
+          include_fix_links: 'false'
+          settings: '{"attribution": false}'
+          # remote-gpu is shut out: the pool is this host.
+          claude_args: |
+            --model ${{ vars.SHEPHERD_LLM_MODEL }}
+            --dangerously-skip-permissions
+            --disallowedTools "Skill(aklr:remote-gpu),Skill(remote-gpu)"
+          prompt: |
+            Read and follow harness/automations/shepherd/templates/actions-setup-prompt.md.
+            The JSON file is ${{ env.EVENT }}: issue #${{ github.event.issue.number || inputs.issue }} of ${{ github.repository }}, labeled by ${{ github.triggering_actor }}.
       - name: Check the configuration
         run: |
           test -f "$CONFIG" || { echo "::error::this host is not set up: an allowed user's shepherd issue sets it up (see setup-shepherd)"; exit 1; }
@@ -160,18 +174,34 @@ jobs:
           fi
       - name: Run the round
         if: steps.begin.outputs.begun != ''
+        uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          # The gateway reads its key from this header.
           ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.ANTHROPIC_API_KEY }}'
-          BEGUN: ${{ steps.begin.outputs.begun }}
+          CLAUDE_CODE_TMPDIR: ${{ runner.temp }}
           # Pushes use the App token through gh, without writing a credential to disk.
           GIT_CONFIG_COUNT: '1'
           GIT_CONFIG_KEY_0: credential.https://github.com.helper
           GIT_CONFIG_VALUE_0: '!gh auth git-credential'
-        # The model comes from the runner user's own Claude settings. remote-gpu is shut out: the pool is this host.
-        run: |
-          claude -p "$(cat harness/automations/shepherd/templates/actions-prompt.md)
-          $BEGUN" --dangerously-skip-permissions --disallowedTools 'Skill(aklr:remote-gpu)' 'Skill(remote-gpu)' < /dev/null
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.app.outputs.token }}
+          bot_name: aklr-claude[bot]
+          bot_id: '355267095'
+          # The classifier would call api.anthropic.com, bypassing the gateway.
+          classify_inline_comments: 'false'
+          include_fix_links: 'false'
+          settings: '{"attribution": false}'
+          # remote-gpu is shut out: the pool is this host.
+          claude_args: |
+            --model ${{ vars.SHEPHERD_LLM_MODEL }}
+            --dangerously-skip-permissions
+            --disallowedTools "Skill(aklr:remote-gpu),Skill(remote-gpu)"
+          prompt: |
+            Read and follow harness/automations/shepherd/templates/actions-prompt.md.
+            `begin` printed:
+            ${{ steps.begin.outputs.begun }}
       - name: Rewrite the requests' progress comments
         if: ${{ !cancelled() && steps.begin.outcome != 'skipped' }}
         env:
