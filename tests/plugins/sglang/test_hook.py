@@ -26,8 +26,6 @@ for package in op_packages():
         importlib.import_module(f"{package}.api")
 importlib.import_module("aklr.plugins.sglang.models.kimi_k3_torch_gemm")
 importlib.import_module("aklr.plugins.sglang.models.dspark_torch_gemm")
-importlib.import_module("aklr.plugins.sglang.layers.logits_processor_torch_gemm")
-importlib.import_module("aklr.plugins.sglang.layers.aiter_backend_mla_prefill")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.5.22"
 
@@ -277,8 +275,6 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
             "aklr.plugins.sglang.x.y.api",
             "aklr.plugins.sglang.models.kimi_k3_torch_gemm",
             "aklr.plugins.sglang.models.dspark_torch_gemm",
-            "aklr.plugins.sglang.layers.logits_processor_torch_gemm",
-            "aklr.plugins.sglang.layers.aiter_backend_mla_prefill",
             "install",
         ]
         if hooked

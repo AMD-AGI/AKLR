@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The torch GEMMs sglang runs for Kimi-K3, routed to AKLR's gemm: the lm_head (``LogitsProcessor``), the DSpark
-draft's lm_head and K3's own bf16 GEMMs. What each hands the op, and what stays on sglang before the op is asked."""
+"""The torch GEMMs sglang runs for Kimi-K3, routed to AKLR's gemm: the DSpark draft's lm_head and K3's own bf16
+GEMMs. What each hands the op, and what stays on sglang before the op is asked."""
 
 import sys
 from types import ModuleType, SimpleNamespace
@@ -11,7 +11,6 @@ import pytest
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.sglang.layers import logits_processor_torch_gemm as lm_head_route
 from aklr.plugins.sglang.models import dspark_torch_gemm as dspark_route
 from aklr.plugins.sglang.models import kimi_k3_torch_gemm as k3_route
 
@@ -32,21 +31,19 @@ class _Gemm:
 @pytest.fixture
 def gemm(monkeypatch):
     fake = _Gemm()
-    for module in (lm_head_route, dspark_route, k3_route):
+    for module in (dspark_route, k3_route):
         monkeypatch.setattr(module, "gemm", fake)
     return fake
 
 
 @pytest.fixture
 def sglang(monkeypatch):
-    """sglang's helpers the lm_head routes ask: a head is quantized where it carries ``quantized``, uses AMX where it
-    carries ``amx``; the DSpark module, without 0.5.23's fp8 head flag."""
+    """sglang's helper the DSpark route asks: a head is quantized where it carries ``quantized``; the DSpark module,
+    without 0.5.23's fp8 head flag."""
     logits = ModuleType("sglang.srt.layers.logits_processor")
     logits.should_apply_lm_head_quant_method = lambda head, method: getattr(head, "quantized", False)
-    common = ModuleType("sglang.srt.utils.common")
-    common.use_intel_amx_backend = lambda head: getattr(head, "amx", False)
     dspark = ModuleType("sglang.srt.models.dspark")
-    for module in (logits, common, dspark):
+    for module in (logits, dspark):
         monkeypatch.setitem(sys.modules, module.__name__, module)
     return dspark
 
@@ -57,48 +54,15 @@ def head(**traits):
     )
 
 
-def processor(**changed):
-    defaults = {"use_fp32_lm_head": False, "use_fp32_lm_head_output": False, "rl_on_policy_target": None}
-    return SimpleNamespace(**(defaults | changed))
-
-
 def hidden(dtype=torch.bfloat16):
     return torch.zeros(ROWS, HIDDEN, dtype=dtype)
-
-
-@pytest.mark.parametrize(
-    ("lm_head", "logits"),
-    [
-        (head(set_lora=None, apply_lora=None), processor()),
-        (head(quantized=True), processor()),
-        (SimpleNamespace(quant_method=None), processor()),
-        (head(), processor(use_fp32_lm_head=True)),
-        (head(), processor(use_fp32_lm_head_output=True)),
-        (head(amx=True), processor()),
-        (head(), processor(rl_on_policy_target="policy")),
-    ],
-    ids=["lora", "quantized", "weightless", "fp32_logits", "fp32_logits_output", "amx", "rl"],
-)
-def test_an_lm_head_sglang_treats_specially_stays_on_sglang(sglang, gemm, lm_head, logits):
-    assert lm_head_route._compute_lm_head(logits, hidden(), lm_head) is FallbackReason.OUT_OF_CONTRACT
-    assert gemm.calls == []
-
-
-@pytest.mark.parametrize("result", ["aklr", FallbackReason.NO_WORKLOAD], ids=["served", "declined"])
-def test_a_plain_lm_head_hands_its_hidden_states_and_weight_to_gemm(sglang, gemm, result):
-    gemm.result = result
-    x, lm_head = hidden(), head()
-    assert lm_head_route._compute_lm_head(processor(), x, lm_head) is result
-    (call,) = gemm.calls
-    assert call["a"] is x and call["b"] is lm_head.weight
 
 
 def test_hidden_states_of_another_dtype_reach_gemm_unconverted(sglang, gemm):
     """gemm declines them, sglang converts: nothing is copied before the op is asked."""
     x = hidden(torch.float32)
-    lm_head_route._compute_lm_head(processor(), x, head())
     dspark_route._project_through_lm_head(x, head())
-    assert [call["a"] for call in gemm.calls] == [x, x]
+    assert [call["a"] for call in gemm.calls] == [x]
 
 
 def test_a_quantized_draft_head_stays_on_sglang(sglang, gemm):
