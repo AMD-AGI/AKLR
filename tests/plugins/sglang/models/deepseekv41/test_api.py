@@ -324,12 +324,10 @@ def test_a_prefills_bf16_wo_a_reaches_gemm_once_a_group(gemm):
 @pytest.mark.parametrize(
     ("call", "mode"),
     [
-        (bf16_wo_a_call(), {"is_decode": True}),
-        (bf16_wo_a_call(), {"is_decode": False, "is_target_verify": True}),
         (tuple(t.flatten(0, 1) for t in bf16_wo_a_call()), {"is_decode": False}),
         ((bf16_wo_a_call()[0], bf16_wo_a_call(groups=1)[1]), {"is_decode": False}),
     ],
-    ids=["decode", "target_verify", "ungrouped", "other_groups"],
+    ids=["ungrouped", "other_groups"],
 )
 def test_a_bf16_wo_a_sglangs_own_kernels_take_stays_on_sglang(gemm, call, mode):
     assert api._apply_wo_a_bf16_matmul(*call, **mode) is FallbackReason.OUT_OF_CONTRACT
@@ -340,6 +338,59 @@ def test_a_bf16_wo_a_gemm_declines_stays_on_sglang_uncopied(gemm):
     gemm.reason = FallbackReason.NO_WORKLOAD
     assert api._apply_wo_a_bf16_matmul(*bf16_wo_a_call(), is_decode=False) is FallbackReason.NO_WORKLOAD
     assert len(gemm.asked) == 1 and gemm.ran == []
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [{"is_decode": True}, {"is_decode": False, "is_target_verify": True}],
+    ids=["decode", "target_verify"],
+)
+def test_a_decode_or_verify_bf16_wo_a_is_asked_of_gemm_once_a_group_and_left_to_sglang(gemm, mode):
+    o, wo_a = bf16_wo_a_call()
+    # sglang's kernels return these rows in other forms: the calls are recorded, never run
+    assert api._apply_wo_a_bf16_matmul(o, wo_a, **mode) is FallbackReason.OUT_OF_CONTRACT
+    assert [(asked["a"].shape, asked["b"].data_ptr()) for asked in gemm.asked] == [
+        ((3, 128), wo_a[group].data_ptr()) for group in range(2)
+    ]
+    assert gemm.ran == []
+
+
+@pytest.mark.parametrize(
+    "answer", [torch.ones(4, 256), FallbackReason.NO_WORKLOAD], ids=["a_kernel_serves", "the_op_declines"]
+)
+def test_a_bf16_linear_with_fp32_output_reaches_gemm(monkeypatch, answer):
+    asked = []
+    monkeypatch.setattr(api, "gemm", lambda *args, **kwargs: asked.append((args, kwargs)) or answer)
+    x, weight = torch.zeros(4, 512, dtype=torch.bfloat16), torch.zeros(256, 512, dtype=torch.bfloat16)
+    assert api._linear_bf16_fp32(x, weight, hpc_kernel_min_m=8) is answer
+    (((a, b), kwargs),) = asked
+    assert a is x and b is weight and kwargs == {"out_dtype": torch.float32}
+
+
+@pytest.mark.parametrize(
+    "reason", [None, FallbackReason.NO_WORKLOAD], ids=["a_kernel_serves", "the_op_declines"]
+)
+def test_the_indexers_key_projection_is_asked_of_gemm_and_left_to_sglang(gemm, reason):
+    gemm.reason = reason
+    indexer = SimpleNamespace(wk=SimpleNamespace(weight=torch.zeros(128, 512, dtype=torch.bfloat16)))
+    latent = torch.zeros(4, 512, dtype=torch.bfloat16)
+    # sglang's small-row kernel keeps its own reduction order: the call is recorded, never run
+    assert api._forward_wk(indexer, latent) is (reason or FallbackReason.OUT_OF_CONTRACT)
+    (asked,) = gemm.asked
+    assert set(asked) == {"a", "b"} and asked["a"] is latent and asked["b"] is indexer.wk.weight
+    assert gemm.ran == []
+
+
+@pytest.mark.parametrize(("ratio", "asks"), [(1, 1), (4, 0)], ids=["uncompressed", "compressed"])
+def test_an_uncompressed_layers_kv_projection_is_asked_of_gemm_and_left_to_sglang(gemm, ratio, asks):
+    compressor = SimpleNamespace(
+        compress_ratio=ratio, wkv=SimpleNamespace(weight=torch.zeros(512, 4096, dtype=torch.bfloat16))
+    )
+    x = torch.zeros(4, 4096, dtype=torch.bfloat16)
+    # a compressed layer's projections reach gemm through sglang's bf16 linear with fp32 output
+    assert api._project(compressor, x) is FallbackReason.OUT_OF_CONTRACT
+    assert [(asked["a"], asked["b"]) for asked in gemm.asked] == [(x, compressor.wkv.weight)] * asks
+    assert gemm.ran == []
 
 
 @pytest.mark.parametrize(
