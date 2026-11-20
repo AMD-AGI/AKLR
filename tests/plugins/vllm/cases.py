@@ -71,6 +71,23 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"n_valid_rows": 2, "write_bank": True, "has_addend": True, "has_norm": True},
         layout_variant_name="row_major",
     ),
+    # the same with the per-token fp8 out the linear after it takes
+    PointSpec(
+        contract_id="kimi_k3_attn_res_fp8@1.0",
+        axes={"n_tokens": 4, "hidden_size": 256, "n_bank_rows": 4},
+        dtypes={
+            "prefix": "bfloat16",
+            "addend": "bfloat16",
+            "bank": "bfloat16",
+            "score_norm_weight": "bfloat16",
+            "score_proj_weight": "bfloat16",
+            "norm_weight": "bfloat16",
+            "quantized": "float8_e4m3fn",
+            "scale": "float32",
+        },
+        attrs={"n_valid_rows": 2, "write_bank": True, "has_addend": True, "has_norm": True},
+        layout_variant_name="row_major",
+    ),
     # Kimi-K3's latent-MoE tail shrunk, a one-rank group (the generic tests draw one rank's inputs; the CPU tests of
     # the op run its eight ranks)
     PointSpec(

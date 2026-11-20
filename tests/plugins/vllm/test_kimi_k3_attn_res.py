@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Kimi-K3's attention residual on vLLM to AKLR's kimi_k3_attn_res: what the route takes and how it hands it over
-(CPU), and the baseline's copy of vLLM's Triton kernel against vLLM's own (GPU)."""
+"""Kimi-K3's attention residual on vLLM to AKLR's kimi_k3_attn_res and kimi_k3_attn_res_fp8: what the route takes
+and how it hands it over (CPU), and the baseline's copy of vLLM's Triton kernel against vLLM's own (GPU)."""
 
 import pytest
 import torch
@@ -17,11 +17,15 @@ TOKENS, HIDDEN, ROWS = 4, 256, 4
 def op(monkeypatch):
     calls = []
 
-    def fake(*args, **kwargs):
-        calls.append((args, kwargs))
-        return "aklr"
+    def fake(name):
+        def call(*args, **kwargs):
+            calls.append((args, kwargs))
+            return name
 
-    monkeypatch.setattr(api, "kimi_k3_attn_res", fake)
+        return call
+
+    monkeypatch.setattr(api, "kimi_k3_attn_res", fake("aklr"))
+    monkeypatch.setattr(api, "kimi_k3_attn_res_fp8", fake("aklr_fp8"))
     return calls
 
 
@@ -39,8 +43,8 @@ def operands():
 
 @pytest.mark.parametrize(
     ("changed", "write_idx"),
-    [({"quant_dtype": torch.float8_e4m3fn}, 2), ({}, 1)],
-    ids=["fp8_output", "write_before_the_last_row"],
+    [({"quant_dtype": torch.float8_e4m3fnuz}, 2), ({}, 1)],
+    ids=["fnuz_fp8_output", "write_before_the_last_row"],
 )
 def test_what_no_contract_states_goes_back_to_vllm(op, changed, write_idx):
     x = operands()
@@ -51,16 +55,20 @@ def test_what_no_contract_states_goes_back_to_vllm(op, changed, write_idx):
     assert result is FallbackReason.OUT_OF_CONTRACT and op == []
 
 
+@pytest.mark.parametrize(
+    ("quant_dtype", "to"), [(None, "aklr"), (torch.float8_e4m3fn, "aklr_fp8")], ids=["bf16", "fp8"]
+)
 @pytest.mark.parametrize("write_idx", [-1, 2], ids=["no_write", "write_row_n"])
 @pytest.mark.parametrize("with_optionals", [True, False], ids=["addend_and_norm", "neither"])
-def test_a_supported_call_hands_every_operand_over(op, write_idx, with_optionals):
+def test_a_supported_call_hands_every_operand_over(op, write_idx, with_optionals, quant_dtype, to):
     x = operands()
     delta = x["delta"] if with_optionals else None
     norm = x["output_norm_weight"] if with_optionals else None
     result = api._attn_res(
-        x["prefix"], delta, x["blocks"], x["norm_weight"], x["qk_weight"], norm, 2, write_idx, 1e-6, 1e-5
-    )
-    assert result == "aklr"
+        x["prefix"], delta, x["blocks"], x["norm_weight"], x["qk_weight"], norm, 2, write_idx, 1e-6, 1e-5,
+        quant_dtype=quant_dtype,
+    )  # fmt: skip
+    assert result == to
     ((args, kwargs),) = op
     assert args[0] is x["prefix"] and args[1] is x["blocks"]
     assert args[2] is x["norm_weight"] and args[3] is x["qk_weight"]
