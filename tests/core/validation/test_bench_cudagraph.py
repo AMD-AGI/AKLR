@@ -16,7 +16,8 @@ import torch
 
 def _assert_milliseconds(value):
     assert isinstance(value, float)
-    assert math.isfinite(value) and value > 0
+    assert math.isfinite(value)
+    assert value > 0
 
 
 def _per_stream_state(bench_cudagraph):
@@ -84,6 +85,30 @@ def _destroy_unused_stream(bench_cudagraph):
     torch.testing.assert_close(x, torch.full_like(x, 7))
 
 
+def _return_modes_and_quantiles(bench_cudagraph):
+    x = torch.zeros(1024, device="cuda")
+
+    def subject():
+        x.fill_(7)
+
+    for mode in ("min", "max", "mean", "median"):
+        _assert_milliseconds(bench_cudagraph(subject, rep=1, return_mode=mode))
+    samples = bench_cudagraph(subject, rep=1, return_mode="all")
+    assert isinstance(samples, list)
+    assert samples
+    for value in samples:
+        _assert_milliseconds(value)
+    _assert_milliseconds(bench_cudagraph(subject, rep=1, quantiles=[0.5]))
+    quantiles = bench_cudagraph(subject, rep=1, quantiles=[0, 0.5, 1])
+    assert isinstance(quantiles, list)
+    assert len(quantiles) == 3
+    assert quantiles == sorted(quantiles)
+    for value in quantiles:
+        _assert_milliseconds(value)
+    with pytest.raises(ValueError, match="Quantiles must be in the range"):
+        bench_cudagraph(subject, rep=1, quantiles=[1.1])
+
+
 def _capture_exception_and_recovery(bench_cudagraph):
     x = torch.zeros(1024, device="cuda")
 
@@ -114,6 +139,7 @@ def _run_scenario(scenario):
         _forked_stream,
         _device_copy,
         _destroy_unused_stream,
+        _return_modes_and_quantiles,
         _capture_exception_and_recovery,
     ],
     ids=[
@@ -121,6 +147,7 @@ def _run_scenario(scenario):
         "forked_stream",
         "device_copy",
         "destroy_unused_stream",
+        "return_modes",
         "capture_exception",
     ],
 )
@@ -169,9 +196,11 @@ def _group_rank(rank, rendezvous, fault=False):
                 bench_cudagraph(collective, group=dist.group.WORLD)
             return str(error.value)
         # rank 1's budget alone would capture far more calls than rank 0's
-        milliseconds = bench_cudagraph(collective, rep=0 if rank == 0 else 5, group=dist.group.WORLD)
+        times = bench_cudagraph(
+            collective, rep=0 if rank == 0 else 5, group=dist.group.WORLD, return_mode="all"
+        )
         torch.testing.assert_close(value, torch.full_like(value, 3))
-        return milliseconds
+        return times
     finally:
         dist.destroy_process_group()
 
@@ -185,8 +214,9 @@ def test_bench_cudagraph_group(tmp_path):
     with multiprocessing.get_context("spawn").Pool(2) as pool:
         jobs = [pool.apply_async(_group_rank, (rank, rendezvous)) for rank in range(2)]
         rank0, rank1 = (job.get(timeout=300) for job in jobs)
+    assert len(rank0) == 1  # the fewest calls any rank's budget allows
     assert rank0 == rank1  # each call reads as its slowest rank's time
-    _assert_milliseconds(rank0)
+    _assert_milliseconds(rank0[0])
 
 
 @pytest.mark.gpu

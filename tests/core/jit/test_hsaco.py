@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from aklr.core.jit import hsaco
-from tests.op_case import hsaco_code_object, hsaco_gemm_code_object
+from tests.hsaco_sample import hsaco_code_object
 
 # reads blockDim and gridDim, which HIP passes as hidden arguments after out
 _DIMS_DEVICE_SOURCE = """\
@@ -29,7 +29,7 @@ class TestKernel:
     """``Kernel.launch`` runs a code object's function on the current stream."""
 
     def test_launches(self) -> None:
-        kernel = hsaco.Kernel(hsaco_gemm_code_object(), "gemm")
+        kernel = hsaco.Kernel(hsaco_code_object(), "gemm")
         a, b = torch.randn(8, 32, device="cuda").bfloat16(), torch.randn(16, 32, device="cuda").bfloat16()
         out = torch.empty(8, 16, device="cuda", dtype=torch.bfloat16)
         _gemm(kernel, a, b, out)
@@ -37,7 +37,7 @@ class TestKernel:
 
     def test_replays_in_a_cuda_graph(self) -> None:
         """A launch captured on a side stream replays with the arguments it was captured with."""
-        kernel = hsaco.Kernel(hsaco_gemm_code_object(), "gemm")
+        kernel = hsaco.Kernel(hsaco_code_object(), "gemm")
         a, b = torch.randn(8, 32, device="cuda").bfloat16(), torch.randn(16, 32, device="cuda").bfloat16()
         out = torch.empty(8, 16, device="cuda", dtype=torch.bfloat16)
         _gemm(kernel, a, b, out)  # loaded outside the capture, as a host warms up
@@ -49,30 +49,29 @@ class TestKernel:
         graph.replay()
         torch.testing.assert_close(out.float(), a.float() @ b.float().mT, rtol=1e-2, atol=1e-2)
 
-    def test_shares_a_module_per_code_object(self) -> None:
-        """Kernels of one code object load it once per device."""
-        code_object = hsaco_gemm_code_object()
-        kernels = hsaco.Kernel(code_object, "gemm"), hsaco.Kernel(code_object, "gemm")
+    def test_kernels_of_one_code_object_both_launch(self) -> None:
+        code_object = hsaco_code_object()
         a, b = torch.randn(8, 32, device="cuda").bfloat16(), torch.randn(16, 32, device="cuda").bfloat16()
-        for kernel in kernels:
+        for kernel in (hsaco.Kernel(code_object, "gemm"), hsaco.Kernel(code_object, "gemm")):
             out = torch.empty(8, 16, device="cuda", dtype=torch.bfloat16)
             _gemm(kernel, a, b, out)
             torch.testing.assert_close(out.float(), a.float() @ b.float().mT, rtol=1e-2, atol=1e-2)
-        digest = kernels[0]._digest
-        assert [key for key in hsaco._MODULES if key[1] == digest] == [(torch.cuda.current_device(), digest)]
 
     def test_launches_on_the_current_stream(self) -> None:
         """A launch under another stream runs on it."""
-        kernel = hsaco.Kernel(hsaco_gemm_code_object(), "gemm")
+        kernel = hsaco.Kernel(hsaco_code_object(), "gemm")
         a, b = torch.randn(8, 32, device="cuda").bfloat16(), torch.randn(16, 32, device="cuda").bfloat16()
         out = torch.zeros(8, 16, device="cuda", dtype=torch.bfloat16)
         torch.cuda.synchronize()
         stream = torch.cuda.Stream()
         stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(stream):
-            torch.cuda._sleep(50_000_000)
+            # keeps the stream busy while the launch queues behind it
+            busy = torch.randn(8192, 8192, device="cuda")
+            for _ in range(8):
+                busy = torch.nn.functional.normalize(busy @ busy)
             _gemm(kernel, a, b, out)
-        # had it run on the default stream, it would be done before the sleep
+        # had it run on the default stream, it would be done by now
         assert out.eq(0).all()
         stream.synchronize()
         torch.testing.assert_close(out.float(), a.float() @ b.float().mT, rtol=1e-2, atol=1e-2)
@@ -85,7 +84,7 @@ class TestKernel:
         assert out.eq(64 * 1000 + 4).all()
 
     def test_unknown_symbol(self) -> None:
-        kernel = hsaco.Kernel(hsaco_gemm_code_object(), "gemv")
+        kernel = hsaco.Kernel(hsaco_code_object(), "gemv")
         with pytest.raises(RuntimeError, match="finding gemv in its code object"):
             kernel.launch((1,), (1,), b"")
 

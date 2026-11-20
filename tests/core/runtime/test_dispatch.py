@@ -1,547 +1,223 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-import logging
-import sys
-import threading
-import time
-import types
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import torch
 
-import aklr.plugins.aiter.gemm
-from aklr.core.contract.export import read_calls
-from aklr.core.contract.op import OpContract
-from aklr.core.contract.registry import ContractRegistry
-from aklr.core.contract.spec import WorkloadSpec
+import aklr.plugins.aiter
 from aklr.core.platform import toolchain
 from aklr.core.platform.device import DeviceTarget
-from aklr.core.platform.env import (
-    ENV_DISABLE,
-    ENV_EXPORT,
-    ENV_EXPORT_DIR,
-    ENV_MIN_SPEEDUP,
-    ENV_TRACE,
-    RuntimeEnv,
-)
-from aklr.core.runtime import LoadError
-from aklr.core.runtime._vllm_hook_registry import HookRegistry
-from aklr.core.runtime.builder import BuilderRegistry
+from aklr.core.platform.env import ENV_MIN_SPEEDUP
 from aklr.core.runtime.dispatch import (
-    CallRecorder,
-    DispatcherRegistry,
-    DispatchTable,
-    FallbackReason,
-    KernelDispatcher,
-    register_vllm_plugin,
+    DispatchConfig,
+    DispatchConfigRegistry,
+    Dispatcher,
+    OpVariants,
+    aklr_api,
 )
-from tests.op_case import GEMM_KERNEL_SOURCE, KERNEL_TARGET, OpCase
+from aklr.core.schema import Evaluation, SchemaCollection, Speedup, save_json_file
+from tests.op_sample import GEMM_KERNEL as GEMM
+from tests.op_sample import GEMM_SAMPLE, OpSample, dispatcher
+
+_GEMM_RETURNING = "def run(a, b, bias):\n    return a @ b.mT\n"
 
 
-class TestKernelDispatcher:
-    """One contract's dispatch: serving, fallback reasons and call recording."""
+def _evaluation(accuracy: str, speedup: float) -> Evaluation:
+    return Evaluation(
+        hardware=str(DeviceTarget.current()),
+        accuracy=accuracy,
+        speedup={"aiter": Speedup(commit="v0", value=speedup)},
+    )
 
-    def _dispatcher(
-        self,
-        builder_registry: BuilderRegistry,
-        schemas: tuple[OpContract, ...],
-        *,
-        min_speedup: float = 0.0,
-    ) -> KernelDispatcher:
-        contract_id = schemas[0].contract_id if schemas else "gemm@1.0"
-        contract = ContractRegistry.default().get(contract_id)
-        dispatcher = KernelDispatcher(contract)
-        if schemas:
-            table = DispatchTable.from_schemas(
-                contract,
-                torch.device("cpu"),
-                [(s, builder_registry.build(s), s.workloads) for s in schemas],
-                min_speedup=min_speedup,
-            )
-            table.warmed_keys.update(table.runnables)
-            dispatcher.set_table(table)
-        return dispatcher
 
-    @pytest.mark.parametrize("served", ["allocated", "caller", "strided_a_scale"])
-    def test_api_fn_runs_served_kernel(self, builder_registry: BuilderRegistry, served: str) -> None:
-        """The kernel fills the caller's ``out`` as is, else one dispatch allocates;
-        sglang's column-major a_scale view reaches it as the stored tensor."""
-        if served == "strided_a_scale":
-            case = next(
-                c
-                for c in OpCase.all()
-                if c.contract_id == "gemm_a8w8_blockwise_scaled@1.0"
-                and c.point.layout_variant_name == "b_shuffled"
-            )
-            # view(-1) raises on a strided view, as the committed kernels' launch does
-            source = (
-                "def run(*, a_scale, out, **_):\n"
-                "    out.view(-1)[: a_scale.numel()].copy_(a_scale.view(-1))\n"
-            )
-            dispatcher = self._dispatcher(builder_registry, (case.schema(source),))
-            call = case.call(case.inputs())
-            stored = call["a_scale"]
-            call["a_scale"] = stored.view(*stored.shape[::-1]).mT
-            result = dispatcher.dispatch(call)
-            assert isinstance(result, torch.Tensor)
-            expected = stored.view(-1).to(result.dtype)
-            torch.testing.assert_close(result.view(-1)[: stored.numel()], expected)
-            return
-        caller_out = served == "caller"
-        case = OpCase.of("gemm@1.0")
-        dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
-        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.gemm.gemm.__wrapped__)
-        call = case.call(case.inputs())
-        if caller_out:
-            call["out"] = torch.empty(
-                case.contract.storage_shape_of("out", case.point),
-                dtype=call["out_dtype"],
-            )
-        result = api_fn(**call)
-        assert isinstance(result, torch.Tensor)
-        if caller_out:
-            assert result is call["out"]
-        torch.testing.assert_close(result, call["a"] @ call["b"].mT, rtol=0, atol=0)
+@pytest.mark.gpu
+@pytest.mark.usefixtures("builder_registry")
+class TestDispatcher:
+    @pytest.mark.parametrize(
+        ("source", "dps"),
+        [(GEMM, True), (_GEMM_RETURNING, False)],
+        ids=["dps", "returning"],
+    )
+    def test_serves_a_qualified_workload(self, source: str, dps: bool) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(source, dps=dps)
+        out = dispatcher(schema).call(schema, {"a": call["a"], "b": call["b"]}, fallback=lambda: None)
+        assert torch.equal(out, call["a"] @ call["b"].mT)
+
+    def test_fills_the_callers_output(self) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(GEMM)
+        out = torch.empty(4, 32, dtype=torch.bfloat16)
+        result = dispatcher(schema).call(schema, {"a": call["a"], "b": call["b"], "out": out})
+        assert result is out
+        assert torch.equal(out, call["a"] @ call["b"].mT)
 
     @pytest.mark.parametrize(
-        ("miss", "reason"),
+        ("evaluations", "m", "baseline"),
         [
-            ("no_table", FallbackReason.NO_SCHEMA),
-            ("other_point", FallbackReason.NO_WORKLOAD),
-            ("unmeasured", FallbackReason.NOT_MEASURED),
-            ("slow", FallbackReason.NOT_QUALIFIED),
-            ("undescribed_call", FallbackReason.OUT_OF_CONTRACT),
-            ("misaligned", FallbackReason.OUT_OF_CONTRACT),
-            ("non_contiguous", FallbackReason.OUT_OF_CONTRACT),
-            ("aliased_out", FallbackReason.OUT_OF_CONTRACT),
-            ("not_warmed", FallbackReason.NOT_WARMED),
+            pytest.param(None, 8, None, id="other_workload"),
+            pytest.param([], 4, None, id="unmeasured"),
+            pytest.param([_evaluation("failed", 2.0)], 4, None, id="failed"),
+            pytest.param([_evaluation("passed", 0.5)], 4, "aiter", id="slower"),
         ],
     )
-    def test_missed_call_returns_fallback_reason(
-        self,
-        builder_registry: BuilderRegistry,
-        monkeypatch: pytest.MonkeyPatch,
-        miss: str,
-        reason: FallbackReason,
+    def test_falls_back_on_a_miss(self, evaluations: list | None, m: int, baseline: str | None) -> None:
+        case = GEMM_SAMPLE
+        schema = case.served(GEMM, evaluations=evaluations)
+        a, b = torch.ones(m, 64, dtype=torch.bfloat16), case.call()["b"]
+        assert (
+            dispatcher(schema).call(schema, {"a": a, "b": b}, fallback=lambda: "fallback", baseline=baseline)
+            == "fallback"
+        )
+
+    @pytest.mark.parametrize(("installed", "is_served"), [("3.8.0", True), ("3.7.0", False), (None, False)])
+    def test_serves_only_a_kernel_whose_toolchain_is_installed(
+        self, monkeypatch: pytest.MonkeyPatch, installed: str | None, is_served: bool
     ) -> None:
-        case = OpCase.of("gemm@1.0")
-        schema = case.schema(GEMM_KERNEL_SOURCE)
-        workload = schema.workloads[0]
-        with_workload = lambda **update: schema.model_copy(
-            update={"workloads": (workload.model_copy(update=update),)}
-        )
-        schemas, min_speedup = {
-            "no_table": ((), 0.0),
-            "other_point": ((with_workload(axes={**workload.axes, "m": 8}),), 0.0),
-            "unmeasured": ((schema,), 1.0),
-            "slow": ((with_workload(accuracy="passed", speedup=0.5),), 1.0),
-            "undescribed_call": ((schema,), 0.0),
-            "misaligned": ((schema,), 0.0),
-            "non_contiguous": ((schema,), 0.0),
-            "aliased_out": ((schema,), 0.0),
-            "not_warmed": ((schema,), 0.0),
-        }[miss]
-        dispatcher = self._dispatcher(builder_registry, schemas, min_speedup=min_speedup)
-        call = case.call(case.inputs())
-        call["out"] = torch.full(
-            case.contract.storage_shape_of("out", case.point),
-            float("nan"),
-            dtype=call["out_dtype"],
-        )
-        if miss == "undescribed_call":
-            call["a"] = call["a"].float()
-        elif miss == "misaligned":
-            a = call["a"]
-            call["a"] = torch.empty(a.numel() + 1, dtype=a.dtype, device=a.device)[1:].view_as(a).copy_(a)
-        elif miss == "non_contiguous":
-            call["a"] = call["a"].mT.contiguous().mT
-        elif miss == "aliased_out":
-            call["out"] = call["a"].view(-1)[: call["out"].numel()].view_as(call["out"]).fill_(float("nan"))
-        elif miss == "not_warmed":
-            dispatcher.table.warmed_keys.clear()
-            monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: True)
-        # asked first, the same reason
-        assert dispatcher.fallback_reason(call) is reason
-        assert dispatcher.dispatch(call) is reason
-        assert call["out"].isnan().all()
-        if miss == "not_warmed":  # capture never marks the key warm
-            assert not dispatcher.table.warmed_keys
+        monkeypatch.setattr(toolchain, "toolchain_version", lambda name: installed)
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(GEMM)
+        build = replace(schema.kernel.build, requires={"triton": ">=3.8"})
+        schema = replace(schema, kernel=replace(schema.kernel, build=build))
+        out = dispatcher(schema).call(schema, {"a": call["a"], "b": call["b"]}, fallback=lambda: "fallback")
+        assert isinstance(out, torch.Tensor) is is_served
 
-    def _state_dispatcher(
-        self,
-        builder_registry: BuilderRegistry,
-        workloads: tuple[WorkloadSpec, ...] = (),
-        min_speedup: float = 0.0,
-    ) -> tuple[OpCase, KernelDispatcher]:
-        """gdn_decode served at its case's workload, or at ``workloads``, by a kernel that
-        zeroes the output and the two state pools, its mutable inputs."""
-        case = OpCase.of("gdn_decode@1.0")
-        schema = case.schema(
-            "def run(*, normalized, conv_state, delta_state, **_):\n"
-            "    normalized.zero_()\n"
-            "    conv_state.zero_()\n"
-            "    delta_state.zero_()\n"
-        )
-        if workloads:
-            schema = schema.model_copy(update={"workloads": workloads})
-        dispatcher = self._dispatcher(
-            builder_registry,
-            (schema,),
-            min_speedup=min_speedup,
-        )
-        return case, dispatcher
-
-    def test_any_size_axis_matches_every_value(self, builder_registry: BuilderRegistry) -> None:
-        """A schema serving one value of an any_size axis serves every value of it: state
-        pools of twice the workload's slots are served, and written in place."""
-        case, dispatcher = self._state_dispatcher(builder_registry)
-        call = case.call(case.inputs())
-        for name in ("conv_state", "delta_state"):
-            call[name] = torch.cat([call[name], call[name]])
-        output = dispatcher.dispatch(call)
-        assert not output.any() and not call["conv_state"].any() and not call["delta_state"].any()
-
-    @pytest.mark.parametrize("slots", [0, 2], ids=["below_its_lo", "constrained"])
-    def test_any_size_axis_keeps_its_domain(self, builder_registry: BuilderRegistry, slots: int) -> None:
-        """An any_size axis matches only values its bounds and the constraints reading it
-        admit: state pools of no slots (below n_slots' lowest) or of 2 (4 tokens <=
-        n_slots + 1 fails) fall back."""
-        case, dispatcher = self._state_dispatcher(builder_registry)
-        call = case.call(case.inputs())
-        for name in ("conv_state", "delta_state"):
-            call[name] = call[name][:slots]
-        assert dispatcher.dispatch(call) is FallbackReason.OUT_OF_CONTRACT
-
-    def test_any_size_axis_needs_each_workload_qualified(self, builder_registry: BuilderRegistry) -> None:
-        """Workloads differing in an any_size axis alone share a key, served only if each
-        of them qualifies: one too slow leaves the case's call unserved."""
-        case = OpCase.of("gdn_decode@1.0")
-        workload = case.contract.workload_for(case.point, {})
-        doubled = {**workload.axes, "n_slots": 2 * workload.axes["n_slots"]}
-        _, dispatcher = self._state_dispatcher(
-            builder_registry,
-            (
-                workload.model_copy(update={"accuracy": "passed", "speedup": 2.0}),
-                workload.model_copy(update={"axes": doubled, "accuracy": "passed", "speedup": 0.5}),
-            ),
-            min_speedup=1.0,
-        )
-        call = case.call(case.inputs())
-        assert dispatcher.dispatch(call) is FallbackReason.NOT_QUALIFIED
-
-    def test_mutable_input_sharing_bytes_declines(self, builder_registry: BuilderRegistry) -> None:
-        """A mutable input sharing a byte with another input falls back, unwritten."""
-        case, dispatcher = self._state_dispatcher(builder_registry)
-        call = case.call(case.inputs())
-        conv_bytes = call["conv_state"].view(torch.uint8).view(-1)
-        n = call["cache_indices"].numel()
-        conv_bytes[: 4 * n].view(torch.int32).copy_(call["cache_indices"])
-        call["cache_indices"] = conv_bytes[: 4 * n].view(torch.int32)
-        before = conv_bytes.clone()
-        assert dispatcher.dispatch(call) is FallbackReason.OUT_OF_CONTRACT
-        assert torch.equal(conv_bytes, before)
-
-    def test_failing_kernel_raises(
-        self, builder_registry: BuilderRegistry, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A kernel's error is not caught; the log names the kernel, its toolchain here
-        and the switch that turns its op off."""
-        case = OpCase.of("gemm@1.0")
-        schema = case.schema("def run(**_):\n    raise RuntimeError('broken')\n")
-        dispatcher = self._dispatcher(builder_registry, (schema,))
-        with pytest.raises(RuntimeError, match="broken"):
-            dispatcher.dispatch(case.call(case.inputs()))
-        assert f"the kernel serving {schema.name} at m=" in caplog.text
-        assert f"{ENV_DISABLE}={case.contract_id} turns this op off" in caplog.text
+    def test_unmeasured_workload_is_served_at_min_speedup_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(ENV_MIN_SPEEDUP, "0")
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(GEMM, evaluations=[])
+        out = dispatcher(schema).call(schema, {"a": call["a"], "b": call["b"]}, fallback=lambda: None)
+        assert torch.equal(out, call["a"] @ call["b"].mT)
 
     @pytest.mark.parametrize(
-        ("mode", "is_traced"), [("0", False), ("plugin", False), ("op", True), ("all", True)]
+        ("configs", "served"),
+        [
+            pytest.param({"gemm_bf16_nt.default": DispatchConfig()}, True, id="its_variant"),
+            pytest.param({"gemm_bf16_nt.shuffled": DispatchConfig()}, False, id="another_variant"),
+        ],
     )
-    def test_trace_names_the_kernel_or_the_fallback_reason_once(
-        self,
-        builder_registry: BuilderRegistry,
-        caplog: pytest.LogCaptureFixture,
-        monkeypatch: pytest.MonkeyPatch,
-        mode: str,
-        is_traced: bool,
-    ) -> None:
-        """``AKLR_TRACE`` op or all: one ``[aklr op]`` line per distinct call, naming its
-        Point and kernel when served, its reason when not."""
-        monkeypatch.setenv(ENV_TRACE, mode)
-        case = OpCase.of("gemm@1.0")
-        schema = case.schema(GEMM_KERNEL_SOURCE)
-        dispatcher = self._dispatcher(builder_registry, (schema,))
-        closed = KernelDispatcher(case.contract)
-        for _ in range(2):
-            dispatcher.dispatch(case.call(case.inputs()))
-            assert closed.dispatch(case.call(case.inputs())) is FallbackReason.NO_SCHEMA
-            assert closed.fallback_reason(case.call(case.inputs())) is FallbackReason.NO_SCHEMA
-        lines = [r.message for r in caplog.records if r.name == "aklr.trace.op"]
-        if not is_traced:
-            assert lines == []
-            return
-        served, fallen = lines
-        assert (
-            served.startswith("[aklr op] pid=")
-            and f" contract=gemm@1.0 scenario={schema.name} point=m=" in served
+    def test_serves_only_the_variants_with_a_config(self, configs: dict, served: bool) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(GEMM)
+        collection = SchemaCollection(schemas={schema.name: [schema]})
+        out = Dispatcher(collection, DispatchConfigRegistry(per_schema=configs)).call(
+            schema, {"a": call["a"], "b": call["b"]}, fallback=lambda: None
         )
-        meta = dispatcher.table.runnables[next(iter(dispatcher.table.runnables))].metadata
-        assert served.endswith(
-            f" result=served kernel=flydsl:{meta.schema_name}:{meta.content_hash[:12]} reason=-"
+        assert (out is not None) is served
+
+    def test_a_miss_runs_the_best_kernel_of_its_const_axes_when_configured(self) -> None:
+        case = GEMM_SAMPLE
+        schema = case.served(GEMM)
+        collection = SchemaCollection(schemas={schema.name: [schema]})
+        a, b = torch.ones(8, 64, dtype=torch.bfloat16), case.call()["b"]
+        out = Dispatcher(collection, DispatchConfig(on_miss_policy="use_best_kernel")).call(
+            schema, {"a": a, "b": b}, fallback=lambda: None
         )
-        assert fallen.endswith(
-            " contract=gemm@1.0 scenario=- point=- result=fallback kernel=- reason=no_schema"
+        assert torch.equal(out, a @ b.mT)
+
+    def test_miss_without_fallback_raises(self) -> None:
+        case = GEMM_SAMPLE
+        with pytest.raises(RuntimeError, match="no fallback"):
+            dispatcher().call(case.schema(), {"a": case.call()["a"]})
+
+
+@pytest.mark.gpu
+@pytest.mark.usefixtures("builder_registry")
+class TestOpApi:
+    def test_active_dispatcher_serves_the_call(self) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        with dispatcher(case.served(GEMM)):
+            out = aklr.plugins.aiter.gemm_bf16_nt(call["a"], call["b"])
+        assert torch.equal(out, call["a"] @ call["b"].mT)
+
+    def test_call_after_the_dispatcher_stops_raises(self) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        with dispatcher(case.served(GEMM)):
+            pass
+        with pytest.raises(RuntimeError, match="no Dispatcher is active"):
+            aklr.plugins.aiter.gemm_bf16_nt(call["a"], call["b"])
+
+    @pytest.mark.parametrize("shuffled", [False, True])
+    def test_routes_by_the_variant_the_call_matches(self, shuffled: bool) -> None:
+        case = OpSample(aklr.plugins.aiter.gemm_bf16_nt, "gemm_bf16_nt_shuffled", {"M": 4, "N": 64, "K": 64})
+        call = case.call()
+        with dispatcher(case.served(GEMM)):
+            if shuffled:
+                out = aklr.plugins.aiter.gemm_bf16_nt(call["a"], call["b"], use_shuffled_weight=True)
+                assert torch.equal(out, call["a"] @ call["b"].mT)
+            else:
+                with pytest.raises(RuntimeError, match="no fallback"):
+                    aklr.plugins.aiter.gemm_bf16_nt(call["a"], call["b"])
+
+    def test_two_dispatchers_cannot_be_active(self) -> None:
+        with dispatcher(), pytest.raises(RuntimeError, match="already active"):
+            dispatcher().start()
+
+    def test_call_no_variant_matches_runs_the_fallback(self) -> None:
+        case = OpSample(
+            aklr.plugins.aiter.gemm_fp8_nt_blockscaled, "gemm_fp8_nt_blockscaled", {"M": 4, "N": 256, "K": 256}
         )
+        with dispatcher():
+            assert (
+                aklr.plugins.aiter.gemm_fp8_nt_blockscaled.dispatch(
+                    case.call() | {"scale_major_mode": "other"}, fallback=lambda: "fallback"
+                )
+                == "fallback"
+            )
 
-    def test_a_bad_trace_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv(ENV_TRACE, "1")
-        with pytest.raises(ValueError, match=ENV_TRACE):
-            RuntimeEnv()
+    @pytest.mark.parametrize(
+        ("change", "match"),
+        [
+            pytest.param({"op_type": "another_op"}, "op types", id="another_op"),
+            pytest.param({}, "named alike", id="same_variant"),
+            pytest.param({"variant": {"late": "not_an_argument"}}, "not arguments", id="unknown_argument"),
+        ],
+    )
+    def test_api_refuses_variants(self, change: dict, match: str) -> None:
+        template = GEMM_SAMPLE.template
+        with pytest.raises(ValueError, match=match):
 
-    def test_best_ranked_kernel_serves(self, builder_registry: BuilderRegistry) -> None:
-        case = OpCase.of("gemm@1.0")
-        workload = case.schema().workloads[0]
-        measured = lambda source, speedup: case.schema(source).model_copy(
-            update={"workloads": (workload.model_copy(update={"accuracy": "passed", "speedup": speedup}),)}
-        )
-        faster = measured(GEMM_KERNEL_SOURCE, 2.0)
-        slower = measured("def run(*, out, **_):\n    out.zero_()\n", 1.5)
-        for schemas in [(slower, faster), (faster, slower)]:
-            dispatcher = self._dispatcher(builder_registry, schemas)
-            call = case.call(case.inputs())
-            result = dispatcher.dispatch(call)
-            torch.testing.assert_close(result, call["a"] @ call["b"].mT, rtol=0, atol=0)
-
-    def test_fallback_reason_asks_without_serving(
-        self, builder_registry: BuilderRegistry, tmp_path: Path
-    ) -> None:
-        """A call a kernel serves: ``None``, nothing run, allocated or counted; a missed one:
-        dispatch's reason, counted as dispatch counts it. The api function's
-        ``fallback_reason`` takes the api's arguments."""
-        case = OpCase.of("gemm@1.0")
-        dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
-        recorder = CallRecorder(tmp_path, DeviceTarget.from_names(**KERNEL_TARGET))
-        dispatcher.set_table(dispatcher.table, recorder)
-        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.gemm.gemm.__wrapped__)
-        call = case.call(case.inputs())
-        call["out"] = torch.full(
-            case.contract.storage_shape_of("out", case.point),
-            float("nan"),
-            dtype=call["out_dtype"],
-        )
-        assert api_fn.fallback_reason(**call) is None
-        assert call["out"].isnan().all() and not recorder.calls
-        out_of_contract = {**call, "a": call["a"].float()}
-        assert api_fn.fallback_reason(**out_of_contract) is FallbackReason.OUT_OF_CONTRACT
-        assert {k.reason: n for k, n in recorder.calls.items()} == {FallbackReason.OUT_OF_CONTRACT: 1}
-
-    def test_serving_names_the_kernel_without_serving(self, builder_registry: BuilderRegistry) -> None:
-        """``serving``: the metadata of the kernel ``dispatch`` would run, nothing run; else
-        ``fallback_reason``'s reason."""
-        case = OpCase.of("gemm@1.0")
-        dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
-        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.gemm.gemm.__wrapped__)
-        call = case.call(case.inputs())
-        call["out"] = torch.full(
-            case.contract.storage_shape_of("out", case.point),
-            float("nan"),
-            dtype=call["out_dtype"],
-        )
-        meta = api_fn.serving(**call)
-        assert meta is dispatcher.table.runnables[next(iter(dispatcher.table.runnables))].metadata
-        assert meta.kernel_ref == f"flydsl:{meta.schema_name}:{meta.content_hash[:12]}"
-        assert call["out"].isnan().all()
-        assert api_fn.serving(**{**call, "a": call["a"].float()}) is FallbackReason.OUT_OF_CONTRACT
-
-    def test_recorder_counts_calls(self, builder_registry: BuilderRegistry, tmp_path: Path) -> None:
-        case = OpCase.of("gemm@1.0")
-        dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
-        recorder = CallRecorder(tmp_path, DeviceTarget.from_names(**KERNEL_TARGET))
-        dispatcher.set_table(dispatcher.table, recorder)
-        served = case.call(case.inputs())
-        out_of_contract = {**served, "a": served["a"].float()}
-        assert isinstance(dispatcher.dispatch(served), torch.Tensor)
-        # the first key is saved at once
-        assert [r.n_calls for r in read_calls(tmp_path)] == [1]
-        assert isinstance(dispatcher.dispatch(served), torch.Tensor)
-        assert dispatcher.dispatch(out_of_contract) is FallbackReason.OUT_OF_CONTRACT
-        assert {k.reason: n for k, n in recorder.calls.items()} == {
-            None: 2,
-            FallbackReason.OUT_OF_CONTRACT: 1,
-        }
-        recorder.save()
-        records = {r.fallback_reason: r for r in read_calls(tmp_path)}
-        assert set(records) == {None, FallbackReason.OUT_OF_CONTRACT.value}
-        assert (records[None].point, records[None].n_calls) == (case.point, 2)
-        out_of_contract_record = records[FallbackReason.OUT_OF_CONTRACT.value]
-        assert (out_of_contract_record.point, out_of_contract_record.n_calls) == (
-            None,
-            1,
-        )
-        assert {r.target for r in records.values()} == {recorder.target}
+            @aklr_api((template, replace(template, **change)))
+            def gemm_bf16_nt_refused(a, b, bias=None, out=None, use_shuffled_weight=False): ...
 
 
-class TestDispatcherRegistry:
-    """``DispatcherRegistry.init`` over the committed schemas."""
+class TestOpVariants:
+    def test_a_second_api_of_one_op_type_is_refused(self) -> None:
+        assert "gemm_bf16_nt" in OpVariants.ops()
+        with pytest.raises(ValueError, match="gemm_bf16_nt"):
 
-    def test_concurrent_first_calls_init_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Two threads starting AKLR at once: one init, and the other waits for it."""
-        calls = []
+            @aklr_api(GEMM_SAMPLE.template)
+            def gemm_bf16_nt_again(a, b, bias=None, out=None, use_shuffled_weight=False): ...
 
-        def init(registry: DispatcherRegistry) -> None:
-            calls.append(threading.get_ident())
-            time.sleep(0.05)
-            registry.is_initialized = True
+    def test_an_api_declared_after_the_ops_are_read_is_among_them(self) -> None:
+        OpVariants.ops()
+        template = replace(GEMM_SAMPLE.template, op_type="gemm_bf16_nt_late")
 
-        monkeypatch.setattr(DispatcherRegistry, "init", init)
-        registry = DispatcherRegistry()
-        threads = [threading.Thread(target=registry.init_once) for _ in range(4)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        assert len(calls) == 1 and registry.is_initialized
+        @aklr_api(template)
+        def gemm_bf16_nt_late(a, b, bias=None, out=None, use_shuffled_weight=False): ...
 
-    def test_disabled_init_closes_every_dispatcher(
-        self,
-        default_dispatchers: DispatcherRegistry,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        monkeypatch.setenv(ENV_DISABLE, "1")
-        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-        default_dispatchers.init()
-        dispatchers = default_dispatchers.dispatchers()
-        assert set(dispatchers) == {c.contract_id for c in ContractRegistry.default().contracts()}
-        assert {d.dispatch({}) for d in dispatchers.values()} == {FallbackReason.DISABLED}
-        case = OpCase.of("gemm@1.0")
-        assert aklr.plugins.aiter.gemm.gemm(**case.call(case.inputs())) is FallbackReason.DISABLED
-        # an init failing partway leaves every dispatcher closed
-        (tmp_path / "file").touch()
-        monkeypatch.setenv(ENV_EXPORT, "1")
-        monkeypatch.setenv(ENV_EXPORT_DIR, str(tmp_path / "file"))
-        with pytest.raises(LoadError):
-            default_dispatchers.init()
-        assert {d.dispatch({}) for d in default_dispatchers.dispatchers().values()} == {
-            FallbackReason.DISABLED
-        }
+        assert OpVariants.ops()["gemm_bf16_nt_late"] is gemm_bf16_nt_late
 
-    @staticmethod
-    def _schema_alone(monkeypatch: pytest.MonkeyPatch, schema: OpContract) -> None:
-        """``init`` reads ``schema`` alone and serves it on the CPU, as on its target, unmeasured."""
-        op_package = ContractRegistry.default().get(schema.contract_id).op_package
-        monkeypatch.setattr(
-            ContractRegistry,
-            "read_schemas",
-            lambda self, package, **_: (
-                [(Path("a.json"), schema)] if package == op_package else [],
-                [],
-            ),
-        )
-        monkeypatch.setenv(ENV_MIN_SPEEDUP, "0")
-        target = DeviceTarget.from_names(**KERNEL_TARGET)
-        monkeypatch.setattr(
-            DispatcherRegistry,
-            "_probe_device",
-            staticmethod(lambda: (torch.device("cpu"), target)),
-        )
+    def test_an_api_takes_its_variants_as_one_tuple(self) -> None:
+        template = replace(GEMM_SAMPLE.template, op_type="gemm_bf16_nt_tupled")
+        variants = (template, replace(template, variant={"shuffled": "use_shuffled_weight"}))
 
-    @pytest.mark.parametrize(("installed", "is_served"), [("0.3.2", True), ("0.3.1", False)])
-    def test_init_skips_schema_whose_requires_fails(
-        self,
-        default_dispatchers: DispatcherRegistry,
-        monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
-        installed: str,
-        is_served: bool,
-    ) -> None:
-        """A schema whose ``kernel.requires`` the toolchains here miss is not served, and
-        one INFO line says why."""
-        case = OpCase.of("gemm@1.0")
-        schema = case.schema(GEMM_KERNEL_SOURCE)
-        kernel = schema.kernel.model_copy(update={"requires": {"flydsl": ">=0.3.2"}})
-        self._schema_alone(monkeypatch, schema.model_copy(update={"kernel": kernel}))
-        monkeypatch.setattr(toolchain, "toolchain_version", lambda name: installed)
-        with caplog.at_level(logging.INFO):
-            default_dispatchers.init()
-        result = aklr.plugins.aiter.gemm.gemm(**case.call(case.inputs()))
-        assert isinstance(result, torch.Tensor) is is_served
-        skipped = "skipped 1 schemas: flydsl 0.3.1 is not >=0.3.2"
-        assert (skipped in caplog.text) is not is_served
+        @aklr_api(variants)
+        def gemm_bf16_nt_tupled(a, b, bias=None, out=None, use_shuffled_weight=False): ...
 
-    def test_unimportable_kernel_fails_the_init(
-        self, default_dispatchers: DispatcherRegistry, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The error names the switch that turns the kernel's op off."""
-        case = OpCase.of("gemm@1.0")
-        self._schema_alone(monkeypatch, case.schema("import no_such_module\n"))
-        hint = f"{ENV_DISABLE}={case.contract_id} turns this op off"
-        with pytest.raises(LoadError, match=hint):
-            default_dispatchers.init()
+        assert gemm_bf16_nt_tupled.variants == variants
 
-    @pytest.mark.gfx950
-    def test_init_serves_committed_schema(
-        self, default_dispatchers: DispatcherRegistry, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """An unmeasured workload is served at min speedup 0."""
-        monkeypatch.setenv(ENV_MIN_SPEEDUP, "0")
-        default_dispatchers.init()
-        contract = OpCase.of("gemm@1.0").contract
-        schemas, errors = ContractRegistry.default().read_schemas(contract.op_package)
-        assert errors == []
-        schema, workload = next(
-            (s, w)
-            for _, s in schemas
-            if s.contract_id == contract.contract_id and s.kernel.sources
-            for w in s.workloads
-            if w.accuracy != "failed"
-        )
-        case = OpCase(schema.point(workload.axes))
-        args = case.inputs()
-        result = aklr.plugins.aiter.gemm.gemm(**case.call(args, "cuda"))
-        assert not isinstance(result, FallbackReason)
-        comparisons = case.compare(case.contract.outputs_by_name(result), args)
-        assert comparisons == {}
-
-
-class TestVllmPlugin:
-    """``register_vllm_plugin``: AKLR starts in a vLLM worker once its device is bound."""
-
-    def test_init_runs_after_init_device(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The wrapped ``Worker.init_device`` runs the original, then ``init_once``, and
-        returns the original's result."""
-        events: list[str] = []
-
-        class Worker:
-            def init_device(self) -> str:
-                events.append("init_device")
-                return "bound"
-
-        for name in ("vllm", "vllm.v1", "vllm.v1.worker", "vllm.v1.worker.gpu_worker"):
-            module = types.ModuleType(name)
-            module.__path__ = []
-            monkeypatch.setitem(sys.modules, name, module)
-            parent, _, child = name.rpartition(".")
-            if parent:
-                monkeypatch.setattr(sys.modules[parent], child, module, raising=False)
-        module.Worker = Worker
-        monkeypatch.setattr(DispatcherRegistry, "init_once", lambda self: events.append("init_once"))
-        registry = HookRegistry()
-        monkeypatch.setattr(HookRegistry, "default", classmethod(lambda cls: registry))
-        try:
-            register_vllm_plugin()
-            wrapped = Worker.init_device
-            register_vllm_plugin()
-            assert Worker.init_device is wrapped
-            assert Worker().init_device() == "bound"
-            assert events == ["init_device", "init_once"]
-        finally:
-            registry.restore()
-
-
-def test_a_failing_hsaco_kernels_hint_names_the_hip_that_loads_it() -> None:
-    from aklr.core.runtime.dispatch._dispatcher import kernel_failure_hint
-
-    assert kernel_failure_hint("gemm@1.0", "hsaco").startswith("hip ")
+    def test_a_json_no_variant_names_is_loaded_without_a_standard(self, tmp_path: Path) -> None:
+        save_json_file(replace(GEMM_SAMPLE.schema(), name="gemm_bf16_nt_unnamed"), tmp_path / "s.json")
+        schema = OpVariants.load((tmp_path / "s.json").read_bytes())
+        assert (OpVariants.ops()[schema.op_type].variant_of(schema), schema.standard) == (None, None)
