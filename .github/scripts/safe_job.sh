@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The runner (workspace global-cpu) and the GPU pod (workspace $WORKSPACE, another cluster) share
+# no storage. The pod fetches the source from GitHub, and its log, exit code and reports come back
+# through the SaFE pod-log API.
+
 certs=https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs
 curl -fsSL --retry 3 "$certs/amd-root-ca.crt" "$certs/amd-issuing-ca.crt" > "$RUNNER_TEMP/amd-ca.pem"
 
@@ -11,19 +15,8 @@ api() {
 }
 
 name=aklr-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${GITHUB_JOB%-test}
-storage=$(awk '$2 ~ "^/shared_nfs/users/[^/]+$" {print $2; exit}' /proc/mounts)
-if [[ -z $storage ]]; then
-  echo "::error::This runner has no /shared_nfs/users/<user> mount to share with the GPU pod"
-  grep -E ' (nfs|nfs4|ceph|wekafs|fuse[^ ]*) ' /proc/mounts || true
-  id; command -v ssh ssh-keygen scp tar jq base64 nc || true
-  timeout 20 bash -c 'exec 3<>/dev/tcp/global.primus-safe.amd.com/2222 && echo "2222 connected" && head -c 40 <&3' || echo "2222: no banner (rc=$?)"
-  df -h /mnt/ceph || true
-  exit 1
-fi
-export RUN_DIR=$storage/aklr-ci-runs/$name
 
 if [[ ${1:-} == delete ]]; then
-  rm -rf "$RUN_DIR"
   ids=$(api GET "?workspaceId=$WORKSPACE&kind=Deployment&limit=100" |
     jq -r --arg name "$name" '.items[]?.workloadId | select(startswith($name))')
   for id in $ids; do
@@ -33,52 +26,54 @@ if [[ ${1:-} == delete ]]; then
   exit
 fi
 
-umask 007
-mkdir -p "$RUN_DIR"
-tar -C "$GITHUB_WORKSPACE" -cf "$RUN_DIR/src.tar" .
-cp "${1:?usage: safe_job.sh <script> | delete}" "$RUN_DIR/script.sh"
+script=${1:?usage: safe_job.sh <script> | delete}
+# The checkout's commit: GITHUB_SHA on a push, the pull request's merge commit on a PR.
+commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)
 
+# Every line the pod prints is "<number><tab><text>", so that a poll prints only the new ones.
+# shortcut: a pod that restarts runs the script again; detect it when a node proves unstable.
 pod_command=$(
   cat << 'EOF'
-if [ ! -e "$RUN_DIR/started" ]; then
-  touch "$RUN_DIR/started"
-  {
-    work=$(mktemp -d)
-    export REPORTS=$work/reports
-    mkdir "$work/src" "$REPORTS"
-    cd "$work/src"
-    tar -xf "$RUN_DIR/src.tar"
-    bash "$RUN_DIR/script.sh"
-    code=$?
-    tar -C "$REPORTS" -cf "$RUN_DIR/reports.tar" .
-  } >> "$RUN_DIR/log" 2>&1
-  echo "$code" > "$RUN_DIR/exit_code"
-elif [ ! -e "$RUN_DIR/exit_code" ]; then
-  echo "::error::The GPU pod restarted during the script" >> "$RUN_DIR/log"
-  echo 1 > "$RUN_DIR/exit_code"
-fi
+{
+  work=$(mktemp -d)
+  export REPORTS=$work/reports
+  mkdir "$work/src" "$REPORTS"
+  cd "$work/src"
+  git init -q . &&
+    git fetch -q --tags "https://github.com/$AKLR_REPOSITORY" '+refs/heads/*:refs/remotes/origin/*' "$AKLR_COMMIT" &&
+    git checkout -q "$AKLR_COMMIT" &&
+    base64 -d <<< "$AKLR_SCRIPT" > "$work/script.sh" &&
+    bash "$work/script.sh"
+  code=$?
+  echo "::aklr-reports::"
+  tar -C "$REPORTS" -cz . | base64 -w 4000
+  echo "::aklr-exit::$code"
+} 2>&1 | awk '{printf "%d\t%s\n", NR, $0; fflush()}'
 exec sleep infinity
 EOF
 )
-workload=$(jq -n --arg name "$name" --arg command "$(base64 -w0 <<< "$pod_command")" --arg pass "${PASS_ENV:-}" '{
+workload=$(jq -n --arg name "$name" --arg command "$(base64 -w0 <<< "$pod_command")" --arg pass "${PASS_ENV:-}" \
+  --arg commit "$commit" --arg script "$(base64 -w0 "$script")" '{
   displayName: $name,
   workspaceId: env.WORKSPACE,
   groupVersionKind: {kind: "Deployment", version: "v1"},
   images: [env.IMAGE],
   entryPoints: [$command],
   resources: [{replica: 1, gpu: "8", cpu: "96", memory: "512Gi", sharedMemory: "64Gi", ephemeralStorage: "300Gi"}],
-  env: ({RUN_DIR: env.RUN_DIR} + ($ENV | with_entries(select(.key | IN($pass | splits(" +")))))),
+  env: ({AKLR_REPOSITORY: env.GITHUB_REPOSITORY, AKLR_COMMIT: $commit, AKLR_SCRIPT: $script} +
+    ($ENV | with_entries(select(.key | IN($pass | splits(" +")))))),
   priority: ({medium: 1, high: 2}[env.AKLR_GPU_PRIORITY] // error("AKLR_GPU_PRIORITY must be medium or high")),
   timeout: (env.TIMEOUT_MINUTES | tonumber * 60),
-  useWorkspaceStorage: true
+  useWorkspaceStorage: false
 }' | api POST '' -d @- | jq -r '.workloadId // error(tostring)')
 echo "🚀 Workload $workload in $IMAGE at $AKLR_GPU_PRIORITY priority"
 
-tail --pid=$$ -F "$RUN_DIR/log" 2> /dev/null &
-last_phase='' lost=0
-until [[ -s $RUN_DIR/exit_code ]]; do
+log=$RUNNER_TEMP/gpu-log
+last_phase='' last_message='' lost=0 printed=0
+: > "$log"
+until grep -q $'\t::aklr-exit::' "$log"; do
   sleep 15
-  if ! phase=$(api GET "/$workload" | jq -r .phase); then
+  if ! state=$(api GET "/$workload"); then
     if ((++lost == 8)); then
       echo "::error::Workload $workload is gone: deleted, or stopped after $TIMEOUT_MINUTES minutes"
       exit 1
@@ -86,16 +81,26 @@ until [[ -s $RUN_DIR/exit_code ]]; do
     continue
   fi
   lost=0
-  [[ $phase == "$last_phase" ]] || echo "⏳ Workload $workload: $phase"
-  last_phase=$phase
+  phase=$(jq -r .phase <<< "$state") message=$(jq -r '.message // ""' <<< "$state")
+  if [[ $phase != "$last_phase" || $message != "$last_message" ]]; then
+    echo "⏳ Workload $workload: $phase${message:+ ($message)}"
+  fi
+  last_phase=$phase last_message=$message
   if [[ $phase == Failed || $phase == Stopped ]]; then
     echo "::error::Workload $workload $phase before the script finished"
     exit 1
   fi
+  pod=$(jq -r '.pods[0].podId // empty' <<< "$state")
+  [[ -n $pod ]] || continue
+  # 20000 lines a poll is far more than a test run prints in 15 seconds, and holds the reports.
+  api GET "/$workload/pods/$pod/logs?tailLines=20000" | jq -r '.logs[]?' |
+    awk -F'\t' -v printed="$printed" '$1 ~ /^[0-9]+$/ && $1 > printed' >> "$log" || continue
+  # The reports are base64, not for the job's log.
+  awk -F'\t' -v printed="$printed" '{number = $1; sub(/^[0-9]+\t/, "")} $0 == "::aklr-reports::" {exit} number > printed' "$log"
+  printed=$(awk -F'\t' 'END {print $1 + 0}' "$log")
 done
-sleep 5
-kill $!
 
 mkdir -p "$RUNNER_TEMP/gpu-reports"
-tar -C "$RUNNER_TEMP/gpu-reports" -xf "$RUN_DIR/reports.tar"
-exit "$(< "$RUN_DIR/exit_code")"
+sed 's/^[0-9]*\t//' "$log" | sed -n '/^::aklr-reports::$/,/^::aklr-exit::/{//!p}' | base64 -d |
+  tar -C "$RUNNER_TEMP/gpu-reports" -xz
+exit "$(sed -n 's/^[0-9]*\t::aklr-exit:://p' "$log")"
