@@ -16,7 +16,12 @@ from aklr.plugins.sglang.models.deepseek_common.contract import FP8_GROUP
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["mla_kc_rope_cache_reference", "mla_qkv_a_norm_reference", "mla_vc_reference"]
+__all__ = [
+    "mla_kc_rope_cache_reference",
+    "mla_qkv_a_norm_fp8_reference",
+    "mla_qkv_a_norm_reference",
+    "mla_vc_reference",
+]
 
 # fp8 e4m3fn's largest finite value
 _FP8_MAX = 448.0
@@ -67,6 +72,59 @@ def mla_qkv_a_norm_reference(
     eps = args["eps"]
     return (
         _rms_normalized(latent[:, :q_rank], get("q_norm_weight"), eps),
+        _rms_normalized(latent[:, q_rank : q_rank + kv_rank], get("kv_norm_weight"), eps),
+        latent[:, q_rank + kv_rank :],
+    )
+
+
+def _group_codes(x: Tensor) -> tuple[Tensor, Tensor]:
+    """x [rows, k]'s fp8 e4m3fn codes per 128-wide group of k and their scales [rows, groups]:
+    max(amax, 1e-10) / 448 per group, the codes x * (1 / scale) in float32, as the kernels and
+    aiter's per-1x128 quantization compute them."""
+    import torch
+
+    groups = x.float().unflatten(-1, (-1, FP8_GROUP))
+    scale = groups.abs().amax(-1, keepdim=True).clamp(min=1e-10) * (1.0 / _FP8_MAX)
+    codes = (groups * (1.0 / scale)).clamp(-_FP8_MAX, _FP8_MAX).to(torch.float8_e4m3fn)
+    return codes.flatten(-2), scale.squeeze(-1)
+
+
+def mla_qkv_a_norm_fp8_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """(q_latent, q_fp8, q_scale, kv_latent, k_rope): each token's hidden state in fp8 codes
+    per 128-wide group, times w_qkv_a and the two groups' scales; its q and KV parts
+    RMS-normalized and scaled by their weights, its RoPE part as projected; the q part rounded
+    to bf16 and quantized per group again, the scales group-major.
+    Rounding points: the hidden state's fp8 codes, and q_fp8 from q_latent rounded to bf16 (as
+    sglang hands q_b_proj its bf16 latent); the qkv latent is left unrounded."""
+    import torch
+
+    args = row_major_args
+
+    def get(name: str) -> Tensor:
+        return decode(args[name], point.dtypes[name])
+
+    q_rank, kv_rank = point.axes["q_lora_rank"], point.axes["kv_lora_rank"]
+    hidden = get("hidden_states")
+    codes, scales = _group_codes(hidden)
+    weight = get("w_qkv_a")
+    w_scale = get("w_qkv_a_scale").repeat_interleave(FP8_GROUP, 0)[: weight.shape[0]]
+    latent = None
+    for g in range(scales.shape[-1]):
+        cols = slice(g * FP8_GROUP, (g + 1) * FP8_GROUP)
+        part = (codes[:, cols].to(hidden.dtype) @ weight[:, cols].T) * scales[:, g : g + 1].to(hidden.dtype)
+        part = part * w_scale[:, g].to(hidden.dtype)
+        latent = part if latent is None else latent + part
+    eps = args["eps"]
+    q = _rms_normalized(latent[:, :q_rank], get("q_norm_weight"), eps)
+    q_codes, q_scales = _group_codes(q.to(torch.bfloat16))
+    return (
+        q,
+        q_codes.to(q.dtype),
+        q_scales.T.to(q.dtype),
         _rms_normalized(latent[:, q_rank : q_rank + kv_rank], get("kv_norm_weight"), eps),
         latent[:, q_rank + kv_rank :],
     )
