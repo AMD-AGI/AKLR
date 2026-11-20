@@ -17,16 +17,21 @@ from aklr.plugins.sglang.hook import sglang_route
 __all__: list[str] = []
 
 
-@sglang_route("sglang.srt.models.dspark.project_through_lm_head", versions=("0.5.22", "0.5.23"))
+@sglang_route(
+    "sglang.srt.models.dspark.project_through_lm_head", versions=("0.5.22", "0.5.23", "0.5.23.dev20261111")
+)
 def _project_through_lm_head(hidden, lm_head):
     import importlib
 
     from sglang.srt.layers.logits_processor import should_apply_lm_head_quant_method
 
-    # sglang 0.5.23's fp8 head (SGLANG_ROCM_OPT_DSPARK_FP8_LM_HEAD on gfx950) stays on sglang
+    # sglang 0.5.23's fp8 head (SGLANG_ROCM_OPT_DSPARK_FP8_LM_HEAD on gfx950) stays on sglang, as does the
+    # head the nightly quantizes for --speculative-dspark-lm-head-dtype
     dspark = importlib.import_module("sglang.srt.models.dspark")
-    if getattr(dspark, "_DSPARK_FP8_LM_HEAD", False) or should_apply_lm_head_quant_method(
-        lm_head, lm_head.quant_method
+    if (
+        getattr(dspark, "_DSPARK_FP8_LM_HEAD", False)
+        or (hasattr(dspark, "get_spec") and dspark.get_spec().speculative_dspark_lm_head_dtype is not None)
+        or should_apply_lm_head_quant_method(lm_head, lm_head.quant_method)
     ):
         return FallbackReason.OUT_OF_CONTRACT
     # hidden states of another dtype than the head's go back to sglang, which converts them: none is copied first

@@ -251,6 +251,81 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_seq_len": 1024},
         layout_variant_name="row_major",
     ),
+    # DeepSeek-V4.1-Flash's sparse MLA at TP2 shrunk: 32 heads on the rank, the window pool and
+    # the compressed one, the inverse RoPE folded in; sglang's pool pages start every 576 bytes
+    PointSpec(
+        contract_id="deepseekv41_sparse_mla@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_heads": 32,
+            "n_pages": 2,
+            "page_size": 64,
+            "n_indices": 64,
+            "n_extra_pages": 2,
+            "extra_page_size": 64,
+            "n_extra_indices": 64,
+            "n_positions": 16,
+        },
+        dtypes={
+            "q": "bfloat16",
+            "kv_cache": "uint8",
+            "indices": "int32",
+            "sinks": "float32",
+            "extra_kv_cache": "uint8",
+            "extra_indices": "int32",
+            "rope_freqs": "float32",
+            "positions": "int64",
+            "output": "bfloat16",
+        },
+        attrs={
+            "has_extra_kv_cache": True,
+            "has_extra_indices": True,
+            "has_rope_freqs": True,
+            "has_positions": True,
+        },
+        layout_variant_name="padded_pages",
+    ),
+    # a DeepSeek-V4.1 MXFP8 linear shrunk: a bf16 input sglang quantizes, then one it holds quantized
+    PointSpec(
+        contract_id="deepseekv41_mxfp8_linear@1.0",
+        axes={"m": 4, "n": 64, "k": 128},
+        dtypes={
+            "x": "bfloat16",
+            "weight": "float8_e4m3fn",
+            "weight_scale": "float8_e8m0",
+            "x_scale": None,
+            "output": "bfloat16",
+        },
+        attrs={"has_x_scale": False},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="deepseekv41_mxfp8_linear@1.0",
+        axes={"m": 4, "n": 64, "k": 128},
+        dtypes={
+            "x": "float8_e4m3fn",
+            "weight": "float8_e4m3fn",
+            "weight_scale": "float8_e8m0",
+            "x_scale": "float8_e8m0",
+            "output": "bfloat16",
+        },
+        attrs={"has_x_scale": True},
+        layout_variant_name="row_major",
+    ),
+    # a group of DeepSeek-V4.1's wo_a projection shrunk: quantized rows, the weight in aiter's 16 x 16 tiles
+    PointSpec(
+        contract_id="deepseekv41_mxfp8_linear@1.0",
+        axes={"m": 4, "n": 64, "k": 128},
+        dtypes={
+            "x": "float8_e4m3fn",
+            "weight": "float8_e4m3fn",
+            "weight_scale": "float8_e8m0",
+            "x_scale": "float8_e8m0",
+            "output": "bfloat16",
+        },
+        attrs={"has_x_scale": True},
+        layout_variant_name="shuffled_16x16",
+    ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
     *(
@@ -833,6 +908,9 @@ BACKEND_POINTS: tuple[PointSpec, ...] = tuple(
     if point.contract_id == "kimi_k3_latent_moe@1.0"
     else point
     for point in SMALL_POINTS
+    # shortcut: the shuffled linear's baseline is the BMM of the nightly's aiter, which sglang-test's 0.5.23 image
+    # does not ship; check it here once stack.json's sglang image is a build that runs wo_a on it
+    if (point.contract_id, point.layout_variant_name) != ("deepseekv41_mxfp8_linear@1.0", "shuffled_16x16")
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -841,6 +919,8 @@ GFX950_CONTRACT_IDS = frozenset(
         "attn_res@1.0",
         "deepseek_v2_fp8_moe@1.0",
         "deepseek_v2_mxfp4_moe@1.0",
+        "deepseekv41_mxfp8_linear@1.0",
+        "deepseekv41_sparse_mla@1.0",
         "dsa_indexer_key_prepare@1.0",
         "dsa_indexer_prepare@1.0",
         "dsa_sparse_mla_decode@1.0",

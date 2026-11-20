@@ -54,6 +54,12 @@ def fused_moe(
 ):
     """AKLR's routing-weighted sum of the chosen experts, or why aiter computes it. aiter's
     sorting policy and split-K pick its schedule, not the result, and are not taken."""
+    # fp8 named on an interleave call is what fused_moe's baseline runs there at every row count
+    names_interleave_fp8 = False
+    if quant_dtype_a is not None and attr_value(gate_mode) == "interleave":
+        from aiter import dtypes
+
+        names_interleave_fp8 = quant_dtype_a == dtypes.fp8
     if (
         block_size_M is not None
         or hidden_pad
@@ -67,7 +73,7 @@ def fused_moe(
         or shared_expert_id != -1
         or stage2_scatter is not None
         or quant_type_a is not None
-        or quant_dtype_a is not None
+        or (quant_dtype_a is not None and not names_interleave_fp8)
         or quant_dtype_a2 is not None
         or herd_topk
     ):

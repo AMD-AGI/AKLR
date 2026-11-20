@@ -147,6 +147,13 @@ def test_any_other_activation_keeps_4_bit_activations(op_calls, aiter_picks):
     assert aiter_picks.calls == []
 
 
+def test_interleave_takes_the_fp8_activations_a_caller_names(op_calls, aiter_picks):
+    """sglang names fp8 for DeepSeek-V4.1's FP4 experts: what the interleave baseline runs at every row count."""
+    assert moe_call(ActivationType.Silu, gate_mode="interleave", quant_dtype_a=FP8) == "aklr"
+    assert op_calls[0]["act_quant"] == 4
+    assert aiter_picks.calls == []
+
+
 def test_situv2_takes_fp8_activations_where_aiter_quantizes_to_fp8(op_calls, aiter_picks):
     assert moe_call(ActivationType.Situv2) == "aklr"
     assert op_calls[0]["act_quant"] == 8
