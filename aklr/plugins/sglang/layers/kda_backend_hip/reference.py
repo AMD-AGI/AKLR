@@ -1,19 +1,20 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The chain verify from its math, in float64 between its rounding points; independent of the
+"""The chain verify from its math, in float32 between its rounding points; independent of the
 kernels and of sglang's.
 
-Rounding points: each convolution output, the SiLU of the exact sum of the four taps' products,
-to BF16, which the rings keep as the raw values and keys. The norms, gates, betas and the
-recurrence, serial from the slot's state over the chain, run in float64; the outputs and the rings'
-gates and betas round to their dtypes in compare."""
+Rounding points: each convolution output, the SiLU of the sum of the four taps' products, to BF16,
+which the rings keep as the raw values and keys. The norms, gates, betas and the recurrence, serial
+from the slot's state over the chain, run in float32; the outputs and the rings' gates and betas
+round to their dtypes in compare."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from aklr.core.contract.semantics import to_float32
 from aklr.plugins.sglang.layers.kda_backend_hip.contract import HEAD_DIM
 
 if TYPE_CHECKING:
@@ -24,26 +25,25 @@ __all__ = ["kda_chain_verify_ring_reference"]
 _NORM_EPS = 1e-6
 
 
-def _gates(args: Mapping[str, Any], point: Any, decode: Callable) -> tuple[Tensor, Tensor]:
+def _gates(args: Mapping[str, Any], point: Any) -> tuple[Tensor, Tensor]:
     """g (n_tokens, n_heads, HEAD_DIM) and beta (n_tokens, n_heads)."""
     import torch
 
     dtypes = point.dtypes
-    x = decode(args["a"], dtypes["a"]).double() + decode(args["dt_bias"], dtypes["dt_bias"]).double()
-    scale = torch.exp(decode(args["a_log"], dtypes["a_log"]).double())[:, None]
+    x = to_float32(args["a"], dtypes["a"]) + to_float32(args["dt_bias"], dtypes["dt_bias"])
+    scale = torch.exp(to_float32(args["a_log"], dtypes["a_log"]))[:, None]
     if point.attrs["has_lower_bound"]:
         g = args["lower_bound"] * torch.sigmoid(scale * x)
     else:
         beta, threshold = args["softplus_beta"], args["softplus_threshold"]
         bx = beta * x
         g = -scale * torch.where(bx <= threshold, torch.log1p(torch.exp(bx)) / beta, x)
-    return g, torch.sigmoid(decode(args["b"], dtypes["b"]).double())
+    return g, torch.sigmoid(to_float32(args["b"], dtypes["b"]))
 
 
 def kda_chain_verify_ring_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, ...]:
     """(output, conv_window, ring_v, ring_k, ring_g, ring_beta)."""
     import torch
@@ -56,20 +56,20 @@ def kda_chain_verify_ring_reference(
         raise ValueError("slots or window lines repeat")
 
     def read(name: str) -> Tensor:
-        return decode(args[name], dtypes[name]).double()
+        return to_float32(args[name], dtypes[name])
 
-    # decode may return its input: the mutable tensors are written in copies
+    # to_float32 may return its input: the mutable tensors are written in copies
     written = {n: read(n).clone() for n in ("conv_window", "ring_v", "ring_k", "ring_g", "ring_beta")}
     x, weight, conv_state, state = (read(n) for n in ("mixed_qkv", "conv_weight", "conv_state", "ssm_state"))
-    g, beta = _gates(args, point, decode)
-    output = torch.zeros((x.shape[0], heads, HEAD_DIM), dtype=torch.float64, device=x.device)
+    g, beta = _gates(args, point)
+    output = torch.zeros((x.shape[0], heads, HEAD_DIM), device=x.device)
     for r, (slot, line) in enumerate(zip(slots, lines, strict=True)):
         if slot < 0:
             continue
         tokens = slice(r * steps, (r + 1) * steps)
         inputs = torch.cat((conv_state[slot], x[tokens]))  # (steps + 3, conv_dim), oldest first
         written["conv_window"][line] = inputs.unfold(0, 3, 1)[1:].transpose(-1, -2)
-        convolved = F.silu((inputs.unfold(0, 4, 1) * weight).sum(-1)).to(torch.bfloat16).double()
+        convolved = F.silu((inputs.unfold(0, 4, 1) * weight).sum(-1)).to(torch.bfloat16).float()
         q, k, v = convolved.view(steps, 3, heads, HEAD_DIM).unbind(1)
         written["ring_v"][slot, :, :steps] = v.transpose(0, 1)
         written["ring_k"][slot, :, :steps] = k.transpose(0, 1)
@@ -83,5 +83,4 @@ def kda_chain_verify_ring_reference(
             update = (v[t] - (s * k[t][:, None, :]).sum(-1)) * beta[r * steps + t][:, None]
             s = s + update[..., None] * k[t][:, None, :]
             output[r * steps + t] = (s * q[t][:, None, :]).sum(-1)
-    results = {"output": output, **written}
-    return tuple(decode(results[n], dtypes[n]) for n in results)
+    return output, *written.values()
