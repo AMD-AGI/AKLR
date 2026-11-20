@@ -770,10 +770,11 @@ SMALL_POINTS += (
         attrs={},
         layout_variant_name="row_major",
     ),
-    # vLLM's preshuffled per-token fp8 weights, as aiter's gemm_a8w8_bpreshuffle reads them
+    # vLLM's preshuffled per-token fp8 weights, as aiter's gemm_a8w8_bpreshuffle reads them (from aiter
+    # a6c759b1f its heuristic dispatch takes k > 192, a multiple of 64)
     PointSpec(
         contract_id="gemm_a8w8@1.0",
-        axes={"m": 4, "n": 32, "k": 128},
+        axes={"m": 4, "n": 32, "k": 256},
         dtypes={
             "a": "float8_e4m3fn",
             "b": "float8_e4m3fn",
