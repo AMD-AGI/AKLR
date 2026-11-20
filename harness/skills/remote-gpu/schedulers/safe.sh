@@ -14,7 +14,9 @@ safe_api() {
   reply=$(curl -sS --max-time 30 -X "$1" -H 'Content-Type: application/json' "${data[@]}" -w '\n%{http_code}' \
     -K <(printf 'header = "Authorization: Bearer %s"\n' "$(<"$key")") "$SAFE_URL/api/v1$2") || return 1
   printf '%s\n' "${reply%$'\n'*}"
-  case ${reply##*$'\n'} in 2*) return 0 ;; 404) return 4 ;; *) return 1 ;; esac
+  # A 404 means "no such workload" only in SaFE's own words; a gateway's is a controller failure.
+  case ${reply##*$'\n'} in 2*) return 0 ;; 404) [[ $(jq 'has("errorCode")' <<<"${reply%$'\n'*}" 2>/dev/null) == true ]] && return 4 ;; esac
+  return 1
 }
 
 scheduler_submit() {
@@ -29,7 +31,7 @@ scheduler_submit() {
     shift 2
   done
   job=$(date +%s%3N)
-  mkdir -p "$B/safe"
+  mkdir -p "$B/safe" && [[ -w $B/safe ]] || { echo "$C: cannot write $B/safe" >&2; return 206; }
   until (set -C; : >"$B/safe/$job.id") 2>/dev/null; do job=$((job + 1)); done
   mkdir -p "$B/jobs/$job/tasks" "$B/jobs/$job/spawn" "$B/jobs/$job/run"
   touch "$B/jobs/$job/heartbeat"; chmod 666 "$B/jobs/$job/heartbeat"
@@ -90,6 +92,7 @@ scheduler_jobs() {
 scheduler_cancel() {
   local id status
   read -r id 2>/dev/null <"$B/safe/$1.id" || return 1
+  # shortcut: SaFE has no delete-if-pending, so a workload that starts between this check and the delete is cancelled too; use one when the API has it.
   if [[ ${2:-} == pending && $(scheduler_query "$1") != PENDING\|* ]]; then return 1; fi
   safe_api DELETE "/workloads/$id" >/dev/null 2>&1; status=$?
   ((status == 0 || status == 4))
@@ -132,7 +135,8 @@ scheduler_run() {
     if ((finished)); then status=$(<"$base.rc"); break; fi
     sleep 1; nfs_sync "${base%/*}"; ticks=$((ticks + 1))
     if ((ticks == 120)) && [[ ! -e $base.pid ]]; then
-      echo "$C: the holder of job $job did not start the command within 120 s (see $B/logs/$job.$node.log)" >&2; break
+      echo "$C: the holder of job $job did not start the command within 120 s (see $B/logs/$job.$node.log)" >&2
+      rm -f "${request%/*}/${request##*/.}"; break
     fi
     if ((ticks % 30 == 0)) && record=$(scheduler_query "$job") && terminal_state "${record%%|*}"; then
       echo "$C: job $job ended (${record%%|*}) during the command" >&2; status=203; break
@@ -165,7 +169,7 @@ scheduler_capacity() {
     return
   fi
   free=$(jq --argjson gpus "$GPUS_PER_NODE" \
-    '[.items[]? | select(.phase == "Ready" and .available and (.availResources["amd.com/gpu"] // 0) >= $gpus)] | length' <<<"$nodes")
+    '[.items[]? | select(.phase == "Ready" and .available and (.availResources["amd.com/gpu"] // 0 | tonumber) >= $gpus)] | length' <<<"$nodes")
   echo "OK cluster=$C free=$free account= qos= idle=$free partition=$PARTITION burst=0 arch=$GPU_ARCH"
 }
 REMOTE_GPU_ADAPTER

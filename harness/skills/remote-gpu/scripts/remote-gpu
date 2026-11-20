@@ -476,7 +476,8 @@ EOF_ALLOC
 
 cmd_alloc() {
   [[ $MULTI_NODE == 1 ]] || ((ALLOC_REQUEST[nodes] == 1)) || err UNSUPPORTED "msg=\"a job on $CLUSTER is one node\" hint=\"alloc -N 1, once per node\""
-  [[ $IDLE_RELEASE == 1 ]] || echo "WARN cluster=$CLUSTER an idle job keeps its node until release or its time limit" >&2
+  # The pod outlives the holder there, so a holder that idled out would leave a job nothing can run in.
+  [[ $IDLE_RELEASE == 1 ]] || { ALLOC_REQUEST[idle]=0; echo "WARN cluster=$CLUSTER an idle job keeps its node until release or its time limit" >&2; }
   alloc_pairs
   local name="$CLUSTER-${REMOTE_GPU_SESSION:-$(hostname -s | cut -c1-12)}-$RANDOM"
   local partition=${ALLOC_REQUEST[partition]:-$PARTITION} holder

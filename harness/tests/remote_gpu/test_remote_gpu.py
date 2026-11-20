@@ -182,7 +182,7 @@ def start_holder(env, *, idle=0):
 
 def stop_holder(holder):
     if holder.poll() is None:
-        holder.terminate()
+        os.killpg(holder.pid, signal.SIGTERM)  # the group: a pod's entry point is a shell around the holder
         try:
             holder.wait(timeout=25)
         finally:
@@ -909,8 +909,12 @@ if method == "POST":
 elif path.startswith("/nodes"):
     free = {"phase": "Ready", "available": True, "availResources": {"amd.com/gpu": 8}}
     reply = {"items": [free, dict(free, available=False)]}
+elif (root / "gateway-404").exists():
+    print((root / "gateway-404").read_text())
+    print(404, end="")
+    sys.exit()
 elif (root / "deleted").exists():
-    code, reply = 404, {"errorCode": "Primus.00004"}
+    code, reply = 404, {"errorCode": "Primus.01001", "errorMessage": "Workload rg-abc12 not found."}
 elif method == "DELETE":
     (root / "deleted").touch()
 else:
@@ -974,6 +978,13 @@ def test_safe_adapter_allocates_a_workload_runs_in_its_pod_and_deletes_it(env):
         assert "nodes=n0 " in result.stdout
         assert job.split(":")[1] in rg(env, "ls").stdout
 
+        # A 404 that is not SaFE's own answer is a controller failure: the job keeps its handle.
+        for body in ("<html>not found</html>", ""):
+            (home / "safe/gateway-404").write_text(body)
+            rg(env, "ls")
+            (home / "safe/gateway-404").unlink()
+            assert job.split(":")[1] in rg(env, "ls").stdout, repr(body)
+
         result = rg(
             env, "exec", "-j", job, "--", "bash", "-c", 'echo "out $1"; echo err >&2; exit 7', "_", "a b"
         )
@@ -1000,6 +1011,26 @@ def test_safe_adapter_allocates_a_workload_runs_in_its_pod_and_deletes_it(env):
     finally:
         stop_holder(pod)
     assert rg(env, "exec", "-j", job, "--", "true").returncode == 203
+
+
+def test_safe_deployment_job_never_idles_out_of_its_pod(env):
+    home = Path(env["HOME"])
+    cluster = home / ".remote-gpu/clusters/fake"
+    (cluster / "cluster.env").write_text(SAFE_ENV.replace("SAFE_KIND=PyTorchJob", "SAFE_KIND=Deployment"))
+    (cluster / "cluster.sh").unlink()
+    (home / ".remote-gpu/fake.key").write_text("ak-test\n")
+    curl = Path(env["PATH"].split(":")[0]) / "curl"
+    curl.write_text(FAKE_SAFE_CURL)
+    curl.chmod(0o755)
+
+    result = rg(env, "alloc", "--no-wait", "--idle", "5")
+    assert result.returncode == 0, result.stderr
+    assert "an idle job keeps its node" in result.stderr
+    entry = base64.b64decode(json.loads((home / "safe/post.json").read_text())["entryPoints"][0]).decode()
+    # The pod outlives the holder, so a holder that idled out would leave a job nothing can run in.
+    holder, sleep = entry.split("\n")[1:3]
+    assert (holder.split()[2], sleep) == ("0", "exec sleep infinity")
+    rg(env, "release", "-j", re.search(r"job=(fake:\d+)", result.stdout)[1])
 
 
 def test_a_cluster_sh_redefines_one_hook_of_its_scheduler_type(env):
