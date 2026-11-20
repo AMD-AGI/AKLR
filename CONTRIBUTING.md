@@ -61,6 +61,18 @@ Selection is defined in `.github/workflows/ci.yaml`; no repository Actions varia
 needed. Adding or removing a label restarts the PR workflow and cancels its previous run.
 To switch a direct PR run back to SaFE, remove `ci:gpu-direct` and keep `ci:gpu`.
 
+SaFE workloads carry a priority; `aklr-gpu` has none:
+
+| Trigger | SaFE priority |
+| --- | --- |
+| PR with `ci:gpu` | medium |
+| PR with `ci:gpu` and `ci:priority-high` | high |
+| Push to `main` | high: its run takes the published measurements |
+| Manual run | Choose in the `gpu_priority` dropdown; defaults to medium |
+
+`ci:priority-high` alone starts no GPU job. It stays on the PR, so every later push runs at high
+too: remove it once the urgent run is done.
+
 An `aklr-gpu` runner needs Linux, Docker access, ROCm GPU devices (`/dev/kfd` and `/dev/dri`),
 network access to the images in `stack.json`, and enough local disk for image pulls, source
 copies and builds. Docker must run on the runner host. Dedicate the visible GPUs to this

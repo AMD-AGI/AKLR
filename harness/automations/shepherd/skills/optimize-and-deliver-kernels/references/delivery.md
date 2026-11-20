@@ -15,7 +15,7 @@ the crossover and the workloads on each side.
   branch's PRs, closed ones included, before creating: a lost reply means reconcile, never a second PR.
 - A campaign with an `issue` says `Refs #<issue>` in the body, never a closing keyword: the request may
   have other PRs. Save `pr_url` and a one-line `summary` (the measured result) in the campaign.
-- Add `publication.ci_gpu_label` (`ci:gpu` when unset) once, only with `allow_ci_gpu_label`. Comment only with `allow_pr_comments`, deduplicated
+- Add `publication.ci_gpu_label` (`ci:gpu` when unset) once, only with `allow_ci_gpu_label`; never `ci:priority-high`. Comment only with `allow_pr_comments`, deduplicated
   by content hash; a comment is the only way shepherd tells an open PR's readers something.
 - What needs the owner goes to `publication.attention_issue`, when set, the same way: intent first,
   deduplicated by content hash. It needs no `allow_pr_comments`: naming the issue authorizes it.
