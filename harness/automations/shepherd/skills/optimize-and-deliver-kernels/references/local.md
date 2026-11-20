@@ -37,6 +37,7 @@ The container name is the operation's unique external name: a lost reply is reco
 inspect <task>`, never by starting it again. No `--rm`, so a finished step keeps its exit code until
 cleanup removes it.
 
-The worker's model access comes from this user's Claude settings (`~/.claude/settings.json`, only its
-`ANTHROPIC_*` variables) and this user's `claude` binary, as [worker](worker.md#isolation) says for the
-cluster user. The round's GitHub token (`GH_TOKEN`) is never written to a file or passed to a container.
+The worker's model access is the round's own: its `ANTHROPIC_*` environment variables when the round
+has them (the workflow's gateway and key), else this user's Claude settings (`~/.claude/settings.json`,
+only its `ANTHROPIC_*` variables); and this user's `claude` binary, as [worker](worker.md#isolation)
+says for the cluster user. The round's GitHub token (`GH_TOKEN`) is never written to a file or passed to a container.

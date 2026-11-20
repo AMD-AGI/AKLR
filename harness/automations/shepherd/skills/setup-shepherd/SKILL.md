@@ -100,8 +100,10 @@ and the workflow replaces the Cursor automation. Setup runs there in the job of 
 labels `shepherd`, before its round: that issue's text holds the owner's choices of step 3, and nobody
 is there to ask. Instead of the automation and round needs above, check, as the runner's user on that host:
 
-- `claude` on the runner's `PATH`, with the model endpoint and key in that user's
-  `~/.claude/settings.json`; `gh`, `jq`, Docker, and PyYAML importable by `python3 -I` (not only from the user site).
+- Docker, and `gh`, `jq` and PyYAML importable by `python3 -I` (the job installs the last three for
+  the runner's user when the host lacks them). The agent runs through `anthropics/claude-code-action`
+  against the gateway in the variables `SHEPHERD_LLM_BASE_URL` and `SHEPHERD_LLM_MODEL`, with the
+  `ANTHROPIC_API_KEY` secret as its key.
 - The configuration at `~/.shepherd/<owner>/<repository>/configuration.yaml`, outside the runner's
   workspace; the workflow links `.shepherd/configuration.yaml` to it. It has
   `execution.cluster: local`, `execution.gpus`, `execution.work_dir`,
