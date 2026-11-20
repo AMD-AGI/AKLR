@@ -14,8 +14,7 @@ from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang.models import deepseekv41
 from aklr.plugins.vllm.models.deepseekv41 import api
 
-# one group of 8 heads on the rank, whose queries fit in the four streams
-_HIDDEN, _Q_RANK, _HEADS, _TOPK, _O_RANK, _EXPERTS, _INTER = 1024, 32, 8, 8, 64, 16, 128
+_HEADS, _TOPK = 8, 8
 _OPS = ("deepseekv41_sparse_mla",)
 
 
@@ -45,13 +44,9 @@ def asked(monkeypatch):
 def step(monkeypatch):
     """A decode-only step of 64 rows in vLLM's forward context; change it to make another."""
     swa = SimpleNamespace(
-        num_prefills=0,
-        num_decodes=64,
-        num_decode_tokens=64,
         num_prefill_tokens=0,
         block_size=32,
         decode_swa_width=128,
-        decode_swa_indices=torch.zeros(64, 1, 128, dtype=torch.int32),
         decode_swa_ragged_indices=torch.zeros(64 * 128, dtype=torch.int32),
         prefill_swa_ragged_indices=None,
         prefill_swa_indices=None,
@@ -59,38 +54,21 @@ def step(monkeypatch):
     context = SimpleNamespace(attn_metadata={"swa": swa, "compressed": SimpleNamespace(block_size=128)})
     forward_context = ModuleType("vllm.forward_context")
     forward_context.get_forward_context = lambda: context
-    forward_context.is_forward_context_available = lambda: True
     monkeypatch.setitem(sys.modules, "vllm", ModuleType("vllm"))
     monkeypatch.setitem(sys.modules, "vllm.forward_context", forward_context)
     return swa
 
 
 def attention(**changes):
-    def linear(rows, columns):
-        return SimpleNamespace(
-            weight=torch.zeros(rows, columns, dtype=torch.float8_e4m3fn),
-            weight_scale=torch.zeros(rows // 32, columns // 32, dtype=torch.uint8),
-        )
-
-    def norm(width):
-        return SimpleNamespace(weight=torch.zeros(width, dtype=torch.bfloat16), variance_epsilon=1e-6)
-
     attn = SimpleNamespace(
         swa_cache_layer=SimpleNamespace(prefix="swa", kv_cache=pool(3, 32)),
         compressed_cache_prefix="compressed",
         compress_ratio=2,
         _compressed_kv_cache=lambda: pool(5, 64),
         topk_indices_buffer=torch.zeros(1024, _TOPK, dtype=torch.int32),
-        n_local_heads=_HEADS,
         attn_sink=torch.zeros(_HEADS),
         scale=512**-0.5,
         rotary_emb=SimpleNamespace(cos_sin_cache=torch.zeros(16, 64)),
-        fused_wqa_wkv=linear(_Q_RANK + 512, _HIDDEN),
-        wq_b=linear(_HEADS * 512, _Q_RANK),
-        wo_a=linear(_O_RANK, 8 * 512),
-        wo_b=linear(_HIDDEN, _O_RANK),
-        q_norm=norm(_Q_RANK),
-        kv_norm=norm(512),
     )
     attn.__dict__.update(changes)
     return attn
