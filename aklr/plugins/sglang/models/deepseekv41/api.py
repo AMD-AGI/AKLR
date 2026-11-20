@@ -220,3 +220,15 @@ def _apply_wo_a_bf16_matmul(
             return out
         outputs.append(out)
     return torch.stack(outputs, dim=1)
+
+
+@sglang_route("sglang.kernels.ops.gemm.router_gemv_hip.rocm_router_gemv_split_k", versions=_SGLANG)
+def _rocm_router_gemv_split_k(x, w):
+    """The GEMV sglang runs at 64 rows or fewer for the MoE router's logits and the indexer's head
+    weights, asked of gemm as the product it is: x @ w.T in fp32."""
+    import torch
+
+    # shortcut: the op is asked for, which records the call, and the GEMV is left to sglang, whose
+    # callers sum the split-K partials it returns in their own launch; return a kernel's product as
+    # the one partial once a kernel serves it with that sum's batch invariance
+    return gemm.fallback_reason(x, w, out_dtype=torch.float32) or FallbackReason.OUT_OF_CONTRACT
