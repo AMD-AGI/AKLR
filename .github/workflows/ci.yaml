@@ -8,6 +8,13 @@ env:
         (github.event_name == 'pull_request' &&
          contains(github.event.pull_request.labels.*.name, 'ci:gpu-direct') && 'aklr-gpu') ||
         'aklr-safe' }}
+  # The SaFE workload priority. A PR run yields to main's, which takes the published measurements;
+  # ci:priority-high raises a PR run. A name, not SaFE's number: 0 is false in an expression.
+  AKLR_GPU_PRIORITY: >-
+    ${{ inputs.gpu_priority ||
+        ((github.event_name != 'pull_request' ||
+          contains(github.event.pull_request.labels.*.name, 'ci:priority-high')) && 'high') ||
+        'medium' }}
   # The publish-measurement bot's rolling PR: sent and opened by the bot, from aklr-perf/main of
   # this repository. perf-guard.yaml spells the same expression.
   AKLR_BOT_PR: >-
@@ -34,6 +41,13 @@ on:
           - aklr-safe
           - aklr-gpu
         default: aklr-safe
+      gpu_priority:
+        description: SaFE workload priority (aklr-safe only)
+        type: choice
+        options:
+          - medium
+          - high
+        default: medium
       full_lint:
         description: Check all files, including inherited formatting debt
         type: boolean
@@ -90,7 +104,8 @@ jobs:
       - name: Report whether GPU jobs run
         run: |
           if [[ $GPU_ENABLED == true ]]; then
-            echo "🟢 GPU jobs use $AKLR_GPU_RUNNER: aiter-test, sglang-test and vllm-test." | tee -a "$GITHUB_STEP_SUMMARY"
+            [[ $AKLR_GPU_RUNNER != aklr-safe ]] || priority=" at $AKLR_GPU_PRIORITY priority"
+            echo "🟢 GPU jobs use $AKLR_GPU_RUNNER${priority:-}: aiter-test, sglang-test and vllm-test." | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo '⏭️ PR GPU jobs require ci:gpu (SaFE) or ci:gpu-direct (local Docker).' | tee -a "$GITHUB_STEP_SUMMARY"
           fi
