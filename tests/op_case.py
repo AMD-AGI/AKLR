@@ -17,12 +17,11 @@ import torch
 
 from aklr.core.contract import semantics
 from aklr.core.contract.fastkey import CallArgs
-from aklr.core.contract.locate import op_dir
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import CompareResult
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
-from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
+from aklr.core.validation.stages.bench._measure._contract_workload import ContractWorkload
 from tests.ops import cases as ops_cases
 from tests.plugins.aiter import cases as aiter_cases
 from tests.plugins.sglang import cases as sglang_cases
@@ -221,23 +220,14 @@ class OpCase:
         )
 
     @cached_property
-    def request(self) -> TrialRequest:
-        """``TrialRequest.of_workload`` of ``schema()``'s one workload, no thresholds, no
-        incumbent, no baseline."""
+    def contract_workload(self) -> ContractWorkload:
+        """``ContractWorkload.of`` ``schema()``'s one workload."""
         schema = self.schema()
-        return TrialRequest.of_workload(
-            str(op_dir(self.contract.op_package) / schema.relative_path()),
-            schema,
-            self.contract,
-            schema.workloads[0],
-            thresholds={},
-            incumbent=None,
-            baseline=None,
-        )
+        return ContractWorkload.of(schema, schema.workloads[0].axes)
 
     def inputs(self, input_set: str = "numeric/0") -> dict[str, Any]:
         """The row-major inputs of ``input_set`` drawn on the CPU (``row_major_inputs``)."""
-        request = self.request
+        request = self.contract_workload
         return semantics.row_major_inputs(
             request.schema_json,
             request.workload_json,
@@ -247,8 +237,8 @@ class OpCase:
         )
 
     def call(self, row_major_args: Mapping[str, Any], device: str = "cpu") -> CallArgs:
-        """The api call of ``row_major_args`` on ``device`` (``TrialRequest.assemble_call``)."""
-        return self.request.assemble_call(row_major_args, device)
+        """The api call of ``row_major_args`` on ``device`` (``ContractWorkload.assemble_call``)."""
+        return self.contract_workload.assemble_call(row_major_args, device)
 
     def reference_outputs(
         self, row_major_args: Mapping[str, Any], decode: Callable[[Any, str], Any] = semantics.to_float32
@@ -271,7 +261,7 @@ class OpCase:
     ) -> dict[str, CompareResult]:
         """``compare_outputs`` of ``actual_outputs`` against the reference of ``row_major_args``, on the CPU."""
         compare_kwargs = {"reference_outputs": self.reference_outputs(row_major_args, decode)}
-        if self.request.has_error_bound("dot_product"):
+        if self.contract_workload.has_error_bound("dot_product"):
             magnitudes = {
                 n: semantics.absolute_value(v, self.point.dtypes[n])
                 for n, v in row_major_args.items()
@@ -286,7 +276,7 @@ class OpCase:
             kind: {o: t.cpu() for o, t in tensors.items()} for kind, tensors in compare_kwargs.items()
         }
         return semantics.compare_outputs(
-            self.request.schema_json,
+            self.contract_workload.schema_json,
             {o: t.cpu() for o, t in actual_outputs.items()},
             **compare_kwargs,
         )
@@ -299,7 +289,7 @@ class OpCase:
         call = self.call(args, "cuda")
         outputs = self.contract.call_mutable_tensors(self.contract.baseline()(**call), call)
         results = self.compare(outputs, args, baseline_outputs=outputs)
-        output_specs = semantics.mutable_tensor_declarations(self.request.schema_json)
+        output_specs = semantics.mutable_tensor_declarations(self.contract_workload.schema_json)
         integral = {
             o
             for o, spec in output_specs.items()

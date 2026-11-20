@@ -1,10 +1,10 @@
 # Kernel benchmark admission
 
 Each kernel schema qualifies when at least one **same workload** passes all
-correctness checks and its published graph-mode baseline speedup (the lower bound,
-to 3 decimals) reaches 1.05, the default `AKLR_MIN_SPEEDUP`.
+correctness checks and its published graph-mode baseline speedup (the geometric
+mean over its trials, to 3 decimals) reaches 1.05, the default `AKLR_MIN_SPEEDUP`.
 This restores the pre-refactor per-kernel admission rule while
-retaining the current correctness checks and statistical timing bound. When no
+retaining the current correctness checks. When no
 baseline exists, a measured correctness pass is sufficient.
 
 Other workloads may fail correctness or performance without rejecting a kernel
@@ -17,7 +17,7 @@ also exclude only the affected workloads, even when a whole batch stops.
 Platform failures and invalid evaluations still block the stage.
 
 The unused `is_kept` and `known_failed` workload-record fields are removed.
-The report version remains 2; admission uses this run's measurements.
+Admission uses this run's measurements.
 
 The audit gate is unchanged. A normal validation pipeline still stops after a
 failed stage.

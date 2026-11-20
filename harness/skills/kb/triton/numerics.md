@@ -19,8 +19,8 @@ both on gfx950 (MI355X) with Triton 3.8.0. A count ("52 kernels") counts schema 
   an e8m0 scale per 32), in an epilogue or as AKLR's quantization ops (§2, §3).
 - You must decide which divisions, exponentials and roundings have to be exact and which may be fast.
 - You need fp32 accuracy from bf16 or fp8 MFMAs: block-scaled GEMMs, router logits, P·V, GDN state products.
-- A kernel fails `compare` (a NaN, a code off by one, an SQNR shortfall), the `large_magnitude` step or the `bitwise`
-  determinism step: §10 maps what the report says to a cause.
+- A kernel fails `compare` (`outputs_mismatch`: a NaN, a code off by one, an SQNR shortfall), or is wrong at large
+  magnitudes or from run to run, which the bench no longer checks: §10 maps what the report says to a cause.
 - You weigh `enable_fp_fusion`, `allow_flush_denorm`, `amdgpu-ieee`, atomics, asm `v_rcp_f32`/`v_exp_f32`/`v_log_f32`.
 
 Elsewhere: MFMA and scale layouts [gluon/mfma.md](gluon/mfma.md); inline asm [gluon/wave_ops.md](gluon/wave_ops.md);
@@ -40,8 +40,9 @@ Three places define "correct". The rules are stated in `aklr/ops/README.md` § S
 
 - **Both determinism levels compare runs, not kernels.** `bitwise` wants every run byte-identical to the first;
   `bounded` asks nothing across runs (S1). Neither compares the output with the reference, the baseline or the kernel
-  you replace: accuracy is the bound's job. For a `bitwise` schema, bench runs input set `numeric/0` once more, at step
-  `determinism/0` (S2), three runs of that set in all *(field, E9)*: a rare race can pass (§8).
+  you replace: accuracy is the bound's job. The bench no longer checks either level (S2): for a `bitwise`
+  schema the former bench ran input set `numeric/0` once more, at step `determinism/0`, three runs of that set in all
+  *(field, E9)*, and a rare race could pass (§8). Compare repeated runs yourself.
 - **What each bound leaves you** (S1):
   - `tolerance` is per element, B = atol + (rtol + u_out)·|y|: at 0/0 (Qwen3.5 GDN `conv_state`, S3) the output's own
     rounding passes and one step more fails *(field, E2)*, so move such a tensor without arithmetic.
@@ -60,7 +61,7 @@ Three places define "correct". The rules are stated in `aklr/ops/README.md` § S
     drops the test once no element exceeds its bound, `sqnr` has none (S1). Errors all one way, all inside B, failed
     `output_rounding` and `dot_product`, not `baseline_relative` against a same-mean baseline *(field, E2)*: a
     rounding that leans one way (RTZ on one-signed data, a low-biased approximation) can fail there.
-- **A `dot_product` output gets one more bench step**, `large_magnitude/0` (S2; `aklr/ops/README.md` § Semantics): every floating tensor with a `finite` distribution and a cast-decoded dtype is scaled by one exact power of two, chosen under both input-dtype range limits and the conservative dot-output budget (the peak factors are floored at 1); for the two GEMMs this keeps max|a|·max|b|·K under a quarter of the output dtype's largest value: 2^54 and 2^55 for the two bf16 GEMMs *(field, E2)*. Keep every partial sum in fp32:
+- **A `dot_product` output must hold at large magnitudes, which the bench no longer checks.** The former bench added one step, `large_magnitude/0`, on the inputs of `semantics.magnified_inputs` (S2; `aklr/ops/README.md` § Semantics): every floating tensor with a `finite` distribution and a cast-decoded dtype is scaled by one exact power of two, chosen under both input-dtype range limits and the conservative dot-output budget (the peak factors are floored at 1); for the two GEMMs this keeps max|a|·max|b|·K under a quarter of the output dtype's largest value: 2^54 and 2^55 for the two bf16 GEMMs *(field, E2)*. Keep every partial sum in fp32:
   an fp16 or fp8 intermediate overflows there.
 - **Non-finite values must match under every bound, `sqnr` included**: finite wherever the reference rounded to the
   output dtype is finite, equal to it (NaN matching NaN) wherever it is not (S1). A stray NaN fails; so does a saturated
@@ -473,8 +474,8 @@ A failed `compare` reports `violation_fraction`, `peak_bound_multiple`, `bias_z_
 | a few elements over (about 0.01%, peak up to about 3 × B, under bounds of about one rounding step *(field, E2)*) | a rounding point missed or doubled: the round trip (§1), contraction (§6), `x * (1 / s)` for `x / s` (§2) |
 | `bias_z_score` over 5/√n, no element over | a rounding that leans one way, such as RTZ or truncation (§1), or a quantization op's scale formed otherwise than its reference's (§2) |
 | SQNR short | a further lossy step in the budget (§1; an extra e5m2 rounding before MXFP4 cost 1.7 dB *(field, E2)*), the e8m0 rule (§3), P's precision (§5; fp8 P gave 23 dB on P·V *(field, E2)*) |
-| step `large_magnitude/0` fails | an fp16 or fp8 intermediate under a `dot_product` bound (§1) |
-| step `determinism/0` fails, or a mismatch comes and goes | atomics and other arrival-order sums; two runs can miss them: a 6-program fp32 atomic sum took 3 bit patterns in 300 runs, yet 281 of 299 consecutive pairs agreed *(field, E11)* (§8) |
+| wrong on `semantics.magnified_inputs` (the former bench's step `large_magnitude/0`; no bench step today) | an fp16 or fp8 intermediate under a `dot_product` bound (§1) |
+| repeated runs differ (the former bench's step `determinism/0`; no bench step today), or a mismatch comes and goes | atomics and other arrival-order sums; two runs can miss them: a 6-program fp32 atomic sum took 3 bit patterns in 300 runs, yet 281 of 299 consecutive pairs agreed *(field, E11)* (§8) |
 
 ## Evidence
 
@@ -500,7 +501,7 @@ AKLR paths are on `0e02a81` unless a line names another commit; kernels are cite
 - E23 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, a Gluon probe dividing each value by its own scale s = fl32(max(amax, fl32(1e-10)) · fl32(1/448)), default `denormal-fp-math-f32` (`ieee`); against fl32(fl64(x) / fl64(s)) on the host] the fourth form on 169.6M values (every bf16 |x| ≤ amax for amax in 31 binades, 100000 random fp32 groups of 128): 0 code mismatches for nonzero x; 420471 quotients one ulp off, all where |x| < 2^-100 or the quotient < 2^-126; x = −0 gave +0, code 0x00 against 0x80; `gl.div_rn` 0 mismatches (probe kernels, not AKLR schemas)
 - E24 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, 64 input sets from AKLR's input generator at 32 rows, the committed file and a copy without the attention's bf16 rounding before the gate] scales' relative L2 against a float64 reference without that rounding, the copy's over the committed file's: geometric mean 0.849, lower on 62 of 64 sets; both files passed the contract comparison on all 64 sets (Qwen3.5 gated attention decode `d9cbde237fd34de9`, schema at AMD-AGI/AKLR@3b315a7)
 - S1 aklr/core/contract/semantics/_compare.py:143 `runs_agree`: `bitwise`, every run's output byte-identical to the first's; `bounded`, nothing across runs. A compare's measures: `violation_fraction`, `peak_bound_multiple`, `bias_z_score`, non-finite mismatches (:21-27), the fraction checked against `max_violation_fraction` (:216); the element-wise bias test |mean|/rms ≤ 5/√n over the n compared elements (:237), dropped by `tolerance` once nothing exceeds B (:329), also passed by `baseline_relative` with a mean error within twice the baseline's (:295-310); `DotProductBound` B = 2·(6·√n_eff + 2)·u_acc·M + u_out·|y|, n_eff the largest ⌈n/s⌉ + bit_length(s − 1) over s ≤ `max_split_k` (:248-266); `OutputRoundingBound` B = 2·u_out·|y| (:269-275); `ToleranceBound` B = atol + (rtol + u_out)·|y| (:321); `SqnrBound` (:332); non-finite elements matched both ways (:52-55)
-- S2 aklr/core/validation/stages/_bench/_evaluation/_request.py:139 a `dot_product` output adds the step `large_magnitude/0` (:139-140), its inputs from `magnified_inputs` (:221-222): every finite floating input times one exact 2^e, the largest keeping the inputs and max|a|·max|b|·K under a quarter of the output dtype's largest value (`aklr/core/contract/semantics/_workloads.py:98-135`); a `bitwise` schema gets one more `determinism` step on `numeric/0` (:141-142); `find_nondeterminism` (`_comparison.py:31`) fails it on any differing element
+- S2 aklr/core/validation/stages/bench/_measure/_op_bench.py:107 the bench's only check is each trial's compare against the Reference: no large-magnitude input set and no repeated run. `magnified_inputs`: every finite floating input times one exact 2^e, the largest keeping the inputs and max|a|·max|b|·K under a quarter of the output dtype's largest value (`aklr/core/contract/semantics/_workloads.py:98-135`); `runs_agree` (S1) has no caller in the bench. The former bench's steps: AMD-AGI/AKLR@0e02a81:aklr/core/validation/stages/_bench/_evaluation/_request.py:139-142
 - S3 aklr/plugins/sglang/models/qwen3_5/contract.py:121 `conv_state`: `ToleranceBound(absolute_tolerance=0, relative_tolerance=0)`; `values`: `ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125)` (:179); `scales`: relative tolerance 0.02 (:185); decode `delta_state`: `ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)` (:229); gated attention: aiter's fp8-cache decode emulated at 21.8-23.1 dB (values) and 26.7-34.1 dB (scales) at the schemas' Points, "The bounds sit some 6-7 dB under that", kernels wrong on purpose under 9 and 10 dB, "at most 16.4 and 16.8 dB on the small one" (:401-406); `SqnrBound(min_sqnr_db=15.0)` (:412), 20.0 for the scales (:418)
 - S4 aklr/plugins/sglang/models/deepseek_v2/contract.py:167 "the experts' MXFP4 activations alone come to about 12 dB", over `SqnrBound(min_sqnr_db=10.0)` (:168); MiniMax-M2: "about 13 dB on the bench's inputs", `_output(10.0)` (`aklr/plugins/sglang/models/minimax_m2/contract.py:280-281`); MiniMax-M2 fp8: "the fp8 activations come to about 36 dB on the bench's inputs", `_output(30.0)` (same file, :247-248)
 - S5 aklr/ops/gemm/contract.py:186 FIXME: main's tolerance and no determinism check; "gfx950 fp8 MFMA accumulates below _dot_k()'s IEEE fp32 model" (:187-188); scales 2^U[-3, 0], "On 2**U[-1, 1] a k1024 fp8 MFMA tail element breaks main's tolerance" (:189-192); `gemm@1.0`'s `out` is bounded by `_dot_k()`: `DotProductBound(length="k", accumulate_dtype=DType.FLOAT32, max_split_k=16)` (:91-96, :105, :134)

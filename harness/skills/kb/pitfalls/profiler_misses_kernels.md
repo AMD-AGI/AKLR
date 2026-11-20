@@ -6,7 +6,7 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
 sources:
-  - "aklr/core/validation/stages/_measure.py:260"
+  - "aklr/core/validation/stages/bench/_measure/_op_bench.py:182"
 ---
 
 # Kineto misses graph-launched kernels
@@ -48,9 +48,10 @@ Two forms, both silent about which kernels went missing.
 ## How to detect
 
 The timer of S1–S6 is the predecessor repository's Kineto timer of 2026-10, which AKLR used up to measurement
-profile 18. AKLR's timer now traces kernels with rocprofiler-sdk (S7), and its tracer-fault list
-(`aklr/core/validation/stages/_measure.py:326`) holds other messages: "rocprofiler-sdk", "graph replays", "the
-kernel tracer failed" and "calibration could not restore".
+profile 18. AKLR's timer now traces kernels with rocprofiler-sdk (S7), and the bench keeps no list of tracer-fault
+messages: a clock reading that fails without the timed call raising is read once more, then reported as
+`platform_fault` with `tracer:` in its detail (`OpBench.time`,
+`aklr/core/validation/stages/bench/_measure/_op_bench.py:182`); the task is not run again in a fresh process.
 
 - **In AKLR, read the message, not the stage.** Up to profile 18, four messages counted as tracer faults: "Kineto
   recorded no kernels for a single call", "L2 flushes per replay, got 0", `std::bad_alloc` and `std::length_error`
@@ -67,7 +68,7 @@ kernel tracer failed" and "calibration could not restore".
 
 ## Fix or workaround
 
-- `platform_failure` with a tracer-fault message (above) in `aklr validate`: rerun (`../SKILL.md` § Also in AKLR).
+- `platform_fault` with `tracer:` in its detail (above) in `aklr validate`: rerun (`../SKILL.md` § Also in AKLR).
 - A harness that calls `bench_cudagraph` directly: catch the tracer-fault messages, measure again once, then
   again in a fresh process, as AKLR does (S3, S4), and do not turn a tracer fault into a revert or a keep.
   Whether a kernel can make the fault more likely is not established: it recurred on one change twice running

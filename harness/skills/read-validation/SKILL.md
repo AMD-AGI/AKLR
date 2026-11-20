@@ -5,7 +5,7 @@ description: Read a AKLR validation result, local or from CI, and decide what it
 
 # Read a AKLR Validation Result
 
-A verdict is per Point. Before changing a kernel or its workloads, read the rounds behind each
+A verdict is per Point. Before changing a kernel or its workloads, read the trials behind each
 failing Point in the report: the log names the failing schema, and only the report names the Point.
 
 ## Required Context
@@ -21,22 +21,27 @@ Read [references/ruler.md](references/ruler.md) (how a Point is timed and judged
    artifact `validation-report-aiter-test-<attempt>` (`aklr/ops`), `validation-report-sglang-test-<attempt>`
    (sglang's plugins) or `validation-report-vllm-test-<attempt>` (vLLM's); the `aiter-test`, `sglang-test` and
    `vllm-test` jobs' `Validate` step logs end with the findings, and `Enforce the overall CI result` only names the job that failed.
-2. **Separate findings from demotions.** A run fails on its `findings` (`not_faster`, `regressed`,
-   accuracy, build, crash). `demotions` are committed kernels' Points that measured too slow and stop
-   being served; they fail nothing. A committed Point that newly computes wrong is a demotion and a
-   finding at once.
-3. **Read the failing Point's rounds.** In `report.json`, the bench stage's `workload_records` entry
-   with that `schema_path` and `axes` holds `timings[]`: per-round `candidate_milliseconds` and
-   `versus_milliseconds`, `ratio_lower_bound`, `log_ratio_mean`, `min_ratio`. Compare the medians, then
-   look for rounds far above either side's median.
+2. **Separate findings from demotions.** The bench stage's `findings` decide it: `failed` on a
+   candidate's or schema's fault (`no_qualifying_workload`: no Point is correct and clears Entry;
+   `baseline_unbound`: the baseline declines a Point), `aborted` on the platform's
+   (`platform_fault`: a Baseline, Incumbent or Reference that raised, a tracer fault, an unreadable
+   base file, a GPU not in the kernel's `targets`). `demotions` are Points that failed accuracy
+   (`outputs_mismatch`, `wrong_outputs`, `candidate_raised`, `build_failed`, `task_crashed`,
+   `task_timeout`) or performance (`regressed`, `not_faster`); they are written back so dispatch
+   skips them, and fail nothing by themselves. A `--no-timing` run writes nothing back, so it has
+   no demotions: each of these is a finding there.
+3. **Read the failing Point's trials.** In `report.json`, the bench stage's `records` entry with that
+   `schema_path` and `workload` (its key: `{"axes": {...}}`) gives its `verdict`, `is_demoted`,
+   `versus` (`baseline`, `incumbent` or `nothing`), `versus_name` and `comparison`: per-trial
+   `candidate_ms` and `opponent_ms`, `ratio` (the gate's) and `speedup` (unclamped). Compare the
+   trials, then look for a timing far above its side's others.
 4. **Classify the failure.**
-   - **Spikes**: a few rounds of one side well above its median, the medians themselves apart, and
-     spikes on either side elsewhere in the run: the node, not the kernel. The median ratio is the
-     kernel's.
+   - **Spikes**: one trial of one side well above its others, the other trials' ratios clearing the
+     threshold, and spikes on either side elsewhere in the run: the node, not the kernel.
    - **Floor**: both medians near the graph-node floor (~4 µs): the Point's gain is a fixed latency
      difference that does not carry across nodes (ruler.md).
    - **Real**: the medians are close or inverted.
-5. **Decide per Point** (thresholds in ruler.md). Keep a Point whose lower bound is at least the
+5. **Decide per Point** (thresholds in ruler.md). Keep a Point whose stored speedup is at least the
    dispatch threshold, 1.05, with margin; one under 1.05 can merge when another Point of the file
    qualifies, but is never served. Remove only Points the report shows failing or under 1.05, never others on a guess. Rerun a spike failure
    before removing a Point its medians support.
@@ -50,5 +55,5 @@ their behalf.
 
 ## Completion
 
-For each failing Point: the finding, its lower bound, both medians, the spike rounds if any, the
+For each failing Point: the finding, its ratio, both medians, the spike trials if any, the
 classification, and the change proposed with its evidence.

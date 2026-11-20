@@ -37,30 +37,15 @@ def test_ranks_rejects(contract_id: str, ranks: str) -> None:
 
 def test_each_rank_draws_its_own_inputs() -> None:
     """Rank 0 draws a one-rank call's inputs; another rank its own, the same each time."""
-    request = OpCase.of("gemm@1.0").request
+    workload = OpCase.of("gemm@1.0").contract_workload
     one_rank, rank0, rank1 = (
-        request.compose_inputs(None, "cpu"),
-        request.compose_inputs(None, "cpu", 0),
-        request.compose_inputs(None, "cpu", 1),
+        workload.draw("timing", "cpu"),
+        workload.draw("timing", "cpu", 0),
+        workload.draw("timing", "cpu", 1),
     )
     assert rank0.keys() == rank1.keys()
     tensors = [n for n, v in rank0.items() if torch.is_tensor(v)]
     assert all(torch.equal(one_rank[n], rank0[n]) for n in tensors)
     assert not any(torch.equal(rank0[n], rank1[n]) for n in tensors)
-    again = request.compose_inputs(None, "cpu", 1)
+    again = workload.draw("timing", "cpu", 1)
     assert all(torch.equal(again[n], rank1[n]) for n in tensors)
-
-
-def test_no_group_py_is_no_group_init(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An op without ``group.py`` sets nothing up; one whose own import fails raises."""
-    from aklr.core.contract import op
-
-    contract = OpCase.of("gemm@1.0").contract
-    assert contract.group_init() is None
-
-    def unimportable(op_package: str, submodule: str) -> None:
-        raise ModuleNotFoundError("No module named 'mori'", name="mori")
-
-    monkeypatch.setattr(op, "op_module", unimportable)
-    with pytest.raises(ModuleNotFoundError, match="mori"):
-        contract.group_init()

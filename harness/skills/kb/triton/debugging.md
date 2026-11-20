@@ -19,9 +19,9 @@ Triton 3.8.0 for gfx950 without a GPU; GPU numbers are marked and listed under E
   or a change that seems to do nothing: §3.
 - A compile fails (`CompilationError`, `error encountered during parsing`, `PassManager::run failed`, an abort,
   `LLD failed to link`, `unhashable type`), or a Triton error's line number does not match the file: §4.
-- `python -m aklr validate` reports `numeric_mismatch`, `capture_unsafe`, `nondeterministic` or
-  `post_timing_mismatch`, or an output holds NaN or 0xFF bytes where the reference has values: §5.
-- `candidate_crash`, `candidate_timeout`, `build_failed` after changing one constant, a GPU memory access fault,
+- `python -m aklr validate` reports `outputs_mismatch`, `wrong_outputs` or `candidate_raised`, or an output holds
+  NaN or stale bytes where the reference has values: §5.
+- `task_crashed`, `task_timeout`, `build_failed` after changing one constant, a GPU memory access fault,
   `out of resource`: §6.
 - rocprofv3 aborts or hangs, or you need per-launch times, the cost of LDS conflicts or of layout conversions: §7.
 - Eager launches are slow on the host: §8. Your numbers disagree with CI's or a colleague's, or a standalone
@@ -194,7 +194,8 @@ sign-OR lines, so they are dead code (S56). Put `gl.static_print` in the branch 
 
 **Under `validate` you see one line.** The candidate's child process writes its output to a task log file (`TaskLog`,
 S57) that reaches neither the console nor `--out` and is gone after `validate` exits. A dead child leaves its exit code
-only (`runner … exited with code -11`, `-6` for an abort); `build_failed` carries a `CompilationError`'s source and
+only (`runner … exited with code -11`, `-6` for an abort); a compile error at the first call (`candidate_raised` at
+`trial 0`: the build only imports the kernel; `build_failed` under the former bench) carries a `CompilationError`'s source and
 caret but just `RuntimeError: PassManager::run failed` for a lowering error. No MLIR diagnostic, `static_print` or
 `device_print` output survives *(field, E3)*: compile the launch alone (§1) or run it outside AKLR (§5) to read them.
 
@@ -246,22 +247,26 @@ thread (`T<n>:<register>`) holds each element, and `format_hardware_view(shape)`
 
 ## 5. Wrong results
 
-**Start from the failing step**, which opens a finding's detail: `<check>/<i> (<input set>): <output>: …` (S35):
+**Start from the failing trial**, which opens a finding's detail: `trial <i>: <output>: …` (S35). The bench checks
+each trial's eager call, then times it in a CUDA graph, before it draws the next trial; the former bench's steps
+(`first_capture`, `numeric`, `large_magnitude`, `determinism`, `post_timing`) and their codes (`numeric_mismatch`,
+`capture_unsafe`, `nondeterministic`, `post_timing_mismatch`) are gone, and the *(field)* results below that name
+them are that bench's:
 
-| Finding (step) | Means | First suspect |
+| Finding (where) | Means | First suspect |
 |---|---|---|
-| `numeric_mismatch` (`numeric/i`, `first_capture/0`) | an output outside its bound on fresh inputs | NaN, or 0xFF bytes in an integer or sub-byte output, where the kernel wrote nothing (below); otherwise indexing, masks, layouts, rounding points |
-| `numeric_mismatch` (`large_magnitude/0`) | wrong at large magnitudes only: a GEMM (`dot_product` bound) rounding its output through fp16 passed every other step and failed there with 5248 non-finite (overflowed) elements *(field, E3)* | an intermediate dtype that overflows |
-| `capture_unsafe` (`first_capture/1`, `/2`) | a replay of the captured graph on new inputs gave a wrong output (a device counter that changed the output from the 2nd or 3rd replay failed at `/1` or `/2`) | device state kept across calls: counters, sentinels and job descriptors written once instead of in every call ([authoring.md](authoring.md) §8) |
-| `capture_unsafe` at any step, detail `<step>: capture: …` | the capture itself failed: a host read of a device value in `run`, or `_do_compile: compiled in the capture` when a launch's constexpr differs from the warm-up call's (S57) | a constexpr or option computed from an input value instead of the Point's shapes, or an int argument that is 1 or a multiple of 16 in one input set only (§1; [authoring.md](authoring.md) §5, §8) |
-| `nondeterministic` at `determinism/0` (`bitwise` contracts only) | repeated same-input outputs differ bytewise while inside numeric bounds; an out-of-bound rerun is `numeric_mismatch` | atomics, arrival-order reductions and races are possible causes, not inferred from the label alone |
-| `post_timing_mismatch` (`post_timing/i`) | wrong after the timed replays | state kept between calls ([pitfall](../pitfalls/state_kept_across_calls.md)) |
+| `outputs_mismatch` (`trial 0`) | an output outside its bound on fresh inputs | NaN or stale bytes where the kernel wrote nothing (below); otherwise indexing, masks, layouts, rounding points |
+| nothing | wrong at large magnitudes only: the bench draws no large-magnitude input set. Under the former bench a GEMM (`dot_product` bound) rounding its output through fp16 passed every other step and failed `large_magnitude/0` with 5248 non-finite (overflowed) elements *(field, E3)* | an intermediate dtype that overflows: check it outside AKLR with `semantics.magnified_inputs` |
+| `outputs_mismatch` (`trial 1`, `trial 2`) | wrong after earlier calls, eager and replayed, of the same Point (under the former bench a device counter that changed the output from the 2nd or 3rd replay failed `first_capture/1` or `/2`, and state kept between calls `post_timing/i`) | state kept across calls: counters, sentinels and job descriptors written once instead of in every call ([authoring.md](authoring.md) §8; [pitfall](../pitfalls/state_kept_across_calls.md)) |
+| `candidate_raised`, detail `timing against …: candidate: …` | the timing's capture failed: a host read of a device value in `run`. A compile in the capture (a launch's constexpr that differs from the earlier calls') is no longer reported: the former bench's tripwire gave `_do_compile: compiled in the capture` | a constexpr or option computed from an input value instead of the Point's shapes, or an int argument that is 1 or a multiple of 16 in one input set only (§1; [authoring.md](authoring.md) §5, §8) |
+| nothing | repeated same-input outputs differ bytewise while inside numeric bounds: the bench no longer repeats a call (the former bench's `nondeterministic` at `determinism/0`, `bitwise` contracts only) | atomics, arrival-order reductions and races are possible causes |
 
 A mismatch's detail reads (S35)
-`<step> (<input set>): <output>: violation_fraction …, peak_bound_multiple …, bias_z_score …, <n> non-finite mismatches`.
-Before the call it captures, bench fills each output with NaN, or 0xFF bytes for integer and sub-byte dtypes (S57):
-non-finite mismatches in a float output can indicate elements the kernel never wrote, or non-finite values it computed
-(8 unwritten rows of a f3970dec copy: exactly their 24576 elements) *(field, E3)*. A failure within the violation limit
+`trial <i>: <output>: violation_fraction …, peak_bound_multiple …, bias_z_score …, <n> non-finite mismatches`.
+The bench hands the call new output buffers and does not fill them (S57), so an element the kernel never wrote holds
+whatever the allocation held. The former bench filled each output with NaN, or 0xFF bytes for integer and sub-byte
+dtypes, before the call: non-finite mismatches in a float output then indicated elements the kernel never wrote, or
+non-finite values it computed (8 unwritten rows of a f3970dec copy: exactly their 24576 elements) *(field, E3)*. A failure within the violation limit
 with no non-finite mismatch failed the bias test, a rounding that leans one way ([numerics.md](numerics.md) §1;
 `harness/skills/read-validation`).
 
@@ -319,7 +324,7 @@ without `allow_flush_denorm` the 4 DSA 64-head kernels' code did not change; acc
 
 **Localize a mismatch.**
 
-1. Reproduce the failing step outside AKLR with AKLR's own trial code, as `_calls` in
+1. Reproduce the failing trial outside AKLR with AKLR's own trial code, as `_calls` in
    `harness/scripts/forge_task/assets/aklr_forge_driver.py` does (a contract without `ranks`):
 
    ```python
@@ -327,14 +332,12 @@ without `allow_flush_denorm` the 4 DSA 64-head kernels' code did not change; acc
    import torch
    from aklr.core.contract import semantics
    from aklr.core.contract.registry import ContractRegistry
-   from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
+   from aklr.core.validation.stages.bench._measure._contract_workload import ContractWorkload
    path = "aklr/ops/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json"
-   registry = ContractRegistry.default()
-   schema = registry.parse_schema(Path(path).read_bytes(), path)
-   contract = registry.get(schema.contract_id)
-   workload = next(w for w in schema.workloads if w.axes == {"m": 16})
-   request = TrialRequest.of_workload(path, schema, contract, workload, thresholds={}, incumbent=None, baseline=None)
-   args = request.compose_inputs(next(s for s in request.steps if s.name == "numeric/1"), "cuda")  # the step's inputs
+   schema = ContractRegistry.default().parse_schema(Path(path).read_bytes(), path)
+   request = ContractWorkload.of(schema, {"m": 16})
+   contract = request.contract
+   args = request.draw("trial 1", "cuda")  # the trial's inputs
    call = {k: v for k, v in request.assemble_call(args, "cuda").items() if k in schema.kernel_call_keys}
    for name in contract.allocated_outputs:
        call[name] = torch.empty(contract.storage_shape_of(name, request.point),
@@ -357,11 +360,12 @@ without `allow_flush_denorm` the 4 DSA 64-head kernels' code did not change; acc
    `(15 - 3 * (row & 3) - 2 * part) & 15` (S59).
 4. Remove the debug outputs before validating: a kernel writes only its outputs, mutable inputs and scratch
    (`aklr/ops/README.md` § The kernel section and ABI); a debug store into the read-only input `a` of
-   gemm_n6144_k2048 failed `validate` as `input_mutation` *(field, E1)*.
+   gemm_n6144_k2048 failed the former bench as `input_mutation` *(field, E1)*; today's bench does not compare
+   read-only inputs, so nothing reports one left in.
 
 ## 6. Crashes and hangs
 
-**`candidate_crash`, "runner … exited with code -11", after one constant changed.** AKLR runs the candidate in a child
+**`task_crashed`, "runner … exited with code -11", after one constant changed.** AKLR runs the candidate in a child
 process and reports its death by the exit signal (S37); −11 is SIGSEGV, which the compiler can raise as well as the
 kernel. Setting the MiniMax-M2 MXFP4 one-token gate-up's `gate_fold` from 4 to 1 crashed every run *(field, E10)*:
 `gate_fold = 4 if m <= 2 else …` becomes the launch's `FOLD`, beside `NATIVE_FOLD=m in (1, 8)` and, at m ≤ 2,
@@ -384,8 +388,8 @@ The bench reported `NameError('cache_shared is not defined')` in every run *(fie
 branch that assumes a combination with `gl.static_assert`, so a lone change fails with your message: the 16-token DSA
 file states `gl.static_assert(TILES == 1 or PANEL_CACHE)` (S59), the 24-token file nothing.
 
-**`candidate_timeout`.** A batch of one workload whose kernel never ends (a spin on a flag nobody sets) got it after
-1200 s, 900 s + 300 s for the one workload (S57) *(field, E3)*. Run the launches outside AKLR under
+**`task_timeout`.** A task of one workload whose kernel never ends (a spin on a flag nobody sets) gets it after
+1200 s, 900 s + 300 s for the one workload (S57), as the former bench's `candidate_timeout` did *(field, E3)*. Run the launches outside AKLR under
 `timeout -k 5 <s>` with a host sync after each: the one that never returns hangs.
 
 **A GPU memory access fault** comes from the kernel that faulted, not the one that wrote out of bounds: a store past a tensor into the next allocation synced cleanly, and the fault (exit −6) came after a later kernel used the overwritten value as an index *(field, E1)* ([fault_in_the_wrong_kernel.md](../pitfalls/fault_in_the_wrong_kernel.md): a host sync after each launch outside capture). Whether an out-of-bounds access faults depends on what lies there: `buffer_load`, `buffer_store`, `gl.load` and `gl.store` 0x7ffffc00 bytes from the base of a 4 MiB tensor faulted, while 4 KiB past its end, inside the next allocation, all four synced without a fault, reading or zeroing the neighbour (two runs) *(field, E8)*. Inside mapped 2.5–4.5 GiB tensors, buffer accesses of 1–16 bytes at byte offsets from `0x7ffffffe` on did not fault: they read 0 or wrote nothing (93,511 bytes per operation checked, one run), and a vector crossing that offset read or wrote only its in-range part *(field, E1, E8)*. i32 byte offsets reaching 2^32 wrapped to a wrong in-range address *(field, E1, E8)*: gate a buffer path on the tensor's byte extent against `2**31 - 2` ([memory.md](gluon/memory.md) §3). `out of resource: shared memory` at the first launch: §4.
@@ -398,8 +402,8 @@ file states `gl.static_assert(TILES == 1 or PANEL_CACHE)` (S59), the 24-token fi
   `--kernel-trace` and with `--pmc` alike; `import triton` alone runs *(field, E12)*. `timeout` without `-k` does not
   end it: use `timeout -k 5 <s>` or `kill -9`. So no AKLR schema can be traced or counted with rocprofv3 there.
 - **`torch.profiler` works.** AKLR's bench times every Point with its own rocprofiler-sdk collector since #33
-  (`measurement_profile`: `aklr_kernel_tracer`, `gpu_duration_sum`, S64), with `torch.profiler` (Kineto) before it
-  (`kineto`, `gpu_duration_sum` in the report *(field, E12)*), one candidate number per round. For each launch's share,
+  (`bench_cudagraph`, S64), with `torch.profiler` (Kineto) before it
+  (`kineto`, `gpu_duration_sum` in that report *(field, E12)*), one candidate number per trial. For each launch's share,
   profile a few eager calls under `torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA])` and read
   `prof.key_averages().table(sort_by="device_time_total")`, shares only: hot, a DSA decode's two launches summed 15 %
   under validate's time *(field, E12)* ([profiler_misses_kernels.md](../pitfalls/profiler_misses_kernels.md)).
@@ -453,29 +457,28 @@ A replayed graph pays none of the host cost; eager calls (an uncaptured many-tok
 ## 10. Kernel time behind the ratio
 
 `python -m aklr validate` writes `report.json` under `--out` (default `aklr_validation/`, S34). In the bench stage, each
-`workload_records[]` entry has `timings[]`: `versus` (`baseline`, or `incumbent`: the kernel served at `--base`),
-`n_rounds` (16 or 32), `candidate_milliseconds` and `versus_milliseconds` per round, `log_ratio_mean` (the mean
-per-round log ratio), `ratio_lower_bound` (the gate's one-sided bound, each round's log ratio clamped to ±ln 2: a Point
-at 2.48× reads 2.000) *(field, E3)*, `min_ratio`. The speedup CI stores (the console prints it to 2 decimals) is that
-bound on the unclamped rounds, to 3 decimals (S61; `harness/skills/read-validation/references/ruler.md` § Judging);
-`findings` and `demotions` carry the codes of §5 and §6. Read both sides' medians and the stored speedup (on
-single-Point reports of f3970dec and bba17a56 it printed one line per timing, the medians of the per-round arrays):
+`records[]` entry has `versus` (`baseline`, `incumbent`: the kernel served at `--base`, or `nothing`), `versus_name`
+and `comparison` (null when not timed): `candidate_ms` and `opponent_ms` per trial, `ratio` (the gate's: the geometric
+mean of the per-trial ratios, each trial's log ratio clamped to ±ln 2, so a Point at 2.48× reads 2.000) and `speedup`
+(the same mean on the unclamped trials, to 3 decimals: what CI stores against the baseline; S61;
+`harness/skills/read-validation/references/ruler.md` § Judging);
+`findings` and `demotions` carry the codes of §5 and §6. Read both sides' medians and the speedup:
 
 ```python
 import json, statistics, sys
-from aklr.core.validation.stages._measure import TimingRecord
 
 report = json.load(open(sys.argv[1]))
 bench = next(s for s in report["stages"] if s["stage_name"] == "bench")
-for record in bench["workload_records"]:
-    for t in record["timings"]:
-        cand = statistics.median(t["candidate_milliseconds"]) * 1e3
-        vs = statistics.median(t["versus_milliseconds"]) * 1e3
-        stored = TimingRecord.model_validate(t).speedup_bounds[0]       # what CI stores
-        print(record["axes"], f"{t['n_rounds']} rounds: candidate {cand:.2f} us, {t['versus']} {vs:.2f} us, "
-              f"speedup {stored:.3f}, gate bound {t['ratio_lower_bound']:.3f} (clamped at 2)")
+for record in bench["records"]:
+    c = record["comparison"]
+    if c is None:
+        continue
+    cand = statistics.median(c["candidate_ms"]) * 1e3
+    vs = statistics.median(c["opponent_ms"]) * 1e3
+    print(record["workload"]["axes"], f"{len(c['candidate_ms'])} trials: candidate {cand:.2f} us, "
+          f"{record['versus']} {vs:.2f} us, speedup {c['speedup']:.3f}, gate ratio {c['ratio']:.3f} (clamped at 2)")
 for f in bench["findings"] + bench.get("demotions", []):
-    print(f["code"], f["axes"], f["detail"][-300:])                    # the cause is at the end
+    print(f["code"], f["workload"], f["detail"][-300:])                 # the cause is at the end
 ```
 
 The candidate's microseconds say what a change did: 3 prefetched K groups instead of 5 in the m = 16 fp8 GEMM
@@ -488,16 +491,16 @@ moved the ratio 1.475 → 1.285 and the kernel 4.23 → 4.85 µs; 8 KV splits in
 
 Check, in order:
 
-1. **Time with the bench's timer.** `bench_cudagraph(lambda: kernel.run(**call))` from `aklr.core.utils.testing`, with `call` from §5, captures as many calls as fit its 20 ms budget, each behind a 1 GiB read flush, replays the graph 10 times and returns the median over calls of each call's kernel time averaged over the replays, the flush excluded (S64). Since #33 it reads AKLR's rocprofiler-sdk collector, which registers as the module is imported (or, before torch initializes the GPU, as it does): import the module before the process's first kernel, and leave `GPU_FORCE_QUEUE_PROFILING` unset. Before #33 it took the median of 10 replays' per-call averages from Kineto, the bench's child under `GPU_FORCE_QUEUE_PROFILING=1` (S52, S57); then, readings in a separate process were within 2.2 % of validate at four Points above the floor (fp8 GEMM m = 4096, DSA f60f22e6, gated attention 32 rows, MiniMax MoE 256 tokens; two runs, two validates each), but −1.9 % to +4.1 % at the floor-bound fp8 n3072/k1536/m16 across six process pairs *(field, E16)*: two processes need not agree. Drop the first reading, as validate drops an unrecorded warm-up: after one eager call it lay within 0.01 µs of the next nine's range in the five processes tested *(field, E1)*.
+1. **Time with the bench's timer.** `bench_cudagraph(lambda: kernel.run(**call))` from `aklr.core.utils.testing`, with `call` from §5, captures as many calls as fit its 20 ms budget, each behind a 1 GiB read flush, replays the graph 10 times and returns the median over calls of each call's kernel time averaged over the replays, the flush excluded (S64). Since #33 it reads AKLR's rocprofiler-sdk collector, which registers as the module is imported: import the module before the process's first kernel, and leave `GPU_FORCE_QUEUE_PROFILING` unset. Before #33 it took the median of 10 replays' per-call averages from Kineto, the bench's child under `GPU_FORCE_QUEUE_PROFILING=1` (S52, S57); then, readings in a separate process were within 2.2 % of validate at four Points above the floor (fp8 GEMM m = 4096, DSA f60f22e6, gated attention 32 rows, MiniMax MoE 256 tokens; two runs, two validates each), but −1.9 % to +4.1 % at the floor-bound fp8 n3072/k1536/m16 across six process pairs *(field, E16)*: two processes need not agree. Drop the first reading, as validate drops an unrecorded warm-up: after one eager call it lay within 0.01 µs of the next nine's range in the five processes tested *(field, E1)*.
 2. **The flush.** AKLR reads a 1 GiB buffer before each call, inside the graph: "written lines would stay dirty for the next kernel" (S33). On a stream reading 64 MB to 1 GiB once per launch (4 warps, 2048 programs, timed eagerly with events, four runs), plain loads ran at 2.52–4.73 TB/s after a 1 GiB `zero_()` write flush against 4.43–6.02 after a 1 GiB Gluon read flush (write over read 0.49–0.79), while `.cg` loads were not slowed (4.70–6.64 against 4.65–6.67, 0.985–1.022), so a write flush inflates `.cg` over plain to 1.40–2.22× from 1.04–1.12× *(field, E17)*. Unhinted, a read-flushed stream ran 9–19 % below a hot one at 64–192 MB (hot over flushed 1.102–1.224), most at 128 MB in each run, and within 1.4 % of it at 512 MB–1 GiB (0.991–1.014) *(field, E18)*. These eager probes show that the kind of flush matters, not what AKLR's replayed calls read from MALL or HBM.
 3. **Graph replay against eager.** An eager loop of a short kernel times Triton's host path (§8).
 4. **The floor.** Before #33, every dispatch measured inside AKLR read about 4.1 µs or more (§8); the floor under the
    current collector is not measured here.
-5. **The statistic.** The stored speedup is a one-sided lower bound of the mean per-round log ratio over 16 or 32
-   unclamped rounds: compare `report.json`'s medians (§10)
+5. **The statistic.** The stored speedup is the geometric mean of the per-trial ratios over 3 unclamped trials (a
+   one-sided lower bound over 16 or 32 rounds where the former bench stored it): compare `report.json`'s medians (§10)
    ([speedup_from_another_ruler.md](../pitfalls/speedup_from_another_ruler.md)).
-6. **The inputs.** Bench's timed calls reuse one weight buffer: all 1556 timed calls of f3970dec in the bench process
-   got the same weight `data_ptr`, so a cache keyed on the weight's address hits on all but the first *(field, E3)*,
+6. **The inputs.** Bench's timed calls of a trial reuse one weight buffer (under the former bench all 1556 timed calls of f3970dec in the bench process
+   got the same weight `data_ptr`), so a cache keyed on the weight's address hits on all but the first *(field, E3)*,
    contrary to `harness/skills/read-validation/references/ruler.md`.
 
 ## Evidence
@@ -564,14 +567,14 @@ whose bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33)
 - S32 aklr/core/runtime/builder/builder.py:104 the package `<prefix><content_hash[:16]>` under `<kernel cache>/<language>/` (:106-108); `TritonBuilder` sets the language `triton` (:193-196), so the prefix is `_aklr_triton_`
 - S33 aklr/core/utils/testing.py:70 `flush_l2_cache` reads a 1 GiB buffer: "written lines would stay dirty for the next kernel" (:71)
 - S34 aklr/core/validation/command.py:25 `DEFAULT_REPORT_DIR = Path("aklr_validation")`, `--out` at :40
-- S35 aklr/core/validation/stages/_bench/_evaluation/_request.py:131 the steps `first_capture/0-2`, `numeric/0-3`, `large_magnitude/0`, `determinism/0`, `post_timing/*` and their codes (:34-40); a finding's detail starts with the step label (_reference.py:174); a mismatch's measures (aklr/core/contract/semantics/_compare.py:30-36)
+- S35 aklr/core/validation/stages/bench/_measure/_output_check.py:71 `verify`: `wrong_outputs` when the outputs are not the declared shapes and dtypes (:86–88), `outputs_mismatch` when the compare rejects them (:96), each detail starting `trial <i>:`; a call that raises is `candidate_raised` (_op_bench.py:130); a mismatch's measures (aklr/core/contract/semantics/_compare.py:30-36)
 - S36 .github/workflows/ci.yaml:218 `TRITON_CACHE_DIR` under `$RUNNER_TEMP`, emptied at every job (:206); the baseline aiter installed with `AITER_USE_SYSTEM_TRITON=1`, "Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins" (:231-233); the job fails if the image's Triton changed (:232, :236); the `amd-aiter` version must contain `+g<commit[:7]>` (:245)
-- S37 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:85 a candidate task that dies is `candidate_crash` with its last line, such as "runner … exited with code -11"
+- S37 aklr/core/validation/stages/bench/_measure/_task.py:65 a task whose runner dies is `task_crashed` at each of its workloads, with the error's message, such as "runner … exited with code -11" (aklr/core/validation/_execution/_runner.py:420)
 - S38 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/2ee56a6dbabc48a6.json#kernel.py:309 `if TILES > 1:` allocates `cache0`/`cache1`, the other branches `cache_shared` (:316-325); `TILES` at :285; 256 keys per tile (`key_offsets = gl.arange(0, 256, …)` at :308, the tile's indices at :337); the 64-head path reads `cache_shared` at :376; the host's split rule at :585
 - S39 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim512/655723f593921b08.json#kernel.py:1301 `gate_fold`; the scheduler attribute at :1306; the gate-up launch's constexprs and options at :1331-1336
 - S40 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_decode_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072/299133886d479017.json#kernel.py:25 `gl.inline_asm_elementwise("v_med3_f32 $0, $1, $2, $3", …)`
 - S41 aklr/plugins/sglang/models/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim256/d3bbbce5c0bbc61e.json#kernel.py:87 `gl.dot_fma(a0, b, acc0)` in `_router_pair_packet`
-- S42 aklr/core/validation/stages/_bench/_stage.py:159 a `kernel.requires` the installed toolchain does not meet skips the schema, listed in the report's `skipped_schemas`
+- S42 aklr/core/validation/stages/bench/_plan/_plan.py:68 a `kernel.requires` the installed toolchain does not meet skips the schema, listed in the report's `skipped_schemas`
 - S43 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:181 `parse_options` keeps only the keys that are `HIPOptions` fields
 - S44 triton-lang/triton@c01b677:python/triton/runtime/jit.py:715 at the first compile of a launch, a keyword that is neither an option nor a parameter raises `KeyError("Keyword argument %s was specified but unrecognised")`
 - S45 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/cdna4/async_copy.py:91 `buffer_load_to_shared`: "size per thread * bits per element must be 128 or 32" for the offsets layout, or lowering to LLVM fails
@@ -586,11 +589,11 @@ whose bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33)
 - S54 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:489 `set_all_fn_arg_inreg` (kernel arguments preloaded into SGPRs) is skipped when `TRITON_SWAP_MIR` or `TRITON_DUMP_MIR` is set; the debug-info scope pass runs unless `TRITON_DISABLE_LINE_INFO` (:399); `kpack` is reset to 1 on gfx950 with a warning (:119-123), `matrix_instr_nonkdim` is read only by `make_ttgir`'s matmul pass (:273) and `schedule_hint` (:105) nowhere in the backend; `make_hsaco` assembles (:574) and links (:579), a failed link raising "LLD failed to link hsaco source" (third_party/amd/python/triton_amd.cc:546)
 - S55 triton-lang/triton@c01b677:python/triton/runtime/jit.py:486 a function's source starts at its `def` line, from which `CompilationError` counts `at {lineno}:{col_offset}` (python/triton/compiler/errors.py:25); "Global variable {name} has changed since we compiled this kernel" (:766); `@triton.jit` returns an `InterpretedFunction` under `TRITON_INTERPRET` (:984), `gluon.jit` a `GluonJITFunction` regardless (python/triton/experimental/gluon/_runtime.py:106); `device_print`'s line format `pid (<x>, <y>, <z>) idx (<i1>, <i2>, ...)<prefix> (operand <n>) <elem>` (lib/Conversion/TritonGPUToLLVM/PrintOpToLLVM.cpp:98); `device_assert` emits nothing unless `options.debug` (python/triton/language/semantic.py:1811), and a Python `assert` in a jit body becomes `device_assert` (python/triton/compiler/code_generator.py:1353-1356)
 - S56 triton-lang/triton@c01b677:python/triton/compiler/code_generator.py:516 a block stops at its own `return`; a constexpr `if` traces only its taken block (:995-996), and a `return` inside it moves tracing into a dead block, so the statements after the `if` are traced (:551-554); DeepSeek-V2's `_quantized_bytes` has `return packed` before its sign-OR lines (aklr/plugins/sglang/models/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim256/d3bbbce5c0bbc61e.json#kernel.py:36, :37-39); the Qwen3-Next template keeps its rank-2 and rank-3 delta rules apart because "the unified version traced both ranks and failed on the rank it was not given" (aklr/plugins/sglang/models/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_n_v_heads8_key_dim128_value_dim128_conv_dim2048/f44007374038041f.json#gdn_primitives.py:640)
-- S57 aklr/core/validation/stages/_bench/_execution/_runner.py:496 the child's stdout and stderr go to a `TaskLog` file in the task's directory (:497), a directory deleted when the task ends (_execution/_backend.py:185); before #33 the child set `GPU_FORCE_QUEUE_PROFILING=1` (AMD-AGI/AKLR@43e112e:aklr/core/validation/stages/_bench/_execution/_runner.py:515); a dead task's finding keeps the error's last line (_evaluation/_candidate.py:78), a failed build `<type>: <message>` (_evaluation/_candidate.py:127); `candidate_timeout` after 900 s + 300 s per workload of the batch (_stage.py:50-51, :300; _evaluation/_candidate.py:79-80); `_poison_outputs` writes 0xFF bytes for integer and sub-byte dtypes, NaN otherwise (_evaluation/_candidate.py:567, :576-579), inside every capture of a new call (:485, :499); `_CompileTripwire` replaces `JITFunction._do_compile` while a check step captures (:263, :280-292), and a compile there fails the step as "compiled in the capture" (:502), `capture_unsafe` (:490-492)
+- S57 aklr/core/validation/_execution/_runner.py:488 the child's stdout and stderr go to a `TaskLog` file in the task's directory, a directory deleted when a failed task ends (_backend.py:230), the others with the run (:113); before #33 the child set `GPU_FORCE_QUEUE_PROFILING=1` (AMD-AGI/AKLR@43e112e:aklr/core/validation/stages/_bench/_execution/_runner.py:515); a dead task's finding keeps the error's message (aklr/core/validation/stages/bench/_measure/_task.py:65), a failed step `<step>: <type>: <message>` (aklr/core/validation/stages/report/_finding.py:91); `task_timeout` after 900 s + 300 s per workload of the task (aklr/core/validation/stages/bench/_measure/_schedule.py:27-28, :69; _task.py:63); the outputs are new `torch.empty` buffers, not filled (_contract_workload.py:112), and no compile tripwire runs; the former bench's `_poison_outputs` and `_CompileTripwire` are at AMD-AGI/AKLR@0e02a81:aklr/core/validation/stages/_bench/_evaluation/_candidate.py:567, :263
 - S58 triton-lang/triton@c01b677:python/triton/language/semantic.py:1418 the dot asserts `input_precision` is in the backend's list, `('ieee', 'bf16x3', 'bf16x6')` (third_party/amd/backend/compiler.py:93), which `TRITON_F32_DEFAULT` sets for Gluon's `mfma` (python/triton/knobs.py:496); "scale factor must be 16 or 32. Got …" at lib/Dialect/Triton/IR/Ops.cpp:391; `report_fatal_error("Dimensions must match, ignoring order, but they don't…")` at lib/Tools/LinearLayout.cpp:91; the `extract_slice` verifier's "Lane and warp dim basis must match…" at third_party/amd/lib/Dialect/TritonAMDGPU/IR/Dialect.cpp:222; `adjustAccForSmallKDim` multiplies each accumulator element by 1 / duplication (third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/MFMA.cpp:191, :208-213), and the scaled-MFMA lowering asserts linear-layout scales (:898-901)
 - S59 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/f60f22e6f14448c6.json#kernel.py:407 `gl.static_assert(TILES == 1 or PANEL_CACHE)`; `gl.static_assert(TOPK % (SPLITS * 256) == 0)` at :403; `(15 - 3 * (row & 3) - 2 * part & 15)` at aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads8_kv_dim576_topk2048/ae32cc132679692c.json#kernel.py:319
 - S60 triton-lang/triton@c01b677:python/triton/compiler/code_generator.py:1119 a live-in name keeps its Python type through a loop body, else "Loop carried variable {name} changed type, was {type(loop_val)} but is now {type(live_val)}", `loop_val` the body's value and `live_val` the one before the loop; `_find_carries` checks every live-in that is a Triton value (:482-488), constexprs included (`class constexpr(base_value)`, python/triton/language/core.py:210), for `range` (:1284) and `while` (:1131); `static_range` binds its variable as a `constexpr` and leaves it bound (:1212); a plain assignment turns an int into a tensor (:733-737), a `gl.constexpr`-annotated one keeps a constexpr (:747-749)
-- S61 aklr/core/validation/stages/_measure.py:260 each bench round reads `bench_cudagraph` through `graph_reading` (:260-267) after one unrecorded reading and a warm-up round (:284-286); `speedup_bounds`, the bounds of the mean ratio over the unclamped rounds to 3 decimals (:119), against the gate's on rounds clamped to ±ln 2 (:50, :206); `versus` is `baseline` or `incumbent` (:100); `WorkloadRecord.speedup` is the stored one (_bench/_report.py:85-93), printed to 2 decimals (:188)
+- S61 aklr/core/validation/stages/bench/_measure/_op_bench.py:144 each trial is timed once per participant by `bench_cudagraph` (:211-219), in a seeded shuffled order (:164-168); `Comparison.speedup`, the geometric mean of the unclamped per-trial ratios to 3 decimals (aklr/core/validation/stages/bench/_measure/_result.py:42), against the gate's `ratio` on trials clamped to ±ln 2 (:41); `versus` is `baseline`, `incumbent` or `nothing` (aklr/core/validation/stages/bench/_plan/_opponent.py:65, :100, :123)
 - S62 harness/skills/kb/hardware/gfx950/cdna4/ch03_kernel_state.md:195 CDNA4 ISA §3.6.5: "LDS space is allocated to a work-group or wavefront in contiguous blocks of 1280 bytes on 1280-byte alignment"
 - S63 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/_semantic.py:199 a broadcast operand in `AutoLayout` takes the other operand's layout (`set_auto_layout`, :201–204), only two different concrete layouts raising (:205–206); `gl.arange` and `gl.full`, and so `gl.zeros`, default to `AutoLayout` (:214–215, :233–234; python/triton/experimental/gluon/language/_standard.py:29)
 - S64 AMD-AGI/AKLR@0e02a81:aklr/core/utils/testing.py:164 `bench_cudagraph` since #33: as many calls as fit `rep` = 20 ms, each behind `flush_l2_cache()` and inside its own profiler scope (:202–210), the graph replayed 10 times (:212–217), a call's time the sum of its scope's kernel durations over the replays divided by 10 (:222–224), the median over calls returned (:245); AKLR's rocprofiler-sdk collector (`kernel_tracer`, :42) records the durations; `graph_kernel_timing_environment` sets `ROCP_TOOL_ATTACH=1` and unsets `GPU_FORCE_QUEUE_PROFILING` (:25–31), and the bench's child enters it before its first GPU call (aklr/core/validation/stages/_bench/_execution/_runner.py:525–528); `measurement_profile` names `aklr_kernel_tracer`, `gpu_duration_sum`, 10 replays, `mean_over_replays_per_call` and `median` (aklr/core/validation/stages/_measure.py:69–80)

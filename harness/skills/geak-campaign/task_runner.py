@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GEAK's task runner for an AKLR schema: compile, correctness and performance, each done by forge_task's driver.py
 beside this task. Correctness is what `python -m aklr validate` returns for kernel.py published as the schema's
-kernel; performance is AKLR's own graph timer on AKLR's timing inputs, one line per workload. Reports go to build/.
+kernel; performance is AKLR's own graph timer on the inputs of validate's first trial, one line per workload. Reports go to build/.
 """
 
 import argparse

@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 from aklr.core.validation import AuditStage, ValidationScope
-from aklr.core.validation.stages._audit._hip import check_hip_kernel
-from aklr.core.validation.stages._audit._hsaco import check_hsaco_kernel
-from aklr.core.validation.stages._audit._stage import check_kernel
-from aklr.core.validation.stages._report._finding import Finding
+from aklr.core.validation.stages.audit._hip import check_hip_kernel
+from aklr.core.validation.stages.audit._hsaco import check_hsaco_kernel
+from aklr.core.validation.stages.audit._stage import check_kernel
+from aklr.core.validation.stages.report._finding import Finding
 from tests.op_case import HIP_GEMM_KERNEL_SOURCE, HSACO_GEMM_KERNEL_SOURCE, OpCase
 
 _SIGNATURE = "def run(*, a, b, trans_b, bias, out_dtype, out):"  # gemm@1.0's call keys
@@ -479,7 +479,7 @@ class TestAuditStage:
             (),
         )
         report = AuditStage().run(scope, None)
-        assert {f.code.value for f in report.findings} == codes
+        assert {f.code for f in report.findings} == codes
 
     def test_hip_kernel_takes_the_sh_rules(self, tmp_path: Path) -> None:
         """A hip schema's kernel is audited by SH0-SH5, not SA0-SA4."""
@@ -491,7 +491,7 @@ class TestAuditStage:
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
         (finding,) = AuditStage().run(scope, None).findings
-        assert finding.code.value == "source_rejected"
+        assert finding.code == "source_rejected"
         assert finding.detail.startswith("SH3 kernel.hip:")
 
     def test_hsaco_kernel_takes_the_sa_and_sc_rules(self, tmp_path: Path) -> None:
@@ -506,5 +506,5 @@ class TestAuditStage:
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
         findings = AuditStage().run(scope, None).findings
-        assert {f.code.value for f in findings} == {"source_rejected"}
+        assert {f.code for f in findings} == {"source_rejected"}
         assert sorted(f.detail.split(" kernel.py:")[0] for f in findings) == ["SA2", "SC1"]
