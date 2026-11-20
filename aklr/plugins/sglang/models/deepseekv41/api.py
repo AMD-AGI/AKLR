@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
+from aklr.ops.gemm.api import gemm
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models.deepseekv41.contract import (
     DEEPSEEKV41_MXFP8_LINEAR,
@@ -187,3 +188,47 @@ def _wo_a_bmm(o_fp8, weight, o_scale, weight_scale):
             return out
         outputs.append(out)
     return torch.stack(outputs, dim=1)
+
+
+@sglang_route("sglang.srt.models.deepseek_v4._apply_wo_a_bf16_matmul", versions=_SGLANG)
+def _apply_wo_a_bf16_matmul(
+    o,
+    wo_a,
+    is_decode,
+    is_target_verify=False,
+    fuse_mxfp8_quant=False,
+    is_prefill=False,
+    fast_path=False,
+    fp8_grid=False,
+    emit_fp8=False,
+):
+    """The wo_a projection a monokernel's prefill keeps in bf16, as one GEMM a group, returned as
+    sglang's einsum returns it: a token's groups side by side. Decode and target-verify rows stay
+    on sglang's kernels, which return other forms."""
+    import torch
+
+    if is_decode or is_target_verify or not (o.ndim == wo_a.ndim == 3) or o.shape[1] != wo_a.shape[0]:
+        return FallbackReason.OUT_OF_CONTRACT
+    # a group's rows lie a token apart: asked with a row-major stand-in, copied only for a call the op takes
+    stand_in = torch.empty((o.shape[0], o.shape[2]), dtype=o.dtype, device=o.device)
+    outputs = []
+    for group, weight in enumerate(wo_a):
+        if (reason := gemm.fallback_reason(stand_in, weight)) is not None:
+            return reason
+        out = gemm(o[:, group].contiguous(), weight)
+        if isinstance(out, FallbackReason):
+            return out
+        outputs.append(out)
+    return torch.stack(outputs, dim=1)
+
+
+@sglang_route("sglang.kernels.ops.gemm.router_gemv_hip.rocm_router_gemv_split_k", versions=_SGLANG)
+def _rocm_router_gemv_split_k(x, w):
+    """The GEMV sglang runs at 64 rows or fewer for the MoE router's logits and the indexer's head
+    weights, asked of gemm as the product it is: x @ w.T in fp32."""
+    import torch
+
+    # shortcut: the op is asked for, which records the call, and the GEMV is left to sglang, whose
+    # callers sum the split-K partials it returns in their own launch; return a kernel's product as
+    # the one partial once a kernel serves it with that sum's batch invariance
+    return gemm.fallback_reason(x, w, out_dtype=torch.float32) or FallbackReason.OUT_OF_CONTRACT
