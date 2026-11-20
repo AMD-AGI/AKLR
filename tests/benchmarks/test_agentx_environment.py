@@ -559,11 +559,9 @@ def test_wait_returns_once_every_gpu_reads_zero():
 
 def test_wait_times_out_naming_the_busy_gpus():
     clock = iter([0, 0, 200, 301])
-    with (
-        pytest.MonkeyPatch.context() as patch,
-        pytest.raises(runtime.CleanupError, match=r"after 300 s: GPU5 12%"),
-    ):
+    with pytest.MonkeyPatch.context() as patch:
         patch.setattr(runtime, "vram_used_percent", mock.Mock(return_value={0: 0, 5: 12}))
         patch.setattr(runtime.time, "monotonic", lambda: next(clock))
         patch.setattr(runtime.time, "sleep", mock.Mock())
-        runtime.wait_gpus_idle(timeout_s=300, poll_s=5)
+        with pytest.raises(runtime.CleanupError, match=r"after 300 s: GPU5 12%"):
+            runtime.wait_gpus_idle(timeout_s=300, poll_s=5)

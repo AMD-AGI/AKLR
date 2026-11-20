@@ -1,0 +1,15 @@
+# Lint rules for tests only, on top of the repository's. tests/AGENTS.md states what they enforce.
+extend = "../pyproject.toml"
+# keeps `aklr` and `tests` first-party for import sorting, as from the repository root
+src = [".."]
+
+[lint]
+# PLC2701 is a preview rule; explicit-preview-rules keeps every other preview rule off.
+preview = true
+explicit-preview-rules = true
+extend-select = [
+    "PT",      # pytest style: plain asserts, fixtures, parametrize, raises
+    "SLF001",  # no access to a private member: test at seams
+    "PLC2701", # no import of a private name: test at seams
+    "INP001",  # every test directory is a package
+]

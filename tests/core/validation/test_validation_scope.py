@@ -18,13 +18,10 @@ _UUID = "0123456789abcdef"
     ("path", "kind"),
     [
         (f"aklr/ops/gemm/impls/triton/gemm_n8_k8/{_UUID}.json", "schema_data"),
-        (
-            f"aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_model_dim8/{_UUID}.json",
-            "schema_data",
-        ),
-        ("aklr/plugins/sglang/models/qwen2_moe/api.py", "other"),
+        ("aklr/ops/gemm/api.py", "other"),
+        ("aklr/seam/aiter.py", "other"),
         ("aklr/ops/gemm/impls/triton/fp8/fp8_gfx950_m1.json", "other"),
-        ("tests/plugins/sglang/test_qwen2_moe_contract.py", "other"),
+        ("tests/core/test_schema.py", "other"),
         ("aklr/core/validation/stages/validation_scope.py", "core"),
         ("stack.json", "core"),
         ("aklr/core/README.md", "other"),
@@ -44,5 +41,5 @@ def test_under_keeps_the_schemas_inside_or_outside_a_directory(tmp_path: Path) -
     assert scope.under("aklr/op", inside=False) == scope
     assert scope.under("./aklr/ops") == scope.under("aklr/ops")
     assert scope.under(".") == scope
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="is not in the subpath"):
         scope.under("..")
