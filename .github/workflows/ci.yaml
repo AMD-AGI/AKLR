@@ -93,6 +93,7 @@ jobs:
     outputs:
       gpu_enabled: ${{ env.GPU_ENABLED }}
       gpu_runner: ${{ env.AKLR_GPU_RUNNER }}
+      reference_contracts: ${{ steps.reference_scope.outputs.contracts }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
       measured_by_bot: ${{ steps.lint.outputs.measured_by_bot }}
@@ -195,6 +196,16 @@ jobs:
             exit "$code"
           fi
 
+      - name: Select affected op reference tests
+        id: reference_scope
+        if: github.event_name == 'pull_request' && env.GPU_ENABLED == 'true'
+        env:
+          BASE: ${{ steps.lint.outputs.validation_base }}
+        run: |
+          contracts=$(PYTHONPATH=. python .github/scripts/reference_contracts.py "$BASE")
+          echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
+          echo "AITER op baseline/reference tests: ${contracts:-all contracts}" >> "$GITHUB_STEP_SUMMARY"
+
   # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; beside it sglang-test and
   # vllm-test. No secrets and no actions/cache: they run the PR's code and kernels.
   aiter-test:
@@ -208,6 +219,7 @@ jobs:
       TIMEOUT_MINUTES: 180
       IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
       TESTS: tests/core tests/ops tests/benchmarks
+      AKLR_REFERENCE_CONTRACTS: ${{ needs.code-lint.outputs.reference_contracts }}
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
     steps:
       - &checkout_source
@@ -220,7 +232,7 @@ jobs:
         name: Run unit tests (${{ env.TESTS }}) and validation on a GPU node
         shell: bash .github/scripts/gpu_job.sh {0}
         env:
-          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER PLUGINS
+          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER PLUGINS AKLR_REFERENCE_CONTRACTS
           VALIDATE: ${{ needs.code-lint.outputs.has_bench_paths }}
           BASE: ${{ needs.code-lint.outputs.validation_base }}
           MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
