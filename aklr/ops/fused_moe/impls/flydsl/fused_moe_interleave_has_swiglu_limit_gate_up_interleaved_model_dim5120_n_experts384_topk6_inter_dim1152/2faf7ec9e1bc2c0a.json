@@ -394,6 +394,14 @@
     },
     {
       "axes": {
+        "n_tokens": 130
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 132
       },
       "scalars": {
@@ -467,6 +475,14 @@
     {
       "axes": {
         "n_tokens": 154
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 155
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -586,6 +602,14 @@
     },
     {
       "axes": {
+        "n_tokens": 173
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 176
       },
       "scalars": {
@@ -691,6 +715,14 @@
     {
       "axes": {
         "n_tokens": 218
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -827,6 +859,14 @@
     {
       "axes": {
         "n_tokens": 277
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 283
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -1026,6 +1066,14 @@
     },
     {
       "axes": {
+        "n_tokens": 330
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 331
       },
       "scalars": {
@@ -1051,6 +1099,14 @@
     {
       "axes": {
         "n_tokens": 336
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 341
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -1106,6 +1162,14 @@
     },
     {
       "axes": {
+        "n_tokens": 351
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 352
       },
       "scalars": {
@@ -1130,6 +1194,14 @@
     },
     {
       "axes": {
+        "n_tokens": 359
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 360
       },
       "scalars": {
@@ -1147,6 +1219,14 @@
     {
       "axes": {
         "n_tokens": 362
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 363
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -1211,6 +1291,14 @@
     {
       "axes": {
         "n_tokens": 376
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 377
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -1290,6 +1378,14 @@
     },
     {
       "axes": {
+        "n_tokens": 393
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 397
       },
       "scalars": {
@@ -1362,6 +1458,14 @@
     },
     {
       "axes": {
+        "n_tokens": 409
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 410
       },
       "scalars": {
@@ -1379,6 +1483,14 @@
     {
       "axes": {
         "n_tokens": 412
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 414
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -1411,6 +1523,14 @@
     {
       "axes": {
         "n_tokens": 420
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 431
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -1618,6 +1738,14 @@
     },
     {
       "axes": {
+        "n_tokens": 503
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 504
       },
       "scalars": {
@@ -1635,6 +1763,14 @@
     {
       "axes": {
         "n_tokens": 506
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 507
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -1667,6 +1803,14 @@
     {
       "axes": {
         "n_tokens": 512
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 515
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -1914,6 +2058,22 @@
     },
     {
       "axes": {
+        "n_tokens": 678
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 680
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 681
       },
       "scalars": {
@@ -2002,6 +2162,14 @@
     },
     {
       "axes": {
+        "n_tokens": 692
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 693
       },
       "scalars": {
@@ -2074,6 +2242,14 @@
     },
     {
       "axes": {
+        "n_tokens": 703
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 704
       },
       "scalars": {
@@ -2106,7 +2282,23 @@
     },
     {
       "axes": {
+        "n_tokens": 719
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 720
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 721
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2146,7 +2338,23 @@
     },
     {
       "axes": {
+        "n_tokens": 726
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 736
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 737
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2187,6 +2395,14 @@
     {
       "axes": {
         "n_tokens": 752
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 754
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2258,6 +2474,14 @@
     },
     {
       "axes": {
+        "n_tokens": 787
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 788
       },
       "scalars": {
@@ -2275,6 +2499,14 @@
     {
       "axes": {
         "n_tokens": 790
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 796
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2314,6 +2546,14 @@
     },
     {
       "axes": {
+        "n_tokens": 801
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 803
       },
       "scalars": {
@@ -2339,6 +2579,14 @@
     {
       "axes": {
         "n_tokens": 816
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 826
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2402,7 +2650,23 @@
     },
     {
       "axes": {
+        "n_tokens": 858
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 864
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 865
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2443,6 +2707,14 @@
     {
       "axes": {
         "n_tokens": 882
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 892
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2546,6 +2818,14 @@
     },
     {
       "axes": {
+        "n_tokens": 947
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 948
       },
       "scalars": {
@@ -2571,6 +2851,14 @@
     {
       "axes": {
         "n_tokens": 951
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 952
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2682,6 +2970,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1032
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1033
       },
       "scalars": {
@@ -2715,6 +3011,14 @@
     {
       "axes": {
         "n_tokens": 1038
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1039
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -2954,6 +3258,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1075
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1076
       },
       "scalars": {
@@ -2987,6 +3299,14 @@
     {
       "axes": {
         "n_tokens": 1081
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1082
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -3058,6 +3378,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1094
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1095
       },
       "scalars": {
@@ -3083,6 +3411,14 @@
     {
       "axes": {
         "n_tokens": 1099
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1100
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -3178,6 +3514,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1118
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1120
       },
       "scalars": {
@@ -3226,6 +3570,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1127
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1128
       },
       "scalars": {
@@ -3267,6 +3619,22 @@
     {
       "axes": {
         "n_tokens": 1133
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1134
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1135
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -3458,6 +3826,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1167
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1170
       },
       "scalars": {
@@ -3475,6 +3851,14 @@
     {
       "axes": {
         "n_tokens": 1173
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1174
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -3570,6 +3954,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1189
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1191
       },
       "scalars": {
@@ -3587,6 +3979,14 @@
     {
       "axes": {
         "n_tokens": 1195
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1196
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -3706,6 +4106,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1212
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1213
       },
       "scalars": {
@@ -3770,7 +4178,23 @@
     },
     {
       "axes": {
+        "n_tokens": 1226
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1227
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1229
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -3802,6 +4226,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1235
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1236
       },
       "scalars": {
@@ -3826,7 +4258,23 @@
     },
     {
       "axes": {
+        "n_tokens": 1239
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1240
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1242
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -3898,7 +4346,31 @@
     },
     {
       "axes": {
+        "n_tokens": 1254
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1255
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1256
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1257
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -3946,6 +4418,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1266
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1267
       },
       "scalars": {
@@ -3955,6 +4435,14 @@
     {
       "axes": {
         "n_tokens": 1268
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1271
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -4074,6 +4562,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1289
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1290
       },
       "scalars": {
@@ -4106,6 +4602,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1295
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1296
       },
       "scalars": {
@@ -4131,6 +4635,14 @@
     {
       "axes": {
         "n_tokens": 1300
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1302
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -4210,6 +4722,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1324
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1325
       },
       "scalars": {
@@ -4266,6 +4786,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1350
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1351
       },
       "scalars": {
@@ -4275,6 +4803,22 @@
     {
       "axes": {
         "n_tokens": 1352
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1353
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1355
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -4339,6 +4883,14 @@
     {
       "axes": {
         "n_tokens": 1363
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1366
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -4490,6 +5042,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1393
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1395
       },
       "scalars": {
@@ -4515,6 +5075,14 @@
     {
       "axes": {
         "n_tokens": 1408
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1409
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -4650,6 +5218,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1433
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1434
       },
       "scalars": {
@@ -4691,6 +5267,14 @@
     {
       "axes": {
         "n_tokens": 1442
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1443
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -4754,6 +5338,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1460
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1462
       },
       "scalars": {
@@ -4795,6 +5387,22 @@
     {
       "axes": {
         "n_tokens": 1470
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1471
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1475
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -4874,6 +5482,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1485
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1487
       },
       "scalars": {
@@ -4898,6 +5514,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1490
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1491
       },
       "scalars": {
@@ -4915,6 +5539,14 @@
     {
       "axes": {
         "n_tokens": 1495
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1496
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -5106,6 +5738,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1524
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1525
       },
       "scalars": {
@@ -5138,7 +5778,23 @@
     },
     {
       "axes": {
+        "n_tokens": 1531
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1533
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1534
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -5250,7 +5906,23 @@
     },
     {
       "axes": {
+        "n_tokens": 1553
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1554
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1555
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -5299,6 +5971,14 @@
     {
       "axes": {
         "n_tokens": 1561
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1562
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -5355,6 +6035,14 @@
     {
       "axes": {
         "n_tokens": 1570
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1571
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -5546,6 +6234,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1595
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1596
       },
       "scalars": {
@@ -5563,6 +6259,14 @@
     {
       "axes": {
         "n_tokens": 1598
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1599
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -5746,6 +6450,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1632
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1634
       },
       "scalars": {
@@ -5763,6 +6475,14 @@
     {
       "axes": {
         "n_tokens": 1636
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1640
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -5858,6 +6578,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1655
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1657
       },
       "scalars": {
@@ -5938,6 +6666,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1668
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1669
       },
       "scalars": {
@@ -5970,6 +6706,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1678
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1679
       },
       "scalars": {
@@ -5995,6 +6739,14 @@
     {
       "axes": {
         "n_tokens": 1682
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1683
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -6186,6 +6938,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1718
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1720
       },
       "scalars": {
@@ -6362,6 +7122,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1745
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1746
       },
       "scalars": {
@@ -6403,6 +7171,14 @@
     {
       "axes": {
         "n_tokens": 1752
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1754
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -6626,6 +7402,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1786
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1787
       },
       "scalars": {
@@ -6699,6 +7483,14 @@
     {
       "axes": {
         "n_tokens": 1796
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1797
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -6914,6 +7706,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1829
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1830
       },
       "scalars": {
@@ -7010,6 +7810,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1852
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1853
       },
       "scalars": {
@@ -7050,6 +7858,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1858
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1859
       },
       "scalars": {
@@ -7059,6 +7875,14 @@
     {
       "axes": {
         "n_tokens": 1860
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1861
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -7122,6 +7946,22 @@
     },
     {
       "axes": {
+        "n_tokens": 1870
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1871
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1872
       },
       "scalars": {
@@ -7131,6 +7971,14 @@
     {
       "axes": {
         "n_tokens": 1874
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1875
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -7251,6 +8099,14 @@
     {
       "axes": {
         "n_tokens": 1894
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1896
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -7386,6 +8242,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1918
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1919
       },
       "scalars": {
@@ -7411,6 +8275,14 @@
     {
       "axes": {
         "n_tokens": 1922
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1923
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -7450,6 +8322,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1929
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1933
       },
       "scalars": {
@@ -7459,6 +8339,14 @@
     {
       "axes": {
         "n_tokens": 1934
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1935
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -7682,6 +8570,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1974
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1976
       },
       "scalars": {
@@ -7762,6 +8658,14 @@
     },
     {
       "axes": {
+        "n_tokens": 1992
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 1994
       },
       "scalars": {
@@ -7826,7 +8730,23 @@
     },
     {
       "axes": {
+        "n_tokens": 2009
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2013
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2016
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -7851,6 +8771,14 @@
     {
       "axes": {
         "n_tokens": 2022
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2023
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -8146,6 +9074,22 @@
     },
     {
       "axes": {
+        "n_tokens": 2070
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2071
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2072
       },
       "scalars": {
@@ -8346,6 +9290,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2100
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2101
       },
       "scalars": {
@@ -8427,6 +9379,14 @@
     {
       "axes": {
         "n_tokens": 2112
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2113
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -8610,6 +9570,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2144
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2145
       },
       "scalars": {
@@ -8682,6 +9650,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2155
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2156
       },
       "scalars": {
@@ -8714,6 +9690,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2165
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2166
       },
       "scalars": {
@@ -8731,6 +9715,14 @@
     {
       "axes": {
         "n_tokens": 2169
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2170
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -8922,6 +9914,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2216
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2217
       },
       "scalars": {
@@ -9002,6 +10002,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2229
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2230
       },
       "scalars": {
@@ -9011,6 +10019,14 @@
     {
       "axes": {
         "n_tokens": 2231
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2236
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -9083,6 +10099,14 @@
     {
       "axes": {
         "n_tokens": 2261
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2262
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -9242,6 +10266,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2295
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2296
       },
       "scalars": {
@@ -9386,6 +10418,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2325
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2326
       },
       "scalars": {
@@ -9490,7 +10530,23 @@
     },
     {
       "axes": {
+        "n_tokens": 2343
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2345
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2347
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -9602,6 +10658,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2374
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2375
       },
       "scalars": {
@@ -9619,6 +10683,14 @@
     {
       "axes": {
         "n_tokens": 2378
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2379
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -9699,6 +10771,14 @@
     {
       "axes": {
         "n_tokens": 2399
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2400
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -9866,6 +10946,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2426
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2427
       },
       "scalars": {
@@ -9875,6 +10963,14 @@
     {
       "axes": {
         "n_tokens": 2428
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2432
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -9963,6 +11059,14 @@
     {
       "axes": {
         "n_tokens": 2453
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2454
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -10218,6 +11322,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2495
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2497
       },
       "scalars": {
@@ -10235,6 +11347,14 @@
     {
       "axes": {
         "n_tokens": 2499
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2501
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -10338,6 +11458,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2514
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2515
       },
       "scalars": {
@@ -10394,6 +11522,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2522
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2523
       },
       "scalars": {
@@ -10427,6 +11563,14 @@
     {
       "axes": {
         "n_tokens": 2527
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2528
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -10546,6 +11690,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2582
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2585
       },
       "scalars": {
@@ -10587,6 +11739,14 @@
     {
       "axes": {
         "n_tokens": 2592
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2594
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -10658,6 +11818,22 @@
     },
     {
       "axes": {
+        "n_tokens": 2618
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2623
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2631
       },
       "scalars": {
@@ -10675,6 +11851,14 @@
     {
       "axes": {
         "n_tokens": 2633
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2634
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -10754,6 +11938,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2659
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2660
       },
       "scalars": {
@@ -10779,6 +11971,14 @@
     {
       "axes": {
         "n_tokens": 2665
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2666
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -10834,7 +12034,31 @@
     },
     {
       "axes": {
+        "n_tokens": 2674
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2676
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2678
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2679
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -10874,6 +12098,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2687
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2688
       },
       "scalars": {
@@ -10891,6 +12123,14 @@
     {
       "axes": {
         "n_tokens": 2691
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2692
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -10986,6 +12226,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2718
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2721
       },
       "scalars": {
@@ -11026,7 +12274,23 @@
     },
     {
       "axes": {
+        "n_tokens": 2731
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2732
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2735
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -11043,6 +12307,14 @@
     {
       "axes": {
         "n_tokens": 2739
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2740
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -11074,6 +12346,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2745
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2746
       },
       "scalars": {
@@ -11083,6 +12363,14 @@
     {
       "axes": {
         "n_tokens": 2747
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2752
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -11146,6 +12434,22 @@
     },
     {
       "axes": {
+        "n_tokens": 2760
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2762
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2768
       },
       "scalars": {
@@ -11194,6 +12498,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2779
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2781
       },
       "scalars": {
@@ -11227,6 +12539,14 @@
     {
       "axes": {
         "n_tokens": 2796
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2797
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -11386,6 +12706,22 @@
     },
     {
       "axes": {
+        "n_tokens": 2837
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2839
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2841
       },
       "scalars": {
@@ -11450,6 +12786,22 @@
     },
     {
       "axes": {
+        "n_tokens": 2854
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2856
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2857
       },
       "scalars": {
@@ -11498,6 +12850,22 @@
     },
     {
       "axes": {
+        "n_tokens": 2870
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2872
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2873
       },
       "scalars": {
@@ -11514,6 +12882,14 @@
     },
     {
       "axes": {
+        "n_tokens": 2882
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 2884
       },
       "scalars": {
@@ -11523,6 +12899,14 @@
     {
       "axes": {
         "n_tokens": 2886
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2887
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -11571,6 +12955,14 @@
     {
       "axes": {
         "n_tokens": 2900
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2901
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -11731,6 +13123,14 @@
     {
       "axes": {
         "n_tokens": 2947
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2949
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -11899,6 +13299,14 @@
     {
       "axes": {
         "n_tokens": 2997
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2998
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -12090,6 +13498,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3042
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3044
       },
       "scalars": {
@@ -12210,7 +13626,23 @@
     },
     {
       "axes": {
+        "n_tokens": 3059
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3060
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3061
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -12307,6 +13739,14 @@
     {
       "axes": {
         "n_tokens": 3073
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3074
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -12522,6 +13962,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3113
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3117
       },
       "scalars": {
@@ -12570,6 +14018,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3128
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3131
       },
       "scalars": {
@@ -12587,6 +14043,14 @@
     {
       "axes": {
         "n_tokens": 3133
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3136
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -12619,6 +14083,22 @@
     {
       "axes": {
         "n_tokens": 3151
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3158
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3164
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -12706,7 +14186,23 @@
     },
     {
       "axes": {
+        "n_tokens": 3196
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3199
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3200
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -12826,7 +14322,23 @@
     },
     {
       "axes": {
+        "n_tokens": 3273
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3278
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3288
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -12962,6 +14474,22 @@
     },
     {
       "axes": {
+        "n_tokens": 3317
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3323
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3335
       },
       "scalars": {
@@ -12971,6 +14499,14 @@
     {
       "axes": {
         "n_tokens": 3343
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3344
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13090,6 +14626,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3400
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3405
       },
       "scalars": {
@@ -13114,7 +14658,23 @@
     },
     {
       "axes": {
+        "n_tokens": 3417
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3419
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3420
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13194,6 +14754,22 @@
     },
     {
       "axes": {
+        "n_tokens": 3453
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3457
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3459
       },
       "scalars": {
@@ -13203,6 +14779,14 @@
     {
       "axes": {
         "n_tokens": 3463
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3464
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13258,6 +14842,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3495
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3496
       },
       "scalars": {
@@ -13299,6 +14891,14 @@
     {
       "axes": {
         "n_tokens": 3508
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3509
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13434,6 +15034,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3563
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3564
       },
       "scalars": {
@@ -13498,6 +15106,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3608
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3617
       },
       "scalars": {
@@ -13554,7 +15170,23 @@
     },
     {
       "axes": {
+        "n_tokens": 3648
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3649
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3650
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13634,6 +15266,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3669
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3670
       },
       "scalars": {
@@ -13643,6 +15283,22 @@
     {
       "axes": {
         "n_tokens": 3673
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3674
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3676
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13690,6 +15346,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3686
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3687
       },
       "scalars": {
@@ -13723,6 +15387,14 @@
     {
       "axes": {
         "n_tokens": 3692
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3695
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13794,6 +15466,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3726
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3727
       },
       "scalars": {
@@ -13826,7 +15506,31 @@
     },
     {
       "axes": {
+        "n_tokens": 3753
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3757
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3762
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3763
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13883,6 +15587,14 @@
     {
       "axes": {
         "n_tokens": 3779
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3786
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -13962,6 +15674,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3814
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3818
       },
       "scalars": {
@@ -13987,6 +15707,14 @@
     {
       "axes": {
         "n_tokens": 3841
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3842
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14066,6 +15794,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3864
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3868
       },
       "scalars": {
@@ -14091,6 +15827,14 @@
     {
       "axes": {
         "n_tokens": 3876
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3879
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14226,6 +15970,14 @@
     },
     {
       "axes": {
+        "n_tokens": 3932
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 3933
       },
       "scalars": {
@@ -14259,6 +16011,14 @@
     {
       "axes": {
         "n_tokens": 3949
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3955
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14363,6 +16123,14 @@
     {
       "axes": {
         "n_tokens": 3992
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3993
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14546,6 +16314,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4081
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4084
       },
       "scalars": {
@@ -14562,6 +16338,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4087
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4089
       },
       "scalars": {
@@ -14571,6 +16355,14 @@
     {
       "axes": {
         "n_tokens": 4091
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4093
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14595,6 +16387,14 @@
     {
       "axes": {
         "n_tokens": 4102
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4106
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14674,6 +16474,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4142
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4143
       },
       "scalars": {
@@ -14722,6 +16530,22 @@
     },
     {
       "axes": {
+        "n_tokens": 4151
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4154
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4156
       },
       "scalars": {
@@ -14739,6 +16563,14 @@
     {
       "axes": {
         "n_tokens": 4162
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4168
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14810,6 +16642,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4223
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4228
       },
       "scalars": {
@@ -14874,6 +16714,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4251
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4252
       },
       "scalars": {
@@ -14883,6 +16731,30 @@
     {
       "axes": {
         "n_tokens": 4256
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4262
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4263
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4278
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14938,6 +16810,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4301
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4308
       },
       "scalars": {
@@ -14978,7 +16858,23 @@
     },
     {
       "axes": {
+        "n_tokens": 4333
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4337
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4339
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -14995,6 +16891,14 @@
     {
       "axes": {
         "n_tokens": 4344
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4349
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15098,6 +17002,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4416
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4419
       },
       "scalars": {
@@ -15107,6 +17019,14 @@
     {
       "axes": {
         "n_tokens": 4423
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4424
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15178,6 +17098,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4474
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4475
       },
       "scalars": {
@@ -15242,6 +17170,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4509
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4511
       },
       "scalars": {
@@ -15290,6 +17226,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4536
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4539
       },
       "scalars": {
@@ -15315,6 +17259,14 @@
     {
       "axes": {
         "n_tokens": 4552
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4563
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15370,6 +17322,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4585
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4588
       },
       "scalars": {
@@ -15402,7 +17362,23 @@
     },
     {
       "axes": {
+        "n_tokens": 4599
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4602
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4603
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15490,6 +17466,22 @@
     },
     {
       "axes": {
+        "n_tokens": 4642
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4648
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4651
       },
       "scalars": {
@@ -15507,6 +17499,14 @@
     {
       "axes": {
         "n_tokens": 4656
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4657
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15546,6 +17546,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4686
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4687
       },
       "scalars": {
@@ -15555,6 +17563,14 @@
     {
       "axes": {
         "n_tokens": 4688
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4689
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15666,6 +17682,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4714
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4719
       },
       "scalars": {
@@ -15675,6 +17699,14 @@
     {
       "axes": {
         "n_tokens": 4724
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4725
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15762,6 +17794,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4780
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4783
       },
       "scalars": {
@@ -15795,6 +17835,14 @@
     {
       "axes": {
         "n_tokens": 4836
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4854
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15843,6 +17891,38 @@
     {
       "axes": {
         "n_tokens": 4883
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4885
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4886
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4887
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4910
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15906,6 +17986,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4969
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4970
       },
       "scalars": {
@@ -15946,6 +18034,14 @@
     },
     {
       "axes": {
+        "n_tokens": 4989
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4991
       },
       "scalars": {
@@ -15955,6 +18051,14 @@
     {
       "axes": {
         "n_tokens": 4995
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4997
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -15987,6 +18091,14 @@
     {
       "axes": {
         "n_tokens": 5004
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5005
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16098,6 +18210,22 @@
     },
     {
       "axes": {
+        "n_tokens": 5035
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5041
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5044
       },
       "scalars": {
@@ -16115,6 +18243,14 @@
     {
       "axes": {
         "n_tokens": 5048
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5054
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16202,6 +18338,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5111
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5118
       },
       "scalars": {
@@ -16219,6 +18363,14 @@
     {
       "axes": {
         "n_tokens": 5139
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5142
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16251,6 +18403,14 @@
     {
       "axes": {
         "n_tokens": 5165
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5186
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16291,6 +18451,14 @@
     {
       "axes": {
         "n_tokens": 5202
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5203
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16378,6 +18546,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5254
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5259
       },
       "scalars": {
@@ -16387,6 +18563,22 @@
     {
       "axes": {
         "n_tokens": 5267
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5269
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5270
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16442,6 +18634,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5284
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5286
       },
       "scalars": {
@@ -16474,6 +18674,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5291
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5292
       },
       "scalars": {
@@ -16490,6 +18698,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5294
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5295
       },
       "scalars": {
@@ -16499,6 +18715,14 @@
     {
       "axes": {
         "n_tokens": 5305
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5306
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16642,6 +18866,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5346
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5348
       },
       "scalars": {
@@ -16691,6 +18923,14 @@
     {
       "axes": {
         "n_tokens": 5363
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5364
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16834,7 +19074,23 @@
     },
     {
       "axes": {
+        "n_tokens": 5444
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5450
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5451
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16867,6 +19123,14 @@
     {
       "axes": {
         "n_tokens": 5461
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5462
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -16938,6 +19202,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5508
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5510
       },
       "scalars": {
@@ -16986,6 +19258,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5527
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5529
       },
       "scalars": {
@@ -17010,6 +19290,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5534
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5557
       },
       "scalars": {
@@ -17019,6 +19307,22 @@
     {
       "axes": {
         "n_tokens": 5606
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5620
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5643
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17043,6 +19347,14 @@
     {
       "axes": {
         "n_tokens": 5667
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5681
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17106,7 +19418,23 @@
     },
     {
       "axes": {
+        "n_tokens": 5706
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5711
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5722
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17234,6 +19562,22 @@
     },
     {
       "axes": {
+        "n_tokens": 5808
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5810
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5811
       },
       "scalars": {
@@ -17314,6 +19658,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5868
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 5870
       },
       "scalars": {
@@ -17387,6 +19739,14 @@
     {
       "axes": {
         "n_tokens": 5902
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5903
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17483,6 +19843,14 @@
     {
       "axes": {
         "n_tokens": 5929
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5930
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17610,6 +19978,14 @@
     },
     {
       "axes": {
+        "n_tokens": 5992
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6002
       },
       "scalars": {
@@ -17619,6 +19995,14 @@
     {
       "axes": {
         "n_tokens": 6003
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6029
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17698,7 +20082,23 @@
     },
     {
       "axes": {
+        "n_tokens": 6079
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6083
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6090
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17730,7 +20130,23 @@
     },
     {
       "axes": {
+        "n_tokens": 6112
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6121
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6122
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17778,6 +20194,14 @@
     },
     {
       "axes": {
+        "n_tokens": 6145
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6147
       },
       "scalars": {
@@ -17818,7 +20242,23 @@
     },
     {
       "axes": {
+        "n_tokens": 6177
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6178
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6179
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -17922,6 +20362,14 @@
     },
     {
       "axes": {
+        "n_tokens": 6289
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6293
       },
       "scalars": {
@@ -17978,6 +20426,14 @@
     },
     {
       "axes": {
+        "n_tokens": 6308
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6309
       },
       "scalars": {
@@ -18010,7 +20466,23 @@
     },
     {
       "axes": {
+        "n_tokens": 6314
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6317
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6321
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -18035,6 +20507,14 @@
     {
       "axes": {
         "n_tokens": 6334
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6338
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -18130,6 +20610,14 @@
     },
     {
       "axes": {
+        "n_tokens": 6410
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6411
       },
       "scalars": {
@@ -18155,6 +20643,14 @@
     {
       "axes": {
         "n_tokens": 6414
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6418
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -18354,6 +20850,14 @@
     },
     {
       "axes": {
+        "n_tokens": 6593
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6594
       },
       "scalars": {
@@ -18434,6 +20938,14 @@
     },
     {
       "axes": {
+        "n_tokens": 6678
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6680
       },
       "scalars": {
@@ -18498,7 +21010,31 @@
     },
     {
       "axes": {
+        "n_tokens": 6740
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6747
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6757
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6772
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -18547,6 +21083,14 @@
     {
       "axes": {
         "n_tokens": 6814
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6824
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -18626,6 +21170,14 @@
     },
     {
       "axes": {
+        "n_tokens": 6907
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 6910
       },
       "scalars": {
@@ -18675,6 +21227,14 @@
     {
       "axes": {
         "n_tokens": 6970
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6987
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -18794,7 +21354,23 @@
     },
     {
       "axes": {
+        "n_tokens": 7074
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7075
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7113
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -18834,6 +21410,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7135
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7148
       },
       "scalars": {
@@ -18842,7 +21426,23 @@
     },
     {
       "axes": {
+        "n_tokens": 7162
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7163
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7164
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -18890,6 +21490,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7182
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7201
       },
       "scalars": {
@@ -18899,6 +21507,14 @@
     {
       "axes": {
         "n_tokens": 7217
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7218
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19058,6 +21674,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7304
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7323
       },
       "scalars": {
@@ -19098,6 +21722,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7354
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7357
       },
       "scalars": {
@@ -19123,6 +21755,14 @@
     {
       "axes": {
         "n_tokens": 7363
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7376
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19162,7 +21802,31 @@
     },
     {
       "axes": {
+        "n_tokens": 7414
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7419
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7420
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7424
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19179,6 +21843,14 @@
     {
       "axes": {
         "n_tokens": 7427
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7428
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19226,6 +21898,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7451
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7452
       },
       "scalars": {
@@ -19259,6 +21939,14 @@
     {
       "axes": {
         "n_tokens": 7534
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7537
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19330,6 +22018,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7590
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7593
       },
       "scalars": {
@@ -19339,6 +22035,14 @@
     {
       "axes": {
         "n_tokens": 7594
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7601
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19370,6 +22074,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7618
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7625
       },
       "scalars": {
@@ -19386,6 +22098,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7650
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7662
       },
       "scalars": {
@@ -19395,6 +22115,22 @@
     {
       "axes": {
         "n_tokens": 7665
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7671
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7702
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19434,6 +22170,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7743
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7751
       },
       "scalars": {
@@ -19443,6 +22187,14 @@
     {
       "axes": {
         "n_tokens": 7765
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7767
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19467,6 +22219,14 @@
     {
       "axes": {
         "n_tokens": 7778
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7779
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19514,6 +22274,14 @@
     },
     {
       "axes": {
+        "n_tokens": 7812
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 7842
       },
       "scalars": {
@@ -19523,6 +22291,14 @@
     {
       "axes": {
         "n_tokens": 7851
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7854
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19555,6 +22331,14 @@
     {
       "axes": {
         "n_tokens": 7860
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7861
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19634,6 +22418,22 @@
     },
     {
       "axes": {
+        "n_tokens": 8001
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8003
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8007
       },
       "scalars": {
@@ -19690,6 +22490,14 @@
     },
     {
       "axes": {
+        "n_tokens": 8049
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8053
       },
       "scalars": {
@@ -19715,6 +22523,14 @@
     {
       "axes": {
         "n_tokens": 8059
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8061
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19770,6 +22586,14 @@
     },
     {
       "axes": {
+        "n_tokens": 8084
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8085
       },
       "scalars": {
@@ -19810,6 +22634,14 @@
     },
     {
       "axes": {
+        "n_tokens": 8113
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8114
       },
       "scalars": {
@@ -19834,6 +22666,14 @@
     },
     {
       "axes": {
+        "n_tokens": 8119
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8123
       },
       "scalars": {
@@ -19842,7 +22682,23 @@
     },
     {
       "axes": {
+        "n_tokens": 8128
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8133
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8154
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19890,6 +22746,22 @@
     },
     {
       "axes": {
+        "n_tokens": 8235
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8256
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8267
       },
       "scalars": {
@@ -19922,7 +22794,23 @@
     },
     {
       "axes": {
+        "n_tokens": 8409
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8560
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8657
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -19970,6 +22858,14 @@
     },
     {
       "axes": {
+        "n_tokens": 8709
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 8821
       },
       "scalars": {
@@ -19987,6 +22883,14 @@
     {
       "axes": {
         "n_tokens": 8828
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8835
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20082,6 +22986,14 @@
     },
     {
       "axes": {
+        "n_tokens": 9212
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 9213
       },
       "scalars": {
@@ -20107,6 +23019,14 @@
     {
       "axes": {
         "n_tokens": 9229
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 9233
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20162,6 +23082,22 @@
     },
     {
       "axes": {
+        "n_tokens": 9470
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 9512
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 9516
       },
       "scalars": {
@@ -20194,6 +23130,14 @@
     },
     {
       "axes": {
+        "n_tokens": 9783
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 9788
       },
       "scalars": {
@@ -20219,6 +23163,14 @@
     {
       "axes": {
         "n_tokens": 9999
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10028
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20259,6 +23211,14 @@
     {
       "axes": {
         "n_tokens": 10121
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10229
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20314,6 +23274,14 @@
     },
     {
       "axes": {
+        "n_tokens": 10346
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 10453
       },
       "scalars": {
@@ -20339,6 +23307,14 @@
     {
       "axes": {
         "n_tokens": 10477
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10534
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20402,6 +23378,14 @@
     },
     {
       "axes": {
+        "n_tokens": 11211
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 11212
       },
       "scalars": {
@@ -20427,6 +23411,22 @@
     {
       "axes": {
         "n_tokens": 11447
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 11449
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 11754
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20498,6 +23498,14 @@
     },
     {
       "axes": {
+        "n_tokens": 11938
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 11951
       },
       "scalars": {
@@ -20523,6 +23531,14 @@
     {
       "axes": {
         "n_tokens": 11965
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 11966
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20562,6 +23578,14 @@
     },
     {
       "axes": {
+        "n_tokens": 12447
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 12456
       },
       "scalars": {
@@ -20571,6 +23595,14 @@
     {
       "axes": {
         "n_tokens": 12641
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12704
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20626,6 +23658,22 @@
     },
     {
       "axes": {
+        "n_tokens": 13061
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 13188
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 13189
       },
       "scalars": {
@@ -20643,6 +23691,14 @@
     {
       "axes": {
         "n_tokens": 13191
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 13272
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20690,6 +23746,14 @@
     },
     {
       "axes": {
+        "n_tokens": 13291
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 13301
       },
       "scalars": {
@@ -20699,6 +23763,14 @@
     {
       "axes": {
         "n_tokens": 13303
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 13609
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20794,6 +23866,14 @@
     },
     {
       "axes": {
+        "n_tokens": 15185
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 15246
       },
       "scalars": {
@@ -20842,6 +23922,22 @@
     },
     {
       "axes": {
+        "n_tokens": 15995
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16157
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 16160
       },
       "scalars": {
@@ -20874,6 +23970,14 @@
     },
     {
       "axes": {
+        "n_tokens": 17571
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 17572
       },
       "scalars": {
@@ -20891,6 +23995,14 @@
     {
       "axes": {
         "n_tokens": 17574
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18913
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -20954,6 +24066,14 @@
     },
     {
       "axes": {
+        "n_tokens": 20323
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 20326
       },
       "scalars": {
@@ -20970,6 +24090,14 @@
     },
     {
       "axes": {
+        "n_tokens": 21766
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 21769
       },
       "scalars": {
@@ -20979,6 +24107,14 @@
     {
       "axes": {
         "n_tokens": 21770
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 29981
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -21010,6 +24146,14 @@
     },
     {
       "axes": {
+        "n_tokens": 31394
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 31397
       },
       "scalars": {
@@ -21019,6 +24163,14 @@
     {
       "axes": {
         "n_tokens": 31398
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32366
       },
       "scalars": {
         "swiglu_limit": 10.0
