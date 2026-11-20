@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+# Match native sglang-test: the reviewed stack.json image as shipped, plus AKLR.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG AKLR_COMMIT
+ARG SGLANG_VERSION
+ENV GPU_ARCHS=gfx950
+LABEL org.opencontainers.image.source="https://github.com/AMD-AGI/AKLR" \
+      org.opencontainers.image.revision="${AKLR_COMMIT}"
+WORKDIR /opt/aklr
+# Explicit source allowlist: never copy .git, .env, keys, or local artifacts.
+COPY pyproject.toml /opt/aklr/pyproject.toml
+COPY LICENSE LICENSE-APACHE /opt/aklr/
+COPY aklr /opt/aklr/aklr
+# AKLR is separate from AITER. Resolve its dependencies; retain ROCm torch/Triton.
+RUN <<'SH'
+set -eu
+test "${#AKLR_COMMIT}" = 40
+python3 - <<'PY'
+import json
+from importlib.metadata import version
+from pathlib import Path
+import aiter
+Path('/tmp/crystal-framework.json').write_text(json.dumps({
+    'versions': {name: version(name) for name in ('torch', 'triton', 'sglang')},
+    'aiter_path': str(Path(aiter.__file__).resolve()),
+}))
+PY
+SETUPTOOLS_SCM_PRETEND_VERSION="0.1.dev0+g${AKLR_COMMIT}" python3 -m pip install .
+python3 - <<'PY'
+import json
+import os
+from importlib.metadata import entry_points, version
+from pathlib import Path
+import aklr
+import aiter
+import triton
+import torch
+assert torch.version.hip
+assert version("sglang") == os.environ["SGLANG_VERSION"]
+assert os.environ["AKLR_COMMIT"] in version("aklr")
+snapshot = Path('/tmp/crystal-framework.json')
+before = json.loads(snapshot.read_text())
+assert {name: version(name) for name in before['versions']} == before['versions']
+assert str(Path(aiter.__file__).resolve()) == before['aiter_path']
+snapshot.unlink()
+assert any(e.name == "aklr" and e.value == "aklr.plugins.sglang:register"
+           for e in entry_points(group="sglang.srt.plugins"))
+PY
+SH
+# The default SGLang plugin discovery must remain enabled.
+ENV AKLR_SGLANG_PLUGIN=1

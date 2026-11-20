@@ -1,0 +1,167 @@
+name: Crystal Correctness Qualification
+
+on:
+  # Qualification jobs remain off unless CRYSTAL_SCHEDULE_ENABLED is exactly true.
+  schedule:
+    - cron: '17 10 * * 6'
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Optional open AKLR PR number; leave both inputs empty to test merged main
+        required: false
+        type: string
+      commit_sha:
+        description: Optional full release commit SHA already on main; do not combine with a PR number
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crystal-accuracy-${{ inputs.pull_request || 'main' }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  resolve:
+    if: github.event_name != 'schedule' || vars.CRYSTAL_SCHEDULE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      sha: ${{ steps.candidate.outputs.sha }}
+      pull_request: ${{ steps.candidate.outputs.pull_request }}
+      profile_id: ${{ steps.candidate.outputs.profile_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: candidate
+        name: Pin candidate and verify native CI
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ inputs.pull_request }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          SCHEDULE_ENABLED: ${{ vars.CRYSTAL_SCHEDULE_ENABLED }}
+          MANUAL_ACTORS: ${{ vars.CRYSTAL_MANUAL_ACTORS }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          PROFILE_ID: ${{ vars.CRYSTAL_QUALIFICATION_PROFILE }}
+        with:
+          script: |
+            const resolve = require('./.github/scripts/resolve_crystal_candidate.cjs');
+            await resolve({github, context, core, prNumber: process.env.PR_NUMBER,
+              commitSha: process.env.COMMIT_SHA, scheduleEnabled: process.env.SCHEDULE_ENABLED,
+              manualActors: process.env.MANUAL_ACTORS, triggeringActor: process.env.TRIGGERING_ACTOR,
+              profileId: process.env.PROFILE_ID});
+
+  build:
+    needs: resolve
+    # Isolated disposable build runner. It must not be the submission runner.
+    runs-on: [self-hosted, aklr-crystal-build]
+    environment: crystal-build
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Require pre-created private image package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          visibility=$(gh api /orgs/AMD-AGI/packages/container/aklr-sglang --jq .visibility 2>/dev/null) || exit 1
+          [[ "$visibility" == private ]] || { echo 'Private qualification package is required.'; exit 1; }
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push exact candidate
+        id: build
+        env:
+          CANDIDATE_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 control/.github/scripts/resolve_crystal_stack.py \
+            --trusted control/stack.json --candidate candidate/stack.json \
+            > "$RUNNER_TEMP/crystal-stack.json"
+          BASE_IMAGE=$(jq -er .image "$RUNNER_TEMP/crystal-stack.json")
+          SGLANG_VERSION=$(jq -er .version "$RUNNER_TEMP/crystal-stack.json")
+          [[ $(git -C candidate rev-parse HEAD) == "$CANDIDATE_SHA" ]]
+          # Build output stays on the isolated runner; never upload it to public Actions artifacts.
+          if ! docker buildx build --push --platform linux/amd64 --provenance=false --sbom=false \
+            --file control/docker/Dockerfile.sglang \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" --build-arg "AKLR_COMMIT=$CANDIDATE_SHA" \
+            --build-arg "SGLANG_VERSION=$SGLANG_VERSION" \
+            --tag "ghcr.io/amd-agi/aklr-sglang:candidate-${CANDIDATE_SHA}-${GITHUB_RUN_ID}" \
+            --metadata-file "$RUNNER_TEMP/crystal-image.json" candidate \
+            >"$RUNNER_TEMP/crystal-build.log" 2>&1; then
+            echo 'Candidate image build failed; contact the runner operator.'; exit 1
+          fi
+          digest=$(jq -er '."containerimage.digest"' "$RUNNER_TEMP/crystal-image.json")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  submit:
+    needs: [resolve, build]
+    runs-on: [self-hosted, aklr-crystal-submit]
+    environment: crystal-submit
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Confirm PR still points at tested commit
+        if: needs.resolve.outputs.pull_request != ''
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.pull_request }}
+          EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+        with:
+          script: |
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(process.env.PR_NUMBER)});
+            if (pr.state !== 'open' || pr.head.sha !== process.env.EXPECTED_SHA) {
+              throw new Error('PR changed during build; start a new qualification.');
+            }
+      - name: Submit asynchronous qualification
+        env:
+          CRYSTAL_URL: ${{ secrets.CRYSTAL_URL }}
+          CRYSTAL_AKLR_SUBMISSION_SECRET: ${{ secrets.CRYSTAL_AKLR_SUBMISSION_SECRET }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pull_request }}
+          CANDIDATE_SHA: ${{ needs.resolve.outputs.sha }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          PROFILE_ID: ${{ needs.resolve.outputs.profile_id }}
+        run: |
+          args=()
+          if [[ -n "$PR_NUMBER" ]]; then args+=(--pull-request "$PR_NUMBER"); fi
+          python3 .github/scripts/submit_crystal_qualification.py \
+            --crystal-url "$CRYSTAL_URL" --request-id "aklr-${GITHUB_RUN_ID}" \
+            "${args[@]}" --commit-sha "$CANDIDATE_SHA" \
+            --image "ghcr.io/amd-agi/aklr-sglang@${IMAGE_DIGEST}" \
+            --profile-id "$PROFILE_ID" \
+            --workflow-run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
