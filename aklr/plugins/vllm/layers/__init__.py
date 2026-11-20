@@ -4,6 +4,6 @@
 """Routes from vLLM's layers to the ops of ``aklr/ops``; mirrors vLLM's
 ``model_executor/layers`` and ``v1/attention``."""
 
-from aklr.plugins.vllm.layers import attention, dcp, utils
+from aklr.plugins.vllm.layers import attention, dcp, fused_moe_router, utils
 
-__all__ = ["attention", "dcp", "utils"]
+__all__ = ["attention", "dcp", "fused_moe_router", "utils"]
