@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The latent-MoE tail as vLLM composes it, in the dtype ``decode`` gives: the all-reduced latent rounded to bf16
+"""The latent-MoE tail as vLLM composes it, in float32: the all-reduced latent rounded to bf16
 (the all-reduce's output), its RMSNorm rounded to bf16 (one rounding of latent * rstd * weight, as aiter's norm
 kernel rounds), each rank's own columns of its shared output rounded to bf16 after the addmm (its epilogue adds the
 shared partial in float32), then the all-reduce of the shared outputs, left unrounded."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -28,7 +30,6 @@ def kimi_k3_latent_moe_tail_reference(
     point: Any,
     group_args: Sequence[Mapping[str, Any]],
     rank: int,
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """``out`` of ``rank``'s call, which is every rank's: the ranks' args in rank order (each on its rank's device,
     read on ``rank``'s), sums in rank order."""
@@ -37,7 +38,7 @@ def kimi_k3_latent_moe_tail_reference(
     device = group_args[rank]["routed"].device
 
     def read(args, name):
-        return decode(args[name], dtypes[name]).to(device)
+        return to_float32(args[name], dtypes[name]).to(device)
 
     latent = read(group_args[0], "routed")
     for args in group_args[1:]:

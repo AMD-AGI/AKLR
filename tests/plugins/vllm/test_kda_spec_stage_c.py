@@ -188,6 +188,15 @@ def vllm_chain(attn, slots=WINDOW_SLOTS, accepted=ACCEPTED):
     return out, conv, state
 
 
+def logical_dtypes(args):
+    """Each tensor operand's dtype as the contract names it (as torch does)."""
+    return {
+        name: str(value.dtype).removeprefix("torch.")
+        for name, value in args.items()
+        if torch.is_tensor(value)
+    }
+
+
 def reference_call(attn, slots, accepted, n_tokens=None):
     """The reference on the op's operands as the route hands them over (views of vLLM's tensors)."""
     flat = torch.tensor(slots, dtype=torch.int32).view(-1)
@@ -200,8 +209,8 @@ def reference_call(attn, slots, accepted, n_tokens=None):
     n_seqs = len(accepted)
     axes = {"n_heads": HEADS, "head_dim": DIM, "width": TAPS, "conv_len": CONV_LEN, "n_seqs": n_seqs,
             "n_tokens": attn.proj.shape[0], "n_slots": SLOTS}  # fmt: skip
-    point = SimpleNamespace(axes=axes, dtypes=dict.fromkeys(args))
-    return kimi_k3_kda_spec_stage_c_reference(point, args, lambda x, _: x.float())
+    point = SimpleNamespace(axes=axes, dtypes=logical_dtypes(args))
+    return kimi_k3_kda_spec_stage_c_reference(point, args)
 
 
 def test_the_reference_is_vllms_ops_in_their_order():
@@ -270,8 +279,8 @@ class _Op:
         n_seqs = bound["num_accepted_tokens"].shape[0]
         axes = {"n_heads": HEADS, "head_dim": DIM, "width": TAPS, "conv_len": bound["conv_state"].shape[1],
                 "n_seqs": n_seqs, "n_tokens": bound["qkv"].shape[0], "n_slots": SLOTS}  # fmt: skip
-        point = SimpleNamespace(axes=axes, dtypes=dict.fromkeys(bound))
-        out, conv, state = kimi_k3_kda_spec_stage_c_reference(point, bound, lambda x, _: x.float())
+        point = SimpleNamespace(axes=axes, dtypes=logical_dtypes(bound))
+        out, conv, state = kimi_k3_kda_spec_stage_c_reference(point, bound)
         bound["conv_state"].copy_(conv)
         bound["state_cache"].copy_(state)
         return bound["out"].copy_(out)
