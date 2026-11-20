@@ -11,44 +11,29 @@ from typing import Final
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-__all__ = ["toolchain_version", "unmet_requirement"]
+__all__ = ["LIBRARIES", "toolchain_version", "unmet_requirement"]
 
-# libraries read from their installed distribution, not imported: importing aiter loads its JIT
-# modules, importing mori sizes its heap
-_DISTRIBUTIONS: Final = {"aiter": "amd-aiter", "mori": "amd_mori"}
+LIBRARIES: Final = {"aiter": "amd-aiter", "mori": "amd_mori"}
 
 
 def toolchain_version(name: str) -> str | None:
-    """``name``'s installed version, None when it is missing: a language's module
-    ``__version__``, for ``hip`` the HIP torch was built with, for a library its
-    distribution's version."""
-    if name == "hip":
-        return _hip_version()
-    if name in _DISTRIBUTIONS:
+    if name in LIBRARIES:
         try:
-            return importlib.metadata.version(_DISTRIBUTIONS[name])
+            return importlib.metadata.version(LIBRARIES[name])
         except importlib.metadata.PackageNotFoundError:
             return None
     try:
+        if name == "hip":
+            import torch
+
+            hip = torch.version.hip
+            return hip.split("-")[0] if hip else None
         return importlib.import_module(name).__version__
     except ImportError:
         return None
 
 
-def _hip_version() -> str | None:
-    """``torch.version.hip`` without its build suffix ("7.15.26333-abc" -> "7.15.26333");
-    None without a ROCm torch."""
-    try:
-        import torch
-    except ImportError:
-        return None
-    hip = torch.version.hip
-    return hip.split("-")[0] if hip else None
-
-
 def unmet_requirement(requires: Mapping[str, str]) -> str | None:
-    """Why the installed toolchains miss ``requires`` (``kernel.requires``), None when
-    they meet it; a dev or rc build counts as its release."""
     for name, specifier in requires.items():
         version = toolchain_version(name)
         if version is None:

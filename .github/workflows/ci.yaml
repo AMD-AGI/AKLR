@@ -93,7 +93,6 @@ jobs:
     outputs:
       gpu_enabled: ${{ env.GPU_ENABLED }}
       gpu_runner: ${{ env.AKLR_GPU_RUNNER }}
-      reference_contracts: ${{ steps.reference_scope.outputs.contracts }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
       measured_by_bot: ${{ steps.lint.outputs.measured_by_bot }}
@@ -152,7 +151,7 @@ jobs:
         uses: pre-commit/action@v3.0.1
         with:
           extra_args: ${{ steps.lint.outputs.args }}
-      # export check and the audit load the default registry, which imports the ops' apis and torch.
+      # The audit loads the default registry, which imports the ops' apis and torch.
       - &install_cpu_deps
         name: Install pydantic, CPU torch and ruff
         run: |
@@ -171,10 +170,6 @@ jobs:
             PYTHONPATH=. python -c "$AKLR_MEASUREMENT_CURRENT" "$sha" ||
               { echo "::error::Measured at $sha, before aklr/core or stack.json changes on main; a later publish-measurement rebuilds this PR without it"; exit 1; }
           done
-      # CI only checks; authors export the schemas locally.
-      - name: Check exported files
-        id: export
-        run: python -m aklr export check
       # A jq that decides the gate is its own assignment: inside echo, a failure would not stop the step.
       - name: Audit gate
         id: audit
@@ -196,16 +191,6 @@ jobs:
             exit "$code"
           fi
 
-      - name: Select affected op reference tests
-        id: reference_scope
-        if: github.event_name == 'pull_request' && env.GPU_ENABLED == 'true'
-        env:
-          BASE: ${{ steps.lint.outputs.validation_base }}
-        run: |
-          contracts=$(PYTHONPATH=. python .github/scripts/reference_contracts.py "$BASE")
-          echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
-          echo "AITER op baseline/reference tests: ${contracts:-all contracts}" >> "$GITHUB_STEP_SUMMARY"
-
   # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; beside it sglang-test and
   # vllm-test. No secrets and no actions/cache: they run the PR's code and kernels.
   aiter-test:
@@ -218,8 +203,7 @@ jobs:
     env:
       TIMEOUT_MINUTES: 180
       IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
-      TESTS: tests/core tests/ops tests/benchmarks
-      AKLR_REFERENCE_CONTRACTS: ${{ needs.code-lint.outputs.reference_contracts }}
+      TESTS: tests/core tests/ops tests/seam tests/benchmarks
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
     steps:
       - &checkout_source
@@ -232,7 +216,7 @@ jobs:
         name: Run unit tests (${{ env.TESTS }}) and validation on a GPU node
         shell: bash .github/scripts/gpu_job.sh {0}
         env:
-          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER PLUGINS AKLR_REFERENCE_CONTRACTS
+          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER
           VALIDATE: ${{ needs.code-lint.outputs.has_bench_paths }}
           BASE: ${{ needs.code-lint.outputs.validation_base }}
           MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
@@ -249,7 +233,7 @@ jobs:
           GPU_ARCHS=$(python3 -c 'import torch; assert torch.version.hip and torch.cuda.is_available(), "no ROCm GPU"; print(";".join(sorted({torch.cuda.get_device_properties(i).gcnArchName.split(":")[0] for i in range(torch.cuda.device_count())})))')
           echo "🔧 GPU_ARCHS=$GPU_ARCHS"
           export GPU_ARCHS FLYDSL_RUNTIME_CACHE_DIR=$cache/flydsl-runtime FLYDSL_AUTOTUNE_CACHE_DIR=$cache/flydsl-autotune \
-            TRITON_CACHE_DIR=$cache/triton XDG_CACHE_HOME=$cache/xdg AKLR_KERNEL_CACHE_DIR=$cache/aklr-kernels
+            TRITON_CACHE_DIR=$cache/triton XDG_CACHE_HOME=$cache/xdg AKLR_BUILD_CACHE_DIR=$cache/aklr-kernels
           # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
           export TMPDIR=$state
 
@@ -270,12 +254,15 @@ jobs:
           from importlib.metadata import distribution, version
           from pathlib import Path
           import aiter
+          from aklr.core.runtime.seam import SeamRegistry
           dist = distribution("amd-aiter")
           installed = Path(dist.locate_file("aiter/__init__.py")).resolve()
           assert Path(aiter.__file__).resolve() == installed, aiter.__file__
           # pip's record of the commit it built: a release tag's version carries none
           commit = json.loads(dist.read_text("direct_url.json"))["vcs_info"]["commit_id"]
           assert commit == os.environ["AKLR_BASELINE_AITER"], commit
+          SeamRegistry.default().install()
+          assert hasattr(aiter.gemm_a8w8, "aklr_adapter"), "AKLR did not patch aiter"
           print("amd-aiter", version("amd-aiter"), "at", installed)
           PY
           else
@@ -319,13 +306,10 @@ jobs:
             python3 -m aklr validate "${flags[@]}" --under aklr/ops --exclude aklr/ops/mega_moe \
               --out "$reports/validation-report"
           else
-            : "${PLUGINS:?}"
-            echo "::group::Validate plugins ($PLUGINS), check aklr/ops"
-            plugins=0 ops=0
-            # shellcheck disable=SC2086 # PLUGINS is a list of flags
-            python3 -m aklr validate "${flags[@]}" $PLUGINS --out "$reports/validation-report" || plugins=$?
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --no-timing --out "$reports/validation-check" || ops=$?
-            exit $((plugins ? plugins : ops))
+            # TODO: aklr/plugins is not on the schema yet (TODO.md): its tests and its timed validation
+            # against sglang's and vLLM's own code come back with it.
+            echo '::group::Check aklr/ops'
+            python3 -m aklr validate "${flags[@]}" --under aklr/ops --no-timing --out "$reports/validation-check"
           fi
       - &finish_gpu_tests
         name: Delete the GPU workload or local container
@@ -367,9 +351,8 @@ jobs:
           path: ${{ runner.temp }}/gpu-reports/validation-report/
           retention-days: 90
 
-  # sglang-test: the sglang image as it ships, AKLR alone installed. Its plugins are timed against
-  # sglang's own code; aklr/ops is built and checked only, its timing being aiter-test's.
-  # aklr/plugins/vllm is vllm-test's.
+  # sglang-test: the sglang image as it ships, AKLR alone installed. aklr/ops is built and checked
+  # only, its timing being aiter-test's; so in vllm-test.
   sglang-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
@@ -378,8 +361,7 @@ jobs:
     env:
       TIMEOUT_MINUTES: 150
       IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
-      TESTS: tests/plugins/aiter tests/plugins/sglang
-      PLUGINS: --under aklr/plugins --exclude aklr/plugins/vllm
+      TESTS: tests/seam
     steps:
       - *checkout_source
       - *gpu_tests
@@ -387,7 +369,6 @@ jobs:
       - *upload_coverage
       - *upload_test_logs
       - *summarize
-      - *upload_report
       - &upload_check
         name: Upload the check of aklr/ops (validation-check-${{ github.job }}-<attempt>)
         if: always() && needs.code-lint.outputs.has_bench_paths == 'true'
@@ -397,8 +378,8 @@ jobs:
           path: ${{ runner.temp }}/gpu-reports/validation-check/
           retention-days: 90
 
-  # vllm-test: the vllm image as it ships, AKLR alone installed. aklr/plugins/vllm is timed in it;
-  # aklr/ops is built and checked only, as in sglang-test.
+  # vllm-test: the vllm image as it ships, AKLR alone installed. aklr/ops is built and checked only,
+  # as in sglang-test.
   vllm-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
@@ -407,8 +388,7 @@ jobs:
     env:
       TIMEOUT_MINUTES: 60
       IMAGE: ${{ needs.code-lint.outputs.vllm_image }}
-      TESTS: tests/plugins/vllm
-      PLUGINS: --under aklr/plugins/vllm
+      TESTS: tests/seam
     steps:
       - *checkout_source
       - *gpu_tests
@@ -416,7 +396,6 @@ jobs:
       - *upload_coverage
       - *upload_test_logs
       - *summarize
-      - *upload_report
       - *upload_check
 
   coverage-report:
@@ -551,7 +530,7 @@ jobs:
           token: ${{ steps.token.outputs.token }}
           # The carry and the current rule read every Measured-SHA commit.
           fetch-depth: 0
-      # export check and the current rule run main's aklr.
+      # The current rule runs main's aklr.
       - *setup_python
       - *install_cpu_deps
       # A missed measurement is not retried; the next aklr/core or stack.json change on main re-benches every schema.

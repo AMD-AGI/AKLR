@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -17,10 +20,8 @@ if TYPE_CHECKING:
 __all__ = ["DeviceTarget", "physical_device"]
 
 
-@dataclass(frozen=True, order=True, config=ConfigDict(extra="forbid"))
+@dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DeviceTarget:
-    """Immutable, normalized architecture/model pair."""
-
     arch: str | None = None
     hardware: str | None = None
 
@@ -33,18 +34,15 @@ class DeviceTarget:
 
     @classmethod
     def normalize_arch(cls, arch: str | None) -> str | None:
-        """The bare arch, such as gfx950, without ROCm feature suffixes."""
         value = (arch or "").strip().lower().split(":", 1)[0]
         return value if re.fullmatch(r"gfx[0-9a-f]+", value) else None
 
     @classmethod
     def normalize_hardware(cls, hardware: str | None) -> str | None:
-        """Normalize names while retaining model, memory and form-factor variants."""
         value = " ".join((hardware or "").upper().split())
         value = re.sub(r"^AMD(?: INSTINCT)?\s+", "", value)
         if value in {"", "UNKNOWN", "UNAVAILABLE", "ANY", "HIP", "GPU"}:
             return None
-        # Some drivers report only the ISA in the name field. That is no model ID.
         if cls.normalize_arch(value) is not None:
             return None
         return value
@@ -62,26 +60,10 @@ class DeviceTarget:
 
     @classmethod
     def from_names(cls, arch: str | None, hardware: str | None) -> DeviceTarget:
-        """Normalize observed device names, retaining unknown values as None."""
         return cls(cls.normalize_arch(arch), cls.normalize_hardware(hardware))
 
     @classmethod
-    def normalize_targets(cls, targets: Sequence[DeviceTarget] | None) -> tuple[DeviceTarget, ...] | None:
-        """Validate, deduplicate and sort build constraints; None is unrestricted."""
-        if targets is None:
-            return None
-        if not targets or any(not target.is_known for target in targets):
-            raise ValueError("target must contain at least one architecture or hardware model")
-        return tuple(
-            sorted(
-                set(targets),
-                key=lambda target: (target.arch or "", target.hardware or ""),
-            )
-        )
-
-    @classmethod
     def matches_target(cls, target: DeviceTarget, constraints: Sequence[DeviceTarget] | None) -> bool:
-        """Match any declared pair, requiring all fields specified by that pair."""
         return constraints is None or any(
             constraint.is_known
             and (constraint.arch is None or target.arch == constraint.arch)
@@ -91,7 +73,6 @@ class DeviceTarget:
 
     @classmethod
     def current(cls, device: torch.device | str | None = None) -> DeviceTarget:
-        """Resolve a device through torch, caching GPU properties by logical ordinal."""
         try:
             import torch
 
@@ -110,23 +91,19 @@ class DeviceTarget:
             target = cls.from_names(getattr(properties, "gcnArchName", None), properties.name)
             cls._target_by_device_idx[device_idx] = target
             return target
-        except Exception:  # noqa: BLE001 (no torch, accelerator or driver)
+        except Exception:  # noqa: BLE001
             return cls()
 
     @property
     def is_known(self) -> bool:
-        """At least one field is known, so this pair can constrain a build target."""
         return self.arch is not None or self.hardware is not None
 
     @property
     def is_complete(self) -> bool:
-        """A known architecture and model identify a measurement's target."""
         return self.arch is not None and self.hardware is not None
 
 
 def physical_device(device: str) -> str:
-    """The physical GPU id behind ``device`` (``cuda:N``) under the parent's
-    HIP/CUDA_VISIBLE_DEVICES."""
     index = int(device.removeprefix("cuda:"))
     visible = os.environ.get("HIP_VISIBLE_DEVICES") or os.environ.get("CUDA_VISIBLE_DEVICES")
     return visible.split(",")[index].strip() if visible else str(index)

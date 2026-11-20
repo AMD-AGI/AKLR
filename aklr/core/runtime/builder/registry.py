@@ -1,132 +1,88 @@
 ###############################################################################
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-# Copyright (c) 2025 FlashInfer-Bench Contributors
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Source: flashinfer_bench/compile/registry.py
-# Modified by Advanced Micro Devices, Inc. for the AKLR project.
-# Modified for aklr/core/runtime/builder
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
-
 
 from __future__ import annotations
 
-from contextlib import ExitStack
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
 import filelock
 
-from aklr.core.runtime.builder.builder import (
-    _CACHE_HINT,
-    Builder,
-    BuildError,
-    FlyDSLBuilder,
-    HipBuilder,
-    HsacoBuilder,
-    PythonBuilder,
-    TritonBuilder,
-    get_build_cache_path,
-)
+from aklr.core.platform.env import RuntimeEnv
+from aklr.core.runtime.builder.builder import Builder, BuildError
 from aklr.core.runtime.builder.runnable import Runnable
-
-if TYPE_CHECKING:
-    from aklr.core.contract.op import OpContract
+from aklr.core.schema import Schema
 
 __all__ = ["BuilderRegistry"]
 
-# the order of get_instance's builders; each claims only its own language
-_BUILDER_PRIORITY: list[type[Builder]] = [
-    TritonBuilder,
-    FlyDSLBuilder,
-    HipBuilder,
-    HsacoBuilder,
-    PythonBuilder,
-]
-
 
 class BuilderRegistry:
-    """The available builders, and one built :class:`Runnable` per kernel content hash."""
-
     _instance: ClassVar[BuilderRegistry | None] = None
 
-    _builders: list[Builder]
-    _hash_to_built: dict[str, Runnable | BuildError]
+    _cache: dict[str, Runnable | BuildError]
 
-    def __init__(self, builders: list[Builder]) -> None:
-        if len(builders) == 0:
-            raise ValueError("BuilderRegistry requires at least one builder")
-        self._builders = list(builders)
-        self._hash_to_built = {}
+    def __init__(self) -> None:
+        self._cache = {}
 
     @classmethod
     def get_instance(cls) -> BuilderRegistry:
-        """The process registry, of every ``_BUILDER_PRIORITY`` builder whose ``is_available()``."""
         if cls._instance is None:
-            cls._instance = BuilderRegistry(
-                [builder_type() for builder_type in _BUILDER_PRIORITY if builder_type.is_available()]
-            )
+            cls._instance = BuilderRegistry()
         return cls._instance
 
     @classmethod
     def set_instance(cls, instance: BuilderRegistry | None) -> None:
-        """Put ``instance`` in place of the process registry; ``None``: made afresh on next use."""
         cls._instance = instance
 
-    def build(self, schema: OpContract) -> Runnable:
-        """The runnable of ``schema.kernel``: built by the first builder that ``can_build`` it."""
+    def build(self, schema: Schema) -> Runnable:
         assert schema.kernel is not None
-        content_hash = schema.kernel.content_hash
-        built = self._hash_to_built.get(content_hash)
-        if isinstance(built, BuildError):
-            raise built
-        if built is not None:
-            return built
-        try:
-            root = get_build_cache_path()
-        except BuildError as e:
-            if not isinstance(e.__cause__, OSError):
-                self._hash_to_built[content_hash] = e
-            raise
-        lock_path = root / "build_locks" / f"{content_hash}.lock"
-        lock_stack = ExitStack()
-        try:
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            lock_stack.enter_context(filelock.FileLock(lock_path))
-        except OSError as e:
-            raise BuildError(f"cannot lock {lock_path}: {e}; {_CACHE_HINT}") from e
-        # only taking the lock is wrapped above: the build's own errors pass through
-        with lock_stack:
-            built = self._hash_to_built.get(content_hash)
-            if isinstance(built, BuildError):
-                raise built
-            if built is not None:
-                return built
-            builder = next((b for b in self._builders if b.can_build(schema)), None)
-            if builder is None:
-                error = BuildError(f"no builder for language {schema.kernel.language!r}")
-                self._hash_to_built[content_hash] = error
-                raise error
+        hash = schema.kernel.hash()
+        if hash in self._cache:
+            cached = self._cache[hash]
+            if isinstance(cached, BuildError):
+                raise cached
+            return cached
+
+        lock_dir = RuntimeEnv().build_cache_path / "build_locks"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_file = lock_dir / f"{hash}.lock"
+
+        with filelock.FileLock(lock_file):
+            if hash in self._cache:
+                cached = self._cache[hash]
+                if isinstance(cached, BuildError):
+                    raise cached
+                return cached
+
+            language = schema.kernel.build.language
             try:
-                runnable = builder.build(schema)
+                try:
+                    builder_type = Builder.resolve(language)
+                except ValueError as e:
+                    raise BuildError(f"kernel '{schema.kernel.name}': {e}") from e
+                if not builder_type.is_available():
+                    raise BuildError(
+                        f"kernel '{schema.kernel.name}': the {language} toolchain is not available"
+                    )
+                runnable = builder_type().build(schema)
             except BuildError as e:
-                if not isinstance(e.__cause__, OSError):
-                    self._hash_to_built[content_hash] = e
+                self._cache[hash] = e
                 raise
-            self._hash_to_built[content_hash] = runnable
-            return runnable
+            else:
+                self._cache[hash] = runnable
+
+        return runnable
 
     def cleanup(self) -> None:
-        """``cleanup()`` every built runnable, its errors ignored; then forget all."""
-        for built in self._hash_to_built.values():
-            if isinstance(built, Runnable):
+        for cached in self._cache.values():
+            if isinstance(cached, Runnable):
                 try:
-                    built.cleanup()
+                    cached.cleanup()
                 except Exception:  # noqa: BLE001, S110
-                    # Continue cleaning other runnables.
                     pass
-        self._hash_to_built.clear()
+        self._cache.clear()

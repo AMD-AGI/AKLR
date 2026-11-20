@@ -219,7 +219,7 @@ Counts are read off the built model, not hardcoded: whether a layer is MoE and w
 
 ## AKLR workloads
 
-The shapes this model runs are written by `python -m aklr export` from a run with `AKLR_EXPORT=1`; the scenarios that have a kernel are checked in under `aklr/ops/<op>/impls/<language>/` (`aklr/ops/README.md`).
+The shapes this model runs are recorded by a run with `AKLR_ENABLE_TRACING=1`; the scenarios that have a kernel are checked in under `aklr/ops/<op>/impls/<language>/` (`aklr/ops/README.md`).
 
 Record the **Kernel environment** table with any capture: aiter picks the SiTUv2 activation dtype from `AITER_SITUV2_A8W4` / `AITER_SITUV2_A4W4` and no argument of the call carries the choice, so the same shapes captured under a different setting are a different arithmetic.
 
