@@ -13,7 +13,7 @@ from aklr.core.contract.semantics import to_float32
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["kimi_k3_attn_res_reference"]
+__all__ = ["kimi_k3_attn_res_fp8_reference", "kimi_k3_attn_res_reference"]
 
 _CHUNK_TOKENS = 2048  # float32 rows of 9 x 8192 per token: about 0.6 GB a chunk
 
@@ -51,3 +51,25 @@ def kimi_k3_attn_res_reference(
     if attrs["write_bank"]:
         bank[:, valid] = prefix
     return out, prefix, bank
+
+
+def kimi_k3_attn_res_fp8_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """(quantized, scale, prefix, bank) as the call leaves them: the attention residual's out rounded to the prefix's
+    dtype, then quantized per token as vLLM does it in float32 (the fp8 rounding is the operation itself, not an
+    error)."""
+    import torch
+
+    from aklr.plugins.vllm.models.kimi_k3.attn_res.contract import FP8_MAX
+
+    out, prefix, bank = kimi_k3_attn_res_reference(point, row_major_args)
+    rounded = out.to(row_major_args["prefix"].dtype).float()
+    floor, inverse_max = (
+        torch.tensor(1e-10, dtype=torch.float32),
+        torch.tensor(1.0 / FP8_MAX, dtype=torch.float32),
+    )
+    scale = torch.maximum(rounded.abs().amax(dim=-1, keepdim=True), floor) * inverse_max
+    values = (rounded * (1.0 / scale)).clamp(-FP8_MAX, FP8_MAX)
+    return values.to(torch.float8_e4m3fn).float(), scale, prefix, bank

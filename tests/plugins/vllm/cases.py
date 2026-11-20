@@ -71,6 +71,70 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"n_valid_rows": 2, "write_bank": True, "has_addend": True, "has_norm": True},
         layout_variant_name="row_major",
     ),
+    # the same with the per-token fp8 out the linear after it takes
+    PointSpec(
+        contract_id="kimi_k3_attn_res_fp8@1.0",
+        axes={"n_tokens": 4, "hidden_size": 256, "n_bank_rows": 4},
+        dtypes={
+            "prefix": "bfloat16",
+            "addend": "bfloat16",
+            "bank": "bfloat16",
+            "score_norm_weight": "bfloat16",
+            "score_proj_weight": "bfloat16",
+            "norm_weight": "bfloat16",
+            "quantized": "float8_e4m3fn",
+            "scale": "float32",
+        },
+        attrs={"n_valid_rows": 2, "write_bank": True, "has_addend": True, "has_norm": True},
+        layout_variant_name="row_major",
+    ),
+    # Kimi-K3's latent-MoE tail shrunk, a one-rank group (the generic tests draw one rank's inputs; the CPU tests of
+    # the op run its eight ranks)
+    PointSpec(
+        contract_id="kimi_k3_latent_moe_tail@1.0",
+        axes={"n_tokens": 4, "hidden_size": 256, "latent_size": 128},
+        dtypes={
+            "routed": "bfloat16",
+            "shared": "bfloat16",
+            "up_weight": "bfloat16",
+            "norm_weight": "bfloat16",
+            "out": "bfloat16",
+        },
+        attrs={"tp_size": 1},
+        layout_variant_name="row_major",
+    ),
+    # Kimi-K3's KDA layer after in_proj shrunk to two heads: two windows of three tokens and a padding row, in vLLM's
+    # paged caches
+    PointSpec(
+        contract_id="kimi_k3_kda_spec_stage_c@1.0",
+        axes={
+            "n_seqs": 2,
+            "n_tokens": 7,
+            "n_slots": 9,
+            "n_heads": 2,
+            "head_dim": 128,
+            "width": 4,
+            "conv_len": 5,
+        },
+        dtypes={
+            "qkv": "bfloat16",
+            "out_gate": "bfloat16",
+            "f_a": "bfloat16",
+            "raw_beta": "bfloat16",
+            "f_b_weight": "bfloat16",
+            "conv_weight": "float32",
+            "conv_state": "bfloat16",
+            "a_log": "float32",
+            "g_bias": "float32",
+            "norm_weight": "bfloat16",
+            "state_cache": "float32",
+            "state_indices": "int32",
+            "num_accepted_tokens": "int32",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="strided_rows",
+    ),
     # Muse Spark's MoE experts shrunk: half the routed experts on the rank, as vLLM holds
     # them for aiter
     PointSpec(
@@ -98,5 +162,5 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         layout_variant_name="shuffled_16x16",
     ),
 )
-# whose baseline runs only on gfx950
-GFX950_CONTRACT_IDS = frozenset({"muse_spark_moe@1.0"})
+# whose baseline runs only on gfx950 (aiter's gfx950 KDA kernel for the stage)
+GFX950_CONTRACT_IDS = frozenset({"kimi_k3_kda_spec_stage_c@1.0", "muse_spark_moe@1.0"})
