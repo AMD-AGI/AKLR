@@ -1,49 +1,13 @@
-# cluster.sh — remote-gpu scheduler adapter for <NAME>. Made from templates/slurm.sh.
 # shellcheck shell=bash disable=SC2016,SC2034
-# Adapted: <list the scheduler hooks changed, and why>
-#
-# Contract (also linked from remote-gpu-setup/references/add-cluster.md): cluster.sh defines CLUSTER_RLIB,
-# a Bash library evaluated remotely after the manifest and shared library (C=cluster,
-# REL=work root, B=state dir). It contains these functions; stdout is data, stderr diagnostics.
-# All hooks return 0 on success, nonzero on failure, except where specified below.
-#   scheduler_submit N TIME NAME PARTITION ACCOUNT QOS HOLDER IDLE [OPTIONS...]
-#     Submit whole nodes/all GPUs, no requeue; print one numeric job ID. HOLDER is called with
-#     IDLE HOLDER B C. Return 201 for a per-user submit limit, 206 for another rejection.
-#   scheduler_query JOB
-#     Print one pipe-delimited record (empty unknown fields, no embedded pipes/newlines):
-#     STATE|NODES|TIMELEFT|REASON|START|PARTITION|ACCOUNT|QOS|TIMELIMIT|USER|NAME|ELAPSED|END|NNODES
-#     NODES is a comma-separated list in rank order; times are [D-]HH:MM:SS (or MM:SS),
-#     START is a start estimate, END is epoch seconds; NNODES includes pending requests. STATE uses Slurm's normalized states;
-#     terminal states must be explicit. Return nonzero for unknown jobs/controller failures.
-#   scheduler_jobs
-#     List this user's jobs, one JOB|<query record> per line; empty output is success.
-#   scheduler_cancel JOB [pending]
-#     Cancel JOB; with pending, cancel atomically only if still pending (never a running job).
-#   scheduler_run JOB NODE MODE CMD...
-#     Run CMD on NODE, all GPUs, overlapping other steps, return CMD's rc and output.
-#     MODE=batch consumes no stdin; MODE=interactive uses the caller's tty. ONTO, when set,
-#     bounds runtime in seconds. NODE is always a member of the job, N0 is its rank-zero node.
-#   scheduler_capacity [info]
-#     No args: OK cluster=C free=N account=A qos=Q [burst=N burst_account=A] ...;
-#     account/qos identify an ACCOUNTS pair with most room. info: human-readable site details.
-#   scheduler_extend JOB TOTAL_TIME  (required only with EXTEND=1)
-#     Change the total time limit; no stdout required.
-#   scheduler_holder IDLE SELF B C
-#     Bootstrap exactly one holder per node; return there with J=job ID, H=rank's node name.
-#     A batch parent that launches steps must wait for them and exit, never run the loop too.
-# Site facts in CLUSTER_RLIB: DOCKER_X (docker argv), NODE_ENV (KEY=VALUE argv), LATE_HINT.
-# The shared CLI owns allocation policy, waiting/health, release, task and holder lifecycle.
 
 read -r -d '' CLUSTER_RLIB <<'REMOTE_GPU_ADAPTER'
 LATE_HINT="save results now; the job ends at its time limit"
-# ADAPT: mounts and environment inherited by commands on a node.
 mount_root=$(df --output=target "$REL" 2>/dev/null | tail -1)
 DOCKER_X=($DOCKER_FLAGS -v "$mount_root:$mount_root")
 if [[ $HOME != "$mount_root"/* ]]; then DOCKER_X+=(-v "$HOME:$HOME"); fi
 NODE_ENV=()
 if [[ $HOME_FULL == 1 ]]; then NODE_ENV=(XDG_CACHE_HOME=$B/.cache); fi
 
-# ADAPT: the scheduler's row format and node expansion stay inside this adapter.
 slurm_record() {
   local state nodes left reason start partition account qos limit user name elapsed end count
   IFS='|' read -r state nodes left reason start partition account qos limit user name elapsed end count <<<"$1"
@@ -63,12 +27,14 @@ slurm_record() {
   printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
     "$state" "$nodes" "$left" "$reason" "$start" "$partition" "$account" "$qos" "$limit" "$user" "$name" "$elapsed" "$end" "$count"
 }
+slurm_ended() { sacct -j "$1" -X -n -o State%30 2>/dev/null; }
+slurm_sbatch() { sbatch --mem=0 --no-requeue "$@"; }
 scheduler_query() {
   local row state
   row=$(squeue -j "$1" -h -o '%T|%N|%L|%r|%S|%P|%a|%q|%l|%u|%j|%M|%e|%D' 2>/dev/null |
     head -1 | sed 's/^ *//;s/ *$//;s/ *| */|/g')
   if [[ -n $row ]]; then slurm_record "$row" "$1"; return; fi
-  state=$(sacct -j "$1" -X -n -o State%30 2>/dev/null | awk 'NF {print $1; exit}')
+  state=$(slurm_ended "$1" | awk 'NF {print $1; exit}')
   [[ -n $state ]] || return 1
   printf '%s|||||||||||||\n' "${state%%+*}"
 }
@@ -100,7 +66,7 @@ scheduler_submit() {
   if [[ -n $partition ]]; then options+=(-p "$partition"); fi
   if [[ -n $account ]]; then options+=(-A "$account"); fi
   if [[ -n $qos ]]; then options+=(-q "$qos"); fi
-  output=$(sbatch --parsable -J "$name" -N "$nodes" --gpus-per-node "$GPUS_PER_NODE" --exclusive --mem=0 --no-requeue \
+  output=$(slurm_sbatch --parsable -J "$name" -N "$nodes" --gpus-per-node "$GPUS_PER_NODE" --exclusive \
     -t "$time" -o "$B/logs/%j.out" -e "$B/logs/%j.err" "${options[@]}" "$@" "$holder" "$idle" "$holder" "$B" "$C" 2>&1)
   job=$(grep -Eo '^[0-9]+(;|$)' <<<"$output" | tail -1)
   job=${job%;}
@@ -120,7 +86,6 @@ scheduler_holder() {
 }
 scheduler_extend() { scontrol update JobId="$1" TimeLimit="$2"; }
 
-# ADAPT: capacity must count whole usable nodes and the applicable account/QOS caps.
 scheduler_capacity() {
   if [[ ${1:-} == info ]]; then
     slurm_info
