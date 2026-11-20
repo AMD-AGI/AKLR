@@ -180,9 +180,9 @@ class FastKeyFnGenerator(ClosureGenerator):
                 value = fill_expr("X if P else L", X=value, P=presence, L=lo)
             self.body += fill_statements("A = X", A=axis, X=value)
             a = self.contract.axes[axis]
-            # no workload holds an any_size axis's value: its bounds and the
-            # constraints reading it are checked here
-            if a.any_size:
+            # no workload holds an any_size (or, within its range, a bucketed) axis's
+            # value: its bounds and the constraints reading it are checked here
+            if a.any_size or a.bucketed:
                 self.body += self._decline_unless(
                     fill_expr(
                         "L <= A <= H and A % M == 0",
@@ -193,7 +193,7 @@ class FastKeyFnGenerator(ClosureGenerator):
                     )
                 )
         self.body += self.derived_axis_statements()
-        any_size = {n for n, a in self.contract.axes.items() if a.any_size}
+        any_size = {n for n, a in self.contract.axes.items() if a.any_size or a.bucketed}
         for text in self.contract.constraints:
             constraint = expr.parse(text)
             if constraint.symbols & any_size:

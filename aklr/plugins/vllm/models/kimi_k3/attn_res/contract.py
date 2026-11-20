@@ -53,7 +53,8 @@ KIMI_K3_ATTN_RES = OpContract(
     ),
     op_type="attn_res",
     axes={
-        "n_tokens": axis("Tokens.", 1, 65536, is_var=True),
+        # one workgroup per token: vLLM's batch sizes are matched by power-of-two range
+        "n_tokens": axis("Tokens.", 1, 65536, is_var=True, bucketed=True),
         "hidden_size": axis("Width of the residual stream.", 256, 8192, multiple_of=256),
         "n_bank_rows": axis("Rows the bank holds per token.", 1, 16),
     },

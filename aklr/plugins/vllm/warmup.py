@@ -37,9 +37,11 @@ def _gemm_dispatcher() -> Any:
 
 
 def _served_gemm_points(dispatcher: Any) -> list[Any]:
-    """The Points of the committed GEMM kernels this device serves."""
+    """The Points of the committed GEMM kernels this device serves at a measured m (a range's key, m bucketed, is
+    no one m)."""
     codec = FastKeyCodec.from_contract(dispatcher.contract)
-    return [codec.to_point(key) for key in dispatcher.table.runnables]
+    points = [codec.to_point(key) for key in dispatcher.table.runnables]
+    return [p for p in points if isinstance(p.axes["m"], int)]
 
 
 def _weight_shapes(worker: Any) -> set[tuple[int, int]]:
