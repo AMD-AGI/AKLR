@@ -1,0 +1,237 @@
+{
+  "schema_version": 5,
+  "name": "fp8_mqa_logits_n_heads32",
+  "contract_id": "fp8_mqa_logits@1.0",
+  "description": "The DSA indexer's prefill logits: for query row r and key c in [cu_starts[r], cu_ends[r]), logits[r, c] = kv_scales[c] * sum over heads h of weights[r, h] * relu(q[r, h] . kv[c]), written in place; logits outside a row's window keep their values.",
+  "op_type": "mqa_logits",
+  "axes": {
+    "n_q": {
+      "type": "var",
+      "description": "Query rows, every request's back to back."
+    },
+    "n_k": {
+      "type": "var",
+      "description": "Keys, every request's back to back."
+    },
+    "n_cols": {
+      "type": "var",
+      "description": "Logits per row: the keys rounded up as aiter allocates them."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Indexer heads."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_q",
+        "n_heads",
+        128
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each row's query heads."
+    },
+    "kv": {
+      "shape": [
+        "n_k",
+        128
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The keys, one fp8 row each."
+    },
+    "kv_scales": {
+      "shape": [
+        "n_k"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -10,
+        "log2_hi": -3
+      },
+      "description": "Each key's fp32 scale, positive: aiter applies it before relu."
+    },
+    "weights": {
+      "shape": [
+        "n_q",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each row's per-head weights."
+    },
+    "cu_starts": {
+      "shape": [
+        "n_q"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 0,
+        "distinct": false
+      },
+      "description": "Each row's first key."
+    },
+    "cu_ends": {
+      "shape": [
+        "n_q"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": "n_k",
+        "hi": "n_k",
+        "distinct": false
+      },
+      "description": "Each row's end: its first key past the window."
+    },
+    "logits": {
+      "shape": [
+        "n_q",
+        "n_cols"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rows' logits, written in place inside each row's window."
+    }
+  },
+  "outputs": {
+    "no_values": {
+      "shape": [0],
+      "dtype": "float32",
+      "description": "No values: the op's one result is logits, and a contract declares an output."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_q": 256,
+        "n_k": 262400,
+        "n_cols": 262400
+      }
+    },
+    {
+      "axes": {
+        "n_q": 512,
+        "n_k": 131584,
+        "n_cols": 131584
+      }
+    },
+    {
+      "axes": {
+        "n_q": 1001,
+        "n_k": 70001,
+        "n_cols": 70144
+      }
+    },
+    {
+      "axes": {
+        "n_q": 1024,
+        "n_k": 66560,
+        "n_cols": 66560
+      }
+    },
+    {
+      "axes": {
+        "n_q": 2048,
+        "n_k": 264192,
+        "n_cols": 264192
+      }
+    },
+    {
+      "axes": {
+        "n_q": 4096,
+        "n_k": 135168,
+        "n_cols": 135168
+      }
+    },
+    {
+      "axes": {
+        "n_q": 4096,
+        "n_k": 528384,
+        "n_cols": 528384
+      }
+    },
+    {
+      "axes": {
+        "n_q": 8192,
+        "n_k": 131072,
+        "n_cols": 131072
+      }
+    },
+    {
+      "axes": {
+        "n_q": 8192,
+        "n_k": 270336,
+        "n_cols": 270336
+      }
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_k": 65536,
+        "n_cols": 65536
+      }
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_k": 147456,
+        "n_cols": 147456
+      }
+    },
+    {
+      "axes": {
+        "n_q": 32768,
+        "n_k": 32768,
+        "n_cols": 32768
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "hip": ">=7.15"
+    },
+    "entry_point": "kernel.hip::run",
+    "sources": [
+      {
+        "path": "kernel.hip",
+        "content": "// The DSA indexer's prefill logits on gfx950, 32 heads of 128 over contiguous fp8 keys, in place:\n// logits[r, c] = kv_scales[c] * sum_h weights[r, h] * relu(q[r, h] . kv[c]) for c in [cu_starts[r],\n// cu_ends[r]); the rest of each row is left as it is. A block holds 16 rows, four a wave, their queries in\n// registers, and its waves walk the same 64-key groups, so a group's keys come from L1 for three of them;\n// a wave walks only the groups its own rows' windows reach. A group is four 16 x 16 x 128 fp8 MFMA tiles\n// a head half, tile b's column c being key 4c + b. Each row's scores go through relu into f16 and an\n// f16 MFMA against the row's weights sums the heads, so that lane c of the first lane group ends with\n// keys 4c .. 4c + 3 of the wave's four rows.\n#include <ATen/ATen.h>\n#include <ATen/hip/HIPContext.h>\n#include <ATen/hip/impl/HIPGuardImplMasqueradingAsCUDA.h>\n#include <c10/hip/HIPException.h>\n#include <hip/hip_runtime.h>\n#include <torch/library.h>\n\nnamespace mqa_logits {\nnamespace {\n\nconstexpr int HEADS    = 32;\nconstexpr int HEAD_DIM = 128;\nconstexpr int ROWS     = 4;  // rows a wave scores, one per lane group after the head sum\nconstexpr int WAVES    = 4;\nconstexpr int BLOCK    = ROWS * WAVES;\nconstexpr int GROUP    = 64;  // keys a wave scores per step\nconstexpr int TILES    = 4;   // 16-key MFMA tiles of a group\n\ntypedef int   i32x4 __attribute__((ext_vector_type(4)));\ntypedef int   i32x8 __attribute__((ext_vector_type(8)));\ntypedef float f32x4 __attribute__((ext_vector_type(4)));\ntypedef _Float16 f16x2 __attribute__((ext_vector_type(2)));\ntypedef _Float16 f16x8 __attribute__((ext_vector_type(8)));\ntypedef short    i16x2 __attribute__((ext_vector_type(2)));\n\nunion V8 {\n    i32x8 v;\n    i32x4 h[2];\n};\n\nstruct Params {\n    const uint8_t *q;       // [n_q, HEADS, HEAD_DIM] e4m3\n    const uint8_t *k;       // [n_k, HEAD_DIM] e4m3\n    const float   *scales;  // [n_k]\n    const float   *w;       // [n_q, HEADS]\n    const int     *starts;  // [n_q]\n    const int     *ends;    // [n_q]\n    float         *out;     // [n_q, n_cols]\n    int            n_q;\n    int            n_k;\n    int            n_cols;\n    int            splits;  // blocks along a row block's window\n};\n\nstruct Group {\n    V8    k[TILES];\n    f32x4 scale;\n};\n\n// S_EXP: scores come out of the fp8 MFMA times 2^-S_EXP (q's block scale), so that the largest an e4m3\n// product sum can be, 448^2 * 128 < 2^25, stays within f16\nconstexpr int S_EXP = 10;\n// W_EXP: a row's weights go to f16 times 2^(W_EXP - e), e the exponent of the largest one\nconstexpr int W_EXP = 14;\n\n__device__ __forceinline__ f32x4 mfma(i32x8 a, i32x8 b) {\n    const f32x4 zero = {0.f, 0.f, 0.f, 0.f};\n    // e4m3 operands; q's block scale 2^-S_EXP, the keys' 1\n    return __builtin_amdgcn_mfma_scale_f32_16x16x128_f8f6f4(a, b, zero, 0, 0, 0, 127 - S_EXP, 0, 127);\n}\n\n// relu of two scores as f16: negative f16 are negative as int16\n__device__ __forceinline__ f16x2 relu_f16(float a, float b) {\n    const i16x2 h = __builtin_bit_cast(i16x2, __builtin_amdgcn_cvt_pkrtz(a, b));\n    return __builtin_bit_cast(f16x2, __builtin_elementwise_max(h, (i16x2){0, 0}));\n}\n\n// 32 bytes of a row: lane (g, c)'s operand bytes [32g, 32g + 32)\n__device__ __forceinline__ void load32(const uint8_t *src, V8 &d) {\n    d.h[0] = *reinterpret_cast<const i32x4 *>(src);\n    d.h[1] = *reinterpret_cast<const i32x4 *>(src + 16);\n}\n\n__device__ __forceinline__ void load_group(const Params &p, int g, int lane, Group &d) {\n    const int c = lane & 15, part = lane >> 4, last = p.n_k - 1;\n    const int key0 = g * GROUP + 4 * c;\n#pragma unroll\n    for (int b = 0; b < TILES; ++b)\n        load32(p.k + static_cast<size_t>(min(key0 + b, last)) * HEAD_DIM + part * 32, d.k[b]);\n    if (key0 + 3 <= last)\n        d.scale = *reinterpret_cast<const f32x4 *>(p.scales + key0);\n    else\n#pragma unroll\n        for (int b = 0; b < TILES; ++b) d.scale[b] = p.scales[min(key0 + b, last)];\n}\n\nstruct Rows {\n    V8    qa[ROWS], qb[ROWS];\n    f32x4 wa[ROWS], wb[ROWS];\n    int   rs[ROWS], re[ROWS];  // the rows' windows, wave-uniform\n};\n\n// one group: per row, its eight score MFMAs, their relu in f16 as the B operand of an f16 MFMA whose A is\n// the row's weights in row r alone, so that tile b's sum over the heads lands in D_b's row r: lane group 0\n// holds rows 0 .. 3 at keys 4c + b, and stores them inside each row's window\n__device__ __forceinline__ void score_group(const Rows &w, const f16x8 (&wa)[ROWS], const Group &k, int g, int lane,\n                                            float *out0, size_t n_cols, const float (&back)[ROWS], int lo_e, int hi_s,\n                                            int live) {\n    const int c = lane & 15;\n    f32x4     d[TILES];\n#pragma unroll\n    for (int b = 0; b < TILES; ++b) d[b] = (f32x4){0.f, 0.f, 0.f, 0.f};\n    // row r + 1's score MFMAs issued before row r's relu and reduction\n    f32x4 x[2][TILES][2];\n#pragma unroll\n    for (int b = 0; b < TILES; ++b) {\n        x[0][b][0] = mfma(w.qa[0].v, k.k[b].v);\n        x[0][b][1] = mfma(w.qb[0].v, k.k[b].v);\n    }\n#pragma unroll\n    for (int r = 0; r < ROWS; ++r) {\n        if (r + 1 < ROWS) {\n#pragma unroll\n            for (int b = 0; b < TILES; ++b) {\n                x[(r + 1) & 1][b][0] = mfma(w.qa[r + 1].v, k.k[b].v);\n                x[(r + 1) & 1][b][1] = mfma(w.qb[r + 1].v, k.k[b].v);\n            }\n        }\n#pragma unroll\n        for (int b = 0; b < TILES; ++b) {\n            const f32x4 x0 = x[r & 1][b][0], x1 = x[r & 1][b][1];\n            // k = 8 part + j: heads 4 part + j of the first half, then 16 + 4 part + j - 4\n            const f16x2 h0 = relu_f16(x0[0], x0[1]), h1 = relu_f16(x0[2], x0[3]);\n            const f16x2 h2 = relu_f16(x1[0], x1[1]), h3 = relu_f16(x1[2], x1[3]);\n            const f16x8 bv = {h0[0], h0[1], h1[0], h1[1], h2[0], h2[1], h3[0], h3[1]};\n            d[b]           = __builtin_amdgcn_mfma_f32_16x16x32_f16(wa[r], bv, d[b], 0, 0, 0);\n        }\n    }\n    if (lane >= 16) return;\n    const int key0 = g * GROUP + 4 * c;\n    f32x4     v[ROWS];\n#pragma unroll\n    for (int r = 0; r < ROWS; ++r) {\n#pragma unroll\n        for (int b = 0; b < TILES; ++b) v[r][b] = d[b][r] * k.scale[b];\n        v[r] *= back[r];\n    }\n    // every live row's window holds the whole group: no masks; rows past n_q have no window\n    if (g * GROUP >= hi_s && (g + 1) * GROUP <= lo_e) {\n#pragma unroll\n        for (int r = 0; r < ROWS; ++r)\n            if (r < live) *reinterpret_cast<f32x4 *>(out0 + r * n_cols + key0) = v[r];\n        return;\n    }\n#pragma unroll\n    for (int r = 0; r < ROWS; ++r)\n#pragma unroll\n        for (int b = 0; b < TILES; ++b)\n            if (key0 + b >= w.rs[r] && key0 + b < w.re[r]) out0[r * n_cols + key0 + b] = v[r][b];\n}\n\n__global__ __launch_bounds__(WAVES * 64) void logits_kernel(Params p) {\n    const int lane = threadIdx.x & 63, part = lane >> 4, c = lane & 15;\n    const int wave = __builtin_amdgcn_readfirstlane(threadIdx.x >> 6);\n    // the last rows first: causal windows grow with the row, so the longest walks start first\n    const int row0 = (gridDim.x - 1 - blockIdx.x) * BLOCK;\n    // the block's joint window: lane r < 16 reads row row0 + r\n    int lo = INT_MAX, hi = 0;\n    if (lane < BLOCK && row0 + lane < p.n_q) {\n        const int s = max(p.starts[row0 + lane], 0), e = min(p.ends[row0 + lane], p.n_k);\n        if (e > s) lo = s, hi = e;\n    }\n    for (int o = 1; o < BLOCK; o <<= 1) {\n        lo = min(lo, __shfl_xor(lo, o));\n        hi = max(hi, __shfl_xor(hi, o));\n    }\n    lo = __builtin_amdgcn_readfirstlane(lo);\n    hi = __builtin_amdgcn_readfirstlane(hi);\n    if (hi <= lo) return;\n    // this block's share of the window's groups\n    const int g0 = lo / GROUP, groups = (hi + GROUP - 1) / GROUP - g0;\n    const int per = (groups + p.splits - 1) / p.splits;\n    const int gb = g0 + min(groups, per * static_cast<int>(blockIdx.y));\n    const int ge = g0 + min(groups, per * static_cast<int>(blockIdx.y + 1));\n    if (gb >= ge) return;\n\n    // the wave's rows: queries and weights of all four in every lane, windows wave-uniform\n    const int r_base = row0 + wave * ROWS;\n    Rows      w;\n#pragma unroll\n    for (int r = 0; r < ROWS; ++r) {\n        const int  row  = min(r_base + r, p.n_q - 1);\n        const bool live = r_base + r < p.n_q;\n        load32(p.q + (static_cast<size_t>(row) * HEADS + c) * HEAD_DIM + part * 32, w.qa[r]);\n        load32(p.q + (static_cast<size_t>(row) * HEADS + 16 + c) * HEAD_DIM + part * 32, w.qb[r]);\n        w.wa[r] = *reinterpret_cast<const f32x4 *>(p.w + static_cast<size_t>(row) * HEADS + 4 * part);\n        w.wb[r] = *reinterpret_cast<const f32x4 *>(p.w + static_cast<size_t>(row) * HEADS + 16 + 4 * part);\n        // a window cut to the keys, as aiter cuts it\n        w.rs[r] = __builtin_amdgcn_readfirstlane(live ? max(p.starts[row], 0) : 0);\n        w.re[r] = __builtin_amdgcn_readfirstlane(live ? min(p.ends[row], p.n_k) : 0);\n    }\n    // the wave's joint window, cut to this block's share\n    int wlo = INT_MAX, whi = 0;\n#pragma unroll\n    for (int r = 0; r < ROWS; ++r)\n        if (w.re[r] > w.rs[r]) wlo = min(wlo, w.rs[r]), whi = max(whi, w.re[r]);\n    const int wgb = max(gb, wlo / GROUP), wge = min(ge, (whi + GROUP - 1) / GROUP);\n    if (wgb >= wge) return;\n    // each row's weights in f16, times 2^(W_EXP - e_r), as the A operand of its reduction MFMA: lane\n    // (part, m) holds row m's k = 8 part .. 8 part + 7 for m == r, else 0\n    f16x8 wa[ROWS];\n    float back[ROWS];\n#pragma unroll\n    for (int r = 0; r < ROWS; ++r) {\n        float m = 0.f;\n#pragma unroll\n        for (int i = 0; i < 4; ++i) m = __builtin_fmaxf(m, __builtin_fmaxf(__builtin_fabsf(w.wa[r][i]), __builtin_fabsf(w.wb[r][i])));\n        m = __builtin_fmaxf(m, __shfl_xor(m, 16));\n        m = __builtin_fmaxf(m, __shfl_xor(m, 32));\n        const int   e  = m > 0.f ? __builtin_amdgcn_frexp_expf(m) : 0;\n        const float up = __builtin_ldexpf(1.f, W_EXP - e);\n        back[r]        = __builtin_ldexpf(1.f, S_EXP + e - W_EXP);\n        const bool mine = c == r;\n#pragma unroll\n        for (int i = 0; i < 4; ++i) {\n            wa[r][i]     = mine ? static_cast<_Float16>(w.wa[r][i] * up) : static_cast<_Float16>(0.f);\n            wa[r][4 + i] = mine ? static_cast<_Float16>(w.wb[r][i] * up) : static_cast<_Float16>(0.f);\n        }\n    }\n    float *out0 = p.out + static_cast<size_t>(r_base) * p.n_cols;\n    // the keys every live row's window holds; rows past n_q have none\n    const int live = min(ROWS, p.n_q - r_base);\n    int       lo_e = INT_MAX, hi_s = 0;\n#pragma unroll\n    for (int r = 0; r < ROWS; ++r)\n        if (r_base + r < p.n_q) lo_e = min(lo_e, w.re[r]), hi_s = max(hi_s, w.rs[r]);\n\n    // two groups' keys in flight: one scored while the next loads\n    Group a, b;\n    load_group(p, wgb, lane, a);\n    for (int g = wgb; g < wge; g += 2) {\n        if (g + 1 < wge) load_group(p, g + 1, lane, b);\n        score_group(w, wa, a, g, lane, out0, p.n_cols, back, lo_e, hi_s, live);\n        if (g + 1 >= wge) break;\n        if (g + 2 < wge) load_group(p, g + 2, lane, a);\n        score_group(w, wa, b, g + 1, lane, out0, p.n_cols, back, lo_e, hi_s, live);\n    }\n}\n\nvoid run(const at::Tensor &q, const at::Tensor &kv, const at::Tensor &kv_scales, const at::Tensor &weights,\n         const at::Tensor &cu_starts, const at::Tensor &cu_ends, at::Tensor &logits, at::Tensor &no_values) {\n    TORCH_CHECK(q.size(1) == HEADS && q.size(2) == HEAD_DIM && kv.size(1) == HEAD_DIM, \"32 heads of 128 only\");\n    TORCH_CHECK(logits.size(0) == q.size(0) && logits.size(1) >= kv.size(0), \"a row of logits per query, a column per key\");\n    TORCH_CHECK(q.is_contiguous() && kv.is_contiguous() && kv_scales.is_contiguous() && weights.is_contiguous() &&\n                    cu_starts.is_contiguous() && cu_ends.is_contiguous() && logits.is_contiguous(),\n                \"contiguous tensors only\");\n    const at::hip::OptionalHIPGuardMasqueradingAsCUDA guard(q.device());\n    Params p{};\n    p.q      = static_cast<const uint8_t *>(q.data_ptr());\n    p.k      = static_cast<const uint8_t *>(kv.data_ptr());\n    p.scales = kv_scales.data_ptr<float>();\n    p.w      = weights.data_ptr<float>();\n    p.starts = cu_starts.data_ptr<int>();\n    p.ends   = cu_ends.data_ptr<int>();\n    p.out    = logits.data_ptr<float>();\n    p.n_q    = static_cast<int>(q.size(0));\n    p.n_k    = static_cast<int>(kv.size(0));\n    p.n_cols = static_cast<int>(logits.size(1));\n    if (p.n_q == 0) return;\n    const int cus    = at::cuda::getCurrentDeviceProperties()->multiProcessorCount;\n    const int blocks = (p.n_q + BLOCK - 1) / BLOCK;\n    // enough blocks for four a CU, a split keeping at least 8 groups\n    const int max_split = std::max(1, (p.n_k + GROUP * 8 - 1) / (GROUP * 8));\n    p.splits            = std::min(max_split, std::max(1, (4 * cus + blocks - 1) / blocks));\n    hipLaunchKernelGGL(logits_kernel, dim3(blocks, p.splits), dim3(WAVES * 64), 0, at::hip::getCurrentHIPStream(), p);\n    C10_HIP_CHECK(hipGetLastError());\n}\n\n} // namespace\n} // namespace mqa_logits\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor q, Tensor kv, Tensor kv_scales, Tensor weights, Tensor cu_starts, Tensor cu_ends, \"\n          \"Tensor(a!) logits, Tensor(b!) no_values) -> ()\",\n          &mqa_logits::run);\n}\n"
+      }
+    ]
+  }
+}

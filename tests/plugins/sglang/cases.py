@@ -168,6 +168,23 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # the DSA indexer's prefill logits: four rows after 36 cached keys
+    PointSpec(
+        contract_id="fp8_mqa_logits@1.0",
+        axes={"n_q": 4, "n_k": 40, "n_cols": 256, "n_heads": 32},
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv": "float8_e4m3fn",
+            "kv_scales": "float32",
+            "weights": "float32",
+            "cu_starts": "int32",
+            "cu_ends": "int32",
+            "logits": "float32",
+            "no_values": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # the DSA indexer's top-k over a short pool: two sequences, rows above and below topk
     PointSpec(
         contract_id="dsa_topk_transform@1.0",
