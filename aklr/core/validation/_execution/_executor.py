@@ -59,9 +59,7 @@ class Executor:
         initializer: Callable[..., None] | None = None,
         initargs: Sequence[Any] = (),
     ) -> Executor:
-        """Run tasks on these devices; like multiprocessing.Pool, each process runs initializer(*initargs) first."""
         ResourceRequest(count=resources_per_runner)
-        # the catalog first: a bad device raises before the job directory exists
         resources = LocalAcceleratorCatalog(devices)
         if resources_per_runner > len(resources):
             raise ValueError("resources_per_runner exceeds the available device count")
@@ -95,7 +93,6 @@ class Executor:
         serial_group: str | None = None,
         **kwargs: Any,
     ) -> ExecutionFuture[Any]:
-        """Run fn(context, **kwargs); an explicit resource request overrides the executor default."""
         if runner is not None:
             ExecutionRunner.resolve(runner)
         task = ExecutionTask(
@@ -125,7 +122,6 @@ class Executor:
         try:
             self._backend.shutdown(wait=wait)
         finally:
-            # Future.result() can wake a waiter before completion callbacks run.
             if self._backend.shutdown_result.done():
                 self._on_backend_closed(self._backend.shutdown_result)
 
@@ -133,7 +129,6 @@ class Executor:
         self.shutdown(wait=True)
 
     def __enter__(self) -> Self:
-        # the children lead their own sessions: a signal must unwind through __exit__ to kill them
         if threading.current_thread() is threading.main_thread():
             for signal_number in (signal.SIGTERM, signal.SIGINT):
                 self._previous_signal_handlers[signal_number] = signal.signal(

@@ -13,16 +13,10 @@ from packaging.version import Version
 
 __all__ = ["LIBRARIES", "toolchain_version", "unmet_requirement"]
 
-# the libraries a kernel may import beyond torch, which kernel.build.requires names, by distribution: read
-# from the installed distribution, not imported (importing aiter loads its JIT modules, importing mori sizes
-# its heap). A new one is a code PR first.
 LIBRARIES: Final = {"aiter": "amd-aiter", "mori": "amd_mori"}
 
 
 def toolchain_version(name: str) -> str | None:
-    """``name``'s installed version, None when it is missing: a language's module
-    ``__version__``, for ``hip`` the HIP torch was built with, for a library its
-    distribution's version."""
     if name in LIBRARIES:
         try:
             return importlib.metadata.version(LIBRARIES[name])
@@ -32,7 +26,6 @@ def toolchain_version(name: str) -> str | None:
         if name == "hip":
             import torch
 
-            # without its build suffix ("7.15.26333-abc" -> "7.15.26333"); None without a ROCm torch
             hip = torch.version.hip
             return hip.split("-")[0] if hip else None
         return importlib.import_module(name).__version__
@@ -41,8 +34,6 @@ def toolchain_version(name: str) -> str | None:
 
 
 def unmet_requirement(requires: Mapping[str, str]) -> str | None:
-    """Why the installed toolchains miss ``requires`` (``kernel.requires``), None when
-    they meet it; a dev or rc build counts as its release."""
     for name, specifier in requires.items():
         version = toolchain_version(name)
         if version is None:

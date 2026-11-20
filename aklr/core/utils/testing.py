@@ -24,7 +24,6 @@ import triton.language as tl
 
 @functools.cache
 def kernel_tracer():
-    """Load AKLR's rocprofiler-sdk collector and graph node attribution fix."""
     from torch.utils.cpp_extension import ROCM_HOME, load
 
     from aklr.core.platform.env import RuntimeEnv
@@ -41,7 +40,6 @@ def kernel_tracer():
         extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk", "-lamdhip64"],
         build_directory=None if build is None else str(build),
     )
-    # SDK 1.4.0 takes a tool at any time and 1.4.2 fixes queue interposition, which torch 2.12 loads at import
     sdk = tracer.rocprofiler_sdk_version
     deprecated = [f"torch {torch.__version__}"] if torch.__version__ < "2.12" else []
     deprecated += [f"rocprofiler-sdk {'.'.join(map(str, sdk))}"] if sdk < (1, 4, 2) else []
@@ -60,8 +58,6 @@ def _links_rocprofiler_sdk() -> bool:
 
 
 if torch.version.hip is not None:
-    # rocprofiler-sdk intercepts only queues made after the tool registers; a torch that links the SDK
-    # configures it as the GPU initializes, after which SDK 1.3.5 takes no tool, so register now
     if _links_rocprofiler_sdk():
         kernel_tracer()
     else:
@@ -76,7 +72,6 @@ def _flush_l2_cache_kernel(cache, sums, N: tl.constexpr, BLOCK: tl.constexpr):
 
 
 def flush_l2_cache() -> None:
-    """Flush L2 and MALL by reading 1 GiB: written lines would stay dirty for the next kernel."""
     cache = torch.empty(1_073_741_824 // 4, dtype=torch.int32, device="cuda")
     blocks = triton.cdiv(cache.numel(), 4096)
     sums = torch.empty(blocks, dtype=torch.int32, device="cuda")
@@ -119,12 +114,10 @@ def _summarize_statistics(times, quantiles, return_mode):
 
 @contextmanager
 def cuda_graph_without_gc(*args, **kwargs):
-    # GC finalizing a Triton kernel unloads its module, which invalidates a capture
     gc_was_enabled = gc.isenabled()
     if gc_was_enabled:
         gc.disable()
     try:
-        # thread_local: another thread's GPU calls, on its own device, do not invalidate this capture
         with torch.cuda.graph(*args, capture_error_mode="thread_local", **kwargs) as graph:
             yield graph
     finally:
@@ -170,13 +163,12 @@ def _collect_scope_times(database, prefix):
 
 
 def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median", *, group=None):
-    """fn's kernel ms per call in a CUDA graph, minus cache flushes; with group, the slowest rank's."""
     assert return_mode in ["min", "max", "mean", "median", "all"]
     distributed = group is not None and dist.get_world_size(group) > 1
 
     kernel_tracer()
     stream = torch.cuda.Stream()
-    stream.wait_stream(torch.cuda.current_stream())  # the inputs are written on the caller's stream
+    stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):
         fn()
         if grad_to_none is not None:
@@ -189,14 +181,13 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
         for _ in range(5):
-            flush_l2_cache()  # the graph replays it too
+            flush_l2_cache()
             fn()
         end_event.record()
         torch.cuda.synchronize()
         estimate_ms = start_event.elapsed_time(end_event) / 5
         n_repeat = 1000 if estimate_ms == 0 else max(1, int(rep / estimate_ms))
         if distributed:
-            # equal collectives on every rank; also sets up the communicator before capture
             agreed = torch.tensor([n_repeat], device="cuda")
             dist.all_reduce(agreed, dist.ReduceOp.MIN, group=group)
             n_repeat = int(agreed.item())
@@ -205,7 +196,6 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
         with _kernel_bench_session() as (profiler, session):
             g = torch.cuda.CUDAGraph()
             scope_prefix = f"aklr.{uuid.uuid4().hex}."
-            # on the warmed stream, where fn's per-stream state exists
             with cuda_graph_without_gc(g, stream=stream):
                 for i in range(n_repeat):
                     if grad_to_none is not None:
@@ -213,7 +203,7 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
                             x.grad = None
                     flush_l2_cache()
                     if distributed:
-                        dist.all_reduce(ready, group=group)  # the ranks start each call together
+                        dist.all_reduce(ready, group=group)
                     with profiler.scope(f"{scope_prefix}{i:08d}"):
                         fn()
             torch.cuda.synchronize()
@@ -236,10 +226,9 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
                 if not distributed:
                     raise
                 error = e
-            del g  # its captured collectives would outlive the call in a raised error's traceback
+            del g
 
     if distributed:
-        # every rank learns each rank's failure, so all fail together and none waits on a collective
         errors = [None] * dist.get_world_size(group)
         dist.all_gather_object(errors, None if error is None else str(error), group=group)
         if error is not None:

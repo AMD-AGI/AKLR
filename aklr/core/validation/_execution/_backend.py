@@ -44,8 +44,7 @@ from aklr.core.validation._execution._scheduler import (
 class ExecutionBackend(ABC):
     @property
     @abstractmethod
-    def shutdown_result(self) -> Future[None]:
-        """The same non-cancellable Future for every caller; completed after all cleanup ends."""
+    def shutdown_result(self) -> Future[None]: ...
 
     @abstractmethod
     def submit(self, task: ExecutionTask) -> ExecutionFuture[Any]: ...
@@ -54,17 +53,10 @@ class ExecutionBackend(ABC):
     def cancel_pending(self) -> int: ...
 
     @abstractmethod
-    def shutdown(self, wait: bool = True) -> None:
-        """Stop accepting work, initiate cleanup once, and optionally wait for shutdown_result.
-
-        Cleanup failures belong to shutdown_result; a cleanup callback reentering
-        shutdown must not wait on its own completion.
-        """
+    def shutdown(self, wait: bool = True) -> None: ...
 
 
 class RunnerSupervisor:
-    """Owns runner lifetimes and resolves tasks only after cleanup and resource release."""
-
     def __init__(
         self,
         on_finished: Callable[[ResourceLease, ResourceHealth], None],
@@ -86,7 +78,7 @@ class RunnerSupervisor:
             thread_name_prefix="aklr-execution-runner",
         )
         self._active: dict[str, ExecutionRunner] = {}
-        self._idle: dict[tuple[str, ...], ExecutionRunner] = {}  # reusable runners, by their resource IDs
+        self._idle: dict[tuple[str, ...], ExecutionRunner] = {}
         self._is_closing = False
         self._lock = threading.Lock()
 
@@ -107,7 +99,6 @@ class RunnerSupervisor:
             try:
                 runner.close()
             except Exception:  # noqa: BLE001, S110
-                # the runner's own pool thread reads its health and reports it
                 pass
         self._pool.shutdown(wait=True)
         shutil.rmtree(self._job_dir, ignore_errors=True)
@@ -136,7 +127,6 @@ class RunnerSupervisor:
                 if self._is_closing:
                     raise TaskCancelled(f"task {task.task_id} was cancelled: the backend is closing")
                 idle = self._idle.pop(resource_ids, None)
-                # a leased device is free, so an idle runner on it only holds its context: it goes
                 stale = [ids for ids in self._idle if set(ids) & set(resource_ids)]
                 evicted = [self._idle.pop(ids) for ids in stale]
                 if idle is not None and type(idle) is runner_type:
@@ -165,7 +155,6 @@ class RunnerSupervisor:
         except BaseException as error:  # noqa: BLE001
             failure = self._as_execution_error(error, RunnerStartupFailed, "could not start execution runner")
         else:
-            # marked running only once started: a start failure may retry the task elsewhere
             if future.mark_running(directory):
                 try:
                     result = runner.execute(task)
@@ -177,7 +166,6 @@ class RunnerSupervisor:
         finally:
             is_kept = False
             if runner is not None and is_returned and runner.reusable:
-                # a runner whose task succeeded waits for the next task on the same resources
                 with self._lock:
                     is_kept = (
                         not self._is_closing
@@ -204,7 +192,6 @@ class RunnerSupervisor:
                     diagnostics = None
                     failure = self._append_cleanup_failure(failure, "runner diagnostics failed", error)
                 if diagnostics and failure is not None:
-                    # the log first, so the failure's own text stays the last line
                     message = f"Runner log:\n{diagnostics}\n\n{failure}"
                     failure = (
                         type(failure)(message)
@@ -225,12 +212,10 @@ class RunnerSupervisor:
         if failure is None and is_returned:
             future.publish_result(result)
             return
-        # a failed or cancelled task's directory goes now; a succeeded one's is the caller's
         if directory is not None:
             shutil.rmtree(directory, ignore_errors=True)
         if failure is None:
             return
-        # the runner never started and its resource left: the task tries once more elsewhere
         if not is_started and resource_health == ResourceHealth.UNHEALTHY and self._retry(task, future):
             return
         future.publish_exception(failure)
@@ -260,8 +245,6 @@ class RunnerSupervisor:
 
 
 class RunnerExecutionBackend(ExecutionBackend):
-    """Connects the scheduler to runner supervision and closes them in dependency order."""
-
     def __init__(
         self,
         resources: ResourceCatalog,
@@ -306,7 +289,6 @@ class RunnerExecutionBackend(ExecutionBackend):
         return self._scheduler.cancel_pending()
 
     def shutdown(self, wait: bool = True) -> None:
-        # Stop accepting work before returning, including when cleanup runs in the background.
         self._scheduler.shutdown()
         with self._shutdown_lock:
             initiate = self._shutdown_owner is None

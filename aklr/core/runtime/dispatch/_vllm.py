@@ -12,12 +12,10 @@ from aklr.core.runtime.dispatch._dispatcher import Dispatcher
 
 __all__ = ["VLLM_HOOKED_METHOD", "register_vllm_plugin"]
 
-# the worker's device is bound once it returns; vLLM loads plugins before it runs
 VLLM_HOOKED_METHOD = "vllm.v1.worker.gpu_worker.Worker.init_device"
 
 
 def register_vllm_plugin() -> None:
-    """The ``vllm.general_plugins`` entry point: starts the dispatcher after ``VLLM_HOOKED_METHOD``."""
     from vllm.v1.worker.gpu_worker import Worker
 
     init_device = Worker.init_device

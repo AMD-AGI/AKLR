@@ -19,7 +19,6 @@ __all__ = ["check_hip_kernel"]
 _COMMENT_OR_LITERAL: Final = re.compile(
     r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'", re.DOTALL
 )
-# SH1: register in the build's TORCH_EXTENSION_NAME only: a namespace's second library aborts the process
 _LIBRARY_MACRO: Final = re.compile(r"\b(TORCH_LIBRARY\w*|PYBIND11_MODULE)\b")
 _EXPAND_DEFINITION: Final = re.compile(
     r"#\s*define\s+TORCH_LIBRARY_EXPAND\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)"
@@ -37,7 +36,6 @@ _HEADERS: Final = frozenset(
         *("type_traits", "utility", "vector"),
     }
 )
-# SH3: syncs, allocation outside torch, device or process changes, I/O; cuda* names, which hipify rewrites
 _FORBIDDEN: Final = re.compile(
     r"\b(hip(?:DeviceSynchronize|StreamSynchronize|EventSynchronize|SetDevice"
     r"|DeviceReset|DeviceEnablePeerAccess|LaunchHostFunc|StreamAddCallback)"
@@ -46,7 +44,6 @@ _FORBIDDEN: Final = re.compile(
     r"|getenv|secure_getenv|setenv|putenv|system|popen|fopen|freopen|dlopen"
     r"|printf|fprintf|puts|cout|cerr|clog|exit|quick_exit|abort)\b"
 )
-# SH4: memory kept across calls: a static or __device__ variable that is not const
 _STATE: Final = re.compile(
     r"\b(?:__managed__|thread_local)\b"
     r"|\b(?:static|__device__)\b(?![^;{}()]*\b(?:const|constexpr|operator)\b)"
@@ -55,7 +52,6 @@ _STATE: Final = re.compile(
 
 
 def check_hip_kernel(kernel: Kernel) -> set[tuple[str, int, int, str]]:
-    """SH0-SH5 rejections, (path, line, rule, what); bench catches input writes and off-stream launches."""
     sources = {source.path: source.content for source in kernel.sources}
     return {
         (path, line, rule, what)

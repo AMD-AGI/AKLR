@@ -4,11 +4,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 import ast
@@ -25,10 +21,7 @@ from aklr.core.platform.device import DeviceTarget
 from aklr.core.platform.toolchain import LIBRARIES, unmet_requirement
 from aklr.core.schema._frozen_model import NonEmptyStr, frozen_dataclass
 
-# build.language and impls/<language>/ values; a new language is a code PR first, then a schema PR
 Language = Literal["flydsl", "hip", "hsaco", "triton"]
-# the toolchain each language's kernels need, which build.requires names: an hsaco kernel needs no compiler,
-# only the HIP that loads its code objects
 TOOLCHAINS: Final = {"flydsl": "flydsl", "hip": "hip", "hsaco": "hip", "triton": "triton"}
 
 
@@ -48,8 +41,6 @@ class SourceFile:
 
     @property
     def imports(self) -> set[str]:
-        """The top-level modules a Python source imports, anywhere in it; none for another language's, or one
-        that does not parse (the audit reports that)."""
         if not self.path.endswith(".py"):
             return set()
         try:
@@ -70,11 +61,9 @@ class Build:
     language: NonEmptyStr
     target_hardware: Annotated[List[str], Field(min_length=1)]
     entry_point: NonEmptyStr
-    # the versions the kernel needs, by toolchain or library: {"triton": ">=3.8"}; a kernel names its
-    # language's toolchain and every library its sources import (Kernel.requires_error)
     requires: Dict[NonEmptyStr, NonEmptyStr] = Field(default_factory=dict)
     dependencies: List[NonEmptyStr] = Field(default_factory=list)
-    destination_passing_style: bool = True  # True: outputs come as the last arguments; False: returned
+    destination_passing_style: bool = True
     binding: Optional[NonEmptyStr] = None
 
     @model_validator(mode="after")
@@ -107,7 +96,6 @@ class Build:
         return self
 
     def runs_on(self, target: DeviceTarget) -> bool:
-        """Whether target is one of target_hardware and the toolchains here meet requires."""
         return (
             DeviceTarget.matches_target(
                 target, [DeviceTarget(*name.split("/")) for name in self.target_hardware]
@@ -141,8 +129,6 @@ class Kernel:
 
     @property
     def requires_error(self) -> Optional[str]:
-        """Why build.requires misses the toolchain the kernel's language needs or a library its sources import;
-        None when it names both."""
         imported = {name for source in self.sources for name in source.imports}
         toolchain = TOOLCHAINS.get(self.build.language, self.build.language)
         for name in (toolchain, *sorted(imported.intersection(LIBRARIES))):
@@ -181,13 +167,12 @@ class Kernel:
         return replace(self, name=f"{self.name}_{self.hash()[:8]}")
 
     def hash(self) -> str:
-        """SHA1 of the kernel's content, name excluded; the build cache's key."""
         return self._hash_cache
 
-    def __hash__(self) -> int:  # pragma: no cover - trivial wrapper
+    def __hash__(self) -> int:  # pragma: no cover
         return hash(self._hash_cache)
 
-    def __eq__(self, other: object) -> bool:  # pragma: no cover - trivial wrapper
+    def __eq__(self, other: object) -> bool:  # pragma: no cover
         if not isinstance(other, Kernel):
             return NotImplemented
         return self._hash_cache == other._hash_cache

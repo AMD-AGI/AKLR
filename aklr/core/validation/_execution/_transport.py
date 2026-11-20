@@ -90,8 +90,6 @@ class RunnerChannel(ABC):
 
 
 class ChildRunnerEndpoint:
-    """The child's end: pickled commands in, JSON events out, so the parent never unpickles its bytes."""
-
     def __init__(self, command_queue: Any, event_connection: Any) -> None:
         self._command_queue = command_queue
         self._event_connection = event_connection
@@ -142,14 +140,13 @@ class MultiprocessingRunnerChannel(RunnerChannel):
 
     @property
     def event_connection(self) -> Any:
-        """The connection events arrive on, for multiprocessing.connection.wait."""
         return self._event_connection
 
     def send(self, command: RunnerCommand) -> None:
         if self._is_closed:
             raise ChannelError("runner channel is closed")
         try:
-            ForkingPickler.dumps(command)  # put() pickles on a feeder thread, which only prints its failure
+            ForkingPickler.dumps(command)
             self._command_queue.put(command)
         except Exception as error:
             raise ChannelError(f"could not send runner command: {error}") from error
@@ -183,7 +180,6 @@ class MultiprocessingRunnerChannel(RunnerChannel):
             return
         self._is_closed = True
         try:
-            # a dead child never drains the pipe: joining the queue's feeder thread at exit would hang
             self._command_queue.cancel_join_thread()
             self._command_queue.close()
         except Exception:  # noqa: BLE001, S110

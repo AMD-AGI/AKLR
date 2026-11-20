@@ -42,7 +42,6 @@ class AuditStage(PipelineStage):
     report_type = StageReport
 
     def __init__(self, *, allow_measured_edits: bool = False) -> None:
-        # skips PERF_EDITED: for the bot's measurement PR only
         self._allow_measured_edits = allow_measured_edits
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport:
@@ -96,7 +95,6 @@ class AuditStage(PipelineStage):
         if template is None:
             errors.append(f"no schema template is named {schema.name}")
         else:
-            # the template's standard draws the inputs and checks the outputs: the json must still match it
             for part in ("inputs", "outputs"):
                 if list(getattr(schema, part)) != list(getattr(template, part)):
                     errors.append(
@@ -119,7 +117,6 @@ class AuditStage(PipelineStage):
             key = WorkloadKey.from_workload(w)
             at = f"workload {{{key}}}"
             try:
-                # axes of absent optional inputs may be left out, the outputs' may not: the bench builds from them
                 schema.get_output_shapes(w.axes)
             except ValueError as e:
                 errors.append(f"{at}: {e}")
@@ -168,7 +165,6 @@ class AuditStage(PipelineStage):
             head = _schema_parts_of(head_path.read_text(encoding="utf-8", errors="replace"))
             if self._allow_measured_edits or head is None:
                 continue
-            # text_at_base raises on a new path; a new or unparsable base has no measurements
             base = base_parts(path) if path in at_base else None
             base_measured = base or {}
             edited = [k for k, evaluations in head.items() if evaluations != base_measured.get(k, [])]
@@ -211,7 +207,6 @@ def check_kernel(
     tensor_names: Collection[str],
     output_names: Collection[str],
 ) -> set[tuple[str, int, int, str]]:
-    """Every SA0-SA4 rejection of a Python kernel, as (path, line, rule, what)."""
     try:
         kernel_sources = KernelSources(kernel, call_keys, tensor_names, output_names)
         parsed_sources = kernel_sources.parsed_sources
@@ -379,7 +374,6 @@ class KernelSources:
         while todo:
             path, fn = todo.pop()
             source = self.parsed_sources[path]
-            # device functions are compiled and compile functions run once per shape: not launch code
             if (
                 (path, fn) in reached
                 or source.is_device(fn)
@@ -442,7 +436,6 @@ class ParsedSource:
         return ".".join([self.imports.get(node.id, node.id), *reversed(parts)])
 
     def decorator_qualname(self, fn: ast.AST) -> str | None:
-        # a second decorator (triton.autotune above triton.jit) makes the def host code
         if not isinstance(fn, _FUNCTION_NODES) or len(fn.decorator_list) != 1:
             return None
         (d,) = fn.decorator_list
@@ -469,7 +462,6 @@ class ParsedSource:
     ) -> Iterator[tuple[ast.AST, frozenset[str]]]:
         own_names = _bindings(_own_nodes(scope))
         is_class = isinstance(scope, ast.ClassDef)
-        # a class body's bindings shadow inputs in the body only, not in its methods
         visible_input_names = input_names - own_names if is_class else input_names
         for node in _own_nodes(scope):
             if isinstance(node, ast.ClassDef):

@@ -4,7 +4,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""The measurement profile: how the bench checks and times a workload, recorded in its report."""
 
 from __future__ import annotations
 
@@ -27,10 +26,6 @@ class MeasurementProfile:
 
     @property
     def digest(self) -> str:
-        """The protocol's name: this profile and the sources of how the bench measures and judges (the clock, the
-        op benches, the input draws and their seeds, the comparison's statistics, the opponents and the
-        thresholds), so a change in any renames it. An op bench defined elsewhere (a test's) names no protocol;
-        nor do the schedule and its budgets."""
         import aklr.core.utils as utils
 
         bench = Path(__file__).parents[1]

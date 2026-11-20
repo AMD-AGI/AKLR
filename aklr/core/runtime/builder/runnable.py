@@ -4,11 +4,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 from __future__ import annotations
@@ -35,7 +31,6 @@ class RunnableMetadata:
 
     @property
     def kernel_ref(self) -> str:
-        """``<language>:<schema name>:<hash prefix>``, the kernel as traces and aiter's plugin name it."""
         return f"{self.build_type}:{self.schema_name}:{self.content_hash[:12]}"
 
 
@@ -56,7 +51,6 @@ class Runnable:
         self._cleaner = cleaner
 
     def __call__(self, *args: Any) -> Any:
-        """Call the kernel; a one-element tuple result is unwrapped and an empty one becomes None."""
         ret = self._callable(*args)
         if not isinstance(ret, tuple) or len(ret) > 1:
             return ret

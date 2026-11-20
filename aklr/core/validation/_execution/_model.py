@@ -61,8 +61,6 @@ class ResourceCapabilities:
 
 @dataclass(frozen=True)
 class ResourceRequest:
-    """Lease ``count`` resources from the allowed IDs/backend; empty filters allow any."""
-
     resource_ids: tuple[str, ...] = ()
     backend: str | None = None
     count: int = 1
@@ -95,11 +93,9 @@ class ExecutionTask:
 
 @dataclass(frozen=True, kw_only=True)
 class ExecutionContext:
-    """Leased devices and task files."""
-
     log_path: Path
     directory: Path
-    devices: tuple[str, ...]  # in rank order; this process's device, devices[RANK], is already current
+    devices: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not self.devices:

@@ -20,8 +20,6 @@ Excluded = Annotated[T, Field(exclude=True)]
 
 @dataclass_transform(frozen_default=True, field_specifiers=(Field,))
 def frozen_dataclass(cls: type[T]) -> type[T]:
-    """A frozen pydantic dataclass: unknown fields rejected, enums kept as plain strings, dumped by alias."""
-    # the ignore: pydantic's stub types dataclass()'s result as PydanticDataclass, not type[T]
     return dataclass(  # pyright: ignore[reportReturnType]
         cls,
         frozen=True,

@@ -28,7 +28,6 @@ class TaskLog:
     def redirected_stdio(self) -> Iterator[None]:
         sys.stdout.flush()
         sys.stderr.flush()
-        # Descendants of the previous task may still hold its stderr.
         self.path.unlink(missing_ok=True)
         redirected_fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600)
         saved_stdout_fd, saved_stderr_fd = os.dup(1), os.dup(2)
@@ -36,7 +35,6 @@ class TaskLog:
             os.dup2(redirected_fd, 1)
             os.dup2(redirected_fd, 2)
             os.close(redirected_fd)
-            # the cap thread truncates fd 1, so it runs only while fd 1 is the log
             stop = threading.Event()
             cap_thread = threading.Thread(target=self._cap, args=(stop,), name="aklr-log-cap", daemon=True)
             cap_thread.start()

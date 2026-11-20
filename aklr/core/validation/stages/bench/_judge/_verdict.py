@@ -4,8 +4,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""A schema's verdict: each workload's judgement (its findings, verdict, vote for Admission and write-back),
-joined into the schema's."""
 
 from __future__ import annotations
 
@@ -27,14 +25,12 @@ __all__ = ["SchemaVerdict", "WorkloadJudgement", "WorkloadRecord"]
 
 @frozen_dataclass
 class WorkloadRecord:
-    """A workload's row of the report."""
-
     schema_path: str
     workload: WorkloadKey
-    verdict: str  # its first finding's code, else "passed"
+    verdict: str
     is_demoted: bool
-    versus: str  # its opponent's label
-    versus_name: str  # the Baseline's name, or the Incumbent's base path
+    versus: str
+    versus_name: str
     threshold: str | None
     comparison: Comparison | None
     kernel_hash: str
@@ -44,7 +40,6 @@ class WorkloadJudgement:
     def __init__(
         self, plan: WorkloadPlan, comparison: Comparison | None, findings: tuple[Finding, ...]
     ) -> None:
-        """findings: its task's, then its threshold's."""
         self.plan = plan
         self.comparison = comparison
         self.findings = findings
@@ -53,9 +48,6 @@ class WorkloadJudgement:
     def judge(
         cls, schema_path: str, plan: WorkloadPlan, result: WorkloadResult, profile: MeasurementProfile
     ) -> WorkloadJudgement:
-        """result judged against plan. A result that disagrees with its plan (timed where nothing is, untimed
-        where an opponent is, or one side's timings not the other's) is the platform's: left alone, an untimed
-        workload would be written back accurate with no speedup, which dispatch serves."""
         findings = list(result.findings)
         threshold = plan.threshold
         opponent = plan.opponent
@@ -96,7 +88,6 @@ class WorkloadJudgement:
 
     @property
     def is_measured(self) -> bool:
-        """Its accuracy is known: no finding of the platform's or the schema's stopped it first."""
         return Outcome.NOT_MEASURED not in self.outcomes
 
     @property
@@ -108,11 +99,9 @@ class WorkloadJudgement:
         return bool(self.findings) and FindingCode(self.findings[0].code).is_demotion
 
     def is_admitting(self) -> bool:
-        """Whether it counts toward its schema's Admission."""
         return self.is_measured and self.is_accurate and self.plan.opponent.admits(self.comparison)
 
     def evaluation(self, target: DeviceTarget, head_sha: str) -> Evaluation:
-        """What it writes back; an inaccurate workload gets no speedup."""
         opponent = self.plan.opponent
         value = opponent.baseline_speedup(self.comparison) if self.is_accurate else None
         speedup = {} if value is None else {opponent.baseline: Speedup(commit=head_sha, value=value)}
@@ -128,7 +117,6 @@ class WorkloadJudgement:
             is_demoted=self.is_demoted,
             versus=self.plan.opponent.label,
             versus_name=self.plan.opponent.name,
-            # where nothing is timed, no threshold applied
             threshold=None if isinstance(self.plan.opponent, Unopposed) else self.plan.threshold,
             comparison=self.comparison,
             kernel_hash=kernel_hash,
@@ -138,11 +126,11 @@ class WorkloadJudgement:
 @frozen_dataclass
 class SchemaVerdict:
     path: str
-    findings: tuple[Finding, ...]  # those that decide the stage
+    findings: tuple[Finding, ...]
     demotions: tuple[Finding, ...]
     records: tuple[WorkloadRecord, ...]
-    evaluations: dict[str, Evaluation] | None  # by workload key text; None: the schema is not written back
-    skipped: str | None = None  # its plan's
+    evaluations: dict[str, Evaluation] | None
+    skipped: str | None = None
 
     @classmethod
     def judge(
@@ -167,7 +155,6 @@ class SchemaVerdict:
             for workload in plan.workloads
         ]
         findings = [f for j in judgements for f in j.findings]
-        # an untimed plan writes nothing back, so it demotes nothing: every finding decides
         demotions = [f for f in findings if plan.is_timed and FindingCode(f.code).is_demotion]
         deciding = [*plan.findings, *(f for f in findings if f not in demotions)]
         is_admitted = any(j.is_admitting() for j in judgements)

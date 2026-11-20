@@ -4,7 +4,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""The check of a Candidate's outputs against its Reference's on one input set."""
 
 from __future__ import annotations
 
@@ -21,7 +20,6 @@ __all__ = ["OutputCheck"]
 
 class OutputCheck:
     def __init__(self, schema: Schema, axes: Mapping[str, int]) -> None:
-        """axes: a workload's; the outputs' declared shapes are at them and the schema's Const axes."""
         shapes = schema.get_output_shapes({**schema.const_axes, **axes})
         self.declared = [
             (tuple(shape), dtype_str_to_torch_dtype(spec.dtype))
@@ -33,15 +31,11 @@ class OutputCheck:
         self.declared_inputs = inspect.signature(self.reference_fn).parameters
 
     def reference(self, input_sets: Sequence[Mapping[str, Any]], rank: int) -> list[Any]:
-        """The Reference's outputs on input_sets[rank], every rank's input sets given as group_calls when it
-        declares them."""
         given = {**input_sets[rank], "group_calls": input_sets}
         outputs = self.reference_fn(**{n: v for n, v in given.items() if n in self.declared_inputs})
         return list(outputs) if isinstance(outputs, (tuple, list)) else [outputs]
 
     def verify(self, reference_outputs: list[Any], produced: Any, trial: int) -> None:
-        """Raises FindingRaised when what the Candidate produced is not the declared outputs (WRONG_OUTPUTS), or
-        the schema's check rejects them against the Reference's outputs or raises (OUTPUTS_MISMATCH)."""
         import torch
 
         actual = [] if produced is None else list(produced) if isinstance(produced, tuple) else [produced]
@@ -55,7 +49,7 @@ class OutputCheck:
                 bool(self.check(reference_outputs, actual)),
                 "the outputs fail the schema's check",
             )
-        except Exception as error:  # noqa: BLE001 -- a check that cannot read the outputs rejects them
+        except Exception as error:  # noqa: BLE001
             is_correct, detail = False, f"the check raised {type(error).__name__}: {error}"
         if not is_correct:
             raise FindingRaised(FindingCode.OUTPUTS_MISMATCH, f"trial {trial}: {detail}")

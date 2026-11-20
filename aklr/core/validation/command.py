@@ -27,7 +27,6 @@ DEFAULT_REPORT_DIR: Final = Path("aklr_validation")
 
 
 def main(argv: Sequence[str]) -> int:
-    """Validate the change against its base and return the pipeline's exit code."""
     parser = argparse.ArgumentParser(prog="python -m aklr validate")
     parser.add_argument("paths", nargs="*", type=Path, metavar="PATH")
     parser.add_argument("--base", help="a git ref; enables the change rules")

@@ -4,11 +4,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 from __future__ import annotations
@@ -26,8 +22,6 @@ __all__ = ["BuilderRegistry"]
 
 
 class BuilderRegistry:
-    """This process's built kernels, one per kernel content hash, each built by its language's builder."""
-
     _instance: ClassVar[BuilderRegistry | None] = None
 
     _cache: dict[str, Runnable | BuildError]
@@ -46,7 +40,6 @@ class BuilderRegistry:
         cls._instance = instance
 
     def build(self, schema: Schema) -> Runnable:
-        """Build ``schema.kernel`` once per content hash; a failure is cached and raised again."""
         assert schema.kernel is not None
         hash = schema.kernel.hash()
         if hash in self._cache:
@@ -55,7 +48,6 @@ class BuilderRegistry:
                 raise cached
             return cached
 
-        # a file lock per kernel hash: processes sharing the build cache never build one kernel at once
         lock_dir = RuntimeEnv().build_cache_path / "build_locks"
         lock_dir.mkdir(parents=True, exist_ok=True)
         lock_file = lock_dir / f"{hash}.lock"

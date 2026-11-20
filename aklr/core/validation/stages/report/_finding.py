@@ -4,7 +4,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""A stage finding: whose fault, where, and what it means for the workload."""
 
 from __future__ import annotations
 
@@ -21,24 +20,18 @@ __all__ = ["Fault", "Finding", "FindingCode", "FindingRaised", "Outcome"]
 
 
 class Fault(StrEnum):
-    """Whose fault a finding is: a candidate's or schema's fails the stage, the platform's aborts it."""
-
     CANDIDATE = "candidate"
     SCHEMA = "schema"
     PLATFORM = "platform"
 
 
 class Outcome(StrEnum):
-    """What a finding means for its workload."""
-
     ACCURACY_FAILED = "accuracy_failed"
     PERFORMANCE_FAILED = "performance_failed"
     NOT_MEASURED = "not_measured"
 
 
 class FindingCode(StrEnum):
-    """Why a stage did not pass, or why a workload was demoted; each code says whose fault and what."""
-
     fault: Fault
     outcome: Outcome
 
@@ -52,7 +45,6 @@ class FindingCode(StrEnum):
     SCHEMA_INVALID = "schema_invalid", Fault.CANDIDATE, Outcome.NOT_MEASURED
     SOURCE_REJECTED = "source_rejected", Fault.CANDIDATE, Outcome.NOT_MEASURED
     PERF_EDITED = "perf_edited", Fault.CANDIDATE, Outcome.NOT_MEASURED
-    # the bench: build_failed, task_crashed and task_timeout stand for every workload of their task
     BUILD_FAILED = "build_failed", Fault.CANDIDATE, Outcome.ACCURACY_FAILED
     TASK_CRASHED = "task_crashed", Fault.CANDIDATE, Outcome.ACCURACY_FAILED
     TASK_TIMEOUT = "task_timeout", Fault.CANDIDATE, Outcome.ACCURACY_FAILED
@@ -71,15 +63,10 @@ class FindingCode(StrEnum):
 
     @property
     def is_demotion(self) -> bool:
-        """A workload's own failure: recorded on it, and it does not decide the stage."""
         return self.outcome != Outcome.NOT_MEASURED
 
     @contextmanager
     def failing_every_rank(self, context: str) -> Iterator[None]:
-        """A step every rank of the task's process group leaves the same way. An error in it is a finding of this
-        code, its detail led by context; a FindingRaised in it keeps its own. When any rank's step fails,
-        every rank raises the lowest failing rank's finding, its detail prefixed with that rank; a single rank
-        raises its own."""
         import torch.distributed as dist
 
         failure = None
@@ -87,7 +74,7 @@ class FindingCode(StrEnum):
             yield
         except FindingRaised as error:
             failure = error
-        except Exception as error:  # noqa: BLE001 -- any error of the step is its finding
+        except Exception as error:  # noqa: BLE001
             failure = FindingRaised(self, f"{context}: {type(error).__name__}: {error}")
             failure.__cause__ = error
         failures: list[Any] = [None] * dist.get_world_size()
@@ -96,14 +83,12 @@ class FindingCode(StrEnum):
             if failed is None:
                 continue
             if len(failures) == 1:
-                raise failure  # type: ignore[misc] -- this rank's own
+                raise failure  # type: ignore[misc]
             failed_code, detail = failed
             raise FindingRaised(failed_code, f"rank {rank}: {detail}") from failure
 
 
 class FindingRaised(Exception):
-    """A step stopped by a finding: its code and detail, wherever the step is."""
-
     def __init__(self, code: FindingCode, detail: str) -> None:
         super().__init__(f"{code}: {detail}")
         self.code = code

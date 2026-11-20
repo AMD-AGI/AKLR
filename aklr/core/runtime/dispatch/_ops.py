@@ -4,7 +4,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""An op's api: the function ops and seam adapters call."""
 
 from __future__ import annotations
 
@@ -27,7 +26,6 @@ from aklr.core.schema import Schema, extract_axes
 
 
 def _is_inplace_api(fn: Callable) -> bool:
-    """Whether the api returns None, i.e. writes its results into its arguments."""
     try:
         annotation = inspect.signature(fn).return_annotation
     except (TypeError, ValueError):
@@ -36,33 +34,25 @@ def _is_inplace_api(fn: Callable) -> bool:
 
 
 class OpVariants:
-    """An op's api: called like the function it decorates, it resolves the call's variant among its schemas and
-    dispatches it."""
-
-    _ops: ClassVar[dict[str, OpVariants]] = {}  # by op type, each put in by its __init__
+    _ops: ClassVar[dict[str, OpVariants]] = {}
 
     @classmethod
     def ops(cls) -> dict[str, OpVariants]:
-        """The apis declared in code, by op type: those of every op (aklr/plugins/aiter/<op>/api.py), and any declared since."""
         import aklr.plugins.aiter
 
         for package in pkgutil.iter_modules(aklr.plugins.aiter.__path__):
             if package.ispkg:
-                importlib.import_module(f"aklr.plugins.aiter.{package.name}.api")  # its aklr_api declares its apis
+                importlib.import_module(f"aklr.plugins.aiter.{package.name}.api")
         return cls._ops
 
     @classmethod
     def load(cls, text: str | bytes) -> Schema:
-        """The schema of a json, with the standard of its variant: the json leaves it out. None when no variant
-        is its."""
         schema = TypeAdapter(Schema).validate_json(text)
         api = cls.ops().get(schema.op_type)
         variant = None if api is None else api.variant_of(schema)
         return schema if variant is None else replace(schema, standard=variant.standard)
 
     def __init__(self, fn: Callable[..., Any], variants: tuple[Schema, ...]) -> None:
-        """Declare fn the api of variants, in resolution order; fn gives the signature and is never run. A second
-        api of one op type raises."""
         self._signature = inspect.signature(fn)
         if len({s.op_type for s in variants}) != 1:
             raise ValueError(f"{fn.__name__}: its variants are of op types {[s.op_type for s in variants]}")
@@ -89,8 +79,6 @@ class OpVariants:
         OpVariants._ops[op_type] = self
 
     def variant_of(self, schema: Schema) -> Schema | None:
-        """The variant schema is an instance of: of its op name, named schema's name at its Const axes; None
-        when none is."""
         return next(
             (
                 v
@@ -101,11 +89,9 @@ class OpVariants:
         )
 
     def resolve(self, call: dict[str, Any]) -> Schema | None:
-        """The first variant whose condition matches call, the api's bound arguments; None when none does."""
         return next((schema for schema in self.variants if schema.matches(call)), None)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        # a direct call has no fallback: a miss raises
         return self.dispatch(
             self._signature.bind_partial(*args, **kwargs).arguments, is_inplace=self._is_inplace
         )
@@ -118,8 +104,6 @@ class OpVariants:
         baseline: str | None = None,
         is_inplace: bool = False,
     ) -> Any:
-        """Run call, the api's arguments by name, on a kernel of its variant that beats baseline; with none,
-        return fallback(), recorded as a workload when tracing, or raise when there is no fallback."""
         bound = self._signature.bind_partial(**call)
         bound.apply_defaults()
         call = bound.arguments
@@ -132,7 +116,6 @@ class OpVariants:
                 raise RuntimeError(f"{self.__name__}: no variant takes this call")
             return fallback()
         tracing = TracingRuntime.get_instance()
-        # only calls that fall back are traced: the workloads no AKLR kernel serves
         if fallback is not None and tracing is not None:
             untraced = fallback
 
@@ -146,7 +129,6 @@ class OpVariants:
                         warnings.warn(
                             f"{self.__module__}.{self.__qualname__}: tracing failed, {type(e).__name__}: {e}; "
                             "further ones of this type are not reported",
-                            # point at the patched entry point's caller; Dispatcher.call adds a frame
                             stacklevel=4 if dispatcher is None else 5,
                         )
                 return untraced()
@@ -157,5 +139,4 @@ class OpVariants:
 
 
 def aklr_api(variants: Schema | tuple[Schema, ...]) -> Callable[[Callable[..., Any]], OpVariants]:
-    """Decorate an op's api with its schema, or with its variants in resolution order."""
     return lambda fn: OpVariants(fn, (variants,) if isinstance(variants, Schema) else variants)

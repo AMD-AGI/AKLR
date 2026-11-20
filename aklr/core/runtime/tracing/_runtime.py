@@ -4,11 +4,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 from __future__ import annotations
@@ -36,9 +32,6 @@ logger = logging.getLogger(__name__)
 
 
 class TracingRuntime:
-    """Collects traced calls and flushes them as workloads into the dataset's kernel-less schemas, each one's
-    standard beside them in a dump."""
-
     _instance: ClassVar[TracingRuntime | None] = None
     _cleanup_registered: ClassVar[bool] = False
     _env_initialized: ClassVar[bool] = False
@@ -47,10 +40,7 @@ class TracingRuntime:
 
     @classmethod
     def get_instance(cls) -> TracingRuntime | None:
-        """The active runtime; the first call starts one if AKLR_ENABLE_TRACING=1. An env it cannot start from
-        raises a RuntimeError from its error on every call."""
         if cls._instance is None:
-            # a second thread waits for the first one's start; the flag set first stops a nested call starting again
             with cls._env_lock:
                 if not cls._env_initialized:
                     cls._env_initialized = True
@@ -60,7 +50,6 @@ class TracingRuntime:
                     except Exception as e:
                         cls._env_error = e
             if cls._instance is None and cls._env_error is not None:
-                # a new error each time: one raised again would keep every caller's frames in its traceback
                 raise RuntimeError(
                     f"AKLR's tracing could not start from the environment: {cls._env_error}"
                 ) from cls._env_error
@@ -93,7 +82,7 @@ class TracingRuntime:
         for schema_name, config in self._config_registry.per_schema.items():
             self._filter_policies[schema_name] = config.create_filter_policy()
 
-        from aklr.core.runtime.seam import SeamRegistry  # seam imports this module
+        from aklr.core.runtime.seam import SeamRegistry
 
         SeamRegistry.default().install()
 
@@ -126,7 +115,6 @@ class TracingRuntime:
         schema_name: str,
         namespace: dict[str, Any],
     ):
-        """Record one call (its bound api arguments) as a workload of ``schema_name``."""
         logger.info(f"Tracing '{schema_name}'")
 
         tracing_config = self._config_registry.get(schema_name)
@@ -137,7 +125,6 @@ class TracingRuntime:
         if schema_name not in self._schemas:
             try:
                 definition = schema.for_call(namespace)
-                # a name the layout cannot place fails here, once, so flush never raises
                 self._schema_collection.layout.path(definition)
             except ValueError as e:
                 logger.error(f"Not tracing {schema_name}: {e}")
@@ -214,7 +201,6 @@ class TracingRuntime:
         self._cuda_graph_entries.clear()
 
     def flush(self):
-        """Write the entries the filter policies kept into the dataset, as workloads."""
         num_selected_entries = 0
 
         if self._in_cuda_graph:
@@ -236,11 +222,9 @@ class TracingRuntime:
                     [(definition, Workload(axes=entry.axes)) for entry in selected_entries]
                 )
                 layout = self._schema_collection.layout
-                # the json holds no standard: the dump keeps it beside, as modules that run without AKLR
                 if isinstance(layout, TraceDumpLayout) and definition.standard is not None:
                     definition.standard.save(layout.root / "standards" / schema_name)
             except Exception:
-                # the policies are drained: one schema that cannot be written must not lose the others'
                 logger.exception(f"Flush of {schema_name} failed: {len(selected_entries)} workloads lost")
                 continue
             num_selected_entries += len(selected_entries)
@@ -261,7 +245,6 @@ class TracingRuntime:
             return
         cls._cleanup_registered = True
         atexit.register(cls._flush_all)
-        # signal.signal raises off the main thread: the first start() must run there
         cls._orig_sigterm = signal.signal(signal.SIGTERM, cls._signal_cleanup)
         cls._orig_sigint = signal.signal(signal.SIGINT, cls._signal_cleanup)
 
@@ -284,5 +267,4 @@ class TracingRuntime:
         if callable(orig_handler):
             orig_handler(signum, frame)
         elif orig_handler == signal.SIG_DFL:
-            # the default action is back: resend, so the process still dies of this signal
             os.kill(os.getpid(), signum)

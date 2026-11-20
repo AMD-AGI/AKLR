@@ -1,14 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Private vLLM startup hook engine with saved callables and reversible attribute writes.
-
-This module has no framework dependencies. Callers own compatibility checks and
-computation/fallback policy; the registry only installs synchronous Python hooks.
-Registration and application must happen before the affected code starts running.
-vLLM extensions declare routes through ``aklr.plugins.vllm.hook.vllm_route``;
-this module is an implementation detail, not a separate registration API.
-"""
 
 from __future__ import annotations
 
@@ -86,7 +78,6 @@ def _resolve(path: str) -> tuple[Any, str, Any]:
     owner_path, sep, attr = path.rpartition(".")
     if not sep or not owner_path or not attr:
         raise ValueError(f"Expected a qualified attribute path: {path!r}")
-    # Some AITER compatibility imports replace their own sys.modules entry.
     pkgutil.resolve_name(owner_path)
     owner = pkgutil.resolve_name(owner_path)
     try:
@@ -94,8 +85,6 @@ def _resolve(path: str) -> tuple[Any, str, Any]:
     except TypeError:
         raise TypeError(f"Hook owner needs writable attributes: {path}") from None
     if isinstance(owner, type) and not any(attr in vars(cls) for cls in owner.__mro__):
-        # A metaclass method binds the class, but is absent on that class's
-        # instances. Installing it on the class would change both lookup rules.
         if any(attr in vars(meta) for meta in type(owner).__mro__):
             raise TypeError(f"Metaclass-only hook targets are not supported: {path}")
     return owner, attr, inspect.getattr_static(owner, attr)
@@ -156,24 +145,12 @@ def _wrap(inner: Callable, spec: HookSpec) -> Callable:
 
 
 def _lookup_depth(owner: Any) -> int:
-    # Write inherited targets before their ancestors so every pre-write check still
-    # observes the original lookup. Reversing this order also restores inheritance.
     if isinstance(owner, type):
         return len(owner.__mro__)
     return len(type(owner).__mro__) + 1
 
 
 class HookRegistry:
-    """One process's startup hook declarations and installed attribute bindings.
-
-    A phase is committed atomically and then frozen. Hooks of a target are ordered
-    by (order, hook_id), from inner to outer, with a sole REPLACE at the center.
-    An exclusive hook permits no other hook on its target. Each target wraps the
-    callable resolved before this batch, including inherited class/instance targets.
-    Equivalent hook stacks on paths resolving to the same attribute install once.
-    ``restore`` is for startup failure/test cleanup, never live graph hot-swapping.
-    """
-
     def __init__(self) -> None:
         self._specs: dict[str, HookSpec] = {}
         self._applied: dict[str, tuple[_Installation, ...]] = {}
@@ -237,10 +214,6 @@ class HookRegistry:
                         sorted(specs, key=lambda s: (s.hook_type is not HookType.REPLACE, s.order, s.hook_id))
                     )
                 )
-            # AITER compatibility module names can resolve to one owner/attribute.
-            # Collapse equivalent stacks, retaining path-specific IDs and validators.
-            # Different hooks must still conflict, and repeated hooks at one literal
-            # target must retain their order and multiplicity.
             stack_keys = [
                 tuple((id(s.hook), s.hook_type, s.group, s.order, s.exclusive) for s in stack)
                 for stack in stacks
@@ -253,10 +226,6 @@ class HookRegistry:
             owner, attr, raw = resolved_targets[target]
             original, descriptor = _callable(raw, target)
             if not isinstance(owner, type):
-                # AITER's tgemm is a singleton instance. Its route receives no self:
-                # save the bound method, then install a plain instance attribute.
-                # This also covers methods on ModuleType subclasses; normal module
-                # functions are unchanged. Keep raw separately for restoring lookup.
                 resolved = getattr(owner, attr)
                 if not callable(resolved):
                     raise TypeError(f"Hook target does not resolve to a callable: {target}")
@@ -270,8 +239,6 @@ class HookRegistry:
                 wrapped = _wrap(wrapped, spec)
             replacement = descriptor(wrapped) if descriptor else wrapped
             if isinstance(owner, type) and descriptor is None and not hasattr(type(raw), "__get__"):
-                # Builtins, partials, bound methods and callable objects stored on
-                # a class do not bind its instances. A plain function wrapper would.
                 replacement = staticmethod(wrapped)
             binding = _Binding(owner, attr, raw, attr in vars(owner), replacement, target)
             bindings = {binding.key: binding}
@@ -296,7 +263,6 @@ class HookRegistry:
 
     @staticmethod
     def _restore_bindings(bindings: list[_Binding]) -> None:
-        # Check the entire batch before writing: never overwrite another owner's patch.
         for binding in bindings:
             if not binding.matches(binding.after, True) and not binding.matches(
                 binding.before, binding.had_own
@@ -317,7 +283,6 @@ class HookRegistry:
                     if not binding.matches(binding.after, True):
                         raise RuntimeError(f"Installed binding changed outside this registry: {binding.path}")
             return [installation.target for installation in self._applied[phase]]
-        # Resolution, descriptors, aliases and conflicts are checked before any writes.
         try:
             plan = self._plan(phase)
         except Exception as exc:
@@ -328,7 +293,6 @@ class HookRegistry:
                 for binding in installation.bindings:
                     if not binding.matches(binding.before, binding.had_own):
                         raise RuntimeError(f"Binding changed during hook preparation: {binding.path}")
-                    # Include an assignment that mutates then raises in the rollback.
                     written.append(binding)
                     setattr(binding.owner, binding.attr, binding.after)
                     if not binding.matches(binding.after, True):
@@ -369,7 +333,6 @@ class HookRegistry:
             self._applied.pop(name, None)
 
     def report(self) -> tuple[dict[str, Any], ...]:
-        """Serializable declarations and installation state; not kernel hit statistics."""
         return tuple(
             {
                 "hook_id": spec.hook_id,

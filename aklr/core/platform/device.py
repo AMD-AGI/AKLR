@@ -20,11 +20,8 @@ if TYPE_CHECKING:
 __all__ = ["DeviceTarget", "physical_device"]
 
 
-# not schema's frozen_dataclass: aklr.core.schema imports this module
 @dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DeviceTarget:
-    """A normalized GPU arch (gfx950) and hardware model (MI355X); None: unknown, or any in a constraint."""
-
     arch: str | None = None
     hardware: str | None = None
 
@@ -37,7 +34,6 @@ class DeviceTarget:
 
     @classmethod
     def normalize_arch(cls, arch: str | None) -> str | None:
-        # drop ROCm feature suffixes, e.g. gfx942:sramecc+:xnack-
         value = (arch or "").strip().lower().split(":", 1)[0]
         return value if re.fullmatch(r"gfx[0-9a-f]+", value) else None
 
@@ -47,7 +43,6 @@ class DeviceTarget:
         value = re.sub(r"^AMD(?: INSTINCT)?\s+", "", value)
         if value in {"", "UNKNOWN", "UNAVAILABLE", "ANY", "HIP", "GPU"}:
             return None
-        # some drivers report only the ISA as the device name, which is no model ID
         if cls.normalize_arch(value) is not None:
             return None
         return value
@@ -65,12 +60,10 @@ class DeviceTarget:
 
     @classmethod
     def from_names(cls, arch: str | None, hardware: str | None) -> DeviceTarget:
-        """Normalize observed names; an unrecognized one becomes None where the constructor would raise."""
         return cls(cls.normalize_arch(arch), cls.normalize_hardware(hardware))
 
     @classmethod
     def matches_target(cls, target: DeviceTarget, constraints: Sequence[DeviceTarget] | None) -> bool:
-        """Whether target meets any constraint (None: no constraint) in each field that constraint sets."""
         return constraints is None or any(
             constraint.is_known
             and (constraint.arch is None or target.arch == constraint.arch)
@@ -80,7 +73,6 @@ class DeviceTarget:
 
     @classmethod
     def current(cls, device: torch.device | str | None = None) -> DeviceTarget:
-        """The target of device (default: the current GPU), cached per ordinal; unknown without a GPU."""
         try:
             import torch
 
@@ -99,7 +91,7 @@ class DeviceTarget:
             target = cls.from_names(getattr(properties, "gcnArchName", None), properties.name)
             cls._target_by_device_idx[device_idx] = target
             return target
-        except Exception:  # noqa: BLE001 (no torch, accelerator or driver)
+        except Exception:  # noqa: BLE001
             return cls()
 
     @property
@@ -112,7 +104,6 @@ class DeviceTarget:
 
 
 def physical_device(device: str) -> str:
-    """The physical GPU id behind cuda:N under the parent's HIP_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES."""
     index = int(device.removeprefix("cuda:"))
     visible = os.environ.get("HIP_VISIBLE_DEVICES") or os.environ.get("CUDA_VISIBLE_DEVICES")
     return visible.split(",")[index].strip() if visible else str(index)

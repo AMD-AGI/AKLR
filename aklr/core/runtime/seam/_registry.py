@@ -15,8 +15,6 @@ __all__ = ["SeamRegistry"]
 
 
 class SeamRegistry:
-    """The declared adapters of backend entry points; ``install`` patches in those this environment has."""
-
     _default: ClassVar[SeamRegistry | None] = None
 
     def __init__(self) -> None:
@@ -38,7 +36,7 @@ class SeamRegistry:
         return tuple(a for a in self._adapters.values() if any(s.op_type == op_type for s in a.api.variants))
 
     def install(self) -> None:
-        import aklr.seam  # noqa: F401 -- declares every adapter: aiter, a submodule, does not import it
+        import aklr.seam  # noqa: F401
 
         for adapter in self._adapters.values():
             self._patches.patch(adapter)

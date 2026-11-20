@@ -4,7 +4,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""The bench stage: checks each benched kernel against its schema's Reference and times it."""
 
 from __future__ import annotations
 
@@ -44,21 +43,16 @@ class BenchStage(PipelineStage):
         num_trials: int = 3,
         timed: bool = True,
     ) -> None:
-        """isolate: op types whose tasks each run in a fresh process rather than a reused one. Not timed: a
-        kernel is built and checked only, on the workloads not recorded failed, and nothing is written back."""
         self.devices = tuple(devices)
         self.timed = timed
         self.schedule = TaskSchedule(isolate=isolate)
         self.profile = MeasurementProfile(num_trials=num_trials)
 
     def plan(self, scope: ValidationScope, target: DeviceTarget) -> list[SchemaPlan]:
-        """One plan per bench path whose schema has a kernel."""
         return SchemaPlan.for_scope(scope, target, RuntimeEnv().min_speedup, self.timed)
 
     @staticmethod
     def _join_process_group() -> None:
-        """Each executor process's initializer: a runner's ranks, a single one too, join one process group,
-        rendezvousing in its directory; gloo carries their agreements, RCCL the collectives of a group timing."""
         import torch
         import torch.distributed as dist
 
@@ -68,7 +62,6 @@ class BenchStage(PipelineStage):
             init_method=f"file://{os.path.abspath('rendezvous')}",
             rank=int(os.environ["RANK"]),
             world_size=size,
-            # a single rank runs no GPU collective: binding its device would start RCCL for nothing
             device_id=torch.device("cuda", torch.cuda.current_device()) if size > 1 else None,
         )
 

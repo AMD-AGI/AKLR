@@ -4,11 +4,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer team.
 #
-# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 from __future__ import annotations
@@ -24,13 +20,10 @@ from types import CodeType, FunctionType
 
 @dataclass(frozen=True)
 class FunctionSource:
-    """How one kind of standard function (init, reference, check, baseline) is written as standalone source."""
-
     preamble: str
     entry: str = "run"
 
     def render(self, fn: Callable) -> str:
-        """The standalone source of fn: preamble, the project functions it calls, fn, bound to entry."""
         functions = (*self.dependencies(fn), fn)
         for f in functions:
             if f.__name__ == "<lambda>" or f.__code__.co_freevars:
@@ -57,7 +50,6 @@ class FunctionSource:
         def visit(f: Callable) -> None:
             codes = [f.__code__]
             for code in codes:
-                # nested defs and comprehensions: code objects in co_consts, visited by this same loop
                 codes += [c for c in code.co_consts if isinstance(c, CodeType)]
                 for instruction in dis.get_instructions(code):
                     name = instruction.argval

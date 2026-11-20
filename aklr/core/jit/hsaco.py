@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Precompiled HIP code objects (hsaco), the kernels of the ``hsaco`` language, in the HIP
-runtime torch uses: loaded on a device at their first launch there, launched on the device's
-current stream."""
 
 from __future__ import annotations
 
@@ -17,23 +14,16 @@ import torch
 
 __all__ = ["Kernel", "is_available"]
 
-# hipModuleLaunchKernel's ``extra``: the arguments as one buffer, laid out as the code object says
 _BUFFER_POINTER, _BUFFER_SIZE, _END = 1, 2, 3
-# the stream's handle without making a torch.cuda.Stream, where torch has it
 _RAW_STREAM = getattr(torch._C, "_cuda_getCurrentRawStream", None)
-# one module per device and code object, whose functions it serves: (device, sha256) ->
-# (module, the code object it was loaded from, kept for as long as the module)
 _MODULES: dict[tuple[int, bytes], tuple[ctypes.c_void_p, bytes]] = {}
 
 
 def is_available() -> bool:
-    """Whether torch is a ROCm build."""
     return torch.version.hip is not None
 
 
 class Kernel:
-    """The function ``symbol`` of ``code_object``, a code object for the GPU's arch."""
-
     def __init__(self, code_object: bytes, symbol: str) -> None:
         self._code_object = bytes(code_object)
         self._digest = hashlib.sha256(self._code_object).digest()
@@ -49,9 +39,6 @@ class Kernel:
         shared_memory: int = 0,
         device: torch.device | int | None = None,
     ) -> None:
-        """Launch ``grid`` workgroups of ``block`` threads (up to 3 dimensions each) on the
-        current stream of ``device`` (the current device when None), with the argument buffer
-        ``kernarg`` and ``shared_memory`` bytes of dynamic LDS."""
         index = None if device is None else torch.device(device).index
         if index is None:
             index = torch.cuda.current_device()
@@ -84,9 +71,6 @@ class Kernel:
 
 @functools.cache
 def _hip() -> ctypes.CDLL:
-    """The HIP runtime torch loaded: another copy would be another runtime, whose modules
-    torch's streams do not know."""
-    # by path: a wheel may bundle it under another name (libamdhip64-<hash>.so)
     with open("/proc/self/maps", encoding="utf-8") as maps:
         paths = {line.split(maxsplit=5)[-1].strip() for line in maps if "libamdhip64" in line}
     names = {p: os.path.basename(p) for p in paths}

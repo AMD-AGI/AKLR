@@ -4,13 +4,8 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 
-"""The dispatcher: sends op calls to dataset kernels."""
 
 from __future__ import annotations
 
@@ -33,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 class Dispatcher:
-    """Sends each call to the best kernel its variant's entry has for it, else to its fallback."""
-
     _instance: ClassVar[Dispatcher | None] = None
     _env_initialized: ClassVar[bool] = False
     _env_error: ClassVar[Exception | None] = None
@@ -42,10 +35,7 @@ class Dispatcher:
 
     @classmethod
     def get_instance(cls) -> Dispatcher | None:
-        """The active dispatcher; the first call starts one from the env unless AKLR_DISABLE=1. An env it cannot
-        start from raises a RuntimeError from its error on every call."""
         if cls._instance is None:
-            # a second thread waits for the first one's start; the flag set first stops a nested call starting again
             with cls._env_lock:
                 if not cls._env_initialized:
                     cls._env_initialized = True
@@ -55,7 +45,6 @@ class Dispatcher:
                     except Exception as e:
                         cls._env_error = e
             if cls._instance is None and cls._env_error is not None:
-                # a new error each time: one raised again would keep every caller's frames in its traceback
                 raise RuntimeError(
                     f"AKLR's dispatcher could not start from the environment: {cls._env_error}"
                 ) from cls._env_error
@@ -67,7 +56,6 @@ class Dispatcher:
         dispatch_config: DispatchConfig | DispatchConfigRegistry | None = None,
         tuner: KernelTuner | None = None,
     ) -> None:
-        """Rank the collection's kernels into one entry per variant that has a dispatch config."""
         self._tuner = tuner
         if dispatch_config is None:
             configs = get_default_registry()
@@ -99,7 +87,7 @@ class Dispatcher:
                 entry.prewarm()
                 self._entries[op_name] = entry
 
-        from aklr.core.runtime.seam import SeamRegistry  # seam imports this module
+        from aklr.core.runtime.seam import SeamRegistry
 
         SeamRegistry.default().install()
 
@@ -132,15 +120,11 @@ class Dispatcher:
         baseline: str | None = None,
         is_inplace: bool = False,
     ) -> Any:
-        """Run call, the api's bound arguments, on the best kernel schema's variant has for its key and
-        baseline; with none, return fallback(), or raise when there is no fallback."""
         entry = self._entries.get(schema.op_name)
         kernel = None
         try:
             key = None if entry is None else DispatchKey.from_call(schema, call)
         except ValueError as e:
-            # shapes the schema does not describe: a miss, the backend's to take or refuse. The error is not
-            # kept past here: held in a local, it and this frame would keep the call's tensors until a collection
             if fallback is None:
                 raise RuntimeError(f"Dispatch miss for '{schema.op_name}' and no fallback provided") from e
             key = None

@@ -59,18 +59,14 @@ class ResourceLease:
 
 
 class ResourceCatalog(ABC):
-    """Owns the resources and leases each to one task at a time."""
-
     @abstractmethod
     def __len__(self) -> int: ...
 
     @abstractmethod
-    def matching(self, request: ResourceRequest) -> Sequence[ResourceSnapshot]:
-        """Snapshot healthy matching resources, including those already leased."""
+    def matching(self, request: ResourceRequest) -> Sequence[ResourceSnapshot]: ...
 
     @abstractmethod
-    def acquire(self, resource_ids: Sequence[str] | str, task_id: str) -> ResourceLease | None:
-        """Atomically lease all requested resources, or leave every resource untouched."""
+    def acquire(self, resource_ids: Sequence[str] | str, task_id: str) -> ResourceLease | None: ...
 
     @abstractmethod
     def release(self, lease: ResourceLease, health: ResourceHealth) -> None: ...

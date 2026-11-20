@@ -57,7 +57,6 @@ class ValidationScope:
                     raise ValueError(f"{path} is not a file in the repository {root}")
             paths = tuple(p.resolve() for p in schema_paths)
         elif is_schema_only:
-            # every changed file the runtime loads, whatever its name: the audit rejects a misnamed one
             changed = {root / p for p in kinds}
             paths = tuple(p for p in scope.layout.paths() if p in changed)
         else:
@@ -76,8 +75,6 @@ class ValidationScope:
         return Path(path).resolve().relative_to(self.root.resolve()).as_posix()
 
     def under(self, directory: str, *, inside: bool = True) -> ValidationScope:
-        """This scope's schemas under ``directory``, a path relative to the root; not
-        ``inside``, those outside it. A directory outside the root is a ValueError."""
         relative = self.relative_path(self.root / directory)
         prefix = "" if relative == "." else relative + "/"
         kept = tuple(p for p in self.schema_paths if self.relative_path(p).startswith(prefix) == inside)
@@ -93,7 +90,6 @@ class ValidationScope:
             self.base_sha, "--",
         )  # fmt: skip
         untracked = self._git(self.root, "ls-files", "--others", "--exclude-standard", "-z")
-        # os.fsdecode: a file name that is not UTF-8 is still a path, of kind "other"
         paths = (diff + untracked).split(b"\0")
         return tuple(sorted({os.fsdecode(p) for p in paths if p}))
 
@@ -113,7 +109,6 @@ class ValidationScope:
         return tuple(sorted(os.fsdecode(p) for p in stdout.split(b"\0") if p))
 
     def is_measurement_only(self, path: Path, at_base: frozenset[str]) -> bool:
-        """Skip an existing schema only when its authored fields match the base."""
         relative = self.relative_path(path)
         if relative not in at_base:
             return False
@@ -128,9 +123,8 @@ class ValidationScope:
             return False
         return head == base
 
-    @functools.cached_property  # one git call per run, not per workload
+    @functools.cached_property
     def is_first_release(self) -> bool:
-        """The base holds no schema data: the change's schemas ship on correctness alone."""
         return self.base_sha is not None and "schema_data" not in map(
             ValidationScope.path_kind, self.paths_at_base(OPS_DIR)
         )
@@ -144,7 +138,6 @@ class ValidationScope:
     @staticmethod
     def _git(directory: Path, *args: str) -> bytes:
         directory = directory.resolve()
-        # safe.directory: git refuses a bind-mounted repo owned by the host user without it
         argv = ["git", "-c", f"safe.directory={directory}", "-C", str(directory), *args]
         try:
             done = subprocess.run(argv, capture_output=True, check=False)
@@ -157,7 +150,6 @@ class ValidationScope:
 
     @staticmethod
     def path_kind(path: str) -> PathKind:
-        """aklr/core's code is the only change that re-benches every schema."""
         match = SCHEMA_PATH_PATTERN.fullmatch(path)
         is_schema_json = match is not None and match["language"] in get_args(Language)
         if is_schema_json:
