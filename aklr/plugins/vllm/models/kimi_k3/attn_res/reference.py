@@ -8,7 +8,7 @@ import torch
 
 from aklr.core.contract.reference import OpReference
 
-__all__ = ["KimiK3AttnResReference"]
+__all__ = ["KimiK3AttnResFp8Reference", "KimiK3AttnResReference"]
 
 _CHUNK_TOKENS = 2048  # float32 rows of 9 x 8192 per token: about 0.6 GB a chunk
 
@@ -53,3 +53,21 @@ class KimiK3AttnResReference(OpReference):
             bank[:, n_valid_rows] = p
         dtype = prefix.dtype
         return {"out": out.to(dtype), "prefix": p.to(dtype), "bank": bank.to(dtype)}
+
+
+class KimiK3AttnResFp8Reference(KimiK3AttnResReference):
+    def reference(self, **call):
+        """quantized, scale, prefix and bank as the call leaves them: the attention residual's out, in the prefix's
+        dtype, quantized per token as vLLM does it in float32 (the fp8 rounding is the operation itself, not an
+        error)."""
+        from aklr.plugins.vllm.models.kimi_k3.attn_res.contract import FP8_MAX
+
+        expected = dict(super().reference(**call))
+        rounded = expected.pop("out").float()
+        floor, inverse_max = (
+            torch.tensor(1e-10, dtype=torch.float32),
+            torch.tensor(1.0 / FP8_MAX, dtype=torch.float32),
+        )
+        scale = torch.maximum(rounded.abs().amax(dim=-1, keepdim=True), floor) * inverse_max
+        values = (rounded * (1.0 / scale)).clamp(-FP8_MAX, FP8_MAX)
+        return {"quantized": values.to(torch.float8_e4m3fn), "scale": scale, **expected}
