@@ -88,6 +88,8 @@ def test_a_run_replaces_only_its_targets(tmp_path, published):
     index = (section / "index.html").read_text()
     assert 'href="https://github.com/o/r/actions/runs/2"><code>22222222</code>' in index
     assert index.count('href="../index.html"') == 2
+    assert "← AKLR Weekly Report" in index
+    assert "← AKLR 每周报告" in index
 
 
 def test_section_lists_the_main_commits_of_its_targets(tmp_path, published):
