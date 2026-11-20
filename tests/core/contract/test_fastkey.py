@@ -62,3 +62,19 @@ class TestFastKey:
             assert call[n].stride() == t.stride()
             assert call[n].data_ptr() == t.data_ptr()
             assert torch.equal(call[n].view(torch.uint8), t.view(torch.uint8))
+
+
+def test_rows_of_one_page_grid_apart_in_every_page_share_no_byte() -> None:
+    """Two views of one buffer's pages, each a dense part of every page (vLLM's Mamba pages: a slot's convolution
+    state, then its recurrent state), are apart; rows that meet, or of another stride, are not."""
+    from aklr.core.contract.fastkey._fast_key_fn import _apart_in_pages
+
+    pages = torch.zeros(6, 64 + 128 + 16)  # 6 pages of a 64-float part, a 128-float part, padding
+    conv = pages[:, :64].view(torch.bfloat16).view(6, 4, 32)
+    state = pages[:, 64:192].view(6, 8, 16)
+    assert _apart_in_pages(conv, state, conv.data_ptr(), state.data_ptr())
+    assert _apart_in_pages(state, conv, state.data_ptr(), conv.data_ptr())
+    meeting = pages.as_strided((6, 8, 16), (pages.stride(0), 16, 1), 60)
+    assert not _apart_in_pages(conv, meeting, conv.data_ptr(), meeting.data_ptr())
+    other_stride = torch.zeros(6, 300)[:, :128].view(6, 8, 16)
+    assert not _apart_in_pages(conv, other_stride, conv.data_ptr(), other_stride.data_ptr())
