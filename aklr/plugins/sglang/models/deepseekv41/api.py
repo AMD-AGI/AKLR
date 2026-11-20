@@ -268,6 +268,11 @@ def _project(self, x):
     "sglang.srt.layers.attention.deepseek_v4_backend.DeepseekV4AttnBackend._low_ratio_compress_fused",
     versions=_SGLANG,
 )
+# the HIP backend binds the step as a class attribute of its own, which a patch of the base class leaves
+@sglang_route(
+    "sglang.srt.layers.attention.deepseek_v4_backend_hip_radix.DeepseekV4HipRadixBackend._low_ratio_compress_fused",
+    versions=_SGLANG,
+)
 def _low_ratio_compress_fused(self, layer, x, req, pos, *, draft_len=1, extend_offsets=None, projected=None):
     """A decode or target-verify step's KV projection on an uncompressed layer, asked of gemm as the
     product it is: x @ wkv.T. sglang calls wkv inline there, so the route sits on the step."""
