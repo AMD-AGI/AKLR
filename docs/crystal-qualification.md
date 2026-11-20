@@ -21,12 +21,18 @@ establish that a changed kernel was selected instead of a fallback.
   settings, workload coverage, cadence, GPU capacity and operational approvals.
   Existing environment approvals still apply to scheduled jobs; a schedule does
   not bypass them. Agree on any unattended-run policy with the environment owners.
-- Set variable `CRYSTAL_SGLANG_BASE_IMAGE` to the approved
-  `lmsysorg/sglang:v0.5.22-rocm10-mi35x@sha256:<digest>` image. The Dockerfile installs
-  AKLR's dependencies and the same pinned AITER baseline as native CI, keeping
-  system Triton. It verifies AKLR, SGLang, AITER and Triton imports/versions.
-  V1 builds Linux x86-64 images for gfx950; other hardware/frameworks need their
-  own reviewed profile and image. Registry access is required during the build.
+- Set `CRYSTAL_MANUAL_ACTORS` to a comma-separated list of approved GitHub logins.
+  Both the original actor and rerun actor must appear in it. An empty list disables
+  manual submissions before any build starts. GitHub repository permissions still apply.
+- Set `CRYSTAL_QUALIFICATION_PROFILE` to the profile reviewed by the evaluation
+  owners and allowlisted in Crystal. `aklr-sglang-v1` is a plumbing smoke test;
+  it is not the six-model release suite. No implicit profile is selected.
+- The trusted default-branch `stack.json` supplies the digest-pinned SGLang image.
+  Candidate and trusted SGLang images must match; a PR changing the stack requires
+  review before it can be qualified. The image preserves the bundled AITER,
+  torch and Triton and installs AKLR, matching native `sglang-test`.
+  `CRYSTAL_SGLANG_BASE_IMAGE` is no longer used. V1 targets Linux x86-64/gfx950;
+  additional framework or hardware images need their own reviewed support.
 - Pre-create `ghcr.io/amd-agi/aklr-sglang` as a **private** package and grant this
   repository's Actions write access. The workflow refuses to create a package
   implicitly or push when its visibility is not private. Provision private pull
@@ -34,8 +40,7 @@ establish that a changed kernel was selected instead of a fallback.
 
 ## Scheduled runs: merged changes only
 
-The proposed schedule is Monday, Wednesday and Friday at **10:17 UTC**: gaps of
-two, two and three days. GitHub captures the latest `main` commit when it starts
+The proposed schedule is Saturday at **10:17 UTC**, once each week. GitHub captures the latest `main` commit when it starts
 the scheduled run. That exact SHA is used throughout the build, submission and
 Check publication, even if more PRs merge while it runs. Scheduled runs never
 select an open PR or require a PR number. They cover the changes already merged
@@ -48,7 +53,7 @@ branch for GitHub's timer to take effect. No branch protections or required
 checks are changed; periodic qualification is not a per-PR merge requirement.
 
 For main/release commits, the latest native `ci.yaml` **push** run on `main` for
-the exact SHA must have passed, including `unittest-aklr` and `validation`.
+the exact SHA must have passed, including `aiter-test`, `sglang-test`, and `vllm-test`.
 Missing, incomplete, failed or skipped GPU validation stops qualification. It
 does not quietly substitute an older passing commit or fall back to PR CI.
 
@@ -77,8 +82,9 @@ Deploy the companion Crystal API before using this sender. It sends
 also accepts the original PR-only version 1 payloads. Every result is attached
 to the exact commit; a scheduled result is not copied onto individual PR heads.
 
-Only a generic GitHub Check is public. Detailed scores, models, paths, server
-addresses and logs stay inside the service. The workflow never uploads build
+Crystal defaults to a generic public Check. An explicitly approved profile may
+publish released model/benchmark names and numeric reference comparisons.
+Internal paths, server addresses, logs and private report links stay inside Crystal. The workflow never uploads build
 logs or prints submission response bodies. The App has Checks write and Metadata
 read only, and must never generate events that start other workflows.
 
@@ -93,6 +99,7 @@ No real image build, GPU execution or Check publication occurs in these tests.
 
 The image enables `AKLR_SGLANG_PLUGIN=1`, retains AITER as a separate dependency,
 and preserves normal dispatch admission rules. New unmeasured PR kernels can
-fall back. V1 therefore checks candidate model accuracy only; baseline comparisons
-and proof of changed-kernel execution must be added before claiming full downstream
-release qualification. Do not bypass kernel validation to obtain a model pass.
+fall back. Crystal collects run-level `AKLR_TRACE=all` evidence and rejects fallback-only
+qualification. This does not prove coverage of every changed kernel. Informational
+pilots return a neutral Check; a release gate also needs comparable benchmark
+recipes, full sample counts and explicitly approved tolerances. Do not bypass kernel validation to obtain a model pass.

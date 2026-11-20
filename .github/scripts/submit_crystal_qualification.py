@@ -48,8 +48,10 @@ def request_body(args: argparse.Namespace) -> bytes:
         raise ValueError("commit SHA must contain 40 lowercase hexadecimal characters")
     if IMAGE_DIGEST.fullmatch(args.image) is None:
         raise ValueError("image must use an immutable sha256 digest")
-    if args.profile_id != "aklr-sglang-v1":
-        raise ValueError("unsupported qualification profile")
+    # The workflow supplies this reviewed repository variable. Crystal owns the
+    # allowlist and profile contents; callers never send commands or thresholds.
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", args.profile_id) is None:
+        raise ValueError("invalid qualification profile")
     if re.fullmatch(r"aklr-[1-9][0-9]*", args.request_id) is None:
         raise ValueError("invalid request ID")
     if (

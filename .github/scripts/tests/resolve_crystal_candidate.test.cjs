@@ -9,8 +9,7 @@ function fixture(mode = 'pr') {
   const runs = [{id: 99, head_sha: sha, head_repository: pr.head.repo,
     pull_requests: [{number: 42}], status: 'completed', conclusion: 'success',
     event: mode === 'pr' ? 'pull_request' : 'push', head_branch: 'main'}];
-  const jobs = [{name: 'unittest-aklr', conclusion: 'success'},
-    {name: 'validation', conclusion: 'success'}];
+  const jobs = ['aiter-test', 'sglang-test', 'vllm-test'].map(name => ({name, conclusion: 'success'}));
   const output = {};
   const calls = {pulls: 0, comparisons: [], runs: 0};
   const comparison = {status: 'ahead', merge_base_commit: {sha}};
@@ -37,9 +36,10 @@ function fixture(mode = 'pr') {
     },
   };
   const args = {github, context: {repo: {owner: 'AMD-AGI', repo: 'AKLR'},
-    sha, eventName: mode === 'schedule' ? 'schedule' : 'workflow_dispatch',
+    sha, actor: 'amd-nithya', eventName: mode === 'schedule' ? 'schedule' : 'workflow_dispatch',
     ref: 'refs/heads/main', payload: {repository: {default_branch: 'main'}}},
     core: {setOutput: (key, value) => { output[key] = value; }},
+    manualActors: 'amd-nithya,zhenhuang12', profileId: 'aklr-sglang-v1',
     prNumber: mode === 'pr' ? '42' : '', scheduleEnabled: mode === 'schedule' ? 'true' : ''};
   return {args, pr, runs, jobs, output, sha, calls, comparison};
 }
@@ -47,7 +47,7 @@ function fixture(mode = 'pr') {
 test('accepts the exact head only after native GPU tests pass', async () => {
   const f = fixture();
   await resolve(f.args);
-  assert.deepEqual(f.output, {sha: f.sha, pull_request: '42'});
+  assert.deepEqual(f.output, {sha: f.sha, pull_request: '42', profile_id: 'aklr-sglang-v1'});
 });
 
 for (const [name, change] of [
@@ -82,7 +82,7 @@ for (const mode of ['main', 'schedule']) {
   test(`${mode} pins merged main without looking up a PR`, async () => {
     const f = fixture(mode);
     await resolve(f.args);
-    assert.deepEqual(f.output, {sha: f.sha, pull_request: ''});
+    assert.deepEqual(f.output, {sha: f.sha, pull_request: '', profile_id: 'aklr-sglang-v1'});
     assert.equal(f.calls.pulls, 0);
     assert.deepEqual(f.calls.comparisons, []);
   });
@@ -135,7 +135,7 @@ test('manual release commit must be an ancestor of the captured main head', asyn
   f.args.context.sha = 'c'.repeat(40);
   await resolve(f.args);
   assert.deepEqual(f.calls.comparisons, [`${f.sha}...${f.args.context.sha}`]);
-  assert.deepEqual(f.output, {sha: f.sha, pull_request: ''});
+  assert.deepEqual(f.output, {sha: f.sha, pull_request: '', profile_id: 'aklr-sglang-v1'});
 });
 
 for (const status of ['behind', 'diverged']) {
@@ -164,3 +164,35 @@ test('rejects arbitrary workflow events', async () => {
   await assert.rejects(resolve(f.args), /Only manual and scheduled/);
   assert.equal(f.calls.runs, 0);
 });
+
+for (const [name, change] of [
+  ['unset maintainer list', f => {f.args.manualActors = '';}],
+  ['unlisted initiator', f => {f.args.context.actor = 'other';}],
+  ['unlisted rerun initiator', f => {f.args.triggeringActor = 'other';}],
+  ['missing profile', f => {f.args.profileId = '';}],
+  ['unsafe profile', f => {f.args.profileId = '../secret';}],
+]) {
+  test(`rejects ${name} before any candidate or CI lookup`, async () => {
+    const f = fixture();
+    change(f);
+    await assert.rejects(resolve(f.args));
+    assert.equal(f.calls.runs, 0);
+    assert.equal(f.calls.pulls, 0);
+  });
+}
+
+test('weekly timer does not depend on the last editor being a manual submitter', async () => {
+  const f = fixture('schedule');
+  f.args.manualActors = '';
+  f.args.context.actor = 'scheduler';
+  await resolve(f.args);
+  assert.equal(f.output.sha, f.sha);
+});
+
+for (const name of ['aiter-test', 'sglang-test', 'vllm-test']) {
+  test(`rejects a skipped ${name}`, async () => {
+    const f = fixture();
+    f.jobs.find(j => j.name === name).conclusion = 'skipped';
+    await assert.rejects(resolve(f.args));
+  });
+}

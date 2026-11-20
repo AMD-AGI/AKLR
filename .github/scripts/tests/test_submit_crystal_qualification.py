@@ -58,6 +58,12 @@ class SubmitCrystalQualificationTests(unittest.TestCase):
         self.assertIsNone(body["pull_request"])
         self.assertEqual(body["commit_sha"], "b" * 40)
 
+    def test_selected_profile_is_sent_without_embedding_its_recipe(self):
+        body = json.loads(MODULE.request_body(arguments(profile_id="aklr-reviewed-pilot-v1")))
+        self.assertEqual(body["profile_id"], "aklr-reviewed-pilot-v1")
+        self.assertNotIn("tasks", body)
+        self.assertNotIn("model", body)
+
     def test_invalid_pull_requests_are_not_treated_as_main(self):
         for value in [True, 0, -1, 1.5, "42", 2**31]:
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "pull request"):
@@ -91,7 +97,9 @@ class SubmitCrystalQualificationTests(unittest.TestCase):
     def test_rejects_other_repositories_profiles_and_workflow_urls(self):
         for change in [
             {"repository": "AMD-AGI/SIKL"},
-            {"profile_id": "arbitrary-profile"},
+            {"profile_id": "../../arbitrary-profile"},
+            {"profile_id": ""},
+            {"profile_id": "a" * 65},
             {"workflow_run_url": "https://example.test/runs/42"},
             {"request_id": "aklr-123\nheader-injection"},
         ]:

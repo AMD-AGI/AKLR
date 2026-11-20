@@ -6,12 +6,16 @@ on:
       - .github/workflows/crystal-*.yml
       - .github/scripts/*crystal*
       - .github/scripts/tests/*crystal*
+      - stack.json
+      - docker/Dockerfile.sglang
   push:
     branches: [main]
     paths:
       - .github/workflows/crystal-*.yml
       - .github/scripts/*crystal*
       - .github/scripts/tests/*crystal*
+      - stack.json
+      - docker/Dockerfile.sglang
 
 permissions:
   contents: read

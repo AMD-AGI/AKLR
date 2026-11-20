@@ -1,5 +1,6 @@
 // Run only from the reviewed default-branch checkout, never the candidate tree.
-module.exports = async ({github, context, core, prNumber, commitSha = '', scheduleEnabled = ''}) => {
+module.exports = async ({github, context, core, prNumber, commitSha = '', scheduleEnabled = '',
+  manualActors = '', triggeringActor = context.actor, profileId = ''}) => {
   const repository = 'AMD-AGI/AKLR';
   const defaultBranch = context.payload.repository.default_branch;
   if (`${context.repo.owner}/${context.repo.repo}` !== repository ||
@@ -8,6 +9,15 @@ module.exports = async ({github, context, core, prNumber, commitSha = '', schedu
   }
   if (!['workflow_dispatch', 'schedule'].includes(context.eventName)) {
     throw new Error('Only manual and scheduled qualifications are supported.');
+  }
+  if (context.eventName === 'workflow_dispatch') {
+    const allowed = new Set(String(manualActors).split(',').map(a => a.trim().toLowerCase()).filter(Boolean));
+    if (![context.actor, triggeringActor].every(a => typeof a === 'string' && allowed.has(a.toLowerCase()))) {
+      throw new Error('Manual qualification requires an approved maintainer, including reruns.');
+    }
+  }
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(profileId)) {
+    throw new Error('Configure the reviewed Crystal qualification profile first.');
   }
   const prInput = String(prNumber ?? '').trim();
   const commitInput = String(commitSha).trim();
@@ -65,11 +75,12 @@ module.exports = async ({github, context, core, prNumber, commitSha = '', schedu
   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
     ...context.repo, run_id: runs[0].id, filter: 'latest', per_page: 100,
   });
-  for (const name of ['unittest-aklr', 'validation']) {
+  for (const name of ['aiter-test', 'sglang-test', 'vllm-test']) {
     if (!jobs.some(j => j.name === name && j.conclusion === 'success')) {
       throw new Error('Native GPU tests and validation must run and pass.');
     }
   }
   core.setOutput('sha', sha);
   core.setOutput('pull_request', number ? String(number) : '');
+  core.setOutput('profile_id', profileId);
 };
