@@ -100,6 +100,7 @@ jobs:
       vllm_image: ${{ steps.stack.outputs.vllm_image }}
       aiter_image: ${{ steps.stack.outputs.aiter_image }}
       aiter: ${{ steps.stack.outputs.aiter }}
+      sgl_amd_mono: ${{ steps.stack.outputs.sgl_amd_mono }}
     steps:
       - name: Report whether GPU jobs run
         run: |
@@ -124,11 +125,13 @@ jobs:
           vllm_image=$(jq -er ".vllm_image | $image" stack.json)
           aiter_image=$(jq -er ".aiter_image | $image" stack.json)
           aiter=$(jq -er '.aiter | select(test("^[0-9a-f]{40}$"))' stack.json)
+          sgl_amd_mono=$(jq -er '.sgl_amd_mono | select(test("^[0-9a-f]{40}$"))' stack.json)
           {
             echo "sglang_image=$sglang_image"
             echo "vllm_image=$vllm_image"
             echo "aiter_image=$aiter_image"
             echo "aiter=$aiter"
+            echo "sgl_amd_mono=$sgl_amd_mono"
           } >> "$GITHUB_OUTPUT"
           echo "🧱 Stack: aiter-test $aiter_image, ROCm/aiter@$aiter; sglang-test $sglang_image; vllm-test $vllm_image" | tee -a "$GITHUB_STEP_SUMMARY"
       - &setup_python
@@ -209,6 +212,7 @@ jobs:
       IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
       TESTS: tests/core tests/ops tests/benchmarks
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
+      AKLR_BASELINE_SGL_AMD_MONO: ${{ needs.code-lint.outputs.sgl_amd_mono }}
     steps:
       - &checkout_source
         name: Checkout source
@@ -220,7 +224,7 @@ jobs:
         name: Run unit tests (${{ env.TESTS }}) and validation on a GPU node
         shell: bash .github/scripts/gpu_job.sh {0}
         env:
-          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER PLUGINS
+          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER AKLR_BASELINE_SGL_AMD_MONO PLUGINS
           VALIDATE: ${{ needs.code-lint.outputs.has_bench_paths }}
           BASE: ${{ needs.code-lint.outputs.validation_base }}
           MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
@@ -248,6 +252,9 @@ jobs:
             # Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins.
             image_triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
             AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
+            if [[ -n ${AKLR_BASELINE_SGL_AMD_MONO:-} ]]; then
+              python3 -m pip install --no-deps "sgl-amd-mono @ git+https://github.com/sgl-project/sgl-amd-mono.git@$AKLR_BASELINE_SGL_AMD_MONO"
+            fi
             python3 -m pip install -e .
             triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
             [[ $triton == "$image_triton" ]] || { echo "::error::The image's Triton $image_triton became $triton"; exit 1; }

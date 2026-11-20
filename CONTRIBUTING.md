@@ -43,6 +43,11 @@ To time an op against an AITER function, call it from the op's `<contract>_basel
 `baseline.py`. To move the baseline, change that commit: the next validation re-measures every
 kernel against it.
 
+`muse_spark_layer@1.0` is timed against [sgl-amd-mono](https://github.com/sgl-project/sgl-amd-mono)'s
+Muse Spark whole-layer launch, which SGLang's ROCm images install as its monokernel plugin, at the
+commit `sgl_amd_mono` in `stack.json`. CI installs that commit over the image without its
+dependencies (`pip install --no-deps`).
+
 ## GPU CI runners
 
 The `aiter-test`, `sglang-test` and `vllm-test` jobs use exactly one backend per workflow

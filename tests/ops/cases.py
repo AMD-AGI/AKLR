@@ -452,6 +452,40 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"ep_size": 1},
         layout_variant_name="gate_up_interleaved",
     ),
+    PointSpec(  # one rank's group at small widths: two requests, a 4-page context
+        contract_id="muse_spark_layer@1.0",
+        axes={
+            "n_rows": 16,
+            "n_requests": 2,
+            "n_slots": 256,
+            "max_blocks": 4,
+            "n_positions": 32,
+            "model_dim": 128,
+            "n_heads": 4,
+            "n_kv_heads": 2,
+            "n_experts": 16,
+            "pooled_dim": 256,
+            "inter_dim": 256,
+        },
+        dtypes={
+            **dict.fromkeys(
+                ("q", "o_gate", "o_proj", "router_hi", "router_lo", "pooler", "unpooler"), "bfloat16"
+            ),
+            **dict.fromkeys(("pre_norm_weight", "pooled_norm_weight", "expert_norm_weight"), "bfloat16"),
+            **dict.fromkeys(("post_ffn_weight", "next_norm_weight", "next_qkvg"), "bfloat16"),
+            **dict.fromkeys(("next_input", "next_k", "next_v"), "bfloat16"),
+            **dict.fromkeys(
+                ("residual", "alpha", "beta", "alpha2", "beta2", "router_bias", "rotary"), "float32"
+            ),
+            **dict.fromkeys(("k_cache", "v_cache", "next_k_cache", "next_v_cache"), "float8_e4m3fn"),
+            **dict.fromkeys(("page_table", "context_lens"), "int32"),
+            **dict.fromkeys(("positions", "slots", "swa_map"), "int64"),
+            **dict.fromkeys(("w13", "w2"), "float4_e2m1"),
+            **dict.fromkeys(("w13_scale", "w2_scale"), "float8_e8m0"),
+        },
+        attrs={"tp_size": 1},
+        layout_variant_name="row_major",
+    ),
     PointSpec(
         contract_id="gemm@1.0",
         axes={"m": 4, "n": 16, "k": 128},
@@ -777,6 +811,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "fused_moe@1.0",
         "gemm_a4w4_mxfp4@1.0",
         "mega_moe@1.0",
+        "muse_spark_layer@1.0",  # fp4 experts
         "flash_mla_with_kvcache@1.0",
         "mla_decode_fwd@1.0",  # aiter's ASM MLA
         "mla_decode_fwd_cprr@1.0",
