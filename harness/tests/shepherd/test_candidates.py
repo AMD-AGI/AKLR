@@ -171,7 +171,10 @@ def test_a_manual_schema_is_kept_wherever_its_strategy_stands(tmp_path):
 
 
 def test_an_open_issue_request_lists_its_schemas_with_the_issue(tmp_path):
-    paths = [f"aklr/ops/gemm/impls/flydsl/{name}/a.json" for name in ("open", "stopped", "closed")]
+    paths = [
+        f"aklr/plugins/aiter/provider/gemm/impls/flydsl/{name}/a.json"
+        for name in ("open", "stopped", "closed")
+    ]
     for path in paths:
         (tmp_path / path).parent.mkdir(parents=True)
         # A request names its schema as a manual strategy does: a kernel does not drop it.

@@ -12,7 +12,7 @@ SCRIPT = (
     Path(__file__).resolve().parents[2]
     / "automations/shepherd/skills/optimize-and-deliver-kernels/scripts/request.py"
 )
-A, B, C = (f"aklr/ops/gemm/impls/flydsl/{name}/a.json" for name in "abc")
+A, B, C = (f"aklr/plugins/aiter/provider/gemm/impls/flydsl/{name}/a.json" for name in "abc")
 FAKE_GH = """#!/bin/sh
 printf '%s\\0' "$@" >> "$GH_LOG"; printf '\\n' >> "$GH_LOG"
 echo 77
