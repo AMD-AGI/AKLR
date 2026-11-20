@@ -274,3 +274,82 @@ def test_a_wo_a_the_op_cannot_express_stays_on_sglang(monkeypatch, call):
 def test_a_wo_a_group_the_op_declines_stays_on_sglang(monkeypatch):
     monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", lambda **call: FallbackReason.NO_WORKLOAD)
     assert api._wo_a_bmm(*wo_a_call()) is FallbackReason.NO_WORKLOAD
+
+
+class _Gemm:
+    """AKLR's gemm as the routes see it: what each is asked and what each runs, the op declining with ``reason``
+    and answering a run with the run's number at the op's output shape."""
+
+    def __init__(self):
+        self.asked, self.ran, self.reason = [], [], None
+
+    def fallback_reason(self, a, b, **kwargs):
+        self.asked.append(dict(a=a, b=b, **kwargs))
+        return self.reason
+
+    def __call__(self, a, b):
+        self.ran.append((a, b))
+        return torch.full((a.shape[0], b.shape[0]), float(len(self.ran)), dtype=a.dtype)
+
+
+@pytest.fixture
+def gemm(monkeypatch):
+    fake = _Gemm()
+    monkeypatch.setattr(api, "gemm", fake)
+    return fake
+
+
+def bf16_wo_a_call(tokens=3, groups=2):
+    """sglang's bf16 wo_a projection of a rank: each token's groups side by side, and a weight a group."""
+    o = torch.arange(tokens * groups * 128, dtype=torch.bfloat16).view(tokens, groups, 128)
+    return o, torch.zeros(groups, 64, 128, dtype=torch.bfloat16)
+
+
+def test_a_prefills_bf16_wo_a_reaches_gemm_once_a_group(gemm):
+    o, wo_a = bf16_wo_a_call()
+    out = api._apply_wo_a_bf16_matmul(o, wo_a, is_decode=False, is_prefill=True, fast_path=True)
+    assert len(gemm.asked) == len(gemm.ran) == 2
+    for group, (asked, (a, b)) in enumerate(zip(gemm.asked, gemm.ran, strict=True)):
+        # asked with the shape and dtype of a group's rows, on the 16 bytes dispatch requires
+        assert set(asked) == {"a", "b"} and asked["a"].shape == (3, 128) and asked["a"].dtype == o.dtype
+        assert asked["a"].is_contiguous() and asked["a"].data_ptr() % 16 == 0
+        # run on the group's rows, row-major, and its weight as sglang holds it
+        assert a.is_contiguous() and a.data_ptr() % 16 == 0 and a.equal(o[:, group])
+        assert asked["b"].data_ptr() == b.data_ptr() == wo_a[group].data_ptr() and b.shape == (64, 128)
+    # as sglang's einsum returns it: a token's groups side by side
+    assert out.shape == (3, 2, 64) and out.dtype == torch.bfloat16 and out.is_contiguous()
+    assert out[:, 0].eq(1).all() and out[:, 1].eq(2).all()
+
+
+@pytest.mark.parametrize(
+    ("call", "mode"),
+    [
+        (bf16_wo_a_call(), {"is_decode": True}),
+        (bf16_wo_a_call(), {"is_decode": False, "is_target_verify": True}),
+        (tuple(t.flatten(0, 1) for t in bf16_wo_a_call()), {"is_decode": False}),
+        ((bf16_wo_a_call()[0], bf16_wo_a_call(groups=1)[1]), {"is_decode": False}),
+    ],
+    ids=["decode", "target_verify", "ungrouped", "other_groups"],
+)
+def test_a_bf16_wo_a_sglangs_own_kernels_take_stays_on_sglang(gemm, call, mode):
+    assert api._apply_wo_a_bf16_matmul(*call, **mode) is FallbackReason.OUT_OF_CONTRACT
+    assert gemm.asked == gemm.ran == []
+
+
+def test_a_bf16_wo_a_gemm_declines_stays_on_sglang_uncopied(gemm):
+    gemm.reason = FallbackReason.NO_WORKLOAD
+    assert api._apply_wo_a_bf16_matmul(*bf16_wo_a_call(), is_decode=False) is FallbackReason.NO_WORKLOAD
+    assert len(gemm.asked) == 1 and gemm.ran == []
+
+
+@pytest.mark.parametrize(
+    "reason", [None, FallbackReason.NO_WORKLOAD], ids=["a_kernel_serves", "the_op_declines"]
+)
+def test_the_routers_gemv_is_asked_of_gemm_as_fp32_logits_and_left_to_sglang(gemm, reason):
+    gemm.reason = reason
+    hidden, weight = torch.zeros(4, 512, dtype=torch.bfloat16), torch.zeros(384, 512, dtype=torch.bfloat16)
+    # sglang's split-K partials are not the op's output: the call is recorded, never run
+    assert api._rocm_router_gemv_split_k(hidden, weight) is (reason or FallbackReason.OUT_OF_CONTRACT)
+    (asked,) = gemm.asked
+    assert set(asked) == {"a", "b", "out_dtype"} and asked["out_dtype"] == torch.float32
+    assert asked["a"] is hidden and asked["b"] is weight and gemm.ran == []
