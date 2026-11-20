@@ -203,11 +203,11 @@ def _apply_wo_a_bf16_matmul(
     emit_fp8=False,
 ):
     """The wo_a projection a monokernel's prefill keeps in bf16, as one GEMM a group, returned as
-    sglang's einsum returns it: a token's groups side by side. Decode and target-verify rows stay
-    on sglang's kernels, which return other forms."""
+    sglang's einsum returns it: a token's groups side by side. Decode and target-verify rows are
+    asked of gemm, which records them, and left to sglang's kernels, which return other forms."""
     import torch
 
-    if is_decode or is_target_verify or not (o.ndim == wo_a.ndim == 3) or o.shape[1] != wo_a.shape[0]:
+    if not (o.ndim == wo_a.ndim == 3) or o.shape[1] != wo_a.shape[0]:
         return FallbackReason.OUT_OF_CONTRACT
     # a group's rows lie a token apart: asked with a row-major stand-in, copied only for a call the op takes
     stand_in = torch.empty((o.shape[0], o.shape[2]), dtype=o.dtype, device=o.device)
@@ -215,11 +215,13 @@ def _apply_wo_a_bf16_matmul(
     for group, weight in enumerate(wo_a):
         if (reason := gemm.fallback_reason(stand_in, weight)) is not None:
             return reason
+        if is_decode or is_target_verify:
+            continue
         out = gemm(o[:, group].contiguous(), weight)
         if isinstance(out, FallbackReason):
             return out
         outputs.append(out)
-    return torch.stack(outputs, dim=1)
+    return torch.stack(outputs, dim=1) if outputs else FallbackReason.OUT_OF_CONTRACT
 
 
 @sglang_route("sglang.kernels.ops.gemm.router_gemv_hip.rocm_router_gemv_split_k", versions=_SGLANG)
@@ -232,3 +234,31 @@ def _rocm_router_gemv_split_k(x, w):
     # callers sum the split-K partials it returns in their own launch; return a kernel's product as
     # the one partial once a kernel serves it with that sum's batch invariance
     return gemm.fallback_reason(x, w, out_dtype=torch.float32) or FallbackReason.OUT_OF_CONTRACT
+
+
+@sglang_route("sglang.kernels.ops.gemm.bf16_fp32.linear_bf16_fp32", versions=_SGLANG)
+def _linear_bf16_fp32(x, y, *, hpc_kernel_min_m=None):
+    """The bf16 linear sglang returns in fp32, the compressor's KV and score projections among its
+    callers, as the GEMM it is. hpc_kernel_min_m picks a kernel no ROCm build has."""
+    import torch
+
+    return gemm(x, y, out_dtype=torch.float32)
+
+
+@sglang_route("sglang.srt.layers.attention.dsv4.dsv41_sparse.DeepseekV41Indexer.forward_wk", versions=_SGLANG)
+def _forward_wk(self, latent):
+    """The indexer's key projection, asked of gemm as the product it is: latent @ wk.T."""
+    # shortcut: the op is asked for, which records the call, and the product is left to sglang, whose
+    # small-row kernel keeps a reduction order of its own; run gemm once a kernel serves it in that order
+    return gemm.fallback_reason(latent, self.wk.weight) or FallbackReason.OUT_OF_CONTRACT
+
+
+@sglang_route("sglang.srt.layers.attention.dsv4.dsv41_sparse.DeepseekV41Compressor.project", versions=_SGLANG)
+def _project(self, x):
+    """An uncompressed layer's KV projection, asked of gemm as the product it is: x @ wkv.T. A
+    compressed layer's projections reach gemm through sglang's bf16 linear with fp32 output."""
+    # shortcut: recorded and left to sglang, which returns the pair project's callers split; serve it
+    # from here once a kernel takes the shape
+    if self.compress_ratio == 1:
+        gemm.fallback_reason(x, self.wkv.weight)
+    return FallbackReason.OUT_OF_CONTRACT
