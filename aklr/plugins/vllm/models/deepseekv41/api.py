@@ -1,25 +1,14 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""vLLM's routes to the DeepSeek-V4.1 ops.
-
-A decode step's layer is asked for as a monokernel's launches at what one TP rank computes
-between the collectives, whether vLLM's mono decode kernels (``--monokernel``: TP 2, 4 or 8,
-at most 48 rows) or its own chain runs the step: the attention front
-(``deepseekv41_mono_k1``), the attention back to the MoE's input
-(``deepseekv41_mono_k2_attention``: an MXFP8 wo_a, the other ranks' wo_b outputs an fp32
-input summed before the FFN seam) and the MoE to this rank's sum (``deepseekv41_mono_k2_ffn``: the
-shared expert an MXFP8 MLP beside the FP4 slots). The chain's kernels are reached one by one
-too: the sparse MLA, the MXFP8 linears and wo_a's groups here, the routed experts through
-aiter's fused_moe."""
+"""vLLM's routes to the DeepSeek-V4.1 ops: the kernels of vLLM's own chain, reached one by one.
+The sparse MLA, the MXFP8 linears and wo_a's groups here; the routed experts through aiter's
+fused_moe."""
 
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang.models.deepseekv41 import (
-    deepseekv41_mono_k1,
-    deepseekv41_mono_k2_attention,
-    deepseekv41_mono_k2_ffn,
     deepseekv41_mxfp8_linear,
     deepseekv41_sparse_mla,
 )
@@ -33,7 +22,6 @@ _VLLM = ("0.33.0rc1.dev910", "0.34.0")
 _RECORD = 584
 _ROCM = "vllm.models.deepseek_v41.amd.rocm"
 _ATTENTION = f"{_ROCM}.DeepseekV41ROCMAiterMLAAttention"
-_MONO = "vllm.models.deepseek_v41.amd.mono_decode.MonoDecodeLayer"
 _LINEAR = "vllm.model_executor.kernels.linear.mxfp8.rocm_native.RocmDotScaledMxfp8LinearKernel"
 
 
@@ -99,147 +87,6 @@ def _aiter_sparse_mla(
     # with both converted and vLLM's quantization after it once a kernel serves it
     reason = deepseekv41_sparse_mla.fallback_reason(**arguments, **pools, kv_cache_layout="strided_pages")
     return reason or FallbackReason.OUT_OF_CONTRACT
-
-
-@vllm_route(_MONO, f"{_MONO}.__call__", versions=_VLLM)
-def _mono_decode(
-    self,
-    layer,
-    x,
-    positions,
-    residual,
-    post_mix,
-    res_mix,
-    pre_mix,
-    engram_hashes=None,
-    engram_mask=None,
-):
-    """A decode-only step's layer, as the launches a monokernel runs it in, each asked for
-    with the layer's own tensors on this rank: the MoE, and for a layer whose attention the
-    mono kernels run its front and back too. vLLM's kernels take the step or its chain does:
-    the route only asks. It is declared on the class, whose source holds the call it
-    replaces: the layer calls its mono object."""
-    import torch
-    from vllm.forward_context import get_forward_context, is_forward_context_available
-
-    try:
-        attn, ffn, tokens = layer.attn, layer.ffn, x.shape[0]
-        metadata = get_forward_context().attn_metadata if is_forward_context_available() else None
-        swa = metadata.get(attn.swa_cache_layer.prefix) if isinstance(metadata, dict) else None
-        if swa is None or swa.num_prefills or not swa.num_decodes or swa.num_decode_tokens > tokens:
-            return FallbackReason.OUT_OF_CONTRACT
-        # shortcut: the launches are asked for, which records the layer's calls, and the layer
-        # is left to vLLM. What a launch reads of an earlier one or of the other ranks stands
-        # in by shape (the MoE's input: the step's rows; the queries and the other ranks' sum:
-        # the streams' memory; the attention seam's mixes; an Engram layer's settled streams),
-        # and so do vLLM's window lists and cos-then-sin RoPE table. Run the launches here
-        # once kernels serve them
-        hidden = x if x.dim() == 2 else x[:, 0].contiguous()
-        experts, shared = ffn.experts.routed_experts, ffn.shared_experts
-        moe = deepseekv41_mono_k2_ffn.fallback_reason(
-            hidden_states=hidden,
-            router_weight=ffn.gate.weight,
-            correction_bias=ffn.gate.e_score_correction_bias,
-            w1=experts.w13_weight,
-            w1_scale=experts.w13_weight_scale,
-            w2=experts.w2_weight,
-            w2_scale=experts.w2_weight_scale,
-            shared_w1=shared.gate_up_proj.weight,
-            shared_w1_scale=shared.gate_up_proj.weight_scale,
-            shared_w2=shared.down_proj.weight,
-            shared_w2_scale=shared.down_proj.weight_scale,
-            topk=ffn.n_activated_experts,
-            routed_scaling_factor=ffn.routed_scaling_factor,
-            swiglu_limit=ffn.swiglu_limit,
-        )
-        epsilons = {
-            layer.attn_norm.variance_epsilon,
-            attn.q_norm.variance_epsilon,
-            attn.kv_norm.variance_epsilon,
-        }
-        if self.ffn_only or len(epsilons) != 1:
-            return moe or FallbackReason.OUT_OF_CONTRACT
-        owed = {}
-        if residual is None:
-            # the embedding in every stream (stream 0 the input), or a pipeline stage's streams
-            # under the pre-mix carried in: no post is owed
-            if x.dim() == 3:
-                residual = x
-                if pre_mix is not None:
-                    owed["prev_pre_mix"] = pre_mix.reshape(tokens, -1)
-            else:
-                residual = x.unsqueeze(1).expand(-1, layer.hc_mult, -1).contiguous()
-        else:
-            owed["prev_pre_mix"] = pre_mix.reshape(tokens, -1)
-            if layer.engram is None or engram_hashes is None:
-                owed.update(x=x, post_mix=post_mix.reshape(tokens, -1), comb_mix=res_mix)
-        seam = {
-            "residual": residual,
-            "rope_freqs": attn.rotary_emb.cos_sin_cache,
-            # a slice of a batch's int64 positions may start 8 bytes past the 16 dispatch requires
-            "positions": positions[:tokens] if positions.data_ptr() % 16 == 0 else positions[:tokens].clone(),
-            "hc_rms_eps": layer.rms_norm_eps,
-            "hc_eps": layer.hc_eps,
-            "sinkhorn_iters": layer.hc_sinkhorn_iters,
-        }
-        front = deepseekv41_mono_k1.fallback_reason(
-            **seam,
-            hc_fn=layer.hc_attn_fn,
-            hc_scale=layer.hc_attn_scale,
-            hc_base=layer.hc_attn_base,
-            norm_weight=layer.attn_norm.weight,
-            wqkv=attn.fused_wqa_wkv.weight,
-            wqkv_scale=attn.fused_wqa_wkv.weight_scale,
-            q_norm_weight=attn.q_norm.weight,
-            kv_norm_weight=attn.kv_norm.weight,
-            wq_b=attn.wq_b.weight,
-            wq_b_scale=attn.wq_b.weight_scale,
-            norm_eps=layer.attn_norm.variance_epsilon,
-            **owed,
-        )
-
-        def pages(cache, page_size):
-            # as vLLM's kernels read a cache: a page of 584-byte records in each block's row
-            return cache.as_strided(
-                (cache.shape[0], page_size, 1, _RECORD), (cache.stride(0), _RECORD, _RECORD, 1)
-            )
-
-        heads, extra = attn.n_local_heads, {}
-        if attn.compress_ratio:
-            block_size = metadata[attn.compressed_cache_prefix].block_size
-            extra = {
-                "extra_kv_cache": pages(attn._compressed_kv_cache(), block_size // attn.compress_ratio),
-                "extra_indices": attn.topk_indices_buffer[:tokens].unsqueeze(1),
-            }
-        mixes = x.new_empty((tokens, 4, 4), dtype=torch.float32)
-        back = deepseekv41_mono_k2_attention.fallback_reason(
-            **seam,
-            **extra,
-            q=residual.view(-1)[: tokens * heads * 512].view(tokens, 1, heads, 512),
-            kv_cache=pages(attn.swa_cache_layer.kv_cache, swa.block_size),
-            indices=swa.decode_swa_indices[:tokens].view(tokens, 1, -1),
-            sinks=attn.attn_sink[:heads].float(),
-            sm_scale=attn.scale,
-            kv_cache_layout="strided_pages",
-            wo_a=attn.wo_a.weight,
-            wo_a_scale=attn.wo_a.weight_scale,
-            wo_b=attn.wo_b.weight,
-            wo_b_scale=attn.wo_b.weight_scale,
-            # fp32, twice a bf16 row: the first half of the streams' memory
-            peer_x=residual.view(-1)[: 2 * hidden.numel()].view(torch.float32).view(hidden.shape),
-            post_mix=mixes.view(-1)[: tokens * 4].view(tokens, 4),
-            comb_mix=mixes,
-            pre_mix=mixes.view(-1)[-tokens * 4 :].view(tokens, 4),
-            hc_fn=layer.hc_ffn_fn,
-            hc_scale=layer.hc_ffn_scale,
-            hc_base=layer.hc_ffn_base,
-            norm_weight=layer.ffn_norm.weight,
-            norm_eps=layer.ffn_norm.variance_epsilon,
-        )
-    except Exception:
-        # a layer or a step shaped otherwise than read here: nothing more is asked, vLLM runs it
-        return FallbackReason.OUT_OF_CONTRACT
-    return front or back or moe or FallbackReason.OUT_OF_CONTRACT
 
 
 @vllm_route(f"{_ATTENTION}._o_proj", f"{_ROCM}.rocm_mxfp8_wo_a_bmm", versions=_VLLM)
