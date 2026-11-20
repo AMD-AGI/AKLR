@@ -8,12 +8,13 @@ from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.layers.dsa_indexer.contract import (
     DSA_INDEXER_KEY_PREPARE,
     DSA_INDEXER_PREPARE,
+    DSA_INDEXER_WRITER_PREPARE,
     HEAD_DIM,
     PAGE_SIZE,
     ROPE_DIM,
 )
 
-__all__ = ["dsa_indexer_key_prepare", "dsa_indexer_prepare"]
+__all__ = ["dsa_indexer_key_prepare", "dsa_indexer_prepare", "dsa_indexer_writer_prepare"]
 
 # Indexer's quantization, as deepseek_v2 builds it: one scale per 128 values, rounded up to a
 # power of two
@@ -54,6 +55,28 @@ def dsa_indexer_key_prepare(
     index_k_cache,
     k_norm_eps=1e-6,
     no_values=None,
+): ...
+
+
+@api(DSA_INDEXER_WRITER_PREPARE)
+def dsa_indexer_writer_prepare(
+    x,
+    q_lora,
+    wq_b,
+    wk,
+    weights_proj,
+    k_norm_weight,
+    k_norm_bias,
+    cos_cache,
+    sin_cache,
+    positions,
+    out_cache_loc,
+    index_k_cache,
+    k_norm_eps=1e-6,
+    wq_b_scale=None,
+    wk_scale=None,
+    q_fp8=None,
+    head_weights=None,
 ): ...
 
 
@@ -182,6 +205,64 @@ def _forward_cuda_k_only(
     return raw_topk_result
 
 
+@sglang_route(
+    "sglang.srt.layers.attention.dsa.dsa_indexer.Indexer._aiter_fused_fp8_prepare_and_store",
+    versions=("0.5.22", "0.5.23"),
+)
+def _aiter_fused_fp8_prepare_and_store(
+    self, x, q_lora, positions, forward_batch, layer_id, *, num_tokens=None
+):
+    """The fused fp8 writer's preparation (wq_b, wk, weights_proj and aiter's
+    indexer_qk_rope_quant_and_cache) as the op. sglang keeps the graph split ops' calls
+    (num_tokens) and the fp8 checkpoints' fused-quantized hidden states."""
+    import torch
+    from sglang.srt.layers.attention.dsa import dsa_indexer as indexer
+
+    if (
+        num_tokens is not None
+        or not isinstance(x, torch.Tensor)
+        or x.dtype != torch.bfloat16
+        or not isinstance(q_lora, torch.Tensor)
+        or positions.dtype != torch.int64
+        or _writer_falls_back(self, indexer)
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    tokens = x.shape[0]
+    pool, index_k_cache = _index_k_cache(layer_id)
+    out_cache_loc = forward_batch.out_cache_loc
+    # the writer stores the first slots, one a key row
+    if index_k_cache is None or out_cache_loc.shape[0] < tokens or positions.shape[0] < tokens:
+        return FallbackReason.OUT_OF_CONTRACT
+    out_cache_loc = out_cache_loc[:tokens].to(torch.int64)
+    cos_cache, sin_cache = self._aiter_fused_fp8_rope_caches(x.device, torch.bfloat16)
+    arguments = {
+        "x": x,
+        "q_lora": q_lora,
+        "wq_b": self.wq_b.weight,
+        "wk": self.wk.weight,
+        "weights_proj": self.weights_proj.weight,
+        "k_norm_weight": self.k_norm.weight,
+        "k_norm_bias": self.k_norm.bias,
+        "cos_cache": cos_cache,
+        "sin_cache": sin_cache,
+        "positions": positions[:tokens],
+        "out_cache_loc": out_cache_loc.contiguous(),
+        "index_k_cache": index_k_cache,
+        "k_norm_eps": self.k_norm.variance_epsilon,
+    }
+    if self.wq_b.weight.dtype == torch.float8_e4m3fn:
+        arguments |= {"wq_b_scale": self.wq_b.weight_scale_inv, "wk_scale": self.wk.weight_scale_inv}
+    reason = dsa_indexer_writer_prepare.fallback_reason(**arguments)
+    if reason is not None:
+        return reason
+    _invalidate(pool, layer_id)
+    result = dsa_indexer_writer_prepare(**arguments)
+    if isinstance(result, FallbackReason):
+        return result
+    q_fp8, head_weights = result
+    return q_fp8, head_weights.unsqueeze(-1)
+
+
 def _hidden_bf16(x):
     """The bf16 hidden states _get_q_k_bf16 and _get_k_bf16 project: x, or the third of
     fused_rms_fp8_group_quant's (fp8, scale, bf16); None for anything else."""
@@ -289,3 +370,71 @@ def _key_arguments(module, hidden, positions, forward_batch, index_k_cache):
         "index_k_cache": index_k_cache,
         "k_norm_eps": module.k_norm.variance_epsilon,
     }
+
+
+def _writer_falls_back(module, indexer) -> bool:
+    """Whether the writer runs other than the op: another geometry, NeoX RoPE, scale format or
+    softmax scale, k_norm not a float32 LayerNorm with bias, page layout or fp8 flavor, a LoRA
+    adapter, or wq_b and wk not both block-fp8 (128 x 128, through aiter_w8a8_block_fp8_linear)
+    or both bf16 with weights_proj bf16 (unquantized, unbiased)."""
+    import torch
+    from sglang.srt.layers.layernorm import LayerNorm
+
+    k_norm = module.k_norm
+    linears = (module.wq_b, module.wk, module.weights_proj)
+    return (
+        not module.use_aiter_fused_fp8_writer
+        or module.is_neox_style
+        or (module.head_dim, module.rope_head_dim) != (HEAD_DIM, ROPE_DIM)
+        or (module.block_size, module.scale_fmt) != (_QUANT_BLOCK, _SCALE_FMT)
+        or module.softmax_scale != HEAD_DIM**-0.5
+        or not isinstance(k_norm, LayerNorm)
+        or not (k_norm.elementwise_affine and k_norm.use_bias)
+        or k_norm.weight.dtype != torch.float32
+        or k_norm.bias.dtype != torch.float32
+        or not (indexer._use_aiter and indexer._use_aiter_preshuffle)
+        or indexer._is_fp8_fnuz
+        or any(getattr(linear, "set_lora", False) for linear in linears)
+        or not _unquantized_bf16(module.weights_proj)
+        or not (
+            (_block_fp8(module.wq_b) and _block_fp8(module.wk))
+            or (_unquantized_bf16(module.wq_b) and _unquantized_bf16(module.wk))
+        )
+    )
+
+
+def _unquantized_bf16(layer) -> bool:
+    """Whether a linear is unquantized, bf16 and unbiased: what _linear replays."""
+    import torch
+    from sglang.srt.layers.quantization.unquant import UnquantizedLinearMethod
+
+    return (
+        type(getattr(layer, "quant_method", None)) is UnquantizedLinearMethod
+        and layer.weight.dtype == torch.bfloat16
+        and getattr(layer, "bias", None) is None
+    )
+
+
+def _block_fp8(layer) -> bool:
+    """Whether a linear is block-fp8 through aiter_w8a8_block_fp8_linear (128 x 128
+    weight_scale_inv; no Marlin, mxfp8 or row-wise copy) and unbiased."""
+    import torch
+    from sglang.srt.layers.quantization import fp8_utils
+    from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
+
+    method = getattr(layer, "quant_method", None)
+    scale = getattr(layer, "weight_scale_inv", None)
+    return (
+        type(method) is Fp8LinearMethod
+        and method.block_quant
+        and list(method.weight_block_size) == [128, 128]
+        and not method.use_marlin
+        and not method.use_mxfp8
+        and not method.block_fp8_as_mxfp8
+        and method.w8a8_block_fp8_linear is fp8_utils.aiter_w8a8_block_fp8_linear
+        and layer.weight.dtype == torch.float8_e4m3fn
+        and getattr(layer.weight, "_ptpc_weight", None) is None
+        and isinstance(scale, torch.Tensor)
+        and scale.dtype == torch.float32
+        and getattr(layer, "bias", None) is None
+    )
