@@ -1,0 +1,165 @@
+{
+  "name": "rms_norm_hidden_size6144",
+  "op_type": "rms_norm",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "hidden_size": {
+      "description": "Width normalized.",
+      "value": 6144,
+      "type": "const"
+    }
+  },
+  "variant": {},
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 3
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 6
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 12
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 18
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1024
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4096
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Rows to normalize."
+    },
+    "weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Scale of each normalized column."
+    },
+    "epsilon": {
+      "dtype": "float32",
+      "description": "Added to the mean square.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The normalized rows, scaled by weight."
+    }
+  },
+  "tags": [],
+  "description": "normalized = x * rsqrt(mean(x**2) + epsilon) * weight, the mean over the hidden axis.",
+  "constraints": [
+    "epsilon > 0",
+    "x.dtype in ('bfloat16', 'float16')",
+    "weight.dtype == x.dtype"
+  ],
+  "kernel": {
+    "name": "rms_norm_hidden_size6144_triton_cf637bff0784c454",
+    "author": "unknown",
+    "build": {
+      "language": "triton",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "requires": {
+        "triton": ">=3.8"
+      },
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Triton RMSNorm of 16-bit rows in float32: the row in three 2048-wide chunks; one program per row, or m // 512 rows per program from m=1024 with the next row's loads pipelined and the weight loaded once; loads bypass the caches and stores write through.\"\"\"\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _rms_kernel(x_ptr, w_ptr, o_ptr, M, eps,\n                H: tl.constexpr, CHUNK: tl.constexpr, LOOP: tl.constexpr, NS: tl.constexpr):\n    # Loads bypass caches (sc0 nt), stores write through (sc0 sc1): 10-20% faster on gfx950.\n    NCH: tl.constexpr = 3 if CHUNK * 3 == H else 1\n    cols = tl.arange(0, CHUNK)\n    cmask = cols < H\n    w0 = tl.load(w_ptr + cols, mask=cmask, other=0.0).to(tl.float32)\n    if NCH == 3:\n        w1 = tl.load(w_ptr + CHUNK + cols).to(tl.float32)\n        w2 = tl.load(w_ptr + 2 * CHUNK + cols).to(tl.float32)\n    for it in tl.range(0, LOOP, num_stages=NS):\n        row = tl.program_id(0) + it * tl.num_programs(0)\n        rmask = cmask & (row < M)\n        base = row.to(tl.int64) * H + cols\n        x0 = tl.load(x_ptr + base, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        if NCH == 3:\n            x1 = tl.load(x_ptr + base + CHUNK, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n            x2 = tl.load(x_ptr + base + 2 * CHUNK, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        sq = x0 * x0\n        if NCH == 3:\n            sq += x1 * x1 + x2 * x2\n        rstd = tl.rsqrt(tl.sum(sq, axis=0) / H + eps)\n        tl.store(o_ptr + base, (x0 * rstd * w0).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n        if NCH == 3:\n            tl.store(o_ptr + base + CHUNK, (x1 * rstd * w1).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n            tl.store(o_ptr + base + 2 * CHUNK, (x2 * rstd * w2).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n\n\ndef _config(m, h):\n    \"\"\"(CHUNK, LOOP, NS, num_warps), from microbenchmarks on MI355X.\"\"\"\n    third = h // 3\n    chunk = third if h % 3 == 0 and third & (third - 1) == 0 else triton.next_power_of_2(h)\n    if h > 4096:\n        # Large m: m // 512 rows per program, the next row's loads pipelined.\n        loop = m // 512 if m >= 1024 else 1\n        return chunk, loop, 2 if loop > 1 else 1, 4\n    if h > 1024:\n        return chunk, 1, 1, 2 if m >= 4096 else 4\n    return chunk, 1, 1, max(1, min(4, chunk // 512))\n\n\ndef run(x, weight, epsilon, normalized):\n    m, h = x.shape\n    chunk, loop, ns, warps = _config(m, h)\n    _rms_kernel[(triton.cdiv(m, loop),)](\n        x, weight, normalized, m, epsilon,\n        H=h, CHUNK=chunk, LOOP=loop, NS=ns, num_warps=warps,\n    )\n"
+      }
+    ],
+    "description": null
+  }
+}
