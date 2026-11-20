@@ -442,6 +442,12 @@ def test_stress_compares_as_the_schemas_determinism_asks(run):
     assert not driver._agrees(wrong, alone, "bounded", 0.001)
     ids = torch.arange(16)
     assert driver._agrees(ids, ids.clone(), "bounded", 0.001)
+    huge = torch.full((4,), 2.0**127, dtype=torch.bfloat16)  # its bound past float32's range
+    assert not driver._agrees(torch.zeros_like(huge), huge, "bounded", 0.0)
+    at_fraction = torch.ones(2000, dtype=torch.bfloat16)
+    off = at_fraction.clone()
+    off[:2] = 2.0
+    assert driver._agrees(off, at_fraction, "bounded", 0.001)
 
 
 def test_stress_lets_full_rows_reorder_under_any_in_full_rows(run):

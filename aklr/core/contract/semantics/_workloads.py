@@ -11,7 +11,7 @@ from typing import Any
 
 from ._compare import mutable_tensor_declarations
 from ._distributions import _DISTRIBUTION_ADAPTER
-from ._dtypes import DTYPE_TRAITS, dtype_storage_shape, from_float64, to_float64
+from ._dtypes import DTYPE_TRAITS, dtype_storage_shape, from_float32, to_float32
 
 
 def sorted_key_json(value: Any) -> str:
@@ -120,7 +120,7 @@ def magnified_inputs(
         if distribution["kind"] in ("int_range", "causal_topk"):
             continue
         traits = DTYPE_TRAITS[dtype]
-        x = to_float64(row_major_args[name], dtype)
+        x = to_float32(row_major_args[name], dtype)
         log2_peak = math.log2(max(1.0, x.abs().max().item()))
         log2_budget -= log2_peak
         # only a cast float scales exactly: finite int8 and fp4 codes keep their values
@@ -131,5 +131,5 @@ def magnified_inputs(
     if decoded:
         e = max(0, math.floor(min(log2_budget / len(decoded), *log2_limits)))
         for name, (x, dtype) in decoded.items():
-            magnified[name] = from_float64(x * 2.0**e, dtype)
+            magnified[name] = from_float32(x * 2.0**e, dtype)
     return magnified

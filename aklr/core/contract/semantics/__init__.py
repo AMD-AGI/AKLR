@@ -40,10 +40,9 @@ from ._dtypes import (
     DType,
     absolute_value,
     dtype_storage_shape,
-    from_float64,
+    from_float32,
     rounded_to_bfloat16,
     to_float32,
-    to_float64,
     torch_dtypes,
 )
 from ._layouts import (
@@ -112,7 +111,7 @@ __all__ = [
     "default_scalar",
     "derive_seed",
     "dtype_storage_shape",
-    "from_float64",
+    "from_float32",
     "magnified_inputs",
     "mutable_tensor_declarations",
     "row_major_inputs",
@@ -122,7 +121,6 @@ __all__ = [
     "sorted_key_json",
     "stored_inputs",
     "to_float32",
-    "to_float64",
     "torch_dtypes",
     "workload_hash",
 ]

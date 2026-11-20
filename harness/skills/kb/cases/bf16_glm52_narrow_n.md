@@ -18,7 +18,7 @@ measured:
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.046–1.330 at m 4–128; m 1, 2 (1.014, 1.019) not listed", gpu: MI355X, workload: "gemm_n64_k4096 kernel of file a59a85330c6da038, measured on a file with the same kernel, apart from taking the current stream without naming the device, and m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n128_k6144/56d3c490873219d9.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n256_k6144/5b35f66b4ee6eeae.json
+  - AMD-AGI/AKLR@1fa2eed1:aklr/ops/gemm/impls/flydsl/gemm_n256_k6144/5b35f66b4ee6eeae.json
   - aklr/ops/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json
   - AMD-AGI/AKLR@3b27df44:aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json
 ---
@@ -122,7 +122,8 @@ these runs used FlyDSL 0.3.2, not the CI image's 0.3.4.1 (not checked in the run
 
 10 of the 39 Points were at or above 1.03 in that run. As of #102 (6d7cfec, CI run 42549655045, measurement profile
 19) 10 are served, not the same 10: n256 no longer at m 2048, n32 also at m 128 *(field, E8)*. The `speedup` in each
-schema's `workloads` is the current value.
+schema's `workloads` is the current value. The n256 file was removed after main `1fa2eed1`'s CI (run 44685037054,
+baseline aiter `a6c759b1`) read 0.43–1.04, no Point at 1.05; its 13 Points stay as a schema without a kernel.
 
 ## N 64 × K 4096 at m 4–128: the whole K in one workgroup, on `v_dot2`
 
@@ -164,7 +165,7 @@ On an MI355X with the repository's FlyDSL 0.3.2, from the repository root:
 
 ```
 python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n128_k6144/56d3c490873219d9.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n256_k6144/5b35f66b4ee6eeae.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n256_k6144/5b35f66b4ee6eeae.json  # at 1fa2eed1
 python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json
 ```
 

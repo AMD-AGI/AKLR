@@ -23,12 +23,12 @@ def test_the_reference_is_a_causal_conv1d_with_silu_from_the_state():
     args = dict(x=x, weight=weight, conv_state=state, state_indices=torch.tensor([1, 3]),
                 has_initial_state=torch.tensor([True, False]), cu_seqlens=torch.tensor([0, 2, n]))  # fmt: skip
     point = SimpleNamespace(dtypes={k: "float32" for k in ("x", "weight", "conv_state")})
-    q, k, v, out_state = kimi_k3_kda_conv_reference(point, args, lambda t, _: t)
-    flat = x.flatten(1).double()
+    q, k, v, out_state = kimi_k3_kda_conv_reference(point, args)
+    flat = x.flatten(1)
     for start, end, slot, resume in [(0, 2, 1, True), (2, n, 3, False)]:
-        head = state[slot].double() if resume else torch.zeros(WIDTH - 1, DIM, dtype=torch.float64)
+        head = state[slot] if resume else torch.zeros(WIDTH - 1, DIM)
         window = torch.cat((head, flat[start:end])).t()[None]  # (1, dim, len)
-        z = torch.nn.functional.conv1d(window, weight.double()[:, None, :], groups=DIM)[0].t()
+        z = torch.nn.functional.conv1d(window, weight[:, None, :], groups=DIM)[0].t()
         expected = torch.nn.functional.silu(z)
         got = torch.cat((q, k, v), dim=1)[start:end]
         torch.testing.assert_close(got, expected)
