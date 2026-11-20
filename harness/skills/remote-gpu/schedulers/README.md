@@ -26,6 +26,7 @@ All hooks return 0 on success, nonzero on failure, except where specified below.
     terminal states must be explicit. Return nonzero for unknown jobs/controller failures.
   scheduler_jobs
     List this user's jobs, one JOB|<query record> per line; empty output is success.
+    Neither it nor scheduler_query may start a step inside a job.
   scheduler_cancel JOB [pending]
     Cancel JOB; with pending, cancel atomically only if still pending (never a running job).
   scheduler_run JOB NODE MODE CMD...
@@ -42,15 +43,11 @@ All hooks return 0 on success, nonzero on failure, except where specified below.
     A batch parent that launches steps must wait for them and exit, never run the loop too.
 Site facts in CLUSTER_RLIB: DOCKER_X (docker argv), NODE_ENV (KEY=VALUE argv), LATE_HINT.
 The shared CLI owns allocation policy, waiting/health, release, task and holder lifecycle.
-
-ead -r -d '' CLUSTER_RLIB <<'REMOTE_GPU_ADAPTER'
 ```
 
-## spur.sh: what spur does differently from Slurm
+## spur.sh: why its hooks differ from Slurm's
 
-- LATE_HINT: jobs can be extended.
 - slurm_ended: no `sacct -X`; an ended job's state comes from `spur history`.
-- slurm_sbatch: `spur submit`.
 - scheduler_run: `srun` steps don't work; rank 0 runs through `spur exec`, the others through
   pty-only `spur run` (CRLF, stderr merged). Both only ask the controller to start CMD, so
   killing them leaves CMD running: CMD's environment carries a tag, and when the caller is killed
@@ -64,15 +61,13 @@ ead -r -d '' CLUSTER_RLIB <<'REMOTE_GPU_ADAPTER'
 
 ```text
   login node   HOST: any host that mounts the volume the workspace mounts into its pods, at the
-               same path, and reaches SAFE_URL. The state dir is on that volume. The user's API
-               key is the file $HOME/.remote-gpu/<NAME>.key there (mode 600), nowhere else.
+               same path, and reaches SAFE_URL. The state dir is on that volume.
   job          one SaFE workload of SAFE_KIND in the workspace PARTITION, one whole node. Its
-               entry point is the shared holder, so the workload ends when the holder does.
+               entry point is the shared holder, so the workload ends when the holder does. A
+               Deployment would restart it, so there the entry point sleeps on after the holder
+               and only release or the time limit ends the job (IDLE_RELEASE=0).
                The job ID is a number made here; $B/safe/ID.id holds the workload ID and name.
   node         the pod. Nothing can exec into it from the login node, so scheduler_run hands
                the command to the holder as a spawn request and reads its output and exit code
                back from files in the state dir.
-What the type lacks: no scheduler_extend, no docker in the pod (commands run in SAFE_IMAGE), one
-node per job, no way into the pod for a shell; a Deployment restarts when its holder exits, so
-only release or the time limit ends it.
 ```
