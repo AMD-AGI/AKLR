@@ -71,32 +71,6 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"n_valid_rows": 2, "write_bank": True, "has_addend": True, "has_norm": True},
         layout_variant_name="row_major",
     ),
-    # Muse Spark's MoE experts shrunk: half the routed experts on the rank, as vLLM holds
-    # them for aiter
-    PointSpec(
-        contract_id="muse_spark_moe@1.0",
-        axes={
-            "n_tokens": 4,
-            "model_dim": 2048,
-            "topk": 2,
-            "n_experts": 2,
-            "inter_dim": 256,
-            "global_experts": 5,
-        },
-        dtypes={
-            "hidden_states": "bfloat16",
-            "norm_weight": "bfloat16",
-            "topk_ids": "int32",
-            "expert_mask": "int32",
-            "w1": "float4_e2m1",
-            "w1_scale": "float8_e8m0",
-            "w2": "float4_e2m1",
-            "w2_scale": "float8_e8m0",
-            "out": "bfloat16",
-        },
-        attrs={},
-        layout_variant_name="shuffled_16x16",
-    ),
 )
 # whose baseline runs only on gfx950
-GFX950_CONTRACT_IDS = frozenset({"muse_spark_moe@1.0"})
+GFX950_CONTRACT_IDS: frozenset[str] = frozenset()

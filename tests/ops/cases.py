@@ -725,6 +725,23 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
             ("row_major", 5, 4, (2047, 0), 8, 1, 128, 32, 96),
         )
     ),
+    # Kimi-K3's a4w4 experts shrunk, laid out as vLLM holds them for aiter
+    PointSpec(
+        contract_id="situv2_a4w4_moe@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_experts": 4, "topk": 2, "inter_dim": 128},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "w1": "float4_e2m1",
+            "w2": "float4_e2m1",
+            "topk_weights": "float32",
+            "topk_ids": "int32",
+            "w1_scale": "float8_e8m0",
+            "w2_scale": "float8_e8m0",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="a16w4_shuffled",
+    ),
 )
 # whose backend runs only on gfx950 (fp4, dsv4 MLA, e4m3fn bytes)
 SMALL_POINTS += (
@@ -820,6 +837,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "fp8_paged_mqa_logits_verify@1.0",
         "per_group_quant_fp8@1.0",
         "per_group_quant_mxfp8@1.0",
+        "situv2_a4w4_moe@1.0",
         "sparse_prefill_mxfp8@1.0",
     }
 )
