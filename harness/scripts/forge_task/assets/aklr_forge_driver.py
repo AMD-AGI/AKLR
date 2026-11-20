@@ -123,11 +123,14 @@ def _candidate_text() -> tuple[str, str]:
 
 
 def _publish() -> Path:
-    """Write the candidate where AKLR keeps kernels; return its path relative to the checkout."""
+    """Write the candidate where AKLR keeps kernels, its op's directory (aklr/ops/<op>, or a plugin op's own package
+    under aklr/plugins); return its path relative to the checkout."""
     _, _, schema_relative_path, _ = _aklr()
+    from aklr.core.contract.locate import op_package_of
+
     text, uuid = _candidate_text()
     raw = json.loads(text)
-    path = Path("aklr/ops", OP_DIR, schema_relative_path(raw["name"], LANGUAGE, uuid))
+    path = Path(*op_package_of(OP_DIR).split("."), schema_relative_path(raw["name"], LANGUAGE, uuid))
     (AKLR_ROOT / path).parent.mkdir(parents=True, exist_ok=True)
     (AKLR_ROOT / path).write_text(text, encoding="utf-8")
     return path

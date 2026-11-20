@@ -76,6 +76,14 @@ def schema_relative_path(name, language, uuid):
     return PurePosixPath("impls", language, name, f"{uuid}.json")
 
 
+# a plugin op's package, its own directory under aklr/plugins; any other op's is aklr.ops.<op>
+_PLUGIN_OPS = {"kda_triton": "aklr.plugins.sglang.layers.kda_triton"}
+
+
+def op_package_of(op_type):
+    return _PLUGIN_OPS.get(op_type, f"aklr.ops.{op_type}")
+
+
 def schema_uuid(name, parts):
     return hashlib.sha256(json.dumps([name, parts], sort_keys=True).encode()).hexdigest()[:16]
 """
