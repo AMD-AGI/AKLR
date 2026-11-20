@@ -89,5 +89,40 @@ models:
                 model-prefix: minimaxm31flash
                 framework: vllm
                 runner_pattern: mi355x
+  kimik3-fp4:
+    enabled: true
+    display_name: Kimi-K3 MXFP4
+    family: Kimi
+    precision: mxfp4
+    weights:
+      repo: moonshotai/Kimi-K3
+      revision: f831ab66814297da540d832a5235f8e904f29d06
+    targets:
+      mi355x:
+        hardware:
+          gpu_name_pattern: '\bMI355X\b'
+          gpu_arch: gfx950
+          gpu_count: 8
+        runner_label: agentx-mi355x
+        frameworks:
+          vllm:
+            recipe_source:
+              kind: inferencex
+              repo: SemiAnalysisAI/InferenceX
+              # InferenceX retired its Kimi-K3 lanes (#4762); pinned to a revision that still has this entry.
+              ref: 57116fff418d7bb651567e722907253a12b75a67
+              config_key: kimik3-fp4-mi355x-vllm-agentic-mtp
+              expect:
+                config_file: inferencex-e2e/configs/amd-master.yaml
+                recipe: inferencex-e2e/benchmarks/single_node/srt-slurm-recipes/kimik3/vllm/mi355x-fp4-mtp/agentic.yaml
+                model: moonshotai/Kimi-K3
+                model-prefix: kimik3
+                framework: vllm
+                runner_pattern: mi355x
+          sglang:
+            recipe_source:
+              kind: cookbook
+              framework: sglang
+              url: https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3
 report:
   repo_url: https://github.com/AMD-AGI/AKLR
