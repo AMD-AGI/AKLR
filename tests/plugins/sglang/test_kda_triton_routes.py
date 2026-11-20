@@ -142,8 +142,14 @@ def reference_op(reference, names):
     def run(*args, storage="row_major", scale=DIM**-0.5, lower_bound=-5.0, out_dtype=None, out=None):
         call = dict(zip(names, args, strict=True))
         call.update(scale=scale, lower_bound=lower_bound)
-        point = SimpleNamespace(axes={"n_heads": HEADS, "head_dim": DIM}, dtypes=dict.fromkeys(call, None))
-        results = reference(point, call, lambda x, _: x.float())
+        # each tensor operand's dtype as the contract names it (as torch does)
+        dtypes = {
+            name: str(value.dtype).removeprefix("torch.")
+            for name, value in call.items()
+            if torch.is_tensor(value)
+        }
+        point = SimpleNamespace(axes={"n_heads": HEADS, "head_dim": DIM}, dtypes=dtypes)
+        results = reference(point, call)
         for name, value in zip(("state_cache", "track_state"), results[1:]):
             call[name].copy_(value)
         return results[0].to(torch.bfloat16)
