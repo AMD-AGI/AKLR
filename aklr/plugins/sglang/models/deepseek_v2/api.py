@@ -118,7 +118,7 @@ def _moe_call(mlp, hidden_states):
         "correction_bias": routing.correction_bias,
         "w1": experts.w13_weight,
         "w2": experts.w2_weight,
-        "topk": routing.top_k - routing.num_fused_shared_experts,
+        "topk": routing.top_k - moe_blocks.fused_shared_experts(routing),
         "num_expert_group": routing.num_expert_group if grouped else 1,
         "topk_group": routing.topk_group if grouped else 1,
         "renormalize": routing.renormalize,
