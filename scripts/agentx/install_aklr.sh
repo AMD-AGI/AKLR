@@ -10,8 +10,31 @@ git config --global --add safe.directory '*'
 mkdir -p "$cache"
 cache=$(cd "$cache" && pwd -P)
 export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
-  TRITON_CACHE_DIR="$cache/triton" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels" PIP_CACHE_DIR="$cache/pip"
+  TRITON_CACHE_DIR="$cache/triton" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels" PIP_CACHE_DIR="$cache/pip" \
+  AITER_JIT_DIR="$cache/aiter-jit"
+# Both modes serve on stack.json's AITER (with its aiter.plugin and the FlyDSL it pins), as aiter-test does, so the
+# aiter provider's routes are reachable; AKLR_DISABLE=1 sends them all back to AITER in the AKLR-off mode.
+AKLR_STACK_AITER=$(python3 -c 'import json; print(json.load(open("stack.json"))["aiter"])')
+image_triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
+AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_STACK_AITER"
+triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
+[[ $triton == "$image_triton" ]] || { echo "The image's Triton $image_triton became $triton" >&2; exit 1; }
 python3 -m pip install -e .
+AKLR_STACK_AITER=$AKLR_STACK_AITER python3 - <<'PY'
+import json
+import os
+from importlib.metadata import distribution, version
+from pathlib import Path
+
+import aiter
+
+dist = distribution("amd-aiter")
+installed = Path(dist.locate_file("aiter/__init__.py")).resolve()
+assert Path(aiter.__file__).resolve() == installed, aiter.__file__
+commit = json.loads(dist.read_text("direct_url.json"))["vcs_info"]["commit_id"]
+assert commit == os.environ["AKLR_STACK_AITER"], commit
+print("amd-aiter", version("amd-aiter"), "at", installed, "; flydsl", version("flydsl"))
+PY
 python3 - <<'PY'
 import json
 import os
@@ -57,7 +80,8 @@ PY
 
 out=${GITHUB_ENV:-$cache/aklr.env}
 [[ -n ${GITHUB_ENV:-} ]] || : > "$out"
-for name in FLYDSL_RUNTIME_CACHE_DIR FLYDSL_AUTOTUNE_CACHE_DIR TRITON_CACHE_DIR AKLR_KERNEL_CACHE_DIR PIP_CACHE_DIR; do
+for name in FLYDSL_RUNTIME_CACHE_DIR FLYDSL_AUTOTUNE_CACHE_DIR TRITON_CACHE_DIR AKLR_KERNEL_CACHE_DIR PIP_CACHE_DIR \
+  AITER_JIT_DIR; do
   printf '%s=%s\n' "$name" "${!name}"
 done >> "$out"
 echo "AKLR installed from $root; environment in $out"
