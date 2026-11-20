@@ -49,7 +49,6 @@ class StageReport:
 
     @classmethod
     def from_findings(cls, stage_name: str, findings: Sequence[Finding], **records: Any) -> Self:
-        """Any candidate fault fails the stage; else any platform fault aborts it."""
         if any(not FindingCode(f.code).is_platform_fault for f in findings):
             status = "failed"
         elif findings:
@@ -108,10 +107,8 @@ class StageReport:
 
 @dataclass(frozen=True)
 class Progress:
-    """Line-atomic progress lines on stderr under one tag: a stage name, or `validate`."""
-
     tag: str = "validate"
-    _lock: ClassVar[threading.Lock] = threading.Lock()  # one stderr, one lock for every tag
+    _lock: ClassVar[threading.Lock] = threading.Lock()
 
     def write(self, text: str) -> None:
         line = f"[{time.strftime('%H:%M:%S')}] {self.tag}: {text}\n"
@@ -122,7 +119,7 @@ class Progress:
     def finish(self, report: StageReport) -> None:
         try:
             lines = report.console_lines()
-        except Exception:  # progress text never costs a report
+        except Exception:
             logging.getLogger(__name__).exception("progress text failed")
             return
         for line in lines:
@@ -134,8 +131,7 @@ class PipelineStage(ABC):
     report_type: ClassVar[type[StageReport]]
 
     @abstractmethod
-    def run(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport:
-        """The stage's own work on scope; earlier is the pipeline's report so far."""
+    def run(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport: ...
 
     @property
     def progress(self) -> Progress:
@@ -145,7 +141,7 @@ class PipelineStage(ABC):
         start = time.monotonic()
         try:
             report = self.run(scope, earlier)
-        except Exception as e:  # noqa: BLE001 -- aklr's defect: aborted, reported
+        except Exception as e:  # noqa: BLE001
             traceback.print_exc()
             report = self.report_type.aborted(self.name, f"internal: {type(e).__name__}: {e}")
         elapsed_secs = time.monotonic() - start

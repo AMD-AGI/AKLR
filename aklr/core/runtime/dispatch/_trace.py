@@ -1,13 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""``AKLR_TRACE``: a log line per hooked call, to see which ops a run reaches.
-
-Two layers trace, each in its own format and logger: ``plugin``, every vLLM or sglang
-route, and ``op``, every op api dispatch (the aklr/ops apis aiter or a route calls, and
-the plugins' own ops). Each says whether AKLR served the call or why it fell back. A
-process logs each distinct call once. A CUDA graph replay runs no Python, so it logs
-nothing: decode shows its capture calls."""
 
 from __future__ import annotations
 
@@ -34,8 +27,6 @@ _OP_LOGGER = logging.getLogger("aklr.trace.op")
 
 
 class Trace:
-    """The layers ``AKLR_TRACE`` turns on, and the calls already logged."""
-
     __slots__ = ("_lock", "_seen", "is_op", "is_plugin")
 
     def __init__(self, mode: str) -> None:
@@ -52,12 +43,9 @@ class Trace:
             return True
 
     def plugin(self, framework: str, target: str, route: str, fallback: FallbackReason | None) -> None:
-        """A route's call of ``target``: served if ``fallback`` is ``None``, else falling back
-        to the framework's own code for it."""
         outcome, reason = ("served", "-") if fallback is None else ("fallback", fallback.value)
         if not self._is_new((framework, target, outcome, reason)):
             return
-        # a warning, so that the line shows at any vLLM or sglang log level
         _PLUGIN_LOGGER.warning(
             "[aklr plugin] pid=%d framework=%s target=%s route=%s result=%s reason=%s",
             os.getpid(),
@@ -69,8 +57,6 @@ class Trace:
         )
 
     def op(self, contract: OpContract, key: FastKey | None, served: Runnable | FallbackReason) -> None:
-        """A dispatch of ``contract`` at ``key`` (``None``: unkeyed), served by the runnable
-        ``served``, else falling back for the ``FallbackReason`` ``served``."""
         if isinstance(served, Runnable):
             kernel, outcome, reason = served.metadata.kernel_ref, "served", "-"
         else:
@@ -95,6 +81,5 @@ class Trace:
 
 @functools.cache
 def trace() -> Trace | None:
-    """The process's trace, ``None`` while ``AKLR_TRACE`` is off; read once."""
     mode = trace_mode()
     return None if mode == "0" else Trace(mode)

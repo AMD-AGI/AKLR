@@ -37,7 +37,7 @@ from aklr.core.validation.stages.workload_key import WorkloadKey
 
 __all__ = ["Pipeline", "PipelineReport", "PlatformRecord"]
 
-_REWRITE_TOLERANCE: Final = 0.02  # a speedup within 2% of the stored one does not rewrite its schema
+_REWRITE_TOLERANCE: Final = 0.02
 _EXIT_CODES: Final = {"failed": 1, "aborted": 3}
 
 
@@ -52,7 +52,6 @@ class Pipeline:
         self._stages = tuple(stages)
 
     def run(self, scope: ValidationScope) -> PipelineReport:
-        """Run each stage on scope; once one does not pass, the later ones are skipped."""
         platform = PlatformRecord.current()
         base = "-" if scope.base_sha is None else scope.base_sha[:12]
         Progress().write(
@@ -148,7 +147,6 @@ class PipelineReport:
 
     @property
     def exit_code(self) -> int:
-        """0 passed, 1 failed (the candidate's error), 3 aborted (the platform's error)."""
         stage = self.deciding_stage
         return 0 if stage is None else _EXIT_CODES[stage.status]
 
@@ -181,14 +179,13 @@ class PipelineReport:
         (directory / "report.md").write_text(self.markdown_text(), encoding="utf-8")
 
     def write_schemas(self, root: Path, directory: Path) -> int:
-        shutil.rmtree(directory, ignore_errors=True)  # no earlier run's rewrites may remain
+        shutil.rmtree(directory, ignore_errors=True)
         measured = self.measured_schemas(root)
         for path, schema in measured.items():
             save_json_file(schema, directory / path)
         return len(measured)
 
     def measured_schemas(self, root: Path) -> dict[str, Schema]:
-        """Bench schemas whose measurements changed, rewritten, by path, whatever failed elsewhere."""
         bench = next((s for s in self.stages if isinstance(s, BenchStage.report_type)), None)
         target = DeviceTarget.from_names(self.platform.arch, self.platform.hardware)
         if bench is None or not target.is_complete:
@@ -208,7 +205,6 @@ class PipelineReport:
                     stored is None
                     or stored.accuracy != m.accuracy
                     or stored.speedup.keys() != m.speedup.keys()
-                    # a time that comes or goes rewrites the file; one that drifts rides with its speedup
                     or (stored.microseconds is None) != (m.microseconds is None)
                 )
                 is_changed = is_changed or any(

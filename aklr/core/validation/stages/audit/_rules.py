@@ -25,8 +25,6 @@ class Rejection(NamedTuple):
 
 
 class SourceRule:
-    """One SA rule over the whole kernel, each source, or each node of launch code."""
-
     number: ClassVar[int]
 
     def kernel_rejections(self, kernel_sources: KernelSources) -> Iterable[Rejection]:
@@ -72,7 +70,6 @@ class _GlobalStatementRule(SourceRule):
                 yield Rejection.from_node(source.path, node, _source_text(node))
 
 
-# container mutators; on an input they count as writes even where torch's (add, sort) is out of place
 _MUTATORS = (
     *("append", "extend", "insert", "update", "setdefault", "pop", "clear", "add"),
     *("remove", "sort", "reverse", "popitem", "discard", "difference_update"),
@@ -94,7 +91,6 @@ class _InputWriteRule(SourceRule):
         node: ast.AST,
         input_names: frozenset[str],
     ) -> Iterable[Rejection]:
-        # `a += x` runs the tensor's in-place `__iadd__`
         if (
             isinstance(node, ast.AugAssign)
             and isinstance(node.target, ast.Name)
@@ -107,7 +103,6 @@ class _InputWriteRule(SourceRule):
             written = [keywords["out"]] if "out" in keywords else []
             inplace = keywords.get("inplace")
             qualname = source.qualname(node.func) or ""
-            # torch.relu_(x) and torch.ops.aten.fill_.Scalar(x) write their first argument
             if not (inplace is None or isinstance(inplace, ast.Constant) and inplace.value is False) or (
                 root_name(node.func) in source.imports and any(map(_is_inplace_name, qualname.split(".")))
             ):
@@ -132,12 +127,10 @@ class _InputWriteRule(SourceRule):
             yield Rejection.from_node(source.path, node, what)
 
 
-# in launch code: synchronization and timing; allocating workspace is fine
 _SYNCHRONIZATION_AND_TIMING = (
     *("synchronize", "item", "cpu", "tolist", "numpy"),
     *("Event", "elapsed_time", "perf_counter"),
 )
-# draws from the global RNG or copies host data: not workspace
 _RNG_AND_HOST_FACTORIES = ("rand", "randn", "randint", "tensor", "as_tensor")
 _INPUT_OUTPUT_CALLS = ("open", "print", "input", "breakpoint", "exit", "quit")
 _FILE_CALLS = ("torch.save", "torch.load")

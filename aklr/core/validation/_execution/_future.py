@@ -50,8 +50,6 @@ class _CallbackDispatcher(Singleton):
 
 
 class ExecutionFuture(Future, Generic[T]):
-    """A Future that also records where its task runs, and runs done-callbacks off the resolving thread."""
-
     def __init__(self, task_id: str) -> None:
         super().__init__()
         self._task_id = task_id
@@ -126,7 +124,6 @@ class ExecutionFuture(Future, Generic[T]):
                 return self.cancelled()
             if not super().cancel():
                 return False
-            # wait() and as_completed() need notification even if this task is never dispatched.
             self.set_running_or_notify_cancel()
             return True
 
@@ -134,7 +131,6 @@ class ExecutionFuture(Future, Generic[T]):
         self,
         callback: Callable[[ExecutionFuture[T]], None],
     ) -> None:
-        """Dispatch off-thread, including callbacks registered after completion."""
         super().add_done_callback(lambda future: _CallbackDispatcher.get_instance().submit(callback, future))
 
     def publish_result(self, result: T) -> None:

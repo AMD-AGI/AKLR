@@ -22,8 +22,6 @@ from aklr.core.schema._frozen_model import frozen_dataclass
 
 @frozen_dataclass
 class Speedup:
-    """A workload's speedup over one baseline, measured at that baseline's commit or tag."""
-
     commit: Annotated[str, Field(pattern=r"^\S+$")]
     value: PositiveFloat
 
@@ -33,7 +31,6 @@ class Evaluation:
     hardware: str
     accuracy: Literal["passed", "failed"]
     speedup: dict[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$")], Speedup] = Field(default_factory=dict)
-    # the kernel's median time per call in the trials against the Baseline; None: not timed against it
     microseconds: PositiveFloat | None = None
 
     @field_validator("hardware")
@@ -62,7 +59,6 @@ class Workload:
         return next((e for e in self.evaluations if e.hardware == str(target)), None)
 
     def qualifies(self, target: DeviceTarget, min_speedup: float, baseline: str) -> bool:
-        """Whether dispatch may serve this workload on target in place of baseline at AKLR_MIN_SPEEDUP."""
         evaluation = self.evaluation(target)
         if evaluation is None:
             return min_speedup <= 0

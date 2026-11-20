@@ -4,7 +4,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""The bench's stage report: its schemas' verdicts gathered, and rendered."""
 
 from __future__ import annotations
 
@@ -38,12 +37,9 @@ class BenchReport(StageReport):
     records: tuple[WorkloadRecord, ...] = ()
     demotions: tuple[Finding, ...] = ()
     profile: MeasurementProfile = Field(default_factory=MeasurementProfile)
-    protocol: str = ""  # the profile's digest: results of another protocol are not comparable
-    # the thresholds' bars it was judged by, by threshold
+    protocol: str = ""
     bars: dict[str, float] = Field(default_factory=lambda: {t.value: t.bar for t in Threshold})
-    # what the pipeline writes back: by schema path, each workload's Evaluation on this target by its key's text
     evaluations: dict[str, dict[str, Evaluation]] = Field(default_factory=dict)
-    # by schema path, the kernel.build.requires this environment misses: not benched, as dispatch skips it
     skipped_schemas: dict[str, str] = Field(default_factory=dict)
 
     @classmethod

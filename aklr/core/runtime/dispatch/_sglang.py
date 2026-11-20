@@ -14,7 +14,6 @@ SGLANG_HOOKED_METHOD = "sglang.srt.model_executor.model_runner.ModelRunner.init_
 
 
 def register_sglang_plugin() -> None:
-    """The ``sglang.srt.plugins`` entry point: starts the dispatcher after ``SGLANG_HOOKED_METHOD``."""
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     HookRegistry.register(

@@ -4,11 +4,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 from __future__ import annotations
@@ -46,25 +42,20 @@ if TYPE_CHECKING:
     from aklr.core.schema._kernel import Kernel
 
 
-class BuildError(LoadError):
-    """A schema's kernel could not be made callable; an ``OSError`` cause marks the platform's fault."""
+class BuildError(LoadError): ...
 
 
 class Builder(Registrable, ABC):
-    """One language's route from a schema's sources to a :class:`Runnable`, registered as ``build.language``."""
-
     @staticmethod
     @abstractmethod
     def is_available() -> bool:
         pass
 
     @abstractmethod
-    def build(self, schema: Schema) -> Runnable:
-        """Make ``schema``'s kernel callable without calling it; failures raise :class:`BuildError`."""
+    def build(self, schema: Schema) -> Runnable: ...
 
     def _get_package_name_and_build_path(self, kernel: Kernel) -> tuple[str, Path]:
         language = kernel.build.language
-        # the prefix keeps the name a valid identifier: torch pastes it into TORCH_LIBRARY's namespace
         package_name = create_package_name(kernel, f"{language}_")
         build_path = RuntimeEnv().build_cache_path / language / package_name
         return package_name, build_path
@@ -82,7 +73,6 @@ class Builder(Registrable, ABC):
         dps = schema.kernel.build.destination_passing_style
         expected_nparam = len(schema.inputs) + len(schema.outputs) if dps else len(schema.inputs)
 
-        # the runtime passes exactly these args positionally: extra params need defaults
         sample_args = [object() for _ in range(expected_nparam)]
         try:
             signature.bind(*sample_args)
@@ -118,8 +108,6 @@ class Builder(Registrable, ABC):
 
 
 class PythonBuilder(Builder, name="python"):
-    """Imports the entry point from the sources written to the build cache, as a per-kernel package."""
-
     @staticmethod
     def is_available() -> bool:
         return True
@@ -203,8 +191,6 @@ class TritonBuilder(PythonBuilder, name="triton"):
 
 
 class FlyDSLBuilder(PythonBuilder, name="flydsl"):
-    """FlyDSL is python too: its kernels JIT-compile themselves inside the imported module."""
-
     @staticmethod
     def is_available() -> bool:
         try:
@@ -214,14 +200,11 @@ class FlyDSLBuilder(PythonBuilder, name="flydsl"):
         return True
 
     def build(self, schema: Schema) -> Runnable:
-        """PythonBuilder's build, the launch cache FlyDSL 0.5 dropped put back first (``aklr.core.jit.flydsl_cache``)."""
         flydsl_cache.install()
         return super().build(schema)
 
 
 class HsacoBuilder(PythonBuilder, name="hsaco"):
-    """An hsaco kernel is python too: it launches precompiled code objects through aklr.core.jit.hsaco."""
-
     @staticmethod
     def is_available() -> bool:
         from aklr.core.jit import hsaco
@@ -230,8 +213,6 @@ class HsacoBuilder(PythonBuilder, name="hsaco"):
 
 
 class TorchBuilder(Builder, name="hip"):
-    """Builds hip sources for this GPU's arch into the TORCH_LIBRARY op ``torch.ops.<package>.<symbol>``."""
-
     _CPP_HIP_CUDA_EXTENSIONS: ClassVar[List[str]] = [".hip", ".cu", ".cpp", ".cc", ".cxx", ".c"]
 
     @staticmethod
@@ -249,7 +230,6 @@ class TorchBuilder(Builder, name="hip"):
         return cleaner
 
     def _signature(self, callable: Callable) -> inspect.Signature:
-        """The op's signature from its schema: ``inspect.signature`` sees only ``(*args, **kwargs)``."""
         import torch
 
         op_schema = callable._schema
@@ -269,7 +249,7 @@ class TorchBuilder(Builder, name="hip"):
                 for argument in op_schema.arguments
             ],
             return_annotation=(
-                inspect.Signature.empty  # a list return has no fixed length to check
+                inspect.Signature.empty
                 if any(isinstance(r.type, torch.ListType) for r in op_schema.returns)
                 else tuple[(Any,) * len(op_schema.returns)]
             ),
@@ -297,19 +277,16 @@ class TorchBuilder(Builder, name="hip"):
 
         extra_include_paths = [str(build_dir)]
 
-        # a killed build leaves torch's lock and load() would wait forever; BuilderRegistry serializes builds
         (build_dir / "lock").unlink(missing_ok=True)
         with_cuda = kernel.build.language == "hip"
         arch = DeviceTarget.current().arch
         if with_cuda and arch is None:
             raise BuildError(f"{kernel.name}: no GPU arch to build for")
         try:
-            # torch adds its archs (PYTORCH_ROCM_ARCH) unless extra_cflags, not extra_cuda_cflags, name one
             load(
                 name=package_name,
                 sources=cpp_cuda_paths,
                 extra_include_paths=extra_include_paths,
-                # host c++ rejects the flag, so only hip sources get it
                 extra_cflags=[f"--offload-arch={arch}"] if with_cuda else [],
                 extra_cuda_cflags=["-O3"],
                 with_cuda=with_cuda,
@@ -342,5 +319,4 @@ class TorchBuilder(Builder, name="hip"):
         return Runnable(callable=callable, metadata=metadata, cleaner=cleaner)
 
 
-class CppBuilder(TorchBuilder, name="cpp"):
-    """Host C++ sources reach torch the same way, built without the GPU toolchain."""
+class CppBuilder(TorchBuilder, name="cpp"): ...

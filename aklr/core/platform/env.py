@@ -28,14 +28,10 @@ ENV_BUILD_CACHE_DIR = "AKLR_BUILD_CACHE_DIR"
 ENV_ENABLE_TRACING = "AKLR_ENABLE_TRACING"
 ENV_SCHEMA_PATH = "AKLR_SCHEMA_PATH"
 ENV_TRACE = "AKLR_TRACE"
-# the least published speedup over the baseline that validation admits a kernel at and
-# dispatch serves a workload at
 DEFAULT_MIN_SPEEDUP = 1.05
 
 
 def trace_mode() -> str:
-    """AKLR_TRACE: "0" or unset traces nothing, "plugin" the plugins' routes, "op" the op
-    dispatches, "all" both."""
     mode = os.environ.get(ENV_TRACE) or "0"
     if mode not in ("0", "plugin", "op", "all"):
         raise ValueError(f"{ENV_TRACE}={mode!r}: expected '0', 'plugin', 'op' or 'all'")
@@ -43,10 +39,7 @@ def trace_mode() -> str:
 
 
 class RuntimeEnv:
-    """AKLR's environment variables, parsed: "" counts as unset, a bad value raises ValueError naming it."""
-
     def __init__(self) -> None:
-        # "1": all op types, "0": none, else a comma list of them (older AKLRs' "<op_type>@<version>" too)
         disable = os.environ.get(ENV_DISABLE) or "0"
         self.is_all_disabled = disable == "1"
         self.disabled_op_types: frozenset[str] = (
@@ -61,7 +54,6 @@ class RuntimeEnv:
         self.trace_mode = trace_mode()
         directory = os.environ.get(ENV_SCHEMA_PATH)
         self.schema_path = Path(directory).absolute() if directory else None
-        # least speedup over the replaced baseline to serve a kernel; <= 0 also serves unmeasured ones
         speedup = os.environ.get(ENV_MIN_SPEEDUP) or str(DEFAULT_MIN_SPEEDUP)
         try:
             self.min_speedup = float(speedup)
@@ -74,5 +66,4 @@ class RuntimeEnv:
         elif directory := os.environ.get("XDG_CACHE_HOME"):
             self.build_cache_path = Path(directory, "aklr", "kernels").absolute()
         else:
-            # expanduser, unlike Path.home(), never raises when HOME and the password database both miss
             self.build_cache_path = Path(os.path.expanduser("~/.cache/aklr/kernels")).absolute()

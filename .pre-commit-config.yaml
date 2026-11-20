@@ -44,3 +44,9 @@ repos:
         language: system
         pass_filenames: false
         files: ^(tests|aklr)/
+      - id: core-no-comments
+        name: no comments or docstrings in aklr/core
+        entry: python3 .github/scripts/check_core_comments.py
+        language: system
+        pass_filenames: false
+        files: ^aklr/core/.*\.py$

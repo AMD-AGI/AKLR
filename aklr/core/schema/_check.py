@@ -4,11 +4,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer team.
 #
-# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 from __future__ import annotations
@@ -19,12 +15,6 @@ import torch
 
 
 def default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:
-    """Return ``(rtol, atol)`` defaults for a trace correctness check.
-
-    These defaults are intentionally conservative for low-precision inference
-    data types. Template-specific ``check`` functions can override them by
-    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.
-    """
     dtype_name = str(dtype).replace("torch.", "")
     if dtype_name in ("float64", "double"):
         return 1e-7, 1e-7
@@ -73,15 +63,6 @@ def default_check(
     max_mismatch_pct: float = 0.0,
     min_cos_sim: Optional[float] = 1.0 - 1e-3,
 ) -> bool:
-    """Validate actual outputs against reference outputs.
-
-    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,
-    dictionaries with matching keys, or single output values. Tensor outputs
-    are checked for shape equality, closeness, mismatch percentage, and cosine
-    similarity. Non-floating tensors are checked exactly unless
-    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python
-    equality.
-    """
     if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):
         if not isinstance(reference_outputs, dict) or not isinstance(actual_outputs, dict):
             return False

@@ -13,8 +13,6 @@ from aklr.core.runtime.dispatch._dispatch_key import DispatchKey
 
 
 class KernelTuner(Protocol):
-    """Picks among a key's ranked kernels online when no baseline was measured; ``run(name)`` runs one."""
-
     def choose(
         self,
         schema_name: str,

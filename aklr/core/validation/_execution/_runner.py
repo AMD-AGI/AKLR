@@ -57,17 +57,13 @@ from aklr.core.validation._execution._transport import (
 DEFAULT_STARTUP_TIMEOUT_SECS: Final = 30.0
 
 
-class _RunnerExited(RuntimeError):
-    """The child exited before sending the expected response."""
+class _RunnerExited(RuntimeError): ...
 
 
-class _RunnerResponseTimeout(TimeoutError):
-    """The child did not respond within the current phase's deadline."""
+class _RunnerResponseTimeout(TimeoutError): ...
 
 
-class _UnexpectedEvent(Exception):  # noqa: N818 -- a message, not an error
-    """A rank sent an event other than the one its phase waits for: the phase decides what it means."""
-
+class _UnexpectedEvent(Exception):  # noqa: N818
     def __init__(self, rank: int, event: RunnerEvent) -> None:
         super().__init__(rank, event)
         self.rank = rank
@@ -75,9 +71,7 @@ class _UnexpectedEvent(Exception):  # noqa: N818 -- a message, not an error
 
 
 class ExecutionRunner(Registrable, ABC):
-    """Runs tasks, one at a time, on devices its supervisor leased to it; waits for cleanup on close."""
-
-    reusable: ClassVar[bool] = False  # the supervisor keeps a healthy one for the next task on its devices
+    reusable: ClassVar[bool] = False
 
     @classmethod
     @abstractmethod
@@ -88,8 +82,7 @@ class ExecutionRunner(Registrable, ABC):
         *,
         startup_timeout_secs: float,
         initializer: Callable[[], None] | None = None,
-    ) -> Self:
-        """Create a runner in the supervisor-owned directory; each of its processes calls initializer once."""
+    ) -> Self: ...
 
     @property
     @abstractmethod
@@ -117,16 +110,13 @@ class ExecutionRunner(Registrable, ABC):
     def health(self) -> RunnerHealth: ...
 
     @abstractmethod
-    def close(self) -> None:
-        """Wait for execution to end; concurrent callers all wait until cleanup finishes."""
+    def close(self) -> None: ...
 
     def diagnostics(self) -> str | None:
         return None
 
 
 class ProcessExecutionRunner(ExecutionRunner):
-    """One child process per device, rank i on device i; rank 0's result is the task's."""
-
     _POLL_SECS: Final = 0.25
     _JOIN_SECS: Final = 2.0
     _KILL_WAIT_SECS: Final = 5.0
@@ -185,7 +175,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                 raise InvalidRunnerState(f"runner {self._runner_id} is {self._state.value}, expected created")
             self._state = RunnerState.STARTING
 
-        # spawn, not fork: torch refuses the GPU in a child forked from a parent that already used it
         context = multiprocessing.get_context("spawn")
         pairs = [MultiprocessingRunnerChannel.create(context) for _ in self._devices]
         processes = [
@@ -197,7 +186,6 @@ class ProcessExecutionRunner(ExecutionRunner):
             for rank, (_, endpoint) in enumerate(pairs)
         ]
         try:
-            # close() must either see these processes or prevent them from being spawned.
             with self._state_lock:
                 if self._state != RunnerState.STARTING:
                     for channel, _ in pairs:
@@ -231,7 +219,6 @@ class ProcessExecutionRunner(ExecutionRunner):
             if not is_closed:
                 self._set_state(RunnerState.FAILED)
                 if self.health() == RunnerHealth.HEALTHY:
-                    # a resource whose child did not start leaves the pool
                     self._set_health(RunnerHealth.RESOURCE_FAILED)
             try:
                 self.close()
@@ -257,7 +244,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                 endpoint.close()
 
     def execute(self, task: ExecutionTask) -> Any:
-        """Run the task on every rank and wait for their replies within the task's execution budget."""
         task_id = task.task_id
         with self._state_lock:
             if self._state == RunnerState.CLOSED:
@@ -281,7 +267,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                 raise TaskTimeout(str(error)) from error
             if isinstance(error, _RunnerExited):
                 raise RunnerCrashed(str(error)) from error
-            # Classify invalid responses received during execution as task failures.
             raise TaskFailed(
                 f"runner {self._runner_id} sent an invalid message for task {task_id}: {error}"
             ) from error
@@ -307,7 +292,6 @@ class ProcessExecutionRunner(ExecutionRunner):
 
     def close(self) -> None:
         with self._close_lock:
-            # Only the cleanup thread can reenter while holding this lock.
             if self._close_result.running():
                 return
             if not self._close_result.done():
@@ -337,7 +321,6 @@ class ProcessExecutionRunner(ExecutionRunner):
 
         is_orphaned = False
         if is_shutdown_sent and previous_state == RunnerState.READY:
-            # an idle child exits by itself; one busy in a task, or a collective, never does
             for process in self._processes:
                 if process.pid is not None:
                     process.join(timeout=self._JOIN_SECS)
@@ -347,7 +330,6 @@ class ProcessExecutionRunner(ExecutionRunner):
             is_gone = False
             try:
                 process.kill()
-                # setsid made the child's pid its group id: kill the group, subprocesses included
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.killpg(process.pid, signal.SIGKILL)
                 deadline = time.monotonic() + self._KILL_WAIT_SECS
@@ -358,7 +340,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                             state, _, group_id = stat_path.read_bytes().rpartition(b")")[2].split()[:3]
                         except (OSError, ValueError):
                             continue
-                        # a zombie (an orphan no init reaps, as in a container) holds nothing
                         if int(group_id) == process.pid and state != b"Z":
                             is_alive = True
                             break
@@ -368,7 +349,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                 process.join(timeout=self._JOIN_SECS)
                 is_gone = not is_alive and bool(multiprocessing.connection.wait([process.sentinel], 0))
             except Exception:  # noqa: BLE001
-                # a process that cannot be reaped is assumed alive
                 has_cleanup_failed = True
             is_orphaned = is_orphaned or not is_gone
         if is_orphaned:
@@ -390,7 +370,6 @@ class ProcessExecutionRunner(ExecutionRunner):
     def _receive_from_every_rank(
         self, timeout: float | None, expected: type[RunnerEvent], task_id: str | None = None
     ) -> list[RunnerEvent]:
-        """One expected event from every rank, in rank order; _UnexpectedEvent for the first other one."""
         if not self._processes:
             raise InvalidRunnerState(f"runner {self._runner_id} has no process")
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -414,7 +393,7 @@ class ProcessExecutionRunner(ExecutionRunner):
                         continue
                     if isinstance(error, ChannelReceiveTimeout):
                         with contextlib.suppress(ChannelReceiveTimeout, EOFError):
-                            event = channel.receive(timeout=0)  # sent just before it exited
+                            event = channel.receive(timeout=0)
                     if event is None:
                         process.join(self._JOIN_SECS)
                         message = f"runner {self._runner_id} exited with code {process.exitcode}"
@@ -468,14 +447,11 @@ class ProcessExecutionRunner(ExecutionRunner):
         task_id: str | None = None
         device = devices[rank]
         is_device_ready = False
-        # torchrun's names: the initializer and the task read their rank from them
         os.environ.update(RANK=str(rank), WORLD_SIZE=str(len(devices)), LOCAL_RANK=str(rank))
         try:
-            os.setsid()  # its pid becomes a group id: the parent kills the group, subprocesses included
+            os.setsid()
 
             def die_with_parent() -> None:
-                # The multiprocessing sentinel becomes ready even when the supervisor is killed; a process
-                # the supervisor forked may hold it open, so the parent pid is watched too.
                 parent = multiprocessing.parent_process()
                 while os.getppid() == parent.pid and not multiprocessing.connection.wait(
                     [parent.sentinel], timeout=1.0
@@ -490,11 +466,10 @@ class ProcessExecutionRunner(ExecutionRunner):
                 with task_log.redirected_stdio():
                     import torch
 
-                    # the kernel tracer registers as torch initializes the GPU: before the process's first kernel
                     import aklr.core.utils.testing  # noqa: F401
 
                     torch.cuda.set_device(device)
-                    torch.cuda.init()  # a device or tracer that cannot start fails the runner, not a task
+                    torch.cuda.init()
                     is_device_ready = True
                     if initializer is not None:
                         initializer()
@@ -506,8 +481,7 @@ class ProcessExecutionRunner(ExecutionRunner):
                     task_id = command.task.task_id
                     with task_log.redirected_stdio():
                         result = command.task.call(context, **command.task.kwargs)
-                        torch.cuda.synchronize()  # a late GPU fault is this task's, not the next one's
-                    # only rank 0's result is the task's; the others' only say they finished
+                        torch.cuda.synchronize()
                     endpoint.send(
                         TaskCompleted(
                             runner_id=runner_id, task_id=task_id, result=result if rank == 0 else None
@@ -515,8 +489,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                     )
                     task_id = None
             except BaseException as error:  # noqa: BLE001
-                # after the task arrived, a failure is the task's; before, the device's if it was not
-                # ready, else the initializer's
                 reason = f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}"
                 try:
                     endpoint.send(
@@ -529,7 +501,6 @@ class ProcessExecutionRunner(ExecutionRunner):
                         )
                     )
                 except Exception:  # noqa: BLE001, S110
-                    # the parent sees the exit anyway
                     pass
         finally:
             try:
@@ -538,11 +509,8 @@ class ProcessExecutionRunner(ExecutionRunner):
                 pass
 
 
-class DisposableExecutionRunner(ProcessExecutionRunner, name="disposable"):
-    """Processes closed after their task."""
+class DisposableExecutionRunner(ProcessExecutionRunner, name="disposable"): ...
 
 
 class ReusableExecutionRunner(ProcessExecutionRunner, name="reuse"):
-    """Processes kept for the next task on the same devices, until a task fails or the executor closes."""
-
     reusable: ClassVar[bool] = True

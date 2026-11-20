@@ -16,16 +16,12 @@ __all__ = ["PatchManager"]
 
 
 class PatchManager:
-    """Swaps entry points for their adapters' stand-ins in every loaded module, and back."""
-
     def __init__(self) -> None:
-        self._patched: dict[str, tuple[Callable, Callable]] = {}  # entry point -> (original, stand-in)
+        self._patched: dict[str, tuple[Callable, Callable]] = {}
 
     def patch(self, adapter: Adapter) -> bool:
-        """Patch ``adapter.entry``; False if this environment lacks it or its backend fails to import."""
         if adapter.entry in self._patched:
             return True
-        # shortcut: module-level functions only; resolve Class.method when a target needs it
         try:
             original = adapter.original()
         except Exception as e:  # noqa: BLE001
@@ -47,7 +43,6 @@ class PatchManager:
         self._patched.clear()
 
     def _rebind(self, old: Callable, new: Callable) -> None:
-        # every module's namespace: callers that ran `from x import f` hold their own f
         for module in list(sys.modules.values()):
             namespace = getattr(module, "__dict__", None)
             if type(namespace) is dict:

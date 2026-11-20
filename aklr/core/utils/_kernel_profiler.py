@@ -1,12 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Kernel benchmark sessions backed by AKLR's graph node attribution.
-
-Sessions share the collector, one per thread at a time: each takes back the replays its
-scopes captured. Its tree contains explicit Python scopes and kernel leaves; CPU op tracing
-and a second GPU profiler are unnecessary.
-"""
 
 from __future__ import annotations
 
@@ -20,8 +14,8 @@ from aklr.core.utils.testing import kernel_tracer
 
 
 class _Session:
-    _scope_ids = itertools.count(1)  # unique across the sessions sharing the collector
-    _current = threading.local()  # each thread's open session
+    _scope_ids = itertools.count(1)
+    _current = threading.local()
 
     def __init__(self, name):
         self.name = name
@@ -39,7 +33,6 @@ class _Session:
         if self.open_scopes:
             raise RuntimeError("cannot deactivate a kernel profiler session inside a scope")
         self.active = False
-        # Drain work before stopping collection, including work on forked streams.
         import torch
 
         try:

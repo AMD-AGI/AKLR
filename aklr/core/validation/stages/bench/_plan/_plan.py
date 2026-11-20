@@ -4,8 +4,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""The bench's plan: for each benched schema with a kernel, what each workload is timed against and the threshold
-it must clear."""
 
 from __future__ import annotations
 
@@ -28,9 +26,6 @@ __all__ = ["SchemaPlan", "WorkloadPlan"]
 
 @dataclass(frozen=True)
 class WorkloadPlan:
-    """A workload's plan: its key, what its Candidate is timed against, and the threshold it must clear where it
-    is timed."""
-
     key: WorkloadKey
     opponent: Opponent
     threshold: Threshold
@@ -41,19 +36,15 @@ class SchemaPlan:
     path: str
     schema: Schema
     workloads: tuple[WorkloadPlan, ...] = ()
-    findings: tuple[Finding, ...] = ()  # the platform's: the schema is not measured
-    skipped: str | None = (
-        None  # the kernel.build.requires this environment misses: not benched, as dispatch skips it
-    )
-    is_timed: bool = True  # False: its workloads are checked only, and nothing is written back
+    findings: tuple[Finding, ...] = ()
+    skipped: str | None = None
+    is_timed: bool = True
 
     @classmethod
     def for_scope(
         cls, scope: ValidationScope, target: DeviceTarget, min_speedup: float, timed: bool = True
     ) -> list[SchemaPlan]:
-        """One plan per bench path whose schema has a kernel. min_speedup: AKLR_MIN_SPEEDUP, the bar at which a
-        base schema serves, and so is an Incumbent. Not timed: the kernels are built and checked only."""
-        import aklr.seam  # noqa: F401 -- declares the seam adapters
+        import aklr.seam  # noqa: F401
         from aklr.core.runtime.seam import SeamRegistry
 
         is_released = scope.base_sha is not None and not scope.is_first_release
@@ -66,7 +57,6 @@ class SchemaPlan:
             path = scope.relative_path(absolute)
             baseline = None
             if schema.standard is not None and schema.standard.baseline is not None:
-                # the name dispatch looks the speedups up by: the backend of the op's seam adapters
                 baseline = next((a.backend for a in SeamRegistry.default().adapters(schema.op_type)), None)
             if (unmet := unmet_requirement(schema.kernel.build.requires)) is not None:
                 plans.append(cls(path=path, schema=schema, skipped=unmet))
@@ -89,8 +79,6 @@ class SchemaPlan:
 
     @classmethod
     def untimed(cls, path: str, schema: Schema, target: DeviceTarget) -> SchemaPlan:
-        """Each workload against nothing, but those recorded failed on target: dispatch never serves one, so
-        there is nothing to check."""
         workloads = tuple(
             WorkloadPlan(key=WorkloadKey.from_workload(w), opponent=Unopposed(), threshold=Threshold.RETAIN)
             for w in schema.workloads
@@ -100,11 +88,6 @@ class SchemaPlan:
 
     @classmethod
     def from_schema(cls, path: str, pool: IncumbentPool, is_released: bool) -> SchemaPlan:
-        """Each workload's opponent and threshold: the one place that decides what a Candidate is timed against
-        and the bar it must clear.
-
-        pool: the Candidate's schema and what the base serves in its place; is_released: the base commit holds
-        schema data, without which a Candidate needs only Retain over the Baseline."""
         workloads = []
         for workload in pool.schema.workloads:
             defends = pool.defends(workload)

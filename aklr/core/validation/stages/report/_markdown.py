@@ -64,7 +64,6 @@ class BulletList(Block):
 
 
 def escape(text: object) -> str:
-    """Markdown-safe text: each special character as its &#N; entity, line breaks as spaces."""
     return "".join(
         (f"&#{ord(ch)};" if ch in _MARKDOWN_SPECIAL_CHARACTERS else " " if ch in "\r\n" else ch)
         for ch in str(text)

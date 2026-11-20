@@ -7,5 +7,4 @@
 __all__ = ["LoadError"]
 
 
-class LoadError(RuntimeError):
-    """AKLR cannot load something it serves, e.g. a kernel that fails to build."""
+class LoadError(RuntimeError): ...

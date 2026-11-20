@@ -5,45 +5,34 @@
 ###############################################################################
 
 
-class ExecutionError(RuntimeError):
-    """Base error for submission, scheduling, runner lifecycle, and task execution."""
+class ExecutionError(RuntimeError): ...
 
 
-class ExecutorClosed(ExecutionError):
-    """Work was submitted after the executor or backend stopped accepting tasks."""
+class ExecutorClosed(ExecutionError): ...
 
 
-class SubmissionRejected(ExecutionError):
-    """The submission was rejected before entering the scheduling queue."""
+class SubmissionRejected(ExecutionError): ...
 
 
-class InsufficientResources(ExecutionError):
-    """Too few matching healthy resources exist; merely busy resources can be waited for."""
+class InsufficientResources(ExecutionError): ...
 
 
-class RunnerStartupFailed(ExecutionError):
-    """The runner could not become ready to execute the task."""
+class RunnerStartupFailed(ExecutionError): ...
 
 
-class RunnerCrashed(ExecutionError):
-    """The task's child process exited before completing execution."""
+class RunnerCrashed(ExecutionError): ...
 
 
-class TaskFailed(ExecutionError):
-    """The task raised an exception or failed to return a valid execution response."""
+class TaskFailed(ExecutionError): ...
 
 
-class TaskTimeout(ExecutionError):
-    """Task execution exceeded its deadline, excluding runner startup."""
+class TaskTimeout(ExecutionError): ...
 
 
-class TaskCancelled(ExecutionError):
-    """Runner shutdown interrupted execution; queued Future cancellation uses CancelledError."""
+class TaskCancelled(ExecutionError): ...
 
 
-class ChannelError(ExecutionError):
-    """Internal error sending, receiving, or decoding a runner message."""
+class ChannelError(ExecutionError): ...
 
 
-class InvalidRunnerState(ExecutionError):
-    """Internal runner lifecycle or lease ownership invariant was violated."""
+class InvalidRunnerState(ExecutionError): ...

@@ -67,8 +67,6 @@ class RoundRobinStrategy(SchedulingStrategy, name="round_robin"):
 
 
 class ExecutionScheduler:
-    """Hands pending tasks to free resources on its own thread, so submitting never blocks."""
-
     def __init__(
         self,
         resources: ResourceCatalog,
@@ -153,7 +151,6 @@ class ExecutionScheduler:
         return cancelled
 
     def shutdown(self) -> None:
-        """Stop dispatching and cancel queued work; the supervisor owns running tasks."""
         with self._condition:
             self._accepting = False
             self._condition.notify_all()

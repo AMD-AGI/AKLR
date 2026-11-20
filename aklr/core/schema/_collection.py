@@ -19,7 +19,6 @@ from aklr.core.schema._schema import Schema
 from aklr.core.schema._workload import Workload
 
 OPS_DIR: Final = "aklr/ops"
-# the only fields in which two files of one schema name may differ
 _DATA_FIELDS: Final = {"kernel", "workloads"}
 
 
@@ -36,8 +35,6 @@ class SchemaLayout(ABC):
 
 @dataclass(frozen=True)
 class TraceDumpLayout(SchemaLayout):
-    """Where tracing dumps schemas (AKLR_SCHEMA_PATH); dispatch reads its kernels from here too."""
-
     def paths(self) -> list[Path]:
         return sorted((self.root / "schemas").rglob("*.json"))
 
@@ -65,8 +62,6 @@ class DefaultLayout(SchemaLayout):
 
 @dataclass
 class SchemaCollection:
-    """A dataset's schemas by name; files of one name differ only in their kernel and workloads."""
-
     layout: SchemaLayout | None = None
     schemas: dict[str, list[Schema]] = field(default_factory=dict)
     _schema_by_kernel: dict[str, Schema] = field(default_factory=dict, init=False, repr=False)
@@ -82,7 +77,6 @@ class SchemaCollection:
 
     @classmethod
     def from_path(cls: type[SchemaCollection], path: str | None = None) -> SchemaCollection:
-        """Load path, else AKLR_SCHEMA_PATH, as a TraceDumpLayout; with neither, aklr/ops as a DefaultLayout."""
         root = Path(path) if path else RuntimeEnv().schema_path
         checkout = Path(__file__).resolve().parents[3]
         return cls.from_layout(TraceDumpLayout(root) if root else DefaultLayout(checkout / OPS_DIR))
@@ -117,7 +111,6 @@ class SchemaCollection:
         return self._schema_by_kernel.get(kernel_name)
 
     def add_workloads(self, workloads: list[tuple[Schema, Workload]]) -> None:
-        """Add each workload to its name's kernel-less schema, made if missing, and save it to the layout."""
         updated: dict[str, Schema] = {}
         for schema, workload in workloads:
             same_name = self.schemas.setdefault(schema.name, [])

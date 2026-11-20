@@ -21,8 +21,6 @@ __all__ = ["Adapter"]
 
 
 class Adapter:
-    """Serves a backend entry point through an AKLR api: ``bind_fn`` maps its call, None to decline."""
-
     def __init__(
         self,
         entry: str,
@@ -34,7 +32,6 @@ class Adapter:
             raise ValueError(f"not a dotted entry point: {entry!r}")
         self.entry = entry
         self.api = api
-        # the entry point's top-level package: the baseline dispatch must beat
         self.backend = module.partition(".")[0]
         self.bind_fn = bind_fn
 
@@ -42,12 +39,10 @@ class Adapter:
         return f"<Adapter {self.entry} -> {self.api.__name__}>"
 
     def original(self) -> Callable | None:
-        """The entry point's unpatched function, or None when this environment lacks it."""
         module, _, name = self.entry.rpartition(".")
         try:
             entry = getattr(importlib.import_module(module), name, None)
         except ModuleNotFoundError as e:
-            # only the entry's own module (or a parent) missing means this environment lacks it
             if e.name is None or not f"{module}.".startswith(f"{e.name}."):
                 raise
             return None
@@ -56,12 +51,10 @@ class Adapter:
         return entry.__wrapped__ if getattr(entry, "aklr_adapter", None) is self else entry
 
     def wrap(self, original: Callable) -> Callable:
-        """The stand-in for ``original``: dispatch to AKLR, else run ``original``."""
         is_inplace = _is_inplace_api(original)
 
         @functools.wraps(original)
         def stand_in(*args: Any, **kwargs: Any) -> Any:
-            # Compiling: dispatch reads data_ptr and keys on each call's sizes, so the graph keeps the backend.
             if torch.compiler.is_compiling() or (
                 Dispatcher.get_instance() is None and TracingRuntime.get_instance() is None
             ):

@@ -5,12 +5,7 @@
 # Copyright (c) 2025 by FlashInfer team.
 # Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer) and
-# FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 from __future__ import annotations
@@ -24,8 +19,6 @@ from aklr.core.schema._frozen_model import Excluded, NonEmptyStr, frozen_datacla
 
 
 class DType(str, Enum):
-    """Element types, each named as its torch dtype."""
-
     FLOAT32 = "float32"
     FLOAT16 = "float16"
     BFLOAT16 = "bfloat16"
@@ -45,8 +38,6 @@ class DType(str, Enum):
 
 @frozen_dataclass
 class Tensor:
-    """An op's tensor argument: its symbolic shape, where the call passes it and how its dtype resolves."""
-
     dim_names: List[NonEmptyStr] = Field(alias="shape")
     dtype: Optional[DType] = None
     description: Optional[str] = None
@@ -62,7 +53,6 @@ class Tensor:
 class Scalar:
     dtype: str
     description: Optional[str] = None
-    # always None: in the json a scalar is a tensor spec without a shape
     shape: None = Field(default=None, kw_only=True, repr=False)
 
     param: Excluded[Optional[NonEmptyStr]] = None
@@ -71,18 +61,14 @@ class Scalar:
 
 @frozen_dataclass
 class Var:
-    """A runtime-variable axis, such as batch_size or seq_len."""
-
     description: Optional[str] = None
     type: Literal["var"] = Field(default="var", kw_only=True, repr=False)
 
 
 @frozen_dataclass
 class Const:
-    """A compile-time-constant axis, such as hidden_size or num_heads."""
-
     description: Optional[str] = None
-    abbrev: Excluded[Optional[str]] = None  # its prefix in schema names: "" omits the axis, None: its name
+    abbrev: Excluded[Optional[str]] = None
     value: Optional[NonNegativeInt] = None
     type: Literal["const"] = Field(default="const", kw_only=True, repr=False)
 

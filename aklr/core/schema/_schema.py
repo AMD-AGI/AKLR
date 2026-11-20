@@ -5,12 +5,7 @@
 # Copyright (c) 2025 by FlashInfer team.
 # Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer) and
-# FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Modified by the AKLR team.
 #
-# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 from __future__ import annotations
@@ -54,7 +49,6 @@ def extract_axes(
     extractors: dict[str, Callable[[dict[str, Any]], int | None]],
     call: dict[str, Any],
 ) -> dict[str, int]:
-    """Each axis's value from its extractor on call, left out if the extractor raises or returns None."""
     axes: dict[str, int] = {}
     for axis, extract in extractors.items():
         try:
@@ -68,15 +62,9 @@ def extract_axes(
 
 @frozen_dataclass
 class Schema:
-    """An op's schema: its contract, at most one kernel and the workloads measured on it, kept as json. One
-    declared in code, a variant of an op api, also holds its test standard; the json leaves it out."""
-
-    # first in the json dump; its "" default, never validated, is filled in by _default_name
     name: NonEmptyStr = Field(default="", kw_only=True)
     op_type: NonEmptyStr
     axes: Dict[NonEmptyStr, Union[Var, Const]]
-    # at most one item, {variant name: condition}: the calls of the op that are this variant's, as a Python
-    # expression over the api's arguments and torch; empty is the default variant, of every call
     variant: Dict[Annotated[str, StringConstraints(pattern=r"^[a-z0-9]+(_[a-z0-9]+)*$")], NonEmptyStr] = (
         Field(default_factory=dict)
     )
@@ -85,7 +73,6 @@ class Schema:
     inputs: Dict[NonEmptyStr, Union[Tensor, Scalar]] = Field(kw_only=True)
     outputs: Dict[NonEmptyStr, Union[Tensor, Scalar]] = Field(kw_only=True)
     standard: Optional[Standard] = Field(default=None, exclude=True, repr=False, kw_only=True)
-    # one "<model>/tp<n>[+dp<n>][+dcp<n>][+ep<n>]" per deployment calling it, e.g. "glm-5.2/tp8+dp8"
     tags: List[NonEmptyStr] = Field(default_factory=list)
     description: Optional[str] = None
     constraints: List[NonEmptyStr] = Field(default_factory=list)
@@ -123,7 +110,6 @@ class Schema:
 
     @property
     def op_name(self) -> str:
-        """Its op's variant: ``gemm_bf16_nt.shuffled``."""
         return f"{self.op_type}.{self.variant_name}"
 
     @cached_property
@@ -133,12 +119,10 @@ class Schema:
         )
 
     def matches(self, call: Dict[str, Any]) -> bool:
-        """Whether call, the api's bound arguments, is one of this variant's."""
         condition = self._variant_condition
-        return condition is None or bool(eval(condition, {"torch": torch}, call))  # noqa: S307 -- template code
+        return condition is None or bool(eval(condition, {"torch": torch}, call))  # noqa: S307
 
     def ordered_inputs(self, call: Dict[str, Any]) -> List[Any]:
-        """The call's input values in the schema's order, None where absent: kernels take them positionally."""
         values: List[Any] = []
         for key, spec in self.inputs.items():
             value = call.get(spec.param or key)
@@ -149,7 +133,6 @@ class Schema:
         return values
 
     def serves(self, workload: Workload, target: DeviceTarget, min_speedup: float, baseline: str) -> bool:
-        """Whether dispatch may serve workload by this schema's kernel on target, see Workload.qualifies."""
         return (
             self.kernel is not None
             and self.kernel.build.runs_on(target)
@@ -173,7 +156,6 @@ class Schema:
 
     @model_validator(mode="after")
     def _validate_workload_axes(self) -> Schema:
-        # an axis left out is not an error here: tracing records a call's axes off its inputs alone
         var_axes = set(self.var_axes)
         for index, workload in enumerate(self.workloads):
             if extra := workload.axes.keys() - var_axes:
@@ -194,7 +176,6 @@ class Schema:
 
     @cached_property
     def uuid(self) -> str:
-        """16 hex of the json's sha256, workloads excluded so that recording one keeps the file name."""
         key = json.dumps(
             TypeAdapter(Schema).dump_python(self, mode="json", exclude={"workloads"}),
             sort_keys=True,
@@ -236,7 +217,6 @@ class Schema:
         return var_axes_values
 
     def get_axes_values_from_inputs(self, inputs: Iterable[Any]) -> Dict[str, int]:
-        """Var axis values from the shapes of input values in schema input order; raises if two disagree."""
         shapes = [tuple(val.shape) if hasattr(val, "shape") else None for val in inputs]
         return self.get_axes_values(shapes)
 
@@ -368,7 +348,6 @@ class Schema:
                 if isinstance(scalar_desc, Scalar):
                     param = scalar_desc.param if scalar_desc.param is not None else axis_name
                     extractor = _make_scalar_extractor(param)
-            # optional tensors come after scalars, as a call may omit them and leave a Const axis unset
             if extractor is None:
                 extractor = _tensor_source(axis_name, allow_optional=True)
             if extractor is None:
@@ -388,7 +367,6 @@ class Schema:
         }
 
     def schema_name(self, axis_values: Dict[str, int]) -> str:
-        """Its name at these Const axis values; dispatch and for_call both name by it, so they agree."""
         prefix = self.op_type if self.variant_name == "default" else f"{self.op_type}_{self.variant_name}"
         parts = []
         for n, marker in self.axes.items():
@@ -401,7 +379,6 @@ class Schema:
         return prefix + ("_" + "_".join(parts) if parts else "")
 
     def call_dtypes(self, call: Dict[str, Any]) -> Dict[str, Optional[str]]:
-        """The dtype call gives each tensor input and output, None where neither it nor the schema names one."""
 
         def call_dtype(key: str, tensor: Tensor) -> Optional[str]:
             t = _get_tensor(call, tensor.param or key, tensor.tuple_idx)
@@ -437,7 +414,6 @@ class Schema:
         }
 
     def for_call(self, call: Dict[str, Any]) -> Schema:
-        """This schema at call: Const axes, name and tensor dtypes read from the call's arguments."""
         values = extract_axes(self.const_axis_extractors, call)
         dtypes = self.call_dtypes(call)
         return replace(
