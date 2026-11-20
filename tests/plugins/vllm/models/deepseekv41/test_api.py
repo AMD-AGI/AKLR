@@ -1,16 +1,21 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import inspect
 import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
 
+from aklr.core.contract.fastkey import FastKeyCodec, FastKeyFnGenerator
+from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.plugins.sglang.models import deepseekv41
 from aklr.plugins.vllm.models.deepseekv41 import api
 
-_HIDDEN, _Q_RANK, _HEADS, _TOPK = 64, 32, 4, 8
+_HEADS, _TOPK = 8, 8
+_OPS = ("deepseekv41_sparse_mla",)
 
 
 def pool(pages, page_size, row_bytes=None):
@@ -25,7 +30,7 @@ def pool(pages, page_size, row_bytes=None):
 def asked(monkeypatch):
     """The calls the routes ask the ops for, by op; every op answers NO_WORKLOAD."""
     calls = {}
-    for name in ("deepseekv41_sparse_mla", "deepseekv41_mono_k1"):
+    for name in _OPS:
         op = SimpleNamespace(
             fallback_reason=lambda _name=name, **call: (
                 calls.setdefault(_name, []).append(call) or FallbackReason.NO_WORKLOAD
@@ -39,9 +44,6 @@ def asked(monkeypatch):
 def step(monkeypatch):
     """A decode-only step of 64 rows in vLLM's forward context; change it to make another."""
     swa = SimpleNamespace(
-        num_prefills=0,
-        num_decodes=64,
-        num_decode_tokens=64,
         num_prefill_tokens=0,
         block_size=32,
         decode_swa_width=128,
@@ -52,22 +54,12 @@ def step(monkeypatch):
     context = SimpleNamespace(attn_metadata={"swa": swa, "compressed": SimpleNamespace(block_size=128)})
     forward_context = ModuleType("vllm.forward_context")
     forward_context.get_forward_context = lambda: context
-    forward_context.is_forward_context_available = lambda: True
     monkeypatch.setitem(sys.modules, "vllm", ModuleType("vllm"))
     monkeypatch.setitem(sys.modules, "vllm.forward_context", forward_context)
     return swa
 
 
 def attention(**changes):
-    def linear(rows, columns):
-        return SimpleNamespace(
-            weight=torch.zeros(rows, columns, dtype=torch.float8_e4m3fn),
-            weight_scale=torch.zeros(rows // 32, columns // 32, dtype=torch.uint8),
-        )
-
-    def norm(width):
-        return SimpleNamespace(weight=torch.zeros(width, dtype=torch.bfloat16), variance_epsilon=1e-6)
-
     attn = SimpleNamespace(
         swa_cache_layer=SimpleNamespace(prefix="swa", kv_cache=pool(3, 32)),
         compressed_cache_prefix="compressed",
@@ -77,10 +69,6 @@ def attention(**changes):
         attn_sink=torch.zeros(_HEADS),
         scale=512**-0.5,
         rotary_emb=SimpleNamespace(cos_sin_cache=torch.zeros(16, 64)),
-        fused_wqa_wkv=linear(_Q_RANK + 512, _HIDDEN),
-        wq_b=linear(_HEADS * 512, _Q_RANK),
-        q_norm=norm(_Q_RANK),
-        kv_norm=norm(512),
     )
     attn.__dict__.update(changes)
     return attn
@@ -162,86 +150,17 @@ def test_a_sparse_mla_the_contract_cannot_express_is_not_asked_for(asked, step, 
     assert asked == {}
 
 
-def mono_decode(attn, taken=False, ffn_only=False, first=False, tokens=64, stage_pre_mix=None):
-    mono = SimpleNamespace(
-        ffn_only=ffn_only,
-        _decode_step=lambda layer, rows: (None if taken else f"{rows} rows", None, None),
-    )
-    layer = SimpleNamespace(
-        attn=attn,
-        hc_mult=4,
-        hc_attn_fn=torch.zeros(24, 4 * _HIDDEN),
-        hc_attn_scale=torch.zeros(3),
-        hc_attn_base=torch.zeros(24),
-        attn_norm=SimpleNamespace(weight=torch.zeros(_HIDDEN, dtype=torch.bfloat16), variance_epsilon=1e-6),
-        rms_norm_eps=1e-6,
-        hc_eps=1e-6,
-        hc_sinkhorn_iters=20,
-        engram=None,
-    )
-    x = torch.zeros(tokens, _HIDDEN, dtype=torch.bfloat16)
-    positions = torch.zeros(tokens, dtype=torch.int64)
-    if stage_pre_mix is not None:
-        streams = torch.zeros(tokens, 4, _HIDDEN, dtype=torch.bfloat16)
-        return api._mono_decode(mono, layer, streams, positions, None, None, None, stage_pre_mix)
-    if first:
-        return api._mono_decode(mono, layer, x, positions, None, None, None, None)
-    return api._mono_decode(
-        mono,
-        layer,
-        x,
-        positions,
-        torch.zeros(tokens, 4, _HIDDEN, dtype=torch.bfloat16),
-        torch.zeros(tokens, 4, 1),
-        torch.zeros(tokens, 4, 4),
-        torch.zeros(tokens, 4),
-    )
+def shapes(call):
+    return {name: tuple(value.shape) for name, value in call.items() if isinstance(value, torch.Tensor)}
 
 
-def test_a_decode_step_vllms_mono_declines_asks_for_the_layers_attention_front(asked, step):
-    """64 rows are past the 48 vLLM's kernels take: K1 is asked for at the rank's heads with the
-    post the previous layer owes, and the layer stays on vLLM."""
-    assert mono_decode(attention()) is FallbackReason.NO_WORKLOAD
-    (call,) = asked["deepseekv41_mono_k1"]
-    assert call["residual"].shape == (64, 4, _HIDDEN)
-    assert call["x"].shape == (64, _HIDDEN)
-    assert call["post_mix"].shape == call["prev_pre_mix"].shape == (64, 4)
-    assert call["comb_mix"].shape == (64, 4, 4)
-    assert call["wq_b"].shape == (_HEADS * 512, _Q_RANK)
-    assert call["positions"].shape == (64,)
-
-
-def test_a_first_layers_attention_front_owes_no_post(asked, step):
-    assert mono_decode(attention(), first=True) is FallbackReason.NO_WORKLOAD
-    (call,) = asked["deepseekv41_mono_k1"]
-    assert call["residual"].shape == (64, 4, _HIDDEN)
-    # the contract's row_major storage: an expanded embedding (stride 0) is outside it
-    assert call["residual"].is_contiguous()
-    assert not {"x", "post_mix", "comb_mix", "prev_pre_mix"} & {k for k, v in call.items() if v is not None}
-
-
-def test_a_pipeline_stages_first_layer_reads_its_streams_under_the_pre_mix_carried_in(asked, step):
-    assert mono_decode(attention(), stage_pre_mix=torch.ones(64, 4)) is FallbackReason.NO_WORKLOAD
-    (call,) = asked["deepseekv41_mono_k1"]
-    assert call["residual"].shape == (64, 4, _HIDDEN)
-    assert call["prev_pre_mix"].shape == (64, 4)
-    assert not {"x", "post_mix", "comb_mix"} & {k for k, v in call.items() if v is not None}
-
-
-@pytest.mark.parametrize(
-    ("layer", "prefills"),
-    [
-        ({"taken": True}, 0),
-        ({"ffn_only": True}, 0),
-        ({}, 1),
-        ({"attn": attention(q_norm=SimpleNamespace(weight=None, variance_epsilon=1e-5))}, 0),
-    ],
-    ids=["a_step_vllms_kernels_take", "vllms_own_attention", "a_step_with_prefills", "norms_of_two_epsilons"],
-)
-def test_a_layer_outside_the_attention_front_is_not_asked_for(asked, step, layer, prefills):
-    step.num_prefills = prefills
-    assert mono_decode(**{"attn": attention(), **layer}) is FallbackReason.OUT_OF_CONTRACT
-    assert asked == {}
+def point(name, call):
+    """The Point the op's contract keys ``call`` at, as dispatch would; None outside the contract."""
+    codec = FastKeyCodec.from_contract(ContractRegistry.default().get(f"{name}@1.0"))
+    bound = inspect.signature(getattr(deepseekv41, name)).bind(**call)
+    bound.apply_defaults()
+    key = FastKeyFnGenerator(codec, torch.device("cpu")).generate()(dict(bound.arguments))
+    return None if key is None else codec.to_point(key)
 
 
 def mxfp8_layer(scale_rows=2):
@@ -293,3 +212,101 @@ def test_an_activation_vllm_holds_quantized_goes_with_its_scales(monkeypatch):
 def test_an_mxfp8_linear_outside_the_contract_stays_on_vllm(monkeypatch, layer, x):
     monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", lambda **call: pytest.fail("asked"))
     assert api._apply_weights(None, layer, x) is FallbackReason.OUT_OF_CONTRACT
+
+
+def wo_a_bmm(groups, tokens=6, scale_rows=None, op=None):
+    wo_a = SimpleNamespace(
+        weight=torch.zeros(groups * 64, 4096, dtype=torch.float8_e4m3fn),
+        weight_scale=torch.zeros(scale_rows or groups * 2, 128, dtype=torch.uint8),
+    )
+    a = torch.zeros(tokens, groups * 4096, dtype=torch.float8_e4m3fn)
+    return api._mxfp8_wo_a_bmm(a, torch.zeros(tokens, groups * 128, dtype=torch.uint8), wo_a, groups, 64)
+
+
+def test_a_grouped_mxfp8_wo_a_is_one_linear_a_group_on_the_groups_own_rows(monkeypatch):
+    calls = []
+
+    def linear(**call):
+        calls.append(call)
+        return torch.full((6, 64), float(len(calls)), dtype=torch.bfloat16)
+
+    monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", linear)
+    out = wo_a_bmm(groups=2)
+    # group-major columns, as vLLM's kernel writes them
+    assert out.shape == (6, 128) and out[0, ::64].tolist() == [1.0, 2.0]
+    assert [shapes(call) for call in calls] == [
+        {"x": (6, 4096), "x_scale": (6, 128), "weight": (64, 4096), "weight_scale": (2, 128)}
+    ] * 2
+    assert all(point("deepseekv41_mxfp8_linear", call).axes == {"m": 6, "n": 64, "k": 4096} for call in calls)
+
+
+@pytest.mark.parametrize(
+    "changes", [{"scale_rows": 128}, {"tokens": 0}], ids=["a_scale_per_weight_row", "no_rows"]
+)
+def test_a_wo_a_outside_the_linears_contract_stays_on_vllm(monkeypatch, changes):
+    monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", lambda **call: pytest.fail("asked"))
+    assert wo_a_bmm(groups=2, **changes) is FallbackReason.OUT_OF_CONTRACT
+
+
+def test_a_wo_a_group_no_kernel_serves_leaves_the_whole_product_to_vllm(monkeypatch):
+    monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", lambda **call: FallbackReason.NO_WORKLOAD)
+    assert wo_a_bmm(groups=2) is FallbackReason.NO_WORKLOAD
+
+
+def compressor(hidden=4096, head=512):
+    """A layer's compressor: the fused KV/score weight, [2 x head_dim, hidden] in bf16."""
+    return SimpleNamespace(
+        fused_wkv_wgate=SimpleNamespace(weight=torch.zeros(2 * head, hidden, dtype=torch.bfloat16))
+    )
+
+
+def test_the_compressors_kv_score_projection_is_one_gemm_with_fp32_out(monkeypatch):
+    calls, kv_score = [], torch.ones(6, 1024)
+    monkeypatch.setattr(api, "gemm", lambda a, b, **call: calls.append((a, b, call)) or kv_score)
+    linear, x = compressor().fused_wkv_wgate, torch.zeros(6, 4096, dtype=torch.bfloat16)
+    assert api._kv_score_forward(linear, x) is kv_score
+    ((a, b, call),) = calls
+    assert a is x and b is linear.weight and call == {"out_dtype": torch.float32}
+
+
+def test_a_kv_score_projection_no_kernel_serves_stays_on_vllm(monkeypatch):
+    monkeypatch.setattr(api, "gemm", lambda a, b, **call: FallbackReason.NO_WORKLOAD)
+    x = torch.zeros(6, 4096, dtype=torch.bfloat16)
+    assert api._kv_score_forward(compressor().fused_wkv_wgate, x) is FallbackReason.NO_WORKLOAD
+
+
+@pytest.fixture
+def gemm_asked(monkeypatch):
+    """The gemms a route asks for without running them; the op answers NO_WORKLOAD."""
+    calls = []
+    op = SimpleNamespace(
+        fallback_reason=lambda a, b, **call: calls.append((a, b, call)) or FallbackReason.NO_WORKLOAD
+    )
+    monkeypatch.setattr(api, "gemm", op)
+    return calls
+
+
+def test_the_projection_inside_the_multi_stream_chain_is_asked_for_and_left_to_vllm(gemm_asked):
+    """vLLM calls torch.mm inline there, between its stream forks: the route records the call."""
+    attn, x = SimpleNamespace(compressor=compressor()), torch.zeros(6, 4096, dtype=torch.bfloat16)
+    assert api._forward_csa2_full(attn, x, None) is FallbackReason.NO_WORKLOAD
+    ((a, b, call),) = gemm_asked
+    assert a is x and b is attn.compressor.fused_wkv_wgate.weight and call == {"out_dtype": torch.float32}
+
+
+def test_the_projection_inside_a_decode_steps_selection_is_asked_for_and_left_to_vllm(gemm_asked):
+    layer, x = (
+        SimpleNamespace(attn=SimpleNamespace(compressor=compressor())),
+        torch.zeros(6, 4096, dtype=torch.bfloat16),
+    )
+    assert api._select(layer, None, x, None) is FallbackReason.NO_WORKLOAD
+    ((a, b, call),) = gemm_asked
+    assert (
+        a is x and b is layer.attn.compressor.fused_wkv_wgate.weight and call == {"out_dtype": torch.float32}
+    )
+
+
+def test_a_selection_on_a_layer_without_a_compressor_asks_for_nothing(gemm_asked):
+    layer = SimpleNamespace(attn=SimpleNamespace(compressor=None))
+    assert api._select(layer, None, torch.zeros(6, 4096), None) is FallbackReason.OUT_OF_CONTRACT
+    assert gemm_asked == []
