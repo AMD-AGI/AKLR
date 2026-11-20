@@ -129,8 +129,9 @@ SITUV2_A4W4_MOE = OpContract(
             description="Routing-weighted sum of the chosen experts' outputs.",
             shape=("n_tokens", "model_dim"),
             dtype=DTypeSpec(same_as_tensor="hidden_states"),
-            # fused_moe's bound: its MXFP4 activations
-            error_bounds=SqnrBound(min_sqnr_db=13.0),
+            # aiter's own SiTUv2 A4W4 reaches 28-31 dB on Kimi-K3's calls (MI355X, aiter a6c759b1f); fused_moe's
+            # 13 dB let through kernels 12 dB short of it
+            error_bounds=SqnrBound(min_sqnr_db=25.0),
         )
     },
     # as vLLM holds the experts for aiter's a4w4 (shuffle_weight_a16w4 and shuffle_scale_a16w4 with gate_up

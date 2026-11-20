@@ -60,11 +60,11 @@ workload=$(jq -n --arg name "$name" --arg command "$(base64 -w0 <<< "$pod_comman
   entryPoints: [$command],
   resources: [{replica: 1, gpu: "8", cpu: "96", memory: "512Gi", sharedMemory: "64Gi", ephemeralStorage: "300Gi"}],
   env: ({RUN_DIR: env.RUN_DIR} + ($ENV | with_entries(select(.key | IN($pass | splits(" +")))))),
-  priority: 2,
+  priority: ({medium: 1, high: 2}[env.AKLR_GPU_PRIORITY] // error("AKLR_GPU_PRIORITY must be medium or high")),
   timeout: (env.TIMEOUT_MINUTES | tonumber * 60),
   useWorkspaceStorage: true
 }' | api POST '' -d @- | jq -r '.workloadId // error(tostring)')
-echo "🚀 Workload $workload in $IMAGE"
+echo "🚀 Workload $workload in $IMAGE at $AKLR_GPU_PRIORITY priority"
 
 tail --pid=$$ -F "$RUN_DIR/log" 2> /dev/null &
 last_phase='' lost=0

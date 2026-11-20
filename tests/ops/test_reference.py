@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import os
 from collections.abc import Callable
 from types import SimpleNamespace
 
@@ -13,6 +14,15 @@ from aklr.core.validation.stages._bench._evaluation._comparison import (
 )
 from tests.op_case import OpCase
 from tests.ops import cases as ops_cases
+
+
+def _backend_points():
+    """Scope this one baseline/reference comparison; keep every variant of each affected contract."""
+    points = ops_cases.SMALL_POINTS
+    contracts = set(os.environ.get("AKLR_REFERENCE_CONTRACTS", "").split())
+    if not contracts or not contracts.issubset({point.contract_id for point in points}):
+        return points
+    return [point for point in points if point.contract_id in contracts]
 
 
 class TestReference:
@@ -39,7 +49,7 @@ class TestReference:
         )
 
     @pytest.mark.gpu
-    @pytest.mark.parametrize("op_case", OpCase.params(ops_cases.SMALL_POINTS))
+    @pytest.mark.parametrize("op_case", OpCase.params(_backend_points()))
     def test_backend_matches_reference(self, op_case: OpCase) -> None:
         """``check_backend_matches_reference`` for aklr/ops, on the aiter aiter-test installs; a
         plugin's contracts in the job that times them (tests/plugins/<framework>/test_reference.py)."""

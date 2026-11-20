@@ -20,7 +20,7 @@ sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n128_k6144/56d3c490873219d9.json
   - aklr/ops/gemm/impls/flydsl/gemm_n256_k6144/5b35f66b4ee6eeae.json
   - aklr/ops/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json
+  - AMD-AGI/AKLR@3b27df44:aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json
 ---
 
 # bf16 GEMM at narrow N, K 6144: one dot product per wave at small M
@@ -129,7 +129,8 @@ schema's `workloads` is the current value.
 `gemm_n64_k4096/a59a85330c6da038.json` lists m 4, 8, …, 128 (512 KiB of weight) with the design of the m ≤ 8 paths
 above: no MFMA, no LDS ring, `b` in its row-major layout loaded straight into registers, the whole K of an output in
 one workgroup. No other file serves these Points, so the yardstick is aiter. As of #125 CI reads 1.020–1.286:
-dispatch serves m 8–128, not m 4 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`,
+dispatch serves m 8–128, not m 4; later CI runs read 0.972–1.048 (main `3b27df44`), no Point at 1.05, and the file
+was removed (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`,
 default 1.05, `aklr/ops/README.md` § Environment variables). Narrow N at larger m:
 [bf16_k4096_splitk_hgemm.md](bf16_k4096_splitk_hgemm.md). m 1 and 2 are not listed: within 2% of aiter
 (1.014, 1.019) *(field, E4)*.
@@ -154,8 +155,8 @@ thin at m 4 *(field, E4)*. The kernel read 4.08–4.20 µs per round at every m 
 4.19–5.95 *(field, E5)*: the gain is aiter's time growing with m, and whether profile 19 has a floor near 4.1 µs was
 not measured (`../pitfalls/aklr_dispatch_floor.md`). Under stress every listed Point gave the output of the call
 alone *(field, E6)*. Reproduce with
-`python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json` (§ Reproduce); to roll back,
-delete it: its Points are then served by no file, and the caller runs its own path.
+`python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json` at `3b27df44` (§ Reproduce).
+Removed since: its Points are served by no file, and the caller runs its own path.
 
 ## Reproduce
 
@@ -191,4 +192,4 @@ m = 2048).
 - E6 [2026-11, gfx950, FlyDSL 0.3.2, N=20, eager and op-level CUDA-graph stress on one MI355X, main 0e02a81 with the schema, each try compared byte for byte with an eager call alone] a59a85330c6da038 as its predecessor, whose one difference was `torch.cuda.current_stream()` without `a.device`, every listed Point: the forge driver's conditions (streams limited to 16 and 64 CUs; a second concurrent call on the same inputs) and one captured graph replayed on the same inputs, 20 tries each; one graph replayed 24 times with three AKLR input sets rotated into its buffers; two calls at once on two streams with different inputs, unrestricted and both on the same 64 CUs, 20 tries each: 0 tries differ
 - E7 [2026-11, gfx950, FlyDSL 0.3.2, N=1, compiler output read in the forge-loop campaign, not timed] gemm_n64_k4096 with `amdgpu-kernarg-preload-count` 16: dynamic-layout tensor arguments preloaded only the first pointer (`preload_length 2`); static-layout `flyc.from_torch_tensor` arguments preloaded all three (kernarg size 24, user SGPR count 8)
 - E8 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI perf run, measurement profile 19] Points at or above 1.03 as of #102: n128 m 2, 4 (0.557–1.094); n256 m 2, 4, 8, 4096 (0.492–1.195; m 2048 1.021); n32 m 4, 8, 128, 2048 (0.711–1.907; m 128 1.081) (6d7cfec, CI run 42549655045; each schema's `workloads`)
-- S1 aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json#kernel.py:111 `_CONFIG` (rows, columns, waves, XCD row and column split) per m; XCD remap at :144-171; loads before use at :178-186; `fdot2_f32_bf16` at :188-207; `shuffle_xor` fold at :216-219, `_butterfly` at :79; wave fold in LDS at :225-237; store `sc0 sc1` at :25, :45; preload hint at :250-253
+- S1 AMD-AGI/AKLR@3b27df44:aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json#kernel.py:111 `_CONFIG` (rows, columns, waves, XCD row and column split) per m; XCD remap at :144-171; loads before use at :178-186; `fdot2_f32_bf16` at :188-207; `shuffle_xor` fold at :216-219, `_butterfly` at :79; wave fold in LDS at :225-237; store `sc0 sc1` at :25, :45; preload hint at :250-253

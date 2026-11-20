@@ -178,7 +178,7 @@
         "n_tokens": 64
       },
       "accuracy": "passed",
-      "speedup": 1.171,
+      "speedup": 1.196,
       "microseconds": 192.0
     }
   ],

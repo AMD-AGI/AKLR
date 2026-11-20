@@ -251,3 +251,62 @@ def test_a_wo_a_outside_the_linears_contract_stays_on_vllm(monkeypatch, changes)
 def test_a_wo_a_group_no_kernel_serves_leaves_the_whole_product_to_vllm(monkeypatch):
     monkeypatch.setattr(api, "deepseekv41_mxfp8_linear", lambda **call: FallbackReason.NO_WORKLOAD)
     assert wo_a_bmm(groups=2) is FallbackReason.NO_WORKLOAD
+
+
+def compressor(hidden=4096, head=512):
+    """A layer's compressor: the fused KV/score weight, [2 x head_dim, hidden] in bf16."""
+    return SimpleNamespace(
+        fused_wkv_wgate=SimpleNamespace(weight=torch.zeros(2 * head, hidden, dtype=torch.bfloat16))
+    )
+
+
+def test_the_compressors_kv_score_projection_is_one_gemm_with_fp32_out(monkeypatch):
+    calls, kv_score = [], torch.ones(6, 1024)
+    monkeypatch.setattr(api, "gemm", lambda a, b, **call: calls.append((a, b, call)) or kv_score)
+    linear, x = compressor().fused_wkv_wgate, torch.zeros(6, 4096, dtype=torch.bfloat16)
+    assert api._kv_score_forward(linear, x) is kv_score
+    ((a, b, call),) = calls
+    assert a is x and b is linear.weight and call == {"out_dtype": torch.float32}
+
+
+def test_a_kv_score_projection_no_kernel_serves_stays_on_vllm(monkeypatch):
+    monkeypatch.setattr(api, "gemm", lambda a, b, **call: FallbackReason.NO_WORKLOAD)
+    x = torch.zeros(6, 4096, dtype=torch.bfloat16)
+    assert api._kv_score_forward(compressor().fused_wkv_wgate, x) is FallbackReason.NO_WORKLOAD
+
+
+@pytest.fixture
+def gemm_asked(monkeypatch):
+    """The gemms a route asks for without running them; the op answers NO_WORKLOAD."""
+    calls = []
+    op = SimpleNamespace(
+        fallback_reason=lambda a, b, **call: calls.append((a, b, call)) or FallbackReason.NO_WORKLOAD
+    )
+    monkeypatch.setattr(api, "gemm", op)
+    return calls
+
+
+def test_the_projection_inside_the_multi_stream_chain_is_asked_for_and_left_to_vllm(gemm_asked):
+    """vLLM calls torch.mm inline there, between its stream forks: the route records the call."""
+    attn, x = SimpleNamespace(compressor=compressor()), torch.zeros(6, 4096, dtype=torch.bfloat16)
+    assert api._forward_csa2_full(attn, x, None) is FallbackReason.NO_WORKLOAD
+    ((a, b, call),) = gemm_asked
+    assert a is x and b is attn.compressor.fused_wkv_wgate.weight and call == {"out_dtype": torch.float32}
+
+
+def test_the_projection_inside_a_decode_steps_selection_is_asked_for_and_left_to_vllm(gemm_asked):
+    layer, x = (
+        SimpleNamespace(attn=SimpleNamespace(compressor=compressor())),
+        torch.zeros(6, 4096, dtype=torch.bfloat16),
+    )
+    assert api._select(layer, None, x, None) is FallbackReason.NO_WORKLOAD
+    ((a, b, call),) = gemm_asked
+    assert (
+        a is x and b is layer.attn.compressor.fused_wkv_wgate.weight and call == {"out_dtype": torch.float32}
+    )
+
+
+def test_a_selection_on_a_layer_without_a_compressor_asks_for_nothing(gemm_asked):
+    layer = SimpleNamespace(attn=SimpleNamespace(compressor=None))
+    assert api._select(layer, None, torch.zeros(6, 4096), None) is FallbackReason.OUT_OF_CONTRACT
+    assert gemm_asked == []
