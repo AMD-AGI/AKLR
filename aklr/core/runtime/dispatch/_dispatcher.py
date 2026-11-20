@@ -105,13 +105,16 @@ class DispatchTable:
         fallback_reasons: dict[FastKey, FallbackReason] = {}
         for schema, runnable, workloads in schema_runnables:
             # workloads differing in any_size axes alone share a key: the schema serves it
-            # only if each of them qualifies, at the lowest rank among them
+            # if one of them qualifies and none failed (a call's size is not in its key),
+            # at the lowest rank among them all
             keyed: dict[FastKey, list[WorkloadSpec]] = {}
             for workload in workloads:
                 key = codec.match_key(codec.to_fast_key(schema.point(workload.axes)))
                 keyed.setdefault(key, []).append(workload)
             for key, same in keyed.items():
                 failing = [w for w in same if not w.qualifies(min_speedup)]
+                if len(failing) < len(same):  # then only a failed one keeps it unserved
+                    failing = [w for w in failing if w.accuracy == "failed"]
                 if not failing:
                     rank = min(map(schema.rank_key, same))
                     # strict: an equal rank shares a content hash, i.e.
