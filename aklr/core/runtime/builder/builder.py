@@ -29,7 +29,7 @@ import torch
 
 from aklr.core.contract.locate import import_entry
 from aklr.core.contract.spec import write_sources
-from aklr.core.jit import hip_extension, hsaco
+from aklr.core.jit import flydsl_cache, hip_extension, hsaco
 from aklr.core.platform.device import DeviceTarget
 from aklr.core.platform.env import (
     ENV_DISABLE,
@@ -219,6 +219,11 @@ class FlyDSLBuilder(PythonBuilder):
         except ImportError:
             return False
         return True
+
+    def build(self, schema: OpContract) -> Runnable:
+        """PythonBuilder's build, the launch cache FlyDSL 0.5 dropped put back first (``aklr.core.jit.flydsl_cache``)."""
+        flydsl_cache.install()
+        return super().build(schema)
 
 
 class HsacoBuilder(PythonBuilder):
