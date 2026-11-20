@@ -1,20 +1,15 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""vLLM's routes to the DeepSeek-V4.1 ops, for the steps its mono decode kernels do not take.
-
-Of a layer's two launches only the attention front (``deepseekv41_mono_k1``) is vLLM's too.
-Its attention back multiplies MXFP8 rows by an MXFP8 wo_a and sums wo_b's output over the TP
-ranks before the FFN seam, and its MoE keeps the shared expert as an MXFP8 MLP beside 384
-FP4 slots: ``deepseekv41_mono_k2_attention`` and ``deepseekv41_mono_k2_ffn`` say neither, so
-no route asks for them. Their kernels are reached one by one: the sparse MLA and the MXFP8
-linears here, the routed experts through aiter's fused_moe."""
+"""vLLM's routes to the DeepSeek-V4.1 ops: the kernels of vLLM's own chain, reached one by one.
+The sparse MLA, the MXFP8 linears, wo_a's groups and the compressor's KV/score projection here;
+the routed experts through aiter's fused_moe."""
 
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.plugins.aiter.provider.gemm.api import gemm
 from aklr.plugins.sglang.models.deepseekv41 import (
-    deepseekv41_mono_k1,
     deepseekv41_mxfp8_linear,
     deepseekv41_sparse_mla,
 )
@@ -26,8 +21,10 @@ __all__: list[str] = []
 _VLLM = ("0.33.0rc1.dev910", "0.34.0")
 # An fp8_ds_mla record: 576 data bytes, 8 scale bytes
 _RECORD = 584
-_ATTENTION = "vllm.models.deepseek_v41.amd.rocm.DeepseekV41ROCMAiterMLAAttention"
-_MONO = "vllm.models.deepseek_v41.amd.mono_decode.MonoDecodeLayer"
+_ROCM = "vllm.models.deepseek_v41.amd.rocm"
+_ATTENTION = f"{_ROCM}.DeepseekV41ROCMAiterMLAAttention"
+_KV_SCORE = "vllm.models.deepseek_v4.compressor.DeepseekV4CompressorKVScoreLinear"
+_MONO = "vllm.models.deepseek_v41.amd.mono_decode"
 _LINEAR = "vllm.model_executor.kernels.linear.mxfp8.rocm_native.RocmDotScaledMxfp8LinearKernel"
 
 
@@ -95,80 +92,40 @@ def _aiter_sparse_mla(
     return reason or FallbackReason.OUT_OF_CONTRACT
 
 
-@vllm_route(_MONO, f"{_MONO}.__call__", versions=_VLLM)
-def _mono_decode(
-    self,
-    layer,
-    x,
-    positions,
-    residual,
-    post_mix,
-    res_mix,
-    pre_mix,
-    engram_hashes=None,
-    engram_mask=None,
-):
-    """A decode-only step's layer where vLLM's mono kernels do not take the step (more than
-    48 rows): its attention front as the launch a monokernel runs it in, asked for with the
-    layer's own tensors on this rank. The route is declared on the class, whose source holds
-    the call it replaces: the layer calls its mono object."""
-    from vllm.forward_context import get_forward_context, is_forward_context_available
+@vllm_route(f"{_ATTENTION}._o_proj", f"{_ROCM}.rocm_mxfp8_wo_a_bmm", versions=_VLLM)
+def _mxfp8_wo_a_bmm(a, a_scale, wo_a, n_groups, o_lora_rank):
+    """wo_a on the MXFP8 rows the attention stored, where vLLM's own chain runs the layer: an
+    MXFP8 linear a group, on the group's columns of a and its rows of the weight, returned
+    group-major as vLLM's kernel writes them. A group's columns are copied out of a's rows
+    (the op takes row-major rows), and so are the outputs into one tensor. The route replaces
+    the name the attention looks up: vLLM's custom op keeps its own reference to the kernel."""
+    import torch
 
-    attn, tokens = layer.attn, x.shape[0]
-    metadata = get_forward_context().attn_metadata if is_forward_context_available() else None
-    swa = metadata.get(attn.swa_cache_layer.prefix) if isinstance(metadata, dict) else None
+    weight, weight_scale, tokens = wo_a.weight, wo_a.weight_scale, a.shape[0]
+    # a scale per weight row is vLLM's other loaded form, outside the linear's 32 x 32 blocks
     if (
-        self.ffn_only
-        or swa is None
-        or swa.num_prefills
-        or not swa.num_decodes
-        or swa.num_decode_tokens > tokens
-        # vLLM's own answer for the step: no reason, and its kernels take it
-        or self._decode_step(layer, tokens)[0] is None
-        or len(
-            {layer.attn_norm.variance_epsilon, attn.q_norm.variance_epsilon, attn.kv_norm.variance_epsilon}
-        )
-        != 1
+        not tokens
+        or weight_scale.shape[0] * 32 != weight.shape[0]
+        or weight.shape[0] != n_groups * o_lora_rank
     ):
         return FallbackReason.OUT_OF_CONTRACT
-    owed = {}
-    if residual is None:
-        # the embedding in every stream (stream 0 the input), or a pipeline stage's streams
-        # under the pre-mix carried in: no post is owed
-        if x.dim() == 3:
-            residual = x
-            if pre_mix is not None:
-                owed["prev_pre_mix"] = pre_mix.reshape(tokens, -1)
-        else:
-            residual = x.unsqueeze(1).expand(-1, layer.hc_mult, -1).contiguous()
-    else:
-        owed["prev_pre_mix"] = pre_mix.reshape(tokens, -1)
-        if layer.engram is None or engram_hashes is None:
-            owed.update(x=x, post_mix=post_mix.reshape(tokens, -1), comb_mix=res_mix)
-    # shortcut: the launch is asked for, which records the layer's call, and the layer is
-    # left to vLLM (an Engram layer's settled streams and the cos-then-sin RoPE table stand
-    # in by shape); run it here once a kernel serves it and the layer's back has its ops
-    reason = deepseekv41_mono_k1.fallback_reason(
-        residual=residual,
-        hc_fn=layer.hc_attn_fn,
-        hc_scale=layer.hc_attn_scale,
-        hc_base=layer.hc_attn_base,
-        norm_weight=layer.attn_norm.weight,
-        wqkv=attn.fused_wqa_wkv.weight,
-        wqkv_scale=attn.fused_wqa_wkv.weight_scale,
-        q_norm_weight=attn.q_norm.weight,
-        kv_norm_weight=attn.kv_norm.weight,
-        wq_b=attn.wq_b.weight,
-        wq_b_scale=attn.wq_b.weight_scale,
-        rope_freqs=attn.rotary_emb.cos_sin_cache,
-        positions=positions[:tokens],
-        hc_rms_eps=layer.rms_norm_eps,
-        hc_eps=layer.hc_eps,
-        norm_eps=layer.attn_norm.variance_epsilon,
-        sinkhorn_iters=layer.hc_sinkhorn_iters,
-        **owed,
+    a, a_scale = a.view(tokens, n_groups, -1), a_scale.view(tokens, n_groups, -1)
+    weight, weight_scale = (
+        weight.view(n_groups, o_lora_rank, -1),
+        weight_scale.view(n_groups, -1, weight_scale.shape[1]),
     )
-    return reason or FallbackReason.OUT_OF_CONTRACT
+    outs = []
+    for group in range(n_groups):
+        out = deepseekv41_mxfp8_linear(
+            x=a[:, group].contiguous(),
+            x_scale=a_scale[:, group].contiguous(),
+            weight=weight[group],
+            weight_scale=weight_scale[group],
+        )
+        if isinstance(out, FallbackReason):
+            return out
+        outs.append(out)
+    return torch.cat(outs, dim=1)
 
 
 @vllm_route(_LINEAR, f"{_LINEAR}.apply_weights", versions=_VLLM)
@@ -198,3 +155,38 @@ def _apply_weights(self, layer, x, bias=None):
         return out
     out = out.view(*shape[:-1], weight.shape[0])
     return out if bias is None else out + bias
+
+
+@vllm_route(_KV_SCORE, f"{_KV_SCORE}.forward", versions=_VLLM)
+def _kv_score_forward(self, input_):
+    """The compressor's fused KV/score projection where vLLM runs a layer's input projections
+    one after another: bf16 rows on a bf16 weight, fp32 out, as one gemm."""
+    import torch
+
+    return gemm(input_, self.weight, out_dtype=torch.float32)
+
+
+# shortcut: vLLM's other two chains call torch.mm on the same weight inline, and torch.mm is no
+# route target (a builtin without a signature, shared by the whole process); the routes below ask
+# the op for the projection, which records the call, and leave the chain to vLLM. Compute it here
+# once vLLM calls the projection through DeepseekV4CompressorKVScoreLinear.forward there too.
+@vllm_route(_ATTENTION, f"{_ATTENTION}._forward_csa2_full", versions=_VLLM)
+def _forward_csa2_full(self, hidden_states, positions):
+    """The projection inside the chain vLLM forks over its streams, on the layers with a compressor."""
+    import torch
+
+    weight = self.compressor.fused_wkv_wgate.weight
+    return (
+        gemm.fallback_reason(hidden_states, weight, out_dtype=torch.float32) or FallbackReason.OUT_OF_CONTRACT
+    )
+
+
+@vllm_route(_MONO, f"{_MONO}._select", versions=_VLLM)
+def _select(layer, positions, normed, qr):
+    """The projection inside a decode step's top-k selection, on the layers with a compressor."""
+    import torch
+
+    if layer.attn.compressor is None:
+        return FallbackReason.OUT_OF_CONTRACT
+    weight = layer.attn.compressor.fused_wkv_wgate.weight
+    return gemm.fallback_reason(normed, weight, out_dtype=torch.float32) or FallbackReason.OUT_OF_CONTRACT

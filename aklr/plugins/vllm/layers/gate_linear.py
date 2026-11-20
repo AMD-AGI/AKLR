@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.gemm.api import gemm
+from aklr.plugins.aiter.provider.gemm.api import gemm
 from aklr.plugins.vllm.hook import vllm_route
 
 __all__: list[str] = []
