@@ -3,6 +3,6 @@
 
 """aiter's fused MoE for SiTUv2 experts with MXFP4 activations, the a4w4 path vLLM's Kimi-K3 recipe takes."""
 
-from aklr.plugins.aiter.situv2_a4w4_moe import api
+from aklr.ops.situv2_a4w4_moe import api
 
 __all__ = ["api"]
