@@ -1,0 +1,326 @@
+{
+  "schema_version": 5,
+  "name": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
+  "contract_id": "situv2_a4w4_moe@1.0",
+  "description": "aiter's fused MoE as vLLM calls it for SiTUv2 experts with MXFP4 weights and MXFP4 activations (VLLM_ROCM_USE_AITER_MOE_SITUV2 a4w4, AITER_SITUV2_A4W4): each token through its top-k experts, down(situ(gate(x)) * linear(up(x))) of fp4 weights at an e8m0 scale per 32, each stage's activations rounded to MXFP4, weighted by its routing weight, summed. w1 keeps the gate rows before the up rows; aiter's a16w4 shuffle, gate and up not interleaved, holds both weights and both scales.",
+  "op_type": "situv2_a4w4_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 3584,
+      "description": "Hidden size."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 896,
+      "description": "Experts."
+    },
+    "topk": {
+      "type": "const",
+      "value": 16,
+      "description": "Experts per token."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 384,
+      "description": "Expert intermediate size."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 768,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 112,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 12,
+      "description": "w2 scale columns."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per expert."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 895,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -9,
+        "log2_hi": -3
+      },
+      "description": "Per 1 x 32 block of w2."
+    },
+    "beta": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "SiTUv2 gate saturation."
+    },
+    "linear_beta": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "SiTUv2 up saturation."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1024
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3000
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4096
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4632
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4712
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6144
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6240
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7680
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7688
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8192
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16384
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "a16w4_shuffled": {
+        "layouts": {
+          "w1": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w2": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w1_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          },
+          "w2_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 2
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.001,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}
