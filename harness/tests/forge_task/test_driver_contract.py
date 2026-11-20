@@ -245,6 +245,30 @@ def test_publish_keeps_the_kernel_in_the_checkout_to_commit(run, aklr_root: Path
     assert "python -m aklr export check" in out
 
 
+def test_a_plugin_ops_kernel_is_published_under_its_own_package(aklr_root: Path, tmp_path: Path, capsys):
+    """A plugin op's schemas and kernels live in its package under aklr/plugins, which aklr/ops must not shadow."""
+    from forge_task import cli
+
+    payload = schema_payload("kimi_k3_sgl_kda_decode_n_heads12", op_type="kda_triton")
+    op = aklr_root / "aklr" / "plugins" / "sglang" / "layers" / "kda_triton"
+    schema = op / "impls" / "flydsl" / payload["name"] / "0123456789abcdef.json"
+    schema.parent.mkdir(parents=True)
+    schema.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    run = workspace.materialize(
+        load(schema),
+        tmp_path / "plugin_run",
+        aklr_root=aklr_root,
+        language="flydsl",
+        starting_kernel={"kernel.py": STARTING_KERNEL},
+        anchor="baseline",
+    )
+    run.kernel.write_text(CANDIDATE_KERNEL, encoding="utf-8")
+    assert cli.main(["publish", str(run.root)]) == 0
+    published = Path(capsys.readouterr().out.split("published: ")[1].splitlines()[0])
+    assert published.parent.parent.parent.parent == op.relative_to(aklr_root)
+    assert not (aklr_root / "aklr" / "ops" / "kda_triton").exists()
+
+
 def test_finding_kinds_split_into_wrong_and_slow(run):
     """A speed finding grades a workload AKLR still serves the baseline for; only a correctness one fails it."""
     driver = _import_driver(run)
