@@ -15,7 +15,6 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from aklr.core.contract import semantics
 from aklr.core.contract.fastkey import FastKeyCodec, FastKeyFnGenerator
 from aklr.core.contract.locate import committed_schema_paths, op_dir, schema_relative_path, schema_uuid
 from aklr.core.contract.op import OpContract
@@ -61,8 +60,7 @@ def point(n, hidden=HIDDEN, latent=LATENT, tp=TP):
 def reference(group_args, rank=0):
     n, latent = group_args[0]["routed"].shape
     hidden = group_args[0]["shared"].shape[1]
-    return kimi_k3_latent_moe_tail_reference(point(n, hidden, latent, len(group_args)), group_args, rank,
-                                             semantics.to_float32)  # fmt: skip
+    return kimi_k3_latent_moe_tail_reference(point(n, hidden, latent, len(group_args)), group_args, rank)
 
 
 # ---------------------------------------------------------------- the reference

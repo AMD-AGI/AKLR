@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The stage from vLLM's own ops, in their order and in the dtype ``decode`` gives, rounded to bf16 where vLLM hands
+"""The stage from vLLM's own ops, in their order and in float32, rounded to bf16 where vLLM hands
 a bf16 tensor from one kernel to the next: f_b_proj's GEMM (raw_g), ``causal_conv1d_update`` with the accepted counts
 and SiLU (its bf16 output), the speculative recurrence of ``fused_recurrent_kda`` into vLLM's bf16 core_attn_out,
 then ``FusedRMSNormGated`` with the sigmoid."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from aklr.core.contract.semantics import to_float32
 from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.contract import L2_NORM_EPS
 
 if TYPE_CHECKING:
@@ -103,7 +104,6 @@ def _spec_recurrence(
 def kimi_k3_kda_spec_stage_c_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor, Tensor]:
     """(out, conv_state, state_cache) as the call leaves them."""
     import torch
@@ -119,12 +119,12 @@ def kimi_k3_kda_spec_stage_c_reference(
     live = [start > 0 for start in starts]
 
     # (1) f_b_proj: vLLM's GEMM writes bf16
-    f_a = decode(args["f_a"], dtypes["f_a"])[:rows, 0]
-    raw_g = _bf16(f_a @ decode(args["f_b_weight"], dtypes["f_b_weight"]).T).view(rows, heads, dim)
+    f_a = to_float32(args["f_a"], dtypes["f_a"])[:rows, 0]
+    raw_g = _bf16(f_a @ to_float32(args["f_b_weight"], dtypes["f_b_weight"]).T).view(rows, heads, dim)
     # (2) the convolution of the windows' packed q|k|v columns
-    conv_state = decode(args["conv_state"], dtypes["conv_state"]).clone()
-    qkv = decode(args["qkv"], dtypes["qkv"])[:rows].flatten(1)
-    conv_weight = decode(args["conv_weight"], dtypes["conv_weight"])
+    conv_state = to_float32(args["conv_state"], dtypes["conv_state"]).clone()
+    qkv = to_float32(args["qkv"], dtypes["qkv"])[:rows].flatten(1)
+    conv_weight = to_float32(args["conv_weight"], dtypes["conv_weight"])
     y = spec_conv_update(
         qkv, conv_weight, conv_state, [slots[s * window] for s in range(n_seqs)], accepted, live
     )
@@ -132,10 +132,10 @@ def kimi_k3_kda_spec_stage_c_reference(
     o, state_cache = _spec_recurrence(
         y.view(rows, 3 * heads, dim),
         raw_g,
-        decode(args["raw_beta"], dtypes["raw_beta"])[:rows],
-        decode(args["a_log"], dtypes["a_log"]),
-        decode(args["g_bias"], dtypes["g_bias"]),
-        decode(args["state_cache"], dtypes["state_cache"]),
+        to_float32(args["raw_beta"], dtypes["raw_beta"])[:rows],
+        to_float32(args["a_log"], dtypes["a_log"]),
+        to_float32(args["g_bias"], dtypes["g_bias"]),
+        to_float32(args["state_cache"], dtypes["state_cache"]),
         slots,
         accepted,
         args["scale"],
@@ -143,8 +143,8 @@ def kimi_k3_kda_spec_stage_c_reference(
     )
     # (4) the gated RMSNorm of vLLM's bf16 core_attn_out
     o = _bf16(o)
-    gate = decode(args["out_gate"], dtypes["out_gate"])[:rows]
-    norm_weight = decode(args["norm_weight"], dtypes["norm_weight"])
+    gate = to_float32(args["out_gate"], dtypes["out_gate"])[:rows]
+    norm_weight = to_float32(args["norm_weight"], dtypes["norm_weight"])
     rstd = 1 / torch.sqrt((o * o).sum(-1, keepdim=True) / dim + args["eps"])  # FLA's layer_norm_gated, RMS
     normed = o * rstd * norm_weight * torch.sigmoid(gate)
     is_live = torch.tensor(live, device=o.device).repeat_interleave(window)[:, None, None]
