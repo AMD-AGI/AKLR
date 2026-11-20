@@ -2,12 +2,13 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """vLLM's routes to the DeepSeek-V4.1 ops: the kernels of vLLM's own chain, reached one by one.
-The sparse MLA, the MXFP8 linears and wo_a's groups here; the routed experts through aiter's
-fused_moe."""
+The sparse MLA, the MXFP8 linears, wo_a's groups and the compressor's KV/score projection here;
+the routed experts through aiter's fused_moe."""
 
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.ops.gemm.api import gemm
 from aklr.plugins.sglang.models.deepseekv41 import (
     deepseekv41_mxfp8_linear,
     deepseekv41_sparse_mla,
@@ -22,6 +23,8 @@ _VLLM = ("0.33.0rc1.dev910", "0.34.0")
 _RECORD = 584
 _ROCM = "vllm.models.deepseek_v41.amd.rocm"
 _ATTENTION = f"{_ROCM}.DeepseekV41ROCMAiterMLAAttention"
+_KV_SCORE = "vllm.models.deepseek_v4.compressor.DeepseekV4CompressorKVScoreLinear"
+_MONO = "vllm.models.deepseek_v41.amd.mono_decode"
 _LINEAR = "vllm.model_executor.kernels.linear.mxfp8.rocm_native.RocmDotScaledMxfp8LinearKernel"
 
 
@@ -152,3 +155,38 @@ def _apply_weights(self, layer, x, bias=None):
         return out
     out = out.view(*shape[:-1], weight.shape[0])
     return out if bias is None else out + bias
+
+
+@vllm_route(_KV_SCORE, f"{_KV_SCORE}.forward", versions=_VLLM)
+def _kv_score_forward(self, input_):
+    """The compressor's fused KV/score projection where vLLM runs a layer's input projections
+    one after another: bf16 rows on a bf16 weight, fp32 out, as one gemm."""
+    import torch
+
+    return gemm(input_, self.weight, out_dtype=torch.float32)
+
+
+# shortcut: vLLM's other two chains call torch.mm on the same weight inline, and torch.mm is no
+# route target (a builtin without a signature, shared by the whole process); the routes below ask
+# the op for the projection, which records the call, and leave the chain to vLLM. Compute it here
+# once vLLM calls the projection through DeepseekV4CompressorKVScoreLinear.forward there too.
+@vllm_route(_ATTENTION, f"{_ATTENTION}._forward_csa2_full", versions=_VLLM)
+def _forward_csa2_full(self, hidden_states, positions):
+    """The projection inside the chain vLLM forks over its streams, on the layers with a compressor."""
+    import torch
+
+    weight = self.compressor.fused_wkv_wgate.weight
+    return (
+        gemm.fallback_reason(hidden_states, weight, out_dtype=torch.float32) or FallbackReason.OUT_OF_CONTRACT
+    )
+
+
+@vllm_route(_MONO, f"{_MONO}._select", versions=_VLLM)
+def _select(layer, positions, normed, qr):
+    """The projection inside a decode step's top-k selection, on the layers with a compressor."""
+    import torch
+
+    if layer.attn.compressor is None:
+        return FallbackReason.OUT_OF_CONTRACT
+    weight = layer.attn.compressor.fused_wkv_wgate.weight
+    return gemm.fallback_reason(normed, weight, out_dtype=torch.float32) or FallbackReason.OUT_OF_CONTRACT
