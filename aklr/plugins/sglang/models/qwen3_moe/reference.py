@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What the contract says, in torch, in the dtype the inputs decode to: nothing rounded or
+"""What the contract says, in torch, in float32: nothing rounded or
 quantized in between (the kernels' float32 and bf16 steps are theirs) but the router's
 logits, rounded once to bf16 as the block's gate returns them, which pick the experts, and
 what the checkpoint's FP8 scheme quantizes: each expert linear's input (_fp8_input)."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from aklr.core.contract.semantics import rounded_to_bfloat16
+from aklr.core.contract.semantics import rounded_to_bfloat16, to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -24,13 +24,11 @@ _BLOCK = 128  # the FP8 scheme's block: 128 x 128 of a weight, 1 x 128 of an inp
 def _router_logits(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    """hidden_states router_weight^T, exact (float64), rounded to bf16, in the decoded
-    dtype."""
-    x = decode(row_major_args["hidden_states"], point.dtypes["hidden_states"])
-    w = decode(row_major_args["router_weight"], point.dtypes["router_weight"])
-    return rounded_to_bfloat16(x.double() @ w.double().T).to(x.dtype)
+    """hidden_states router_weight^T, rounded to bf16, in float32."""
+    x = to_float32(row_major_args["hidden_states"], point.dtypes["hidden_states"])
+    w = to_float32(row_major_args["router_weight"], point.dtypes["router_weight"])
+    return rounded_to_bfloat16(x @ w.T)
 
 
 def _routed(logits: Tensor, topk: int) -> tuple[Tensor, Tensor]:
@@ -66,7 +64,6 @@ def _dequantized(weight: Tensor, scale: Tensor) -> Tensor:
 def qwen3_moe_fp8_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """This rank's share of the block's output: each token's routed experts (the bf16
     logits' top-k, _router_logits and _routed) weighed by their renormalized softmax, each
@@ -75,9 +72,9 @@ def qwen3_moe_fp8_moe_reference(
 
     def f(name: str, e: int | None = None) -> Tensor:
         tensor = row_major_args[name]
-        return decode(tensor if e is None else tensor[e], point.dtypes[name])
+        return to_float32(tensor if e is None else tensor[e], point.dtypes[name])
 
-    weights, ids = _routed(_router_logits(point, row_major_args, decode), point.attrs["topk"])
+    weights, ids = _routed(_router_logits(point, row_major_args), point.attrs["topk"])
     x = f("hidden_states")
     x_fp8 = _fp8_input(x)
     out = torch.zeros_like(x)

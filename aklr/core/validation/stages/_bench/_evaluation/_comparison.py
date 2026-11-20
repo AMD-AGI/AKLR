@@ -23,7 +23,7 @@ def is_reference_comparable(
 ) -> bool:
     rounded = {o: r.to(semantics.torch_dtypes(output_dtypes[o])[0]) for o, r in reference_outputs.items()}
     is_finite_where_reference_is = all(
-        (rounded[o].double().isfinite() | ~r.isfinite()).all() for o, r in reference_outputs.items()
+        (rounded[o].float().isfinite() | ~r.isfinite()).all() for o, r in reference_outputs.items()
     )
     return is_finite_where_reference_is and all(r.is_passed for r in compared(rounded).values())
 

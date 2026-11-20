@@ -526,13 +526,17 @@ def _agrees(stressed, alone, determinism: str, max_fraction: float, element_orde
     if determinism == "bitwise" or not alone.is_floating_point():
         return torch.equal(stressed.contiguous().view(torch.uint8), alone.contiguous().view(torch.uint8))
     unit = torch.finfo(alone.dtype).eps / 2
-    stressed, alone = stressed.double(), alone.double()
+    stressed, alone = stressed.float(), alone.float()
     finite = torch.isfinite(alone)
     if bool((finite & ~torch.isfinite(stressed)).any()):
         return False
+    # both over the peak first: the bound and the difference can pass float32's range
+    peak = alone[finite].abs().max() if bool(finite.any()) else torch.tensor(0.0)
+    if 0 < peak < torch.inf:
+        stressed, alone = stressed / peak, alone / peak
     bound = STRESS_BOUNDED_ULPS * unit * (alone.abs() + alone[finite].abs().mean())
     off = finite & ((stressed - alone).abs() > bound)
-    return float(off.double().mean()) <= max_fraction
+    return off.numel() == 0 or int(off.sum()) / off.numel() <= max_fraction
 
 
 def _run_stress(device: str = "cuda") -> int:

@@ -123,7 +123,7 @@ class _Op:
         self.calls.append(call)
         x, conv_state = call["x"], call["conv_state"]
         point = SimpleNamespace(dtypes={"x": "bfloat16", "weight": "float32", "conv_state": "bfloat16"})
-        q, k, v, state = kimi_k3_kda_conv_reference(point, call, lambda t, _: t)
+        q, k, v, state = kimi_k3_kda_conv_reference(point, call)
         conv_state.copy_(state)
         return q.to(x.dtype), k.to(x.dtype), v.to(x.dtype)
 
@@ -132,14 +132,14 @@ def _aiters_result(call):
     """What aiter's kernel computes, from its operands as it reads them: per sequence, its slot's
     first width - 1 state rows (or zeros) then its tokens, convolved per channel, with silu;
     q, k and v in conv_states' dtype, and each slot it names left holding the window's last inputs."""
-    x, weight, states = call["x"].t().double(), call["weight"].double(), call["conv_states"].clone()
+    x, weight, states = call["x"].t().float(), call["weight"].float(), call["conv_states"].clone()
     offsets, slots, resumes = (
         call[n].tolist() for n in ("query_start_loc", "cache_indices", "has_initial_state")
     )
     y = torch.empty_like(x)
     for seq, (slot, resume) in enumerate(zip(slots, resumes, strict=True)):
         start, end = offsets[seq], offsets[seq + 1]
-        head = states[slot, :, : WIDTH - 1].t().double() if resume else torch.zeros(WIDTH - 1, DIM).double()
+        head = states[slot, :, : WIDTH - 1].t().float() if resume else torch.zeros(WIDTH - 1, DIM)
         window = torch.cat((head, x[start:end]))
         z = torch.nn.functional.conv1d(window.t()[None], weight[:, None, :], groups=DIM)[0].t()
         y[start:end] = torch.nn.functional.silu(z)
