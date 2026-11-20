@@ -12,6 +12,12 @@ api() {
 
 name=aklr-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${GITHUB_JOB%-test}
 storage=$(awk '$2 ~ "^/shared_nfs/users/[^/]+$" {print $2; exit}' /proc/mounts)
+if [[ -z $storage ]]; then
+  echo "::error::This runner has no /shared_nfs/users/<user> mount to share with the GPU pod"
+  grep -E ' (nfs|nfs4|ceph|wekafs|fuse[^ ]*) ' /proc/mounts || true
+  id; df -h /shared_nfs 2>&1 || true; ls -ld /shared_nfs /shared_nfs/users /shared_nfs/users/* 2>&1 | head -40 || true
+  exit 1
+fi
 export RUN_DIR=$storage/aklr-ci-runs/$name
 
 if [[ ${1:-} == delete ]]; then
