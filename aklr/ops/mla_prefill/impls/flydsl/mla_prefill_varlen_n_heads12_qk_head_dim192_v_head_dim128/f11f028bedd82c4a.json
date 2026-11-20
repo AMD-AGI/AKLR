@@ -1,42 +1,80 @@
 {
-  "schema_version": 5,
   "name": "mla_prefill_varlen_n_heads12_qk_head_dim192_v_head_dim128",
-  "contract_id": "mla_prefill_varlen@1.0",
-  "description": "MLA's prefill attention once kv_b has expanded the latent keys, every head on its own: sequence s's queries are q's rows cu_seqlens_q[s]:cu_seqlens_q[s + 1], its keys and values the rows cu_seqlens_k[s]:cu_seqlens_k[s + 1] of k and v (with no prefix, the queries' own rows). Causal, aligned at the end: query i of a sequence of Lq queries over Lk keys reads keys 0 .. Lk - Lq + i. Logits q . k * sm_scale over qk_head_dim; output the softmax-weighted sum of v. With qkv_fp8 a kernel may round q, k and v to float8_e4m3fn first, as aiter's fp8 prefill does.",
-  "op_type": "mla_prefill",
+  "op_type": "mla_prefill_varlen",
   "axes": {
     "n_q": {
-      "type": "var",
-      "description": "Query rows, every sequence's back to back."
+      "description": "Query rows, every sequence's back to back.",
+      "type": "var"
     },
     "n_kv": {
-      "type": "var",
-      "description": "Key and value rows, every sequence's back to back."
+      "description": "Key and value rows, every sequence's back to back.",
+      "type": "var"
     },
     "n_offsets": {
-      "type": "var",
-      "description": "Sequence offsets: sequences + 1."
+      "description": "Sequence offsets: sequences + 1.",
+      "type": "var"
     },
     "n_heads": {
-      "type": "const",
+      "description": "Heads on this rank; k and v carry q's.",
       "value": 12,
-      "description": "Heads on this rank; k and v carry q's."
+      "type": "const"
     },
     "qk_head_dim": {
-      "type": "const",
+      "description": "Values per q and k head: the no-rope and rope parts.",
       "value": 192,
-      "description": "Values per q and k head: the no-rope and rope parts."
+      "type": "const"
     },
     "v_head_dim": {
-      "type": "const",
+      "description": "Values per v and output head.",
       "value": 128,
-      "description": "Values per v and output head."
+      "type": "const"
     }
   },
-  "attrs": {
-    "has_prefix": false,
-    "qkv_fp8": true
+  "variant": {
+    "default": "sm_scale is not None and cu_seqlens_k is None"
   },
+  "workloads": [
+    {
+      "axes": {
+        "n_q": 893,
+        "n_kv": 893,
+        "n_offsets": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_q": 1696,
+        "n_kv": 1696,
+        "n_offsets": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_q": 2732,
+        "n_kv": 2732,
+        "n_offsets": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_q": 9397,
+        "n_kv": 9397,
+        "n_offsets": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 16384,
+        "n_offsets": 2
+      },
+      "evaluations": []
+    }
+  ],
   "inputs": {
     "q": {
       "shape": [
@@ -45,9 +83,6 @@
         "qk_head_dim"
       ],
       "dtype": "bfloat16",
-      "distribution": {
-        "kind": "finite"
-      },
       "description": "Queries."
     },
     "k": {
@@ -57,9 +92,6 @@
         "qk_head_dim"
       ],
       "dtype": "bfloat16",
-      "distribution": {
-        "kind": "finite"
-      },
       "description": "Keys."
     },
     "v": {
@@ -69,9 +101,6 @@
         "v_head_dim"
       ],
       "dtype": "bfloat16",
-      "distribution": {
-        "kind": "finite"
-      },
       "description": "Values."
     },
     "cu_seqlens_q": {
@@ -79,17 +108,24 @@
         "n_offsets"
       ],
       "dtype": "int32",
-      "distribution": {
-        "kind": "cu_seqlens",
-        "min_seqlen": 1,
-        "total": "n_q"
-      },
       "description": "Where each sequence's queries start in q, then where the last ends."
     },
+    "qkv_fp8": {
+      "dtype": "bool",
+      "description": "Whether a kernel may round q, k and v to float8_e4m3fn, scale 1, before it attends.",
+      "shape": null
+    },
+    "cu_seqlens_k": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "description": "Where each sequence's keys start in k and v, then where the last ends."
+    },
     "sm_scale": {
-      "shape": null,
       "dtype": "float32",
-      "description": "Multiplies every logit."
+      "description": "Multiplies every logit.",
+      "shape": null
     }
   },
   "outputs": {
@@ -103,104 +139,33 @@
       "description": "The softmax-weighted sum of the values each query reads."
     }
   },
-  "workloads": [
-    {
-      "axes": {
-        "n_q": 893,
-        "n_kv": 893,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 7.855,
-      "microseconds": 11.9
-    },
-    {
-      "axes": {
-        "n_q": 1696,
-        "n_kv": 1696,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 3.539,
-      "microseconds": 35.6
-    },
-    {
-      "axes": {
-        "n_q": 2732,
-        "n_kv": 2732,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 3.816,
-      "microseconds": 46.2
-    },
-    {
-      "axes": {
-        "n_q": 9397,
-        "n_kv": 9397,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.72,
-      "microseconds": 196.0
-    },
-    {
-      "axes": {
-        "n_q": 16384,
-        "n_kv": 16384,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.162,
-      "microseconds": 510.0
-    }
+  "tags": [],
+  "description": "MLA's prefill attention once kv_b has expanded the latent keys, every head on its own: sequence s's queries are q's rows cu_seqlens_q[s]:cu_seqlens_q[s + 1], its keys and values the rows cu_seqlens_k[s]:cu_seqlens_k[s + 1] of k and v (with no prefix, the queries' own rows). Causal, aligned at the end: query i of a sequence of Lq queries over Lk keys reads keys 0 .. Lk - Lq + i. Logits q . k * sm_scale over qk_head_dim; output the softmax-weighted sum of v. With qkv_fp8 a kernel may round q, k and v to float8_e4m3fn first, as aiter's fp8 prefill does.",
+  "constraints": [
+    "n_offsets - 1 <= n_q",
+    "cu_seqlens_k is None and n_kv == n_q"
   ],
-  "layout_variants": {
-    "by_name": {
-      "row_major": {
-        "layouts": {},
-        "detect_facts": []
-      }
-    }
-  },
-  "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
-  },
   "kernel": {
-    "language": "flydsl",
-    "targets": [
-      {
-        "arch": "gfx950",
-        "hardware": "MI355X"
-      }
-    ],
-    "requires": {
-      "flydsl": ">=0.3.2",
-      "aiter": ">=0.1.21"
-    },
+    "name": "mla_prefill_varlen_n_heads12_qk_head_dim192_v_head_dim128_flydsl_f11f028bedd82c4a",
     "author": "kyle-256",
-    "entry_point": "kernel.py::run",
+    "build": {
+      "language": "flydsl",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "requires": {
+        "flydsl": ">=0.3.2",
+        "aiter": ">=0.1.21"
+      },
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
     "sources": [
       {
         "path": "kernel.py",
-        "content": "\"\"\"MLA prefill attention, causal, every head on its own, routed by shape.\n\nOne sequence of at most ``_SHORT_MAX_ROWS`` rows runs on the FlyDSL short-sequence kernel (``short_attn``).\n\nOne sequence of at least ``_FP8_MIN_ROWS`` rows runs on aiter's fp8 assembly MLA prefill\n(``mla_prefill_ps_asm_fwd``, qk 192 / v 128) after q, k and v are rounded to float8_e4m3fn in one FlyDSL\nlaunch (``qkv_fp8``), as the contract allows. Its persistent work list is built here per shape instead of by\naiter's planner: one item per (head, 256-row query tile) walking the tile's causal key range, dealt longest\nfirst to the least loaded CU with a key-length plus fixed cost model, then rebalanced by moves and swaps.\nWhere the longest CU load is far above the mean, the longest walks are split into key pieces that write fp32\npartials, and a FlyDSL launch (``split_merge``) merges them.\n\nAny other single sequence runs on aiter's gfx950 assembly forward (``fmha_v3_varlen_fwd``, 128-row Q tiles) in\ngroup mode, one group per 128-row Q block: group ``g`` holds the block's queries over keys ``[0, end of\nblock)``, causal aligned at the end, which is the block's own causal walk. Groups are ordered longest first,\nand when one group per block would need more than one round of workgroups the shortest blocks are paired into\n256-row groups, which the kernel's head/tail merge runs as one workgroup. The groups' real lengths and\nphysical row offsets are shape constants, since a single sequence starts at row 0.\n\"\"\"\n\nimport functools\nimport heapq\n\nimport torch\n\nfrom .qkv_fp8 import launcher as to_fp8\nfrom .short_attn import launcher as short_attn\nfrom .split_merge import descriptors, merge\n\n_ONE_ROUND_WG = 256\n\n# longest single sequence run on the FlyDSL short-sequence kernel\n_SHORT_MAX_ROWS = 1024\n\n_V3_BLOCK = 128\n_V3_MAX_BLOCKS = 24\n# 128-row blocks paired into one group, smallest first, when one group per block exceeds a round\n_V3_PAIRS_OVER_ROUND = 4\n\n\n# plans kept per shape: a forward's layers share one, and serving sees new lengths without end\n_PLANS_KEPT = 64\n\n\n@functools.lru_cache(maxsize=_PLANS_KEPT)\ndef _v3_plan(n_q: int, n_heads: int, n_offsets: int, device):\n    \"\"\"For one short sequence: the per-block groups' real offsets, their physical offsets relative to the\n    sequence start, and the longest group; ``None`` otherwise.\"\"\"\n    if n_offsets != 2:\n        return None\n    n_blocks = -(-n_q // _V3_BLOCK)\n    if n_blocks > _V3_MAX_BLOCKS:\n        return None\n    bounds = [min(_V3_BLOCK * i, n_q) for i in range(n_blocks + 1)]\n    pairs = _V3_PAIRS_OVER_ROUND if n_blocks * n_heads > _ONE_ROUND_WG else 0\n    pairs = min(pairs, n_blocks // 2)\n    groups = [(bounds[2 * p], bounds[2 * p + 2]) for p in range(pairs)]\n    groups += [(bounds[j], bounds[j + 1]) for j in range(2 * pairs, n_blocks)]\n    groups.sort(key=lambda g: -g[1])\n    seqstart_q, seqstart_k = [0], [0]\n    for r0, r1 in groups:\n        seqstart_q.append(seqstart_q[-1] + r1 - r0)\n        seqstart_k.append(seqstart_k[-1] + r1)\n    # physical offsets: a single sequence always starts at row 0 (the offsets' first entry is 0)\n    as_tensor = functools.partial(torch.tensor, dtype=torch.int32, device=device)\n    return (\n        as_tensor(seqstart_q),\n        as_tensor(seqstart_k),\n        as_tensor([r0 for r0, _ in groups] + [n_q]),\n        as_tensor([0] * len(groups) + [n_q]),\n        max(r1 - r0 for r0, r1 in groups),\n    )\n\n\n_FP8_TILE = 256  # the fp8 assembly prefill's query rows per work item\n_FP8_KV_UNIT = 128  # keys per unit of a work item's cost\n_FP8_WORK_COST = 1.0  # a work item's fixed cost, in key units\n_FP8_MIN_ROWS = 2048  # shortest single sequence run on the fp8 path\n# split the key walks when the longest CU load exceeds this many times the mean\n_SPLIT_IMBALANCE = 1.5\n\n\ndef _rebalance(bins, loads, eps=1e-9):\n    \"\"\"Lower the busiest CU's load by moving one of its items to another CU, or swapping it for a smaller one,\n    while either step leaves both CUs below the old maximum; the step taken is the one with the lowest new\n    pair maximum.\"\"\"\n    while True:\n        m = max(range(len(bins)), key=lambda c: (loads[c], -c))\n        best = None\n        for i, a in enumerate(bins[m]):\n            for c in range(len(bins)):\n                if c == m:\n                    continue\n                if loads[c] + a[0] < loads[m] - eps:\n                    cand = (max(loads[m] - a[0], loads[c] + a[0]), i, c, None)\n                    if best is None or cand[0] < best[0] - eps:\n                        best = cand\n                for j, b in enumerate(bins[c]):\n                    d = a[0] - b[0]\n                    if d > eps and loads[c] + d < loads[m] - eps:\n                        cand = (max(loads[m] - d, loads[c] + d), i, c, j)\n                        if best is None or cand[0] < best[0] - eps:\n                            best = cand\n        if best is None:\n            return\n        _, i, c, j = best\n        a = bins[m][i]\n        if j is None:\n            bins[m].pop(i)\n            bins[c].append(a)\n            loads[m] -= a[0]\n            loads[c] += a[0]\n        else:\n            b = bins[c][j]\n            bins[m][i], bins[c][j] = b, a\n            loads[m] -= a[0] - b[0]\n            loads[c] += a[0] - b[0]\n\n\ndef _fp8_deal(n_q: int, n_heads: int, n_cu: int, max_units):\n    \"\"\"Each (head, 256-row query tile) walks its causal key range whole, or, past ``max_units`` key units, in\n    near-equal 128-key-aligned pieces that write partial outputs (one partial slot per piece, shared by the\n    heads); items are dealt longest first to the least loaded CU, then rebalanced. Returns the per-CU items\n    and loads, the slot count and the split tiles as ``(first row, rows, slots)``.\"\"\"\n    items, merges = [], []\n    n_slots = 0\n    for j in range(-(-n_q // _FP8_TILE)):\n        r0, r1 = j * _FP8_TILE, min(j * _FP8_TILE + _FP8_TILE, n_q)\n        units = -(-r1 // _FP8_KV_UNIT)\n        pieces = 1 if max_units is None else -(-units // max_units)\n        bounds = [min(round(units * p / pieces) * _FP8_KV_UNIT, r1) for p in range(pieces + 1)]\n        slots = [-1] if pieces == 1 else list(range(n_slots, n_slots + pieces))\n        if pieces > 1:\n            n_slots += pieces\n            merges.append((r0, r1 - r0, tuple(slots)))\n        for h in range(n_heads):\n            for k0, k1, slot in zip(bounds, bounds[1:], slots):\n                items.append(((k1 - k0) / _FP8_KV_UNIT + _FP8_WORK_COST, h, r0, r1, k0, k1, slot))\n    items.sort(key=lambda t: (-t[0], t[1], t[2], t[4]))\n    heap = [(0.0, c) for c in range(n_cu)]\n    bins = [[] for _ in range(n_cu)]\n    loads = [0.0] * n_cu\n    for item in items:\n        load, c = heapq.heappop(heap)\n        bins[c].append(item)\n        loads[c] = load + item[0]\n        heapq.heappush(heap, (loads[c], c))\n    _rebalance(bins, loads)\n    return bins, loads, n_slots, tuple(merges)\n\n\n@functools.lru_cache(maxsize=_PLANS_KEPT)\ndef _fp8_plan(n_q: int, n_heads: int, n_offsets: int, device):\n    \"\"\"For one sequence of at least ``_FP8_MIN_ROWS`` rows: the fp8 prefill's work list, with the key walks\n    split (``_fp8_deal``) only when the longest unsplit CU load exceeds ``_SPLIT_IMBALANCE`` times the mean,\n    into the piece size that minimizes the longest load (then the slot count); ``None`` otherwise.\"\"\"\n    if n_offsets != 2 or n_q < _FP8_MIN_ROWS:\n        return None\n    n_cu = torch.cuda.get_device_properties(device).multi_processor_count\n    bins, loads, n_slots, merges = _fp8_deal(n_q, n_heads, n_cu, None)\n    if max(loads) > _SPLIT_IMBALANCE * sum(loads) / n_cu:\n        bins, loads, n_slots, merges = min(\n            (_fp8_deal(n_q, n_heads, n_cu, units) for units in range(2, int(max(loads)) + 1)),\n            key=lambda plan: (max(plan[1]), plan[2]),\n        )\n    indptr, works = [0], []\n    for b in bins:\n        # batch, partial row (-1: write the output), query rows, key rows, keys past the piece up to the\n        # tile's causal end, heads [h, h + 1)\n        works += [\n            [0, slot * _FP8_TILE if slot >= 0 else -1, r0, r1, k0, k1, r1 - k1, ((h + 1) << 16) | h]\n            for _, h, r0, r1, k0, k1, slot in sorted(b, key=lambda t: (-t[0], t[1], t[2], t[4]))\n        ]\n        indptr.append(len(works))\n    as_tensor = functools.partial(torch.tensor, dtype=torch.int32, device=device)\n    return (\n        as_tensor(indptr),\n        as_tensor(works),\n        torch.arange(n_q, dtype=torch.int32, device=device),\n        torch.ones((), dtype=torch.float32, device=device),\n        n_slots,\n        descriptors(merges, n_heads, _FP8_TILE, device) if merges else None,\n    )\n\n\ndef _fp8_run(q, k, v, cu_seqlens_q, sm_scale, output, plan):\n    from aiter import mla_prefill_ps_asm_fwd\n\n    work_indptr, work_info, indices, one, n_slots, split = plan\n    n_q, n_heads, v_dim = q.shape[0], q.shape[1], v.shape[-1]\n    f8 = torch.float8_e4m3fn\n    qf, kf, vf = (torch.empty(x.shape, dtype=f8, device=x.device) for x in (q, k, v))\n    to_fp8(n_q, q.shape[1] * q.shape[2], v.shape[1] * v.shape[2], q.device)(q, k, v, qf, kf, vf)\n    # every slot the merge reads is written whole by its piece; unsplit items write ``output`` directly\n    rows = max(n_slots, 1) * _FP8_TILE\n    logits = torch.empty((rows, n_heads, v_dim), dtype=torch.float32, device=q.device)\n    lse = torch.empty((rows, n_heads), dtype=torch.float32, device=q.device)\n    mla_prefill_ps_asm_fwd(\n        qf, kf, vf, cu_seqlens_q, cu_seqlens_q, indices, work_indptr, work_info, n_q,\n        float(sm_scale), True, logits, lse, output, one, one, one,\n    )  # fmt: skip\n    if split is not None:\n        merge(split, n_heads, v_dim, rows, n_q, logits, lse, output)\n\n\ndef run(*, q, k, v, cu_seqlens_q, qkv_fp8, cu_seqlens_k, sm_scale, output):\n    from aiter.ops.mha import fmha_v3_varlen_fwd\n\n    n_q, n_heads = q.shape[0], q.shape[1]\n    fp8 = (\n        _fp8_plan(n_q, n_heads, cu_seqlens_q.shape[0], q.device) if cu_seqlens_k is None and qkv_fp8 else None\n    )\n    if fp8 is not None:\n        _fp8_run(q, k, v, cu_seqlens_q, sm_scale, output, fp8)\n        return\n    if cu_seqlens_k is None and cu_seqlens_q.shape[0] == 2 and n_q <= _SHORT_MAX_ROWS:\n        short_attn(n_q, n_heads, q.shape[2], v.shape[2], float(sm_scale))(q, k, v, output)\n        return\n    v3 = _v3_plan(n_q, n_heads, cu_seqlens_q.shape[0], q.device) if cu_seqlens_k is None else None\n    if v3 is not None:\n        seqstart_q, seqstart_k, pad_q, pad_k, max_q = v3\n        # physical offsets: every group's queries at its block's rows, its keys from the sequence start\n        fmha_v3_varlen_fwd(\n            q,\n            k,\n            v,\n            seqstart_q,\n            seqstart_k,\n            max_q,\n            n_q,\n            0,\n            0.0,\n            float(sm_scale),\n            0.0,\n            False,\n            True,\n            -1,\n            0,\n            False,\n            False,\n            1,\n            out=output,\n            cu_seqlens_q_padded=pad_q,\n            cu_seqlens_k_padded=pad_k,\n        )\n        return\n    # dispatch serves one sequence (the workloads' count) in fp8, which the paths above cover at every length\n    raise ValueError(f\"mla_prefill_varlen: no path for {n_q} rows over {k.shape[0]} keys\")\n"
+        "content": "\"\"\"MLA prefill attention, causal, every head on its own, routed by shape.\n\nOne sequence of at most ``_SHORT_MAX_ROWS`` rows runs on the FlyDSL short-sequence kernel (``short_attn``).\n\nOne sequence of at least ``_FP8_MIN_ROWS`` rows runs on aiter's fp8 assembly MLA prefill\n(``mla_prefill_ps_asm_fwd``, qk 192 / v 128) after q, k and v are rounded to float8_e4m3fn in one FlyDSL\nlaunch (``qkv_fp8``), as the contract allows. Its persistent work list is built here per shape instead of by\naiter's planner: one item per (head, 256-row query tile) walking the tile's causal key range, dealt longest\nfirst to the least loaded CU with a key-length plus fixed cost model, then rebalanced by moves and swaps.\nWhere the longest CU load is far above the mean, the longest walks are split into key pieces that write fp32\npartials, and a FlyDSL launch (``split_merge``) merges them.\n\nAny other single sequence runs on aiter's gfx950 assembly forward (``fmha_v3_varlen_fwd``, 128-row Q tiles) in\ngroup mode, one group per 128-row Q block: group ``g`` holds the block's queries over keys ``[0, end of\nblock)``, causal aligned at the end, which is the block's own causal walk. Groups are ordered longest first,\nand when one group per block would need more than one round of workgroups the shortest blocks are paired into\n256-row groups, which the kernel's head/tail merge runs as one workgroup. The groups' real lengths and\nphysical row offsets are shape constants, since a single sequence starts at row 0.\n\"\"\"\n\nimport functools\nimport heapq\n\nimport torch\n\nfrom .qkv_fp8 import launcher as to_fp8\nfrom .short_attn import launcher as short_attn\nfrom .split_merge import descriptors, merge\n\n_ONE_ROUND_WG = 256\n\n# longest single sequence run on the FlyDSL short-sequence kernel\n_SHORT_MAX_ROWS = 1024\n\n_V3_BLOCK = 128\n_V3_MAX_BLOCKS = 24\n# 128-row blocks paired into one group, smallest first, when one group per block exceeds a round\n_V3_PAIRS_OVER_ROUND = 4\n\n\n# plans kept per shape: a forward's layers share one, and serving sees new lengths without end\n_PLANS_KEPT = 64\n\n\n@functools.lru_cache(maxsize=_PLANS_KEPT)\ndef _v3_plan(n_q: int, n_heads: int, n_offsets: int, device):\n    \"\"\"For one short sequence: the per-block groups' real offsets, their physical offsets relative to the\n    sequence start, and the longest group; ``None`` otherwise.\"\"\"\n    if n_offsets != 2:\n        return None\n    n_blocks = -(-n_q // _V3_BLOCK)\n    if n_blocks > _V3_MAX_BLOCKS:\n        return None\n    bounds = [min(_V3_BLOCK * i, n_q) for i in range(n_blocks + 1)]\n    pairs = _V3_PAIRS_OVER_ROUND if n_blocks * n_heads > _ONE_ROUND_WG else 0\n    pairs = min(pairs, n_blocks // 2)\n    groups = [(bounds[2 * p], bounds[2 * p + 2]) for p in range(pairs)]\n    groups += [(bounds[j], bounds[j + 1]) for j in range(2 * pairs, n_blocks)]\n    groups.sort(key=lambda g: -g[1])\n    seqstart_q, seqstart_k = [0], [0]\n    for r0, r1 in groups:\n        seqstart_q.append(seqstart_q[-1] + r1 - r0)\n        seqstart_k.append(seqstart_k[-1] + r1)\n    # physical offsets: a single sequence always starts at row 0 (the offsets' first entry is 0)\n    as_tensor = functools.partial(torch.tensor, dtype=torch.int32, device=device)\n    return (\n        as_tensor(seqstart_q),\n        as_tensor(seqstart_k),\n        as_tensor([r0 for r0, _ in groups] + [n_q]),\n        as_tensor([0] * len(groups) + [n_q]),\n        max(r1 - r0 for r0, r1 in groups),\n    )\n\n\n_FP8_TILE = 256  # the fp8 assembly prefill's query rows per work item\n_FP8_KV_UNIT = 128  # keys per unit of a work item's cost\n_FP8_WORK_COST = 1.0  # a work item's fixed cost, in key units\n_FP8_MIN_ROWS = 2048  # shortest single sequence run on the fp8 path\n# split the key walks when the longest CU load exceeds this many times the mean\n_SPLIT_IMBALANCE = 1.5\n\n\ndef _rebalance(bins, loads, eps=1e-9):\n    \"\"\"Lower the busiest CU's load by moving one of its items to another CU, or swapping it for a smaller one,\n    while either step leaves both CUs below the old maximum; the step taken is the one with the lowest new\n    pair maximum.\"\"\"\n    while True:\n        m = max(range(len(bins)), key=lambda c: (loads[c], -c))\n        best = None\n        for i, a in enumerate(bins[m]):\n            for c in range(len(bins)):\n                if c == m:\n                    continue\n                if loads[c] + a[0] < loads[m] - eps:\n                    cand = (max(loads[m] - a[0], loads[c] + a[0]), i, c, None)\n                    if best is None or cand[0] < best[0] - eps:\n                        best = cand\n                for j, b in enumerate(bins[c]):\n                    d = a[0] - b[0]\n                    if d > eps and loads[c] + d < loads[m] - eps:\n                        cand = (max(loads[m] - d, loads[c] + d), i, c, j)\n                        if best is None or cand[0] < best[0] - eps:\n                            best = cand\n        if best is None:\n            return\n        _, i, c, j = best\n        a = bins[m][i]\n        if j is None:\n            bins[m].pop(i)\n            bins[c].append(a)\n            loads[m] -= a[0]\n            loads[c] += a[0]\n        else:\n            b = bins[c][j]\n            bins[m][i], bins[c][j] = b, a\n            loads[m] -= a[0] - b[0]\n            loads[c] += a[0] - b[0]\n\n\ndef _fp8_deal(n_q: int, n_heads: int, n_cu: int, max_units):\n    \"\"\"Each (head, 256-row query tile) walks its causal key range whole, or, past ``max_units`` key units, in\n    near-equal 128-key-aligned pieces that write partial outputs (one partial slot per piece, shared by the\n    heads); items are dealt longest first to the least loaded CU, then rebalanced. Returns the per-CU items\n    and loads, the slot count and the split tiles as ``(first row, rows, slots)``.\"\"\"\n    items, merges = [], []\n    n_slots = 0\n    for j in range(-(-n_q // _FP8_TILE)):\n        r0, r1 = j * _FP8_TILE, min(j * _FP8_TILE + _FP8_TILE, n_q)\n        units = -(-r1 // _FP8_KV_UNIT)\n        pieces = 1 if max_units is None else -(-units // max_units)\n        bounds = [min(round(units * p / pieces) * _FP8_KV_UNIT, r1) for p in range(pieces + 1)]\n        slots = [-1] if pieces == 1 else list(range(n_slots, n_slots + pieces))\n        if pieces > 1:\n            n_slots += pieces\n            merges.append((r0, r1 - r0, tuple(slots)))\n        for h in range(n_heads):\n            for k0, k1, slot in zip(bounds, bounds[1:], slots):\n                items.append(((k1 - k0) / _FP8_KV_UNIT + _FP8_WORK_COST, h, r0, r1, k0, k1, slot))\n    items.sort(key=lambda t: (-t[0], t[1], t[2], t[4]))\n    heap = [(0.0, c) for c in range(n_cu)]\n    bins = [[] for _ in range(n_cu)]\n    loads = [0.0] * n_cu\n    for item in items:\n        load, c = heapq.heappop(heap)\n        bins[c].append(item)\n        loads[c] = load + item[0]\n        heapq.heappush(heap, (loads[c], c))\n    _rebalance(bins, loads)\n    return bins, loads, n_slots, tuple(merges)\n\n\n@functools.lru_cache(maxsize=_PLANS_KEPT)\ndef _fp8_plan(n_q: int, n_heads: int, n_offsets: int, device):\n    \"\"\"For one sequence of at least ``_FP8_MIN_ROWS`` rows: the fp8 prefill's work list, with the key walks\n    split (``_fp8_deal``) only when the longest unsplit CU load exceeds ``_SPLIT_IMBALANCE`` times the mean,\n    into the piece size that minimizes the longest load (then the slot count); ``None`` otherwise.\"\"\"\n    if n_offsets != 2 or n_q < _FP8_MIN_ROWS:\n        return None\n    n_cu = torch.cuda.get_device_properties(device).multi_processor_count\n    bins, loads, n_slots, merges = _fp8_deal(n_q, n_heads, n_cu, None)\n    if max(loads) > _SPLIT_IMBALANCE * sum(loads) / n_cu:\n        bins, loads, n_slots, merges = min(\n            (_fp8_deal(n_q, n_heads, n_cu, units) for units in range(2, int(max(loads)) + 1)),\n            key=lambda plan: (max(plan[1]), plan[2]),\n        )\n    indptr, works = [0], []\n    for b in bins:\n        # batch, partial row (-1: write the output), query rows, key rows, keys past the piece up to the\n        # tile's causal end, heads [h, h + 1)\n        works += [\n            [0, slot * _FP8_TILE if slot >= 0 else -1, r0, r1, k0, k1, r1 - k1, ((h + 1) << 16) | h]\n            for _, h, r0, r1, k0, k1, slot in sorted(b, key=lambda t: (-t[0], t[1], t[2], t[4]))\n        ]\n        indptr.append(len(works))\n    as_tensor = functools.partial(torch.tensor, dtype=torch.int32, device=device)\n    return (\n        as_tensor(indptr),\n        as_tensor(works),\n        torch.arange(n_q, dtype=torch.int32, device=device),\n        torch.ones((), dtype=torch.float32, device=device),\n        n_slots,\n        descriptors(merges, n_heads, _FP8_TILE, device) if merges else None,\n    )\n\n\ndef _fp8_run(q, k, v, cu_seqlens_q, sm_scale, output, plan):\n    from aiter import mla_prefill_ps_asm_fwd\n\n    work_indptr, work_info, indices, one, n_slots, split = plan\n    n_q, n_heads, v_dim = q.shape[0], q.shape[1], v.shape[-1]\n    f8 = torch.float8_e4m3fn\n    qf, kf, vf = (torch.empty(x.shape, dtype=f8, device=x.device) for x in (q, k, v))\n    to_fp8(n_q, q.shape[1] * q.shape[2], v.shape[1] * v.shape[2], q.device)(q, k, v, qf, kf, vf)\n    # every slot the merge reads is written whole by its piece; unsplit items write ``output`` directly\n    rows = max(n_slots, 1) * _FP8_TILE\n    logits = torch.empty((rows, n_heads, v_dim), dtype=torch.float32, device=q.device)\n    lse = torch.empty((rows, n_heads), dtype=torch.float32, device=q.device)\n    mla_prefill_ps_asm_fwd(\n        qf, kf, vf, cu_seqlens_q, cu_seqlens_q, indices, work_indptr, work_info, n_q,\n        float(sm_scale), True, logits, lse, output, one, one, one,\n    )  # fmt: skip\n    if split is not None:\n        merge(split, n_heads, v_dim, rows, n_q, logits, lse, output)\n\n\ndef run(q, k, v, cu_seqlens_q, qkv_fp8, cu_seqlens_k, sm_scale, output):\n    from aiter.ops.mha import fmha_v3_varlen_fwd\n\n    n_q, n_heads = q.shape[0], q.shape[1]\n    fp8 = (\n        _fp8_plan(n_q, n_heads, cu_seqlens_q.shape[0], q.device) if cu_seqlens_k is None and qkv_fp8 else None\n    )\n    if fp8 is not None:\n        _fp8_run(q, k, v, cu_seqlens_q, sm_scale, output, fp8)\n        return\n    if cu_seqlens_k is None and cu_seqlens_q.shape[0] == 2 and n_q <= _SHORT_MAX_ROWS:\n        short_attn(n_q, n_heads, q.shape[2], v.shape[2], float(sm_scale))(q, k, v, output)\n        return\n    v3 = _v3_plan(n_q, n_heads, cu_seqlens_q.shape[0], q.device) if cu_seqlens_k is None else None\n    if v3 is not None:\n        seqstart_q, seqstart_k, pad_q, pad_k, max_q = v3\n        # physical offsets: every group's queries at its block's rows, its keys from the sequence start\n        fmha_v3_varlen_fwd(\n            q,\n            k,\n            v,\n            seqstart_q,\n            seqstart_k,\n            max_q,\n            n_q,\n            0,\n            0.0,\n            float(sm_scale),\n            0.0,\n            False,\n            True,\n            -1,\n            0,\n            False,\n            False,\n            1,\n            out=output,\n            cu_seqlens_q_padded=pad_q,\n            cu_seqlens_k_padded=pad_k,\n        )\n        return\n    # dispatch serves one sequence (the workloads' count) in fp8, which the paths above cover at every length\n    raise ValueError(f\"mla_prefill_varlen: no path for {n_q} rows over {k.shape[0]} keys\")\n"
       },
       {
         "path": "qkv_fp8.py",
@@ -214,6 +179,7 @@
         "path": "split_merge.py",
         "content": "\"\"\"Merge of the fp8 prefill's split key walks: each split query tile's output rows are the LSE-weighted mean\nof its pieces' fp32 partial outputs, merged in piece order, rounded to bf16.\n\nThe tiles come as descriptor rows at each launch, one build per most pieces a tile has, so a sequence length\nfirst seen while serving does not compile. Split tile s has the row [out_base, n_rows, n_splits, p_0 .. p_{MS-1}]\nwith out_base = its first row * H, n_rows = its rows * H and p_j = the first partial row of piece j * H (padded\nwith p_0). Row x of the tile (x = local row * H + h) merges partial rows p_j + x by their natural-log lse, in j\norder, into out_base + x.\"\"\"\n\nimport functools\nimport math\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.expr.typing import T\n\n_LOG2E = math.log2(math.e)\n_VEC = 4  # fp32 values per lane: one 16-byte load\n_THREADS = 256\n_DESC_HEAD = 3\n\n\ndef _view(ptr, dtype, shape, stride):\n    return fx.rocdl.make_buffer_tensor(fx.make_view(fx.recast_iter(dtype, ptr), fx.make_layout(shape, stride)))\n\n\n@functools.cache\ndef _compile(max_splits: int, v_dim: int):\n    ms, stride = max_splits, _DESC_HEAD + max_splits\n    lanes = v_dim // _VEC\n    rows_per_block = _THREADS // lanes\n\n    @flyc.kernel(known_block_size=[_THREADS, 1, 1])\n    def merge_split_rows(\n        part: fx.Pointer,  # f32 [P, v_dim] (P = partial rows * H)\n        lse: fx.Pointer,  # f32 [P]\n        desc: fx.Pointer,  # i32 [n_tiles, stride]\n        out: fx.Pointer,  # bf16 [R, v_dim]\n        n_part: fx.Int32,\n        n_out: fx.Int32,\n        n_tiles: fx.Int32,\n    ):\n        tid = fx.thread_idx.x\n        bx = fx.block_idx.x\n        by = fx.block_idx.y\n        x = bx * fx.Int32(rows_per_block) + tid // fx.Int32(lanes)\n        lane = tid % fx.Int32(lanes)\n\n        g_desc = _view(desc, fx.Int32, (n_tiles * fx.Int32(stride),), (1,))\n        g_part = _view(part, fx.Float32, (n_part, v_dim), (v_dim, 1))\n        g_lse = _view(lse, fx.Float32, (n_part,), (1,))\n        g_out = _view(out, fx.BFloat16, (n_out, v_dim), (v_dim, 1))\n\n        base = by * fx.Int32(stride)\n        out_base = g_desc[base]\n        n_rows = g_desc[base + fx.Int32(1)]\n        n_splits = g_desc[base + fx.Int32(2)]\n        # the grid is as wide as the widest tile: a row past this tile's stores nothing\n        if x < n_rows:\n            reg_layout = fx.make_layout(_VEC, 1)\n            atom = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), fx.Float32)\n            neg_inf = fx.Float32(float(\"-inf\"))\n            lses, parts = [], []\n            for j in fx.range_constexpr(ms):\n                prow = g_desc[base + fx.Int32(_DESC_HEAD + j)] + x\n                l = g_lse[prow]\n                if j >= 1:  # a tile of fewer pieces pads with its first: weigh the copies 0\n                    l = (fx.Int32(j) < n_splits).select(l, neg_inf)\n                lses.append(l)\n                tiled = fx.logical_divide(fx.slice(g_part, (prow, None)), reg_layout)\n                frag = fx.make_rmem_tensor(reg_layout, fx.Float32)\n                fx.copy_atom_call(atom, fx.slice(tiled, (None, lane)), frag)\n                parts.append(frag.load())\n\n            m = lses[0]\n            for j in fx.range_constexpr(1, ms):\n                m = m.maximumf(lses[j])\n            zero = fx.Float32(0.0)\n            m = (m > neg_inf).select(m, zero)\n            acc = [zero for _ in fx.range_constexpr(_VEC)]\n            den = zero\n            for j in fx.range_constexpr(ms):\n                w = fx.Float32(fx.rocdl.exp2(T.f32, ((lses[j] - m) * _LOG2E).ir_value()))\n                den = den + w\n                v = parts[j]\n                acc = [acc[i] + w * v[i] for i in fx.range_constexpr(_VEC)]\n            inv = fx.Float32((den > zero).select(fx.rocdl.rcp(T.f32, den.ir_value()), zero))\n\n            res = fx.make_rmem_tensor(reg_layout, fx.BFloat16)\n            res.store(\n                fx.Vector.from_elements([(acc[i] * inv).to(fx.BFloat16) for i in fx.range_constexpr(_VEC)],\n                                        dtype=fx.BFloat16)\n            )  # fmt: skip\n            out_atom = fx.make_copy_atom(fx.rocdl.BufferCopy64b(), fx.BFloat16)\n            out_tiled = fx.logical_divide(fx.slice(g_out, (out_base + x, None)), reg_layout)\n            fx.copy_atom_call(out_atom, res, fx.slice(out_tiled, (None, lane)))\n\n    @flyc.jit\n    def launch(\n        part: fx.Pointer, lse: fx.Pointer, desc: fx.Pointer, out: fx.Pointer,\n        n_part: fx.Int32, n_out: fx.Int32, n_tiles: fx.Int32, n_blocks: fx.Int32,\n        stream: fx.Stream = fx.Stream(None),  # noqa: B008\n    ):  # fmt: skip\n        merge_split_rows(part, lse, desc, out, n_part, n_out, n_tiles).launch(\n            grid=(n_blocks, n_tiles, 1), block=(_THREADS, 1, 1), stream=stream\n        )\n\n    return launch, rows_per_block\n\n\ndef descriptors(tiles, n_heads, slot_rows, device):\n    \"\"\"For split tiles ``((first row, rows, (slot, ...)), ...)``, where slot ``s`` holds rows ``[s * slot_rows,\n    s * slot_rows + rows)`` of the partial buffers: the descriptor rows on the device, the most pieces a tile has\n    and the most rows.\"\"\"\n    ms = max(len(slots) for _, _, slots in tiles)\n    desc = []\n    for r0, rows, slots in tiles:\n        ps = [s * slot_rows * n_heads for s in slots]\n        desc += [r0 * n_heads, rows * n_heads, len(slots)] + ps + [ps[0]] * (ms - len(ps))\n    return torch.tensor(desc, dtype=torch.int32, device=device), ms, max(rows for _, rows, _ in tiles)\n\n\ndef merge(split, n_heads, v_dim, partial_rows, out_rows, partial_out, partial_lse, out):\n    \"\"\"Merge the split tiles ``split`` (``descriptors``' result) of the partial buffers into ``out``.\"\"\"\n    desc, ms, max_rows = split\n    launch, rows_per_block = _compile(ms, v_dim)\n    ptr = lambda t, d: flyc.from_c_void_p(d, t.data_ptr())  # noqa: E731\n    launch(\n        ptr(partial_out, fx.Float32), ptr(partial_lse, fx.Float32), ptr(desc, fx.Int32), ptr(out, fx.BFloat16),\n        partial_rows * n_heads, out_rows * n_heads, desc.numel() // (_DESC_HEAD + ms),\n        -(-max_rows * n_heads // rows_per_block), fx.Stream(torch.cuda.current_stream(out.device)),\n    )  # fmt: skip\n"
       }
-    ]
+    ],
+    "description": null
   }
 }

@@ -29,6 +29,21 @@ def _topk_transform_paged_check(reference_outputs, actual_outputs, **_unused):
     )
 
 
+def _topk_transform_paged_init(*, n_tokens, n_candidates, n_pages, k, page_size, device="cuda", seed=0):
+    torch.manual_seed(seed)
+    return {
+        # a permutation a row: no ties
+        "scores": torch.rand(n_tokens, n_candidates, device=device).argsort(dim=-1).float() / n_candidates,
+        "seq_lens": torch.randint(
+            0, min(n_candidates, n_pages * page_size) + 1, (n_tokens,), device=device
+        ).to(torch.int32),
+        # distinct within a row
+        "page_tables": torch.rand(n_tokens, n_pages, device=device).argsort(dim=-1).to(torch.int32),
+        "k": k,
+        "page_size": page_size,
+    }
+
+
 TOPK_TRANSFORM_PAGED = Schema(
     op_type="topk_transform_paged",
     description=(
@@ -79,6 +94,7 @@ TOPK_TRANSFORM_PAGED = Schema(
     standard=Standard(
         reference=topk_transform_paged_reference,
         check=_topk_transform_paged_check,
+        init=_topk_transform_paged_init,
         baseline=topk_transform_baseline,
     ),
 )

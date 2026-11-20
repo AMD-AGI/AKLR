@@ -50,6 +50,7 @@ __all__ = [
     "GEMM_A8W8_NT",
     "GEMM_A8W8_NT_SHUFFLED",
     "GEMM_BF16_NT",
+    "GEMM_BF16_NT_OUT_FLOAT32",
     "GEMM_BF16_NT_SHUFFLED",
     "GEMM_FP8_NT_BLOCKSCALED",
     "GEMM_FP8_NT_BLOCKSCALED_MN",
@@ -114,6 +115,10 @@ def _gemm_bf16_nt_init(*, M, N, K, device="cuda", seed=0):
 
 def _gemm_bf16_nt_shuffled_init(*, M, N, K, device="cuda", seed=0):
     return _gemm_bf16_nt_init(M=M, N=N, K=K, device=device, seed=seed) | {"use_shuffled_weight": True}
+
+
+def _gemm_bf16_nt_out_float32_init(*, M, N, K, device="cuda", seed=0):
+    return _gemm_bf16_nt_init(M=M, N=N, K=K, device=device, seed=seed) | {"out_dtype": torch.float32}
 
 
 def _gemm_a8w8_nt_init(*, M, N, K, device="cuda", seed=0):
@@ -231,6 +236,17 @@ GEMM_A8W8_NT = Schema(
         init=_gemm_a8w8_nt_init,
         baseline=gemm_a8w8_baseline,
     ),
+)
+# a router's logits, kept float32: the init draws the output dtype, so these calls are a variant of their own
+GEMM_BF16_NT_OUT_FLOAT32 = replace(
+    GEMM_BF16_NT,
+    variant={
+        "out_float32": (
+            "not use_shuffled_weight and (out_dtype if out is None else out.dtype) == torch.float32"
+        )
+    },
+    description=f"{GEMM_BF16_NT.description} out is float32.",
+    standard=replace(GEMM_BF16_NT.standard, init=_gemm_bf16_nt_out_float32_init),
 )
 GEMM_BF16_NT_SHUFFLED = _shuffled(GEMM_BF16_NT, gemm_bf16_nt_shuffled_reference, _gemm_bf16_nt_shuffled_init)
 # vLLM's per-token fp8 linears, for aiter's gemm_a8w8_bpreshuffle
@@ -463,7 +479,7 @@ BMM_BF16_NT_SHUFFLED = _shuffled(BMM_BF16_NT, bmm_bf16_nt_shuffled_reference)
 BMM_BF16_NN_SHUFFLED = _shuffled(BMM_BF16_NN, bmm_bf16_nn_shuffled_reference)
 
 # each op's variants, in resolution order: its api takes the first whose condition matches the call
-GEMM_BF16_NT_VARIANTS = (GEMM_BF16_NT, GEMM_BF16_NT_SHUFFLED)
+GEMM_BF16_NT_VARIANTS = (GEMM_BF16_NT_OUT_FLOAT32, GEMM_BF16_NT, GEMM_BF16_NT_SHUFFLED)
 GEMM_A8W8_NT_VARIANTS = (GEMM_A8W8_NT, GEMM_A8W8_NT_SHUFFLED)
 GEMM_FP8_NT_BLOCKSCALED_VARIANTS = (
     GEMM_FP8_NT_BLOCKSCALED,
