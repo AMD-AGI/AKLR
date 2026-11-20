@@ -1,0 +1,215 @@
+{
+  "schema_version": 5,
+  "name": "deepseekv41_mxfp8_linear_n512_k5120",
+  "contract_id": "deepseekv41_mxfp8_linear@1.0",
+  "description": "sglang's MXFP8 linear of a DeepSeek-V4.1 layer on gfx950 (aiter_mxfp8_blockscaled_linear, and each group of the wo_a projection's BMM), before any bias: x @ weight.T, weight fp8 e4m3 at an e8m0 scale per 32 x 32 block. A bf16 x is first rounded to fp8 e4m3 at an e8m0 scale per 32 values of a row, the scale 2**ceil(log2(amax / 448)) of the block's largest magnitude, never below 1e-30; an fp8 x comes with those scales.",
+  "op_type": "deepseekv41",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Rows of x."
+    },
+    "n": {
+      "type": "const",
+      "value": 512,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 5120,
+      "description": "Reduction length."
+    },
+    "scale_rows": {
+      "type": "const",
+      "value": 16,
+      "description": "Weight-scale rows."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 160,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "has_x_scale": false
+  },
+  "inputs": {
+    "x": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations: bf16, or the fp8 values x_scale scales."
+    },
+    "weight": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights."
+    },
+    "weight_scale": {
+      "shape": [
+        "scale_rows",
+        "scale_columns"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 32 x 32 block of weight."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "x @ weight.T, dequantized."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 10
+      }
+    },
+    {
+      "axes": {
+        "m": 15
+      }
+    },
+    {
+      "axes": {
+        "m": 20
+      }
+    },
+    {
+      "axes": {
+        "m": 25
+      }
+    },
+    {
+      "axes": {
+        "m": 30
+      }
+    },
+    {
+      "axes": {
+        "m": 35
+      }
+    },
+    {
+      "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 50
+      }
+    },
+    {
+      "axes": {
+        "m": 60
+      }
+    },
+    {
+      "axes": {
+        "m": 70
+      }
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    },
+    {
+      "axes": {
+        "m": 90
+      }
+    },
+    {
+      "axes": {
+        "m": 100
+      }
+    },
+    {
+      "axes": {
+        "m": 110
+      }
+    },
+    {
+      "axes": {
+        "m": 120
+      }
+    },
+    {
+      "axes": {
+        "m": 130
+      }
+    },
+    {
+      "axes": {
+        "m": 140
+      }
+    },
+    {
+      "axes": {
+        "m": 150
+      }
+    },
+    {
+      "axes": {
+        "m": 160
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "weight_layout",
+            "expected_value": "row_major"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}

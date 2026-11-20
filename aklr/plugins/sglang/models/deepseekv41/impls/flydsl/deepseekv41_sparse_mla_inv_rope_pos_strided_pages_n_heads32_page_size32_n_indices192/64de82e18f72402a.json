@@ -1,0 +1,915 @@
+{
+  "schema_version": 5,
+  "name": "deepseekv41_sparse_mla_inv_rope_pos_strided_pages_n_heads32_page_size32_n_indices192",
+  "contract_id": "deepseekv41_sparse_mla@1.0",
+  "description": "sglang's sparse MLA of a DeepSeek-V4.1 layer on gfx950 (aiter_sparse_decode_fwd): each head of each token attends the slots its indices name (-1: none) in the layer's KV pool and in the optional extra one, with scores q . row * sm_scale; sinks join the normalisation only; the output is the softmax-weighted sum of the rows, 0 for a token that reads no row. With rope_freqs, the last 64 values of every head are then rotated back in pairs (a, b) by the pair's (c, s) at the token's position: (a c + b s, b c - a s).",
+  "op_type": "deepseekv41",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Query heads on this rank."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the KV pool."
+    },
+    "page_size": {
+      "type": "const",
+      "value": 32,
+      "description": "Slots per page of the KV pool."
+    },
+    "n_indices": {
+      "type": "const",
+      "value": 192,
+      "description": "Indices per token into the KV pool."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the RoPE table."
+    }
+  },
+  "attrs": {
+    "has_extra_kv_cache": false,
+    "has_extra_indices": false,
+    "has_rope_freqs": true,
+    "has_positions": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head, the RoPE part last."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        1,
+        584
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "deepseekv4_fp8_kv_cache"
+      },
+      "description": "The layer's KV pool: DeepSeek-V4's packed fp8 slots."
+    },
+    "indices": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_pages * page_size - 1",
+        "distinct": false
+      },
+      "description": "Slots of the KV pool each token reads; negative: skipped."
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head logit added to the normalisation only."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    },
+    "rope_freqs": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The RoPE table: a (c, s) per pair of each position."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's row of the RoPE table."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        1,
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's attended values, the RoPE part rotated back with rope_freqs."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 50,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 55,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 70,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 75,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 80,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 90,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 95,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 100,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 110,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 115,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 130,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 135,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 140,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 150,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 155,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 160,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 170,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 175,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 190,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 195,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 200,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 210,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 215,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 230,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 255,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 270,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 280,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 295,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 310,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 320,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 335,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 350,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 360,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 375,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 390,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 400,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 415,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 430,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 440,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 455,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 470,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 480,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 495,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 510,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 520,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 535,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 550,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 560,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 575,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 590,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 600,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 615,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 630,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 640,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 655,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 670,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 680,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 695,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 710,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 720,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 735,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 750,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 760,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 775,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 790,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 800,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 815,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 830,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 840,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5120,
+        "n_pages": 403141,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "strided_pages": {
+        "layouts": {
+          "kv_cache": {
+            "kind": "strided_pages"
+          },
+          "extra_kv_cache": {
+            "kind": "strided_pages"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "kv_cache_layout",
+            "expected_value": "strided_pages"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}
