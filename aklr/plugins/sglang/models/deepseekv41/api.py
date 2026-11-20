@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
+from aklr.ops.gemm.api import gemm
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models.deepseekv41.contract import (
     DEEPSEEKV41_MXFP8_LINEAR,
@@ -183,6 +184,38 @@ def _wo_a_bmm(o_fp8, weight, o_scale, weight_scale):
             weight_scale=weight_scale[group],
             weight_layout="shuffled_16x16",
         )
+        if isinstance(out, FallbackReason):
+            return out
+        outputs.append(out)
+    return torch.stack(outputs, dim=1)
+
+
+@sglang_route("sglang.srt.models.deepseek_v4._apply_wo_a_bf16_matmul", versions=_SGLANG)
+def _apply_wo_a_bf16_matmul(
+    o,
+    wo_a,
+    is_decode,
+    is_target_verify=False,
+    fuse_mxfp8_quant=False,
+    is_prefill=False,
+    fast_path=False,
+    fp8_grid=False,
+    emit_fp8=False,
+):
+    """The wo_a projection a monokernel's prefill keeps in bf16, as one GEMM a group, returned as
+    sglang's einsum returns it: a token's groups side by side. Decode and target-verify rows stay
+    on sglang's kernels, which return other forms."""
+    import torch
+
+    if is_decode or is_target_verify or not (o.ndim == wo_a.ndim == 3) or o.shape[1] != wo_a.shape[0]:
+        return FallbackReason.OUT_OF_CONTRACT
+    # a group's rows lie a token apart: asked with a row-major stand-in, copied only for a call the op takes
+    stand_in = torch.empty((o.shape[0], o.shape[2]), dtype=o.dtype, device=o.device)
+    outputs = []
+    for group, weight in enumerate(wo_a):
+        if (reason := gemm.fallback_reason(stand_in, weight)) is not None:
+            return reason
+        out = gemm(o[:, group].contiguous(), weight)
         if isinstance(out, FallbackReason):
             return out
         outputs.append(out)
