@@ -448,8 +448,10 @@ def test_sglangs_own_hip_prefill_keeps_its_calls(monkeypatch, hip, takes):
 
 @pytest.fixture
 def sglang_kernels(monkeypatch):
-    """Stand-ins of sglang's chunk_kda and fused_sigmoid_gating_delta_rule_update (at 0.5.22's path only), each
-    recording its call and returning an output of sglang's shape."""
+    """Stand-ins of sglang's chunk_kda and fused_sigmoid_gating_delta_rule_update (the recurrent kernel at both its
+    0.5.22 and 0.5.23 paths: the baseline tries 0.5.23's first, so with sglang installed a stand-in at 0.5.22's path
+    alone leaves the real Triton kernel to run on these CPU tensors), each recording its call and returning an output
+    of sglang's shape."""
     calls = {}
 
     def chunk_kda(**kwargs):
@@ -464,6 +466,9 @@ def sglang_kernels(monkeypatch):
     for name, attrs in {
         "sglang.kernels.ops.attention.fla.kda": {"chunk_kda": chunk_kda},
         "sglang.kernels.ops.attention.fla.fused_sigmoid_gating_recurrent": {
+            "fused_sigmoid_gating_delta_rule_update": fused_sigmoid_gating_delta_rule_update
+        },
+        "sglang.kernels.ops.attention.linear.fused_sigmoid_gating_recurrent": {
             "fused_sigmoid_gating_delta_rule_update": fused_sigmoid_gating_delta_rule_update
         },
     }.items():
