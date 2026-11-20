@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
-from aklr.ops.gemm.api import gemm
-from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins.aiter.provider.gemm.api import gemm
+from aklr.plugins.sglang.hook import sglang_route, sglang_version
 from aklr.plugins.sglang.models.deepseekv41.contract import (
     DEEPSEEKV41_MXFP8_LINEAR,
     DEEPSEEKV41_SPARSE_MLA,
@@ -268,6 +268,11 @@ def _project(self, x):
     "sglang.srt.layers.attention.deepseek_v4_backend.DeepseekV4AttnBackend._low_ratio_compress_fused",
     versions=_SGLANG,
 )
+# the HIP backend binds the step as a class attribute of its own, which a patch of the base class leaves
+@sglang_route(
+    "sglang.srt.layers.attention.deepseek_v4_backend_hip_radix.DeepseekV4HipRadixBackend._low_ratio_compress_fused",
+    versions=_SGLANG,
+)
 def _low_ratio_compress_fused(self, layer, x, req, pos, *, draft_len=1, extend_offsets=None, projected=None):
     """A decode or target-verify step's KV projection on an uncompressed layer, asked of gemm as the
     product it is: x @ wkv.T. sglang calls wkv inline there, so the route sits on the step."""
@@ -277,3 +282,56 @@ def _low_ratio_compress_fused(self, layer, x, req, pos, *, draft_len=1, extend_o
     if getattr(layer, "compress_ratio", None) == 1 and projected is None and weight is not None:
         gemm.fallback_reason(x, weight)
     return FallbackReason.OUT_OF_CONTRACT
+
+
+@sglang_route(
+    "sglang.srt.layers.logits_processor.LogitsProcessor._compute_lm_head",
+    versions=("0.5.23", "0.5.23.dev20261111"),
+)
+def _compute_lm_head(self, hidden_states, lm_head, embedding_bias=None, *, out=None):
+    import importlib
+
+    sglang = importlib.import_module("sglang.srt.layers.logits_processor")
+    # LoRA, a quantized head, logits in fp32 and the other branches sglang takes before its plain
+    # matmul, which ignores embedding_bias; the nightly's call of aiter's GEMM has its own route
+    if (
+        (hasattr(lm_head, "set_lora") and hasattr(lm_head, "apply_lora"))
+        or sglang.should_apply_lm_head_quant_method(lm_head, getattr(lm_head, "quant_method", None))
+        or not hasattr(lm_head, "weight")
+        or self.use_fp32_lm_head
+        or self.use_fp32_lm_head_output
+        or sglang.use_intel_amx_backend(lm_head)
+        or self.rl_on_policy_target is not None
+        or (hasattr(sglang, "_aiter_lm_head_ok") and sglang._aiter_lm_head_ok(hidden_states, lm_head.weight))
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    # 0.5.23's matmul writes no buffer; the nightly's writes one of the logits' shape and the head's dtype
+    if out is not None and (
+        sglang_version() == "0.5.23"
+        or out.shape != (hidden_states.shape[0], lm_head.weight.shape[0])
+        or out.dtype != lm_head.weight.dtype
+    ):
+        out = None
+    # hidden states of another dtype than the head's go back to sglang, which converts them: none is copied first
+    return gemm(hidden_states, lm_head.weight, out=out)
+
+
+@sglang_route(
+    "sglang.srt.models.dspark.project_through_lm_head", versions=("0.5.22", "0.5.23", "0.5.23.dev20261111")
+)
+def _project_through_lm_head(hidden, lm_head):
+    import importlib
+
+    from sglang.srt.layers.logits_processor import should_apply_lm_head_quant_method
+
+    # sglang 0.5.23's fp8 head (SGLANG_ROCM_OPT_DSPARK_FP8_LM_HEAD on gfx950) stays on sglang, as does the
+    # head the nightly quantizes for --speculative-dspark-lm-head-dtype
+    dspark = importlib.import_module("sglang.srt.models.dspark")
+    if (
+        getattr(dspark, "_DSPARK_FP8_LM_HEAD", False)
+        or (hasattr(dspark, "get_spec") and dspark.get_spec().speculative_dspark_lm_head_dtype is not None)
+        or should_apply_lm_head_quant_method(lm_head, lm_head.quant_method)
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    # hidden states of another dtype than the head's go back to sglang, which converts them: none is copied first
+    return gemm(hidden, lm_head.weight)

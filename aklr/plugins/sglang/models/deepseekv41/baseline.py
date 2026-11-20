@@ -6,6 +6,8 @@ serves the step."""
 
 from __future__ import annotations
 
+from aklr.core.contract.baseline import OpBaseline
+
 __all__ = ["deepseekv41_mxfp8_linear_baseline", "deepseekv41_sparse_mla_baseline"]
 
 
@@ -66,3 +68,13 @@ def deepseekv41_sparse_mla_baseline(
         inv_rope=None if rope_freqs is None else (rope_freqs, positions),
     )
     return attended
+
+
+class Deepseekv41Mxfp8LinearBaseline(OpBaseline):
+    def baseline(self, **call):
+        return {"output": deepseekv41_mxfp8_linear_baseline(**call)}
+
+
+class Deepseekv41SparseMlaBaseline(OpBaseline):
+    def baseline(self, **call):
+        return {"output": deepseekv41_sparse_mla_baseline(**call)}

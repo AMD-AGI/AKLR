@@ -11,9 +11,8 @@ import pytest
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.sglang.layers import logits_processor_torch_gemm as lm_head_route
-from aklr.plugins.sglang.models import dspark_torch_gemm as dspark_route
-from aklr.plugins.sglang.models import kimi_k3_torch_gemm as k3_route
+from aklr.plugins.sglang.models.deepseekv41 import api as dspark_route
+from aklr.plugins.sglang.models.deepseekv41 import api as lm_head_route
 
 ROWS, HIDDEN, VOCAB = 4, 16, 32
 
@@ -32,7 +31,7 @@ class _Gemm:
 @pytest.fixture
 def gemm(monkeypatch):
     fake = _Gemm()
-    for module in (lm_head_route, dspark_route, k3_route):
+    for module in (lm_head_route, dspark_route):
         monkeypatch.setattr(module, "gemm", fake)
     return fake
 
@@ -169,27 +168,3 @@ def test_a_plain_draft_head_hands_its_hidden_states_and_weight_to_gemm(sglang, g
     assert dspark_route._project_through_lm_head(x, lm_head) is result
     (call,) = gemm.calls
     assert call["a"] is x and call["b"] is lm_head.weight
-
-
-@pytest.mark.parametrize(
-    ("out", "out_dtype", "expected"),
-    [
-        (torch.empty(ROWS, VOCAB, dtype=torch.float32), None, torch.float32),
-        (torch.empty(ROWS, VOCAB, dtype=torch.float32), torch.bfloat16, torch.bfloat16),
-        (None, None, None),
-        (None, torch.float32, torch.float32),
-    ],
-    ids=["buffer_sets_dtype", "explicit_dtype_wins", "neither", "dtype_alone"],
-)
-def test_k3s_bf16_gemm_infers_its_output_dtype_from_the_callers_buffer(gemm, out, out_dtype, expected):
-    x, weight = hidden(), torch.zeros(VOCAB, HIDDEN, dtype=torch.bfloat16)
-    k3_route._k3_bf16_gemm(x, weight, out=out, out_dtype=out_dtype)
-    (call,) = gemm.calls
-    assert call["a"] is x and call["b"] is weight and call["out"] is out and call["out_dtype"] == expected
-
-
-def test_k3s_tiny_gemm_hands_both_operands_to_gemm(gemm):
-    x, weight = hidden(), torch.zeros(VOCAB, HIDDEN, dtype=torch.bfloat16)
-    assert k3_route._kimi_k3_tiny_gemm(x, weight) == "aklr"
-    (call,) = gemm.calls
-    assert call["a"] is x and call["b"] is weight

@@ -13,7 +13,6 @@ from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
     Deepseekv4Fp8KvCacheDistribution,
     Deepseekv4KvPages,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
@@ -34,6 +33,14 @@ from aklr.core.contract.spec import (
     attr,
     axis,
     derived_axis,
+)
+from aklr.plugins.sglang.models.deepseekv41.baseline import (
+    Deepseekv41Mxfp8LinearBaseline,
+    Deepseekv41SparseMlaBaseline,
+)
+from aklr.plugins.sglang.models.deepseekv41.reference import (
+    Deepseekv41Mxfp8LinearReference,
+    Deepseekv41SparseMlaReference,
 )
 
 __all__ = ["CONTRACTS", "DEEPSEEKV41_MXFP8_LINEAR", "DEEPSEEKV41_SPARSE_MLA", "MXFP8_BLOCK", "ROPE_DIM"]
@@ -188,7 +195,9 @@ DEEPSEEKV41_SPARSE_MLA = OpContract(
             ),
         }
     ),
-    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism="bounded"),
+    reference=Deepseekv41SparseMlaReference(),
+    baseline=Deepseekv41SparseMlaBaseline(),
 )
 
 DEEPSEEKV41_MXFP8_LINEAR = OpContract(
@@ -269,7 +278,9 @@ DEEPSEEKV41_MXFP8_LINEAR = OpContract(
             ),
         }
     ),
-    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism="bounded"),
+    reference=Deepseekv41Mxfp8LinearReference(),
+    baseline=Deepseekv41Mxfp8LinearBaseline(),
 )
 
 CONTRACTS = (DEEPSEEKV41_MXFP8_LINEAR, DEEPSEEKV41_SPARSE_MLA)
