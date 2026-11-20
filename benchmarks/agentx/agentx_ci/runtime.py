@@ -664,8 +664,14 @@ def main(argv: list[str] | None = None) -> int:
         measurements = {}
         for planned in points:
             point = copy.deepcopy(planned)
+            # AKLR_AITER_PLUGIN in both modes: the framework plugin enables AKLR among aiter's providers
+            # only when AKLR_DISABLE is not 1, so the modes still differ only in the two switches.
             point["launch"]["env"].update(
-                {switch: "1" if mode == "enabled" else "0", "AKLR_DISABLE": "0" if mode == "enabled" else "1"}
+                {
+                    switch: "1" if mode == "enabled" else "0",
+                    "AKLR_DISABLE": "0" if mode == "enabled" else "1",
+                    "AKLR_AITER_PLUGIN": "1",
+                }
             )
             measurement = {
                 "environment_policy": ENVIRONMENT_POLICY,
