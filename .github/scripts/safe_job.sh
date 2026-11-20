@@ -14,6 +14,8 @@ api() {
     "https://global.primus-safe.amd.com/api/v1/workloads$2" "${@:3}"
 }
 
+# Not the runner's own workspace (the pod's WORKSPACE variable): that one has no GPU.
+export WORKSPACE=crusoe-aklr-cicd
 name=aklr-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${GITHUB_JOB%-test}
 
 if [[ ${1:-} == delete ]]; then
