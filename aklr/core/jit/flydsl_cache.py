@@ -26,7 +26,7 @@ from typing import Any
 __all__ = ["install", "is_needed"]
 
 # the packages FlyDSLBuilder imports AKLR's FlyDSL kernels as
-_KERNEL_PACKAGE_PREFIX = "_aklr_flydsl_"
+_KERNEL_PACKAGE_PREFIX = "flydsl_"
 _lock = threading.Lock()
 _original_call: Callable[..., Any] | None = None
 

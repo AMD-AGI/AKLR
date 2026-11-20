@@ -29,7 +29,7 @@ def launch(x: fx.Tensor, n: fx.Int32, block: fx.Constexpr[int], scale=1):
 """
 
 
-_PACKAGES = ("_aklr_flydsl_0123456789abcdef", "aiter_like")
+_PACKAGES = ("flydsl_gemm_bf16_nt_0123ab", "aiter_like")
 
 
 @pytest.fixture(autouse=True)
@@ -81,7 +81,7 @@ def launch(tmp_path, monkeypatch):
 
 
 def _call(jit_function, *args, **kwargs):
-    return flydsl_cache._call(jit_function, args, kwargs)
+    return flydsl_cache._call(jit_function, args, kwargs)  # noqa: SLF001 -- main's test (#271), not at the seam yet (TODO.md)
 
 
 def bf16(*shape):
@@ -120,7 +120,7 @@ def test_compile_hints_and_the_environment_are_in_the_key(launch, flydsl_paths, 
     _call(launch, bf16(4, 8), 5, 64)
     monkeypatch.setattr(type(launch), "_effective_compile_hints", lambda self: {"fast_fp_math": True})
     _call(launch, bf16(4, 8), 5, 64)
-    env = flydsl_jit._cache_invalidating_env_values(flydsl_jit.get_backend().target)
+    env = flydsl_jit._cache_invalidating_env_values(flydsl_jit.get_backend().target)  # noqa: SLF001 -- main's test (#271), not at the seam yet (TODO.md)
     if env:
         monkeypatch.setenv(env[0][0], "changed")
         _call(launch, bf16(4, 8), 5, 64)
@@ -132,22 +132,25 @@ def test_a_function_no_aklr_kernel_defines_keeps_flydsls_path(tmp_path, monkeypa
     x = bf16(4, 8)
     _call(theirs, x, 5, 64)
     _call(theirs, x, 5, 64)
-    assert flydsl_paths.compiled == [] and [a for _, a, _ in flydsl_paths.own] == [(x, 5, 64)] * 2
+    assert flydsl_paths.compiled == []
+    assert [a for _, a, _ in flydsl_paths.own] == [(x, 5, 64)] * 2
 
 
 def test_an_argument_flydsl_cannot_sign_keeps_flydsls_path(launch, flydsl_paths):
     _call(launch, bf16(4, 8), None, 64)
-    assert flydsl_paths.compiled == [] and len(flydsl_paths.own) == 1
+    assert flydsl_paths.compiled == []
+    assert len(flydsl_paths.own) == 1
 
 
 def test_a_call_flyc_compile_would_not_launch_keeps_flydsls_path(launch, flydsl_paths, monkeypatch):
     monkeypatch.setattr(flydsl_cache, "_would_launch", lambda values: False)
     _call(launch, bf16(4, 8), 5, 64)
-    assert flydsl_paths.compiled == [] and len(flydsl_paths.own) == 1
+    assert flydsl_paths.compiled == []
+    assert len(flydsl_paths.own) == 1
 
 
 def test_a_tensor_off_the_device_is_a_placeholder_flyc_compile_does_not_launch():
-    assert not flydsl_cache._would_launch((bf16(4, 8), 5, 64, 1))
+    assert not flydsl_cache._would_launch((bf16(4, 8), 5, 64, 1))  # noqa: SLF001 -- main's test (#271), not at the seam yet (TODO.md)
 
 
 def test_a_compile_only_process_keeps_nothing(launch, flydsl_paths, monkeypatch):
@@ -158,19 +161,21 @@ def test_a_compile_only_process_keeps_nothing(launch, flydsl_paths, monkeypatch)
 
 
 def test_a_call_inside_a_trace_is_inlined_by_flydsls_path(launch, flydsl_paths, monkeypatch):
-    assert not flydsl_cache._tracing()
+    assert not flydsl_cache._tracing()  # noqa: SLF001 -- main's test (#271), not at the seam yet (TODO.md)
     monkeypatch.setattr(flydsl_cache, "_tracing", lambda: True)
     _call(launch, bf16(4, 8), 5, 64)
-    assert flydsl_paths.compiled == [] and len(flydsl_paths.own) == 1
+    assert flydsl_paths.compiled == []
+    assert len(flydsl_paths.own) == 1
 
 
 def test_install_wraps_jit_function_calls_once(monkeypatch):
     monkeypatch.setattr(flydsl_jit.JitFunction, "__call__", flydsl_jit.JitFunction.__call__)
     monkeypatch.setattr(flydsl_cache, "_original_call", None)
     original = flydsl_jit.JitFunction.__call__
-    assert flydsl_cache.install() and flydsl_cache.install()
+    assert flydsl_cache.install()
+    assert flydsl_cache.install()
     assert flydsl_jit.JitFunction.__call__.__wrapped__ is original
-    assert flydsl_cache._original_call is original
+    assert flydsl_cache._original_call is original  # noqa: SLF001 -- main's test (#271), not at the seam yet (TODO.md)
 
 
 @pytest.mark.parametrize(("version", "needed"), [("0.4.2", False), ("0.5.0", True), ("0.5.1.dev3", True)])
