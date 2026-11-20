@@ -67,10 +67,19 @@ def _select_fused_moe(args, kwargs):
     # buffers, where AKLR returns them; deterministic asks for a fixed order of the top-k sums, which AKLR's
     # is not. aiter's sorting policy only schedules its own sort, the HERD routing factor only scales
     # herd_topk's candidates, and splitk asks aiter for a split of K, which moves only the order of the sums.
+    # fp8 named on an interleave call is what fused_moe's baseline runs there at every row count
+    names_interleave_fp8 = False
+    if quant_dtype_a is not None and attr_value(gate_mode) == "interleave":
+        from aiter import dtypes
+
+        names_interleave_fp8 = quant_dtype_a == dtypes.fp8
+    # shortcut: such a call's padded intermediate is taken as zeros (sglang names an activation dtype only
+    # for DeepSeek-V4.1's FP4 experts, whose loader pads with zeros: the sum over the stored width is
+    # aiter's over the real one), decline it once another caller names fp8 there
     if (
         block_size_M != -1
         or hidden_pad
-        or intermediate_pad
+        or (intermediate_pad and not names_interleave_fp8)
         or a1_scale is not None
         or a2_scale is not None
         or bias1 is not None
@@ -83,7 +92,7 @@ def _select_fused_moe(args, kwargs):
         or ep_world_size
         or ep_combine_quant
         or quant_type_a is not None
-        or quant_dtype_a is not None
+        or (quant_dtype_a is not None and not names_interleave_fp8)
         or quant_dtype_a2 is not None
         or herd_topk
         or deterministic
