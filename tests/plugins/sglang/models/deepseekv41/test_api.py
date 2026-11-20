@@ -428,3 +428,14 @@ def test_the_routers_gemv_is_asked_of_gemm_as_fp32_logits_and_left_to_sglang(gem
     (asked,) = gemm.asked
     assert set(asked) == {"a", "b", "out_dtype"} and asked["out_dtype"] == torch.float32
     assert asked["a"] is hidden and asked["b"] is weight and gemm.ran == []
+
+
+def test_the_hip_radix_backends_own_copy_of_the_compress_step_is_routed():
+    """sglang's HIP backend binds the step as a class attribute of its own, which a patch of the base class leaves."""
+    from aklr.plugins.sglang import hook
+
+    targets = {target for target, _, route in hook._ROUTES if route is api._low_ratio_compress_fused}
+    assert (
+        "sglang.srt.layers.attention.deepseek_v4_backend_hip_radix.DeepseekV4HipRadixBackend._low_ratio_compress_fused"
+        in targets
+    )
