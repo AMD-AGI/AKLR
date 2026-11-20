@@ -30,6 +30,9 @@
   after the call (needs approval: `aklr/core/schema/` is protected).
 - **Compile tripwire**: the bench does not fail a kernel that compiles in a timed call. Main's tripwire, with
   its hooks for FlyDSL 0.5's launch cache (#271), went with the old bench.
+- **`tests/core/jit/test_flydsl_cache.py`** (main's #271) reaches `flydsl_cache`'s private functions under five
+  `noqa: SLF001`: rewrite it at `install` and `is_needed` on an image with FlyDSL 0.5, where it runs. The cache
+  now tells AKLR's kernels by the `flydsl_` package prefix `FlyDSLBuilder` gives them here.
 - **CI**: `sglang-test` and `vllm-test` run `tests/seam` and check `aklr/plugins/aiter` untimed. The plugin tests and the
   plugins' timed validation against sglang's and vLLM's own code come back with the plugins. Main's scoping of
   the op reference tests to the changed kernels' contract IDs (#301) is not carried: there are no contract IDs

@@ -380,13 +380,10 @@ def test_exact_model_ref_keeps_pinned_offline_tokenizer(case):
 def test_model_ref_trailing_newline_is_rejected_before_client_setup(case):
     hub, _, _, main, args = case.prepare_model_hub(case.serving["weights"]["revision"].encode() + b"\n")
     fetch = mock.Mock()
-    with (
-        case.use_environ({"HF_HUB_CACHE": str(hub)}),
-        pytest.MonkeyPatch.context() as patch,
-        pytest.raises(RuntimeError, match="must contain exactly the pinned revision"),
-    ):
+    with case.use_environ({"HF_HUB_CACHE": str(hub)}), pytest.MonkeyPatch.context() as patch:
         patch.setattr(runtime, "fetch_inferencex", fetch)
-        runtime.host_settings(args, case.serving)
+        with pytest.raises(RuntimeError, match="must contain exactly the pinned revision"):
+            runtime.host_settings(args, case.serving)
     assert main.stat().st_size == 41
     fetch.assert_not_called()
 
