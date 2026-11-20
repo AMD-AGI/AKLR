@@ -15,7 +15,9 @@ storage=$(awk '$2 ~ "^/shared_nfs/users/[^/]+$" {print $2; exit}' /proc/mounts)
 if [[ -z $storage ]]; then
   echo "::error::This runner has no /shared_nfs/users/<user> mount to share with the GPU pod"
   grep -E ' (nfs|nfs4|ceph|wekafs|fuse[^ ]*) ' /proc/mounts || true
-  id; df -h /shared_nfs 2>&1 || true; stat -c "%A %u:%g %n" /shared_nfs /shared_nfs/users /shared_nfs/users/* 2>&1 | head -40 || true
+  id; command -v ssh ssh-keygen scp tar jq base64 nc || true
+  timeout 20 bash -c 'exec 3<>/dev/tcp/global.primus-safe.amd.com/2222 && echo "2222 connected" && head -c 40 <&3' || echo "2222: no banner (rc=$?)"
+  df -h /mnt/ceph || true
   exit 1
 fi
 export RUN_DIR=$storage/aklr-ci-runs/$name
