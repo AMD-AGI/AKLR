@@ -542,6 +542,8 @@ per_group_quant_fp8_hidden_size#
 per_group_quant_mxfp8_hidden_size#
 rms_norm_hidden_size#
 rms_norm_x_float16_hidden_size#
+situv2_a4w4_moe_model_dim#_n_experts#_topk#_inter_dim#
+situv2_a4w4_moe_a16w4_shuffled_model_dim#_n_experts#_topk#_inter_dim#
 sparse_prefill_mxfp8_n_heads#
 topk_transform_paged_topk#
 topk_transform_paged_has_page_tables_topk#
