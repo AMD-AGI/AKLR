@@ -394,6 +394,30 @@ def test_an_uncompressed_layers_kv_projection_is_asked_of_gemm_and_left_to_sglan
 
 
 @pytest.mark.parametrize(
+    ("ratio", "projected", "asks"),
+    [(1, None, 1), (1, object(), 0), (4, None, 0)],
+    ids=["uncompressed", "already_projected", "compressed"],
+)
+def test_a_decode_steps_uncompressed_kv_projection_is_asked_of_gemm_and_left_to_sglang(
+    gemm, ratio, projected, asks
+):
+    wkv = SimpleNamespace(weight=torch.zeros(512, 5120, dtype=torch.bfloat16))
+    layer = SimpleNamespace(compress_ratio=ratio, compressor=SimpleNamespace(wkv=wkv))
+    x = torch.zeros(4, 5120, dtype=torch.bfloat16)
+    # sglang passes the projection it already has, and a compressed layer's reach gemm through its bf16 linear
+    left = api._low_ratio_compress_fused(None, layer, x, None, None, draft_len=3, projected=projected)
+    assert left is FallbackReason.OUT_OF_CONTRACT
+    assert [(asked["a"], asked["b"]) for asked in gemm.asked] == [(x, wkv.weight)] * asks
+    assert gemm.ran == []
+
+
+def test_a_decode_step_on_a_layer_without_a_plain_kv_projection_stays_on_sglang(gemm):
+    layer = SimpleNamespace(compress_ratio=1, compressor=SimpleNamespace())
+    assert api._low_ratio_compress_fused(None, layer, None, None, None) is FallbackReason.OUT_OF_CONTRACT
+    assert gemm.asked == []
+
+
+@pytest.mark.parametrize(
     "reason", [None, FallbackReason.NO_WORKLOAD], ids=["a_kernel_serves", "the_op_declines"]
 )
 def test_the_routers_gemv_is_asked_of_gemm_as_fp32_logits_and_left_to_sglang(gemm, reason):

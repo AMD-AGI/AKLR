@@ -262,3 +262,18 @@ def _project(self, x):
     if self.compress_ratio == 1:
         gemm.fallback_reason(x, self.wkv.weight)
     return FallbackReason.OUT_OF_CONTRACT
+
+
+@sglang_route(
+    "sglang.srt.layers.attention.deepseek_v4_backend.DeepseekV4AttnBackend._low_ratio_compress_fused",
+    versions=_SGLANG,
+)
+def _low_ratio_compress_fused(self, layer, x, req, pos, *, draft_len=1, extend_offsets=None, projected=None):
+    """A decode or target-verify step's KV projection on an uncompressed layer, asked of gemm as the
+    product it is: x @ wkv.T. sglang calls wkv inline there, so the route sits on the step."""
+    # shortcut: recorded and left to sglang, whose step norms, rotates and stores the projection in
+    # one kernel; pass a kernel's product as `projected` once one serves the shape
+    weight = getattr(getattr(getattr(layer, "compressor", None), "wkv", None), "weight", None)
+    if getattr(layer, "compress_ratio", None) == 1 and projected is None and weight is not None:
+        gemm.fallback_reason(x, weight)
+    return FallbackReason.OUT_OF_CONTRACT
