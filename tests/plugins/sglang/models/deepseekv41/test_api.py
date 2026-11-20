@@ -340,3 +340,16 @@ def test_a_bf16_wo_a_gemm_declines_stays_on_sglang_uncopied(gemm):
     gemm.reason = FallbackReason.NO_WORKLOAD
     assert api._apply_wo_a_bf16_matmul(*bf16_wo_a_call(), is_decode=False) is FallbackReason.NO_WORKLOAD
     assert len(gemm.asked) == 1 and gemm.ran == []
+
+
+@pytest.mark.parametrize(
+    "reason", [None, FallbackReason.NO_WORKLOAD], ids=["a_kernel_serves", "the_op_declines"]
+)
+def test_the_routers_gemv_is_asked_of_gemm_as_fp32_logits_and_left_to_sglang(gemm, reason):
+    gemm.reason = reason
+    hidden, weight = torch.zeros(4, 512, dtype=torch.bfloat16), torch.zeros(384, 512, dtype=torch.bfloat16)
+    # sglang's split-K partials are not the op's output: the call is recorded, never run
+    assert api._rocm_router_gemv_split_k(hidden, weight) is (reason or FallbackReason.OUT_OF_CONTRACT)
+    (asked,) = gemm.asked
+    assert set(asked) == {"a", "b", "out_dtype"} and asked["out_dtype"] == torch.float32
+    assert asked["a"] is hidden and asked["b"] is weight and gemm.ran == []
