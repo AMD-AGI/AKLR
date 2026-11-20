@@ -58,9 +58,10 @@ _MAX_PAGES = 2**24
 _MAX_POSITIONS = 2**24
 
 # The bounds, from fp32 emulations of sglang's path and of the kernels' split-K sums at GLM-5.2's
-# shapes (1 to 256 tokens with 30 input sets each, 1024 and 4096 with 4), against the float64
-# reference: the projections' other summation order rounds a few values to the next bf16, so a
-# few fp8 values sit one fp8 step from the reference's, and a few rows (2 of 3.4e6 query heads,
+# shapes (1 to 256 tokens with 30 input sets each, 1024 and 4096 with 4), against an exact
+# reference (the float32 one sums in one more such order): the projections' other summation
+# order rounds a few values to the next bf16, so a few fp8 values sit one fp8 step from the
+# reference's, and a few rows (2 of 3.4e6 query heads,
 # none of 1.1e5 keys) have their amax cross a power of two times 448, the fp8 scale then twice
 # or half the reference's and the values half or twice. The query side takes SQNR, which admits
 # such a row: one of a token's 32 heads leaves 15 dB, and the emulations stay at 43 dB or more.
