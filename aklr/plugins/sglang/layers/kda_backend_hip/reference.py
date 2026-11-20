@@ -32,13 +32,29 @@ def _gates(args: Mapping[str, Any], point: Any) -> tuple[Tensor, Tensor]:
     dtypes = point.dtypes
     x = to_float32(args["a"], dtypes["a"]) + to_float32(args["dt_bias"], dtypes["dt_bias"])
     scale = torch.exp(to_float32(args["a_log"], dtypes["a_log"]))[:, None]
+
+    def scaled(y: Tensor) -> Tensor:
+        # exp(a_log) may pass float32: inf * 0 is 0 here, not nan
+        return torch.where(y == 0, 0.0, scale * y)
+
     if point.attrs["has_lower_bound"]:
-        g = args["lower_bound"] * torch.sigmoid(scale * x)
+        g = args["lower_bound"] * torch.sigmoid(scaled(x))
     else:
         beta, threshold = args["softplus_beta"], args["softplus_threshold"]
         bx = beta * x
-        g = -scale * torch.where(bx <= threshold, torch.log1p(torch.exp(bx)) / beta, x)
+        g = -scaled(torch.where(bx <= threshold, torch.log1p(torch.exp(bx)) / beta, x))
     return g, torch.sigmoid(to_float32(args["b"], dtypes["b"]))
+
+
+def _l2_normalized(x: Tensor) -> Tensor:
+    """x * rsqrt(sum(x**2) + eps) over the last dim. Scaled down by a power of two, which rounds as
+    unscaled, the squares cannot pass float32 where the norm does not."""
+    import torch
+
+    shift = -torch.frexp(x.abs().amax(-1, keepdim=True)).exponent.clamp_min(0)
+    x = torch.ldexp(x, shift)
+    eps = torch.ldexp(torch.full_like(x[..., :1], _NORM_EPS), 2 * shift)
+    return x * (x.square().sum(-1, keepdim=True) + eps).rsqrt()
 
 
 def kda_chain_verify_ring_reference(
@@ -75,8 +91,8 @@ def kda_chain_verify_ring_reference(
         written["ring_k"][slot, :, :steps] = k.transpose(0, 1)
         written["ring_g"][slot, :, :steps] = g[tokens].transpose(0, 1)
         written["ring_beta"][slot, :, :steps] = beta[tokens].T
-        q = q * (q.square().sum(-1, keepdim=True) + _NORM_EPS).rsqrt() * args["scale"]
-        k = k * (k.square().sum(-1, keepdim=True) + _NORM_EPS).rsqrt()
+        q = _l2_normalized(q) * args["scale"]
+        k = _l2_normalized(k)
         s = state[slot]  # (heads, value, key)
         for t in range(steps):
             s = s * torch.exp(g[r * steps + t])[:, None, :]
