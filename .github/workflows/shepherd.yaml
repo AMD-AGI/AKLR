@@ -82,6 +82,8 @@ jobs:
           { echo "$venv/bin"; echo "$bin"; } >> "$GITHUB_PATH"
       - name: TEMPORARY probe of the host (remove before merge)
         continue-on-error: true
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set +e
           echo "user $(id -un) home $HOME"; df -h "$HOME" /var/tmp | tail -2
@@ -92,6 +94,12 @@ jobs:
           ls /dev/dri | tr '\n' ' '; echo; ls /dev/kfd
           python3 -c 'import json, os; p = os.path.expanduser("~/.claude/settings.json"); print("claude settings env keys:", sorted(json.load(open(p)).get("env", {})) if os.path.exists(p) else "no file")'
           echo "base url: $ANTHROPIC_BASE_URL model: $ANTHROPIC_MODEL key set: ${{ secrets.ANTHROPIC_API_KEY != '' }}"
+          echo "key length ${#KEY}"
+          for header in "Ocp-Apim-Subscription-Key: $KEY" "x-api-key: $KEY" "Authorization: Bearer $KEY"; do
+            echo "${header%%:*} -> $(curl -s -m 60 -w ' [%{http_code}]' "$ANTHROPIC_BASE_URL/v1/messages" -H "$header" \
+              -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
+              -d "{\"model\": \"$ANTHROPIC_MODEL\", \"max_tokens\": 8, \"messages\": [{\"role\": \"user\", \"content\": \"ok\"}]}" | cut -c1-300)"
+          done
           for url in "$ANTHROPIC_BASE_URL" https://api.anthropic.com https://claude.ai; do echo "$url -> $(curl -s -o /dev/null -m 8 -w '%{http_code}' "$url")"; done
       - name: Link the host's configuration
         # Uncommitted and outside the workspace, which checkout cleans; setup writes it through the link.
