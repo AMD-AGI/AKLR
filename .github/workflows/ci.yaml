@@ -15,6 +15,21 @@ env:
         ((github.event_name != 'pull_request' ||
           contains(github.event.pull_request.labels.*.name, 'ci:priority-high')) && 'high') ||
         'medium' }}
+  # Where and how large the aklr-safe GPU workload is (safe_job.sh). A repository variable replaces
+  # a default without a commit. The defaults stay: a fork PR's run is given no variables.
+  AKLR_SAFE_API_URL: ${{ vars.AKLR_SAFE_API_URL || 'https://global.primus-safe.amd.com' }}
+  AKLR_SAFE_WORKSPACE: ${{ vars.AKLR_SAFE_WORKSPACE || 'crusoe-aklr-cicd' }}
+  # A kind the workspace's scopes allow and that keeps the pod after the script ends.
+  AKLR_SAFE_WORKLOAD_KIND: ${{ vars.AKLR_SAFE_WORKLOAD_KIND || 'Deployment' }}
+  # One whole node of the workspace, as a SaFE resources entry.
+  AKLR_SAFE_RESOURCES: >-
+    ${{ vars.AKLR_SAFE_RESOURCES ||
+        '{"replica":1,"gpu":"8","cpu":"96","memory":"512Gi","sharedMemory":"64Gi","ephemeralStorage":"300Gi"}' }}
+  # The CA certificates of the API's host, joined into one bundle. One line: a line break in the
+  # string would end the list at the first URL.
+  AKLR_SAFE_CA_URLS: >-
+    ${{ vars.AKLR_SAFE_CA_URLS ||
+        'https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs/amd-root-ca.crt https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs/amd-issuing-ca.crt' }}
   # The publish-measurement bot's rolling PR: sent and opened by the bot, from aklr-perf/main of
   # this repository. perf-guard.yaml spells the same expression.
   AKLR_BOT_PR: >-
