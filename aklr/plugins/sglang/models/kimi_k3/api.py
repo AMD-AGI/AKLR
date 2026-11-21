@@ -130,7 +130,7 @@ def _topk_falls_back(topk) -> bool:
         or config.scoring_func != "sigmoid"
         or config.correction_bias is None
         or not config.renormalize
-        or config.num_fused_shared_experts != 0
+        or moe_blocks.fused_shared_experts(config) != 0
         or config.routed_scaling_factor not in (None, 1.0)
         or config.apply_routed_scaling_factor_on_output
         or topk.waterfill_balancer is not None
