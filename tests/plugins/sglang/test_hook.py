@@ -37,6 +37,29 @@ def test_no_two_routes_take_one_target():
     assert targets and len(set(targets)) == len(targets)
 
 
+@pytest.mark.parametrize(
+    ("installed", "supported"),
+    [
+        ("0.5.23", True),
+        ("0.5.23.dev20261120+g28e5763574", True),
+        ("0.5.23.dev20261121+gunknown", False),
+    ],
+    ids=["release", "verified-daily", "unknown-daily"],
+)
+def test_deepseek_moe_hook_on_verified_daily(monkeypatch, installed, supported):
+    registered = []
+    registry = ModuleType("sglang.srt.plugins.hook_registry")
+    registry.HookType = SimpleNamespace(AROUND="around")
+    registry.HookRegistry = SimpleNamespace(register=lambda *args: registered.append(args))
+    monkeypatch.setitem(sys.modules, registry.__name__, registry)
+    # External distribution metadata and Python resolution, not AKLR routing internals.
+    monkeypatch.setattr(hook, "version", lambda dist: installed)
+    monkeypatch.setattr(pkgutil, "resolve_name", lambda target: original)
+    hook.install()
+    target = "sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal"
+    assert any(name == target for name, _, _ in registered) is supported
+
+
 def installed_sglang():
     try:
         return hook.sglang_version()

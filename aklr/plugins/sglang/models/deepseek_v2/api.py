@@ -50,7 +50,10 @@ def deepseek_v2_fp8_moe(
 ): ...
 
 
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
+@sglang_route(
+    "sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal",
+    versions=("0.5.23", "0.5.23.dev20261120"),
+)
 def _moe_forward_normal(
     self,
     hidden_states,
