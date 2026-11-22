@@ -300,7 +300,7 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`; an empty value count
 
 | Variable | Values | Effect |
 |---|---|---|
-| `AKLR_DISABLE` | `1`, `0`, unset, `<op_type>,...` | `1`: emergency stop, no dispatcher starts and every call falls back. A list is parsed (`disabled_op_types`) but nothing reads it yet |
+| `AKLR_DISABLE` | `1`, `0`, unset, `<op_type>,...` | `1`: emergency stop, no dispatcher starts and every call falls back. A list: the dispatcher serves no kernel of the listed op types, and their calls fall back |
 | `AKLR_MIN_SPEEDUP` | a finite number | the least measured speedup over the baseline that a workload needs to be served, default `1.05`; `0` or less also serves unmeasured workloads, never a `failed` one |
 | `AKLR_BUILD_CACHE_DIR` | a path | where kernels are built; default `${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels` |
 | `AKLR_ENABLE_TRACING` | `1`, `0`, unset | record the calls that fall back as workloads; any other value is an error |

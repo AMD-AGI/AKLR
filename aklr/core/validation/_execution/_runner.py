@@ -12,7 +12,6 @@ import multiprocessing
 import multiprocessing.connection
 import os
 import signal
-import sys
 import threading
 import time
 import traceback
@@ -473,10 +472,22 @@ class ProcessExecutionRunner(ExecutionRunner):
         os.environ.update(RANK=str(rank), WORLD_SIZE=str(len(devices)), LOCAL_RANK=str(rank))
         try:
             os.setsid()  # its pid becomes a group id: the parent kills the group, subprocesses included
+
+            def die_with_parent() -> None:
+                # The multiprocessing sentinel becomes ready even when the supervisor is killed; a process
+                # the supervisor forked may hold it open, so the parent pid is watched too.
+                parent = multiprocessing.parent_process()
+                while os.getppid() == parent.pid and not multiprocessing.connection.wait(
+                    [parent.sentinel], timeout=1.0
+                ):
+                    pass
+                os.killpg(0, signal.SIGKILL)
+
+            threading.Thread(target=die_with_parent, name="aklr-runner-parent-watch", daemon=True).start()
             os.chdir(directory)
             task_log = TaskLog(ProcessExecutionRunner._log_path(directory, rank))
-            with task_log.redirected_stdio():
-                try:
+            try:
+                with task_log.redirected_stdio():
                     import torch
 
                     # the kernel tracer registers as torch initializes the GPU: before the process's first kernel
@@ -487,44 +498,39 @@ class ProcessExecutionRunner(ExecutionRunner):
                     is_device_ready = True
                     if initializer is not None:
                         initializer()
-                    endpoint.send(RunnerStarted(runner_id=runner_id))
-                    context = ExecutionContext(devices=devices, log_path=task_log.path, directory=directory)
-                    while not isinstance(command := endpoint.receive(), ShutdownRunner):
-                        if not isinstance(command, ExecuteTask) or command.runner_id != runner_id:
-                            raise RuntimeError(f"runner received invalid command: {command}")
-                        task_id = command.task.task_id
+                endpoint.send(RunnerStarted(runner_id=runner_id))
+                context = ExecutionContext(devices=devices, log_path=task_log.path, directory=directory)
+                while not isinstance(command := endpoint.receive(), ShutdownRunner):
+                    if not isinstance(command, ExecuteTask) or command.runner_id != runner_id:
+                        raise RuntimeError(f"runner received invalid command: {command}")
+                    task_id = command.task.task_id
+                    with task_log.redirected_stdio():
                         result = command.task.call(context, **command.task.kwargs)
                         torch.cuda.synchronize()  # a late GPU fault is this task's, not the next one's
-                        # the log is complete when the parent reads its tail
-                        sys.stdout.flush()
-                        sys.stderr.flush()
-                        # only rank 0's result is the task's; the others' only say they finished
-                        endpoint.send(
-                            TaskCompleted(
-                                runner_id=runner_id, task_id=task_id, result=result if rank == 0 else None
-                            )
+                    # only rank 0's result is the task's; the others' only say they finished
+                    endpoint.send(
+                        TaskCompleted(
+                            runner_id=runner_id, task_id=task_id, result=result if rank == 0 else None
                         )
-                        task_id = None
-                except BaseException as error:  # noqa: BLE001
-                    # after the task arrived, a failure is the task's; before, the device's if it was not
-                    # ready, else the initializer's
-                    traceback.print_exc()
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-                    reason = f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}"
-                    try:
-                        endpoint.send(
-                            TaskRaised(runner_id=runner_id, task_id=task_id, reason=reason)
-                            if task_id is not None
-                            else RunnerFailed(
-                                runner_id=runner_id,
-                                reason=reason,
-                                resource_failed=not is_device_ready,
-                            )
+                    )
+                    task_id = None
+            except BaseException as error:  # noqa: BLE001
+                # after the task arrived, a failure is the task's; before, the device's if it was not
+                # ready, else the initializer's
+                reason = f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}"
+                try:
+                    endpoint.send(
+                        TaskRaised(runner_id=runner_id, task_id=task_id, reason=reason)
+                        if task_id is not None
+                        else RunnerFailed(
+                            runner_id=runner_id,
+                            reason=reason,
+                            resource_failed=not is_device_ready,
                         )
-                    except Exception:  # noqa: BLE001, S110
-                        # the parent sees the exit anyway
-                        pass
+                    )
+                except Exception:  # noqa: BLE001, S110
+                    # the parent sees the exit anyway
+                    pass
         finally:
             try:
                 endpoint.send(RunnerExited(runner_id=runner_id, task_id=task_id, exit_code=0))

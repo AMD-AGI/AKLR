@@ -200,6 +200,18 @@ class TestTracing:
             policy.submit(WorkloadEntry("gemm", {"M": m}, {}, order))
         assert [entry.axes for entry in policy.drain()] == [{"M": 4}, {"M": 8}]
 
+    def test_a_schema_that_cannot_be_written_loses_only_its_own_workloads(
+        self, seam: types.ModuleType
+    ) -> None:
+        call = GEMM_SAMPLE.call()
+        blocked = RuntimeEnv().schema_path / "schemas/gemm_bf16_nt/gemm_bf16_nt_n32_k64"
+        blocked.parent.mkdir(parents=True)
+        blocked.write_text("")  # a file where the first schema's directory goes
+        with TracingRuntime(TracingConfig()):
+            seam.gemm(call["a"], B=call["b"])
+            seam.gemm(call["a"], B=call["b"][:16])
+        assert self._traced() == {"gemm_bf16_nt_n16_k64": [[Workload(axes={"M": 4})]]}
+
     def test_adds_to_the_recorded_workloads(self, seam: types.ModuleType) -> None:
         case = GEMM_SAMPLE
         SchemaCollection.from_path(str(RuntimeEnv().schema_path)).add_workloads(

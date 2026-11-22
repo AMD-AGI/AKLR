@@ -204,21 +204,33 @@ class TestAuditStage:
         scope = ValidationScope.of_working_tree("HEAD", None)
         assert {f.code for f in AuditStage().run(scope, None).findings} == codes
 
+    @pytest.mark.parametrize("base", [None, "HEAD"], ids=["whole_tree", "changed_since_base"])
     def test_audits_every_file_the_runtime_loads(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, base: str | None
     ) -> None:
-        directory = tmp_path / "aklr/ops/gemm/impls/triton/gemm_bf16_nt_n32_k64"
-        save_json_file(_schema({"kernel.py": _PLAIN}), directory / "kernel.json")
-        for argv in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "base"]):
+        for argv in (["init", "-q"], ["commit", "-qm", "base", "--allow-empty"]):
             subprocess.run(
                 ["git", "-c", "user.name=t", "-c", "user.email=t@t", *argv],
                 cwd=tmp_path,
                 check=True,
             )
+        directory = tmp_path / "aklr/ops/gemm/impls/triton/gemm_bf16_nt_n32_k64"
+        save_json_file(_schema({"kernel.py": _PLAIN}), directory / "kernel.json")
         monkeypatch.chdir(tmp_path)
-        scope = ValidationScope.of_working_tree(None, None)
+        scope = ValidationScope.of_working_tree(base, None)
         assert [f.detail for f in AuditStage().run(scope, None).findings] == [
             "not at aklr/ops/<op>/impls/<language>/<name>/<uuid>.json"
+        ]
+
+    def test_a_workload_names_every_axis_of_the_outputs(self, tmp_path: Path) -> None:
+        schema = OpSample(
+            aklr.ops.bmm_bf16_nt, "bmm_bf16_nt", {"batch_size": 3, "M": 4, "N": 32, "K": 64}
+        ).schema(_schema({"kernel.py": _PLAIN}).kernel, [Workload(axes={"M": 4})])
+        path = tmp_path / f"aklr/ops/gemm/impls/triton/{schema.name}/{schema.uuid}.json"
+        save_json_file(schema, path)
+        scope = ValidationScope(tmp_path, "", None, (path,), ())
+        assert [f.detail for f in AuditStage().run(scope, None).findings] == [
+            "workload {M=4}: Missing value for variable axis 'batch_size'"
         ]
 
     @pytest.mark.parametrize(

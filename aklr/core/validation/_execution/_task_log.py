@@ -10,6 +10,7 @@ import contextlib
 import os
 import sys
 import threading
+import traceback
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,9 @@ class TaskLog:
     def redirected_stdio(self) -> Iterator[None]:
         sys.stdout.flush()
         sys.stderr.flush()
-        redirected_fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # Descendants of the previous task may still hold its stderr.
+        self.path.unlink(missing_ok=True)
+        redirected_fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600)
         saved_stdout_fd, saved_stderr_fd = os.dup(1), os.dup(2)
         try:
             os.dup2(redirected_fd, 1)
@@ -39,9 +42,12 @@ class TaskLog:
             cap_thread.start()
             try:
                 yield
+            except BaseException:
+                traceback.print_exc()
+                raise
             finally:
                 stop.set()
-                cap_thread.join(timeout=0.2)
+                cap_thread.join()
         finally:
             sys.stdout.flush()
             sys.stderr.flush()
@@ -65,6 +71,5 @@ class TaskLog:
                 if os.fstat(1).st_size <= MAX_LOG_BYTES:
                     continue
                 os.ftruncate(1, MAX_LOG_BYTES)
-                os.lseek(1, MAX_LOG_BYTES, os.SEEK_SET)  # else the next write leaves a hole of NUL bytes
             except OSError:
                 return

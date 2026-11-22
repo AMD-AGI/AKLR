@@ -240,7 +240,6 @@ def _flash_mla(
         inputs={
             "q": Tensor(
                 ["batch", "query_length", "n_heads", "head_dim"],
-                dtype="bfloat16",
                 description="The queries of each row; dense: the rope part last.",
             ),
             "kv_cache": kv_cache,
@@ -493,12 +492,10 @@ FP8_PAGED_MQA_LOGITS = Schema(
     inputs={
         "q": Tensor(
             ["batch", "one", "n_heads", "index_dim"],
-            dtype="float8_e4m3fn",
             description="The decode query of each request.",
         ),
         "kv_cache": Tensor(
             ["n_pages", "page_tokens", "one", "token_bytes"],
-            dtype="uint8",
             description=(
                 "The key pool, a page a row: page_size x 128 fp8 keys in aiter's"
                 " preshuffled 16 x 16 tiles, then page_size fp32 scales."
@@ -506,13 +503,11 @@ FP8_PAGED_MQA_LOGITS = Schema(
         ),
         "weights": Tensor(
             ["batch", "n_heads"],
-            dtype="float32",
             description="Per-head weight of each request.",
         ),
-        "context_lens": Tensor(["batch"], dtype="int32", description="Cached tokens of each request."),
+        "context_lens": Tensor(["batch"], description="Cached tokens of each request."),
         "block_tables": Tensor(
             ["batch", "max_blocks"],
-            dtype="int32",
             description="The pages of each request, in context order.",
         ),
         "page_size": Scalar("int32", description="Tokens per page."),
@@ -594,26 +589,19 @@ MLA_DECODE_FWD = Schema(
     inputs={
         "q": Tensor(
             ["batch", "n_heads", "kv_dim"],
-            dtype="float8_e4m3fn",
             description="Each request's query: the absorbed no-rope part, then the rope part.",
         ),
         "kv_buffer": Tensor(
             ["n_slots", "one", "one", "kv_dim"],
-            dtype="float8_e4m3fn",
             description="The KV pool: a 576-value row a slot, the rope part last.",
         ),
         "kv_indptr": Tensor(
             ["n_offsets"],
-            dtype="int32",
             description="Where each request's entries start in kv_indices, then where the last ends.",
         ),
-        "kv_indices": Tensor(
-            ["n_indices"], dtype="int32", description="Pool rows, each request's back to back."
-        ),
-        "q_scale": Tensor(["one"], dtype="float32", description="Multiplies every q value."),
-        "kv_scale": Tensor(
-            ["one"], dtype="float32", description="Multiplies every KV value, in the logits and the values."
-        ),
+        "kv_indices": Tensor(["n_indices"], description="Pool rows, each request's back to back."),
+        "q_scale": Tensor(["one"], description="Multiplies every q value."),
+        "kv_scale": Tensor(["one"], description="Multiplies every KV value, in the logits and the values."),
         "sm_scale": Scalar("float32", description="Multiplies every logit."),
     },
     outputs={

@@ -3,10 +3,14 @@
 
 """The bench on a GPU, through `python -m aklr validate`: its accuracy check, timing and tasks."""
 
+import contextlib
 import json
 import os
+import select
+import signal
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -34,6 +38,17 @@ _DOC = '"""A test kernel."""\n\n\n'
 _WRONG = "def run(a, b, bias, out):\n    out.zero_()\n"
 _RAISING = "def run(a, b, bias, out):\n    raise RuntimeError('broken kernel')\n"
 _OTHER = GEMM_KERNEL + "# another kernel\n"
+_NOISY = (
+    # Keep a duplicate of stderr, as a subprocess from this task would.
+    "def run(a, b, bias, out):\n    import os\n    import sys\n\n"
+    "    sys.previous_task_stderr = os.dup(2)\n"
+    "    sys.stdout.write('x' * (6 << 20))\n    sys.stdout.flush()\n    out.zero_()\n"
+)
+_CRASHING = (
+    "def run(a, b, bias, out):\n    import os\n    import sys\n\n"
+    "    os.write(sys.previous_task_stderr, b'late output from the first task')\n"
+    "    sys.stdout.write('the crash is here')\n    sys.stdout.flush()\n    os._exit(7)\n"
+)
 
 
 _GROUP_SUM = (
@@ -97,7 +112,8 @@ class _Repo:
         save_json_file(schema, self.root / path)
         return path
 
-    def validate(self, *args: str) -> dict:
+    def start(self, *args: str) -> subprocess.Popen:
+        """A validation of the committed tree, running: its report goes to out/."""
         self.commit()
         out = self.root / "out"
         # the run registers the toy ops' benches, as it does the ones in the bench's _ops/
@@ -106,8 +122,14 @@ class _Repo:
         (site / "sitecustomize.py").write_text("import tests.core.validation.toy_group\n")
         env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(site), str(_AKLR)))}
         argv = [sys.executable, "-m", "aklr", "validate", "--stages", "audit,bench", "--out", str(out), *args]
-        done = subprocess.run(argv, cwd=self.root, env=env, capture_output=True, text=True, check=False)
-        assert (out / "report.json").is_file(), done.stdout[-3000:] + done.stderr[-3000:]
+        return subprocess.Popen(
+            argv, cwd=self.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+
+    def validate(self, *args: str) -> dict:
+        stdout, stderr = self.start(*args).communicate()
+        out = self.root / "out"
+        assert (out / "report.json").is_file(), stdout[-3000:] + stderr[-3000:]
         stages = json.loads((out / "report.json").read_text())["stages"]
         assert stages[0]["status"] == "passed", stages[0]
         return stages[1]
@@ -170,6 +192,46 @@ def test_an_op_types_own_clock_times_its_workloads(repo: _Repo) -> None:
     (record,) = bench["records"]
     comparison = record["comparison"]
     assert comparison["candidate_ms"] == comparison["opponent_ms"] == [ToyClockBench.CLOCK_MS] * 3
+
+
+def test_a_crash_is_reported_with_its_own_tasks_log(repo: _Repo) -> None:
+    repo.write(_NOISY, m=8)  # the costlier task: it runs first, in the process the crashing one reuses
+    path = repo.write(_CRASHING)
+    bench = repo.validate("--devices", "0")
+    (detail,) = [f["detail"] for f in bench["demotions"] if f["schema_path"] == path]
+    assert "the crash is here" in detail
+    assert "x" * 80 not in detail
+    assert "late output from the first task" not in detail
+
+
+def test_a_killed_validation_leaves_no_runner_behind(repo: _Repo) -> None:
+    pid_path = repo.root / "runner.pid"
+    # the kernel's process, a runner, names itself and stays busy
+    kernel = (
+        "def run(a, b, bias, out):\n    import os\n    import pathlib\n    import time\n\n"
+        f"    pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid()))\n    time.sleep(600)\n"
+    )
+    with repo.start("--devices", "0", repo.write(kernel)) as validation:
+        try:
+            deadline = time.monotonic() + 120
+            while not (pid_path.exists() and pid_path.read_text()):
+                assert validation.poll() is None, validation.stderr.read()[-3000:]
+                assert time.monotonic() < deadline, "runner did not enter the kernel"
+                time.sleep(0.1)
+            runner = int(pid_path.read_text())
+            assert runner != validation.pid
+            pidfd = os.pidfd_open(runner)
+            try:
+                validation.kill()
+                validation.wait(timeout=10)
+                assert select.select([pidfd], [], [], 10)[0], "runner survived its supervisor"
+            finally:
+                if not select.select([pidfd], [], [], 0)[0]:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(runner, signal.SIGKILL)
+                os.close(pidfd)
+        finally:
+            validation.kill()
 
 
 def test_threads_time_on_several_devices_at_once(repo: _Repo) -> None:

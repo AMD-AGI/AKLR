@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import functools
+import json
 import os
 import re
 import subprocess
@@ -56,15 +57,15 @@ class ValidationScope:
                     raise ValueError(f"{path} is not a file in the repository {root}")
             paths = tuple(p.resolve() for p in schema_paths)
         elif is_schema_only:
-            changed = (root / p for p, kind in kinds.items() if kind == "schema_data")
-            paths = tuple(sorted(p for p in changed if p.is_file()))
+            # every changed file the runtime loads, whatever its name: the audit rejects a misnamed one
+            changed = {root / p for p in kinds}
+            paths = tuple(p for p in scope.layout.paths() if p in changed)
         else:
             paths = tuple(scope.layout.paths())
         bench_paths = paths
-        # the bench skips measurement-only changes: schemas at paths the base already has
         if is_schema_only:
-            at_base = set(scope.paths_at_base(OPS_DIR))
-            bench_paths = tuple(p for p in paths if scope.relative_path(p) not in at_base)
+            at_base = frozenset(scope.paths_at_base(OPS_DIR))
+            bench_paths = tuple(p for p in paths if not scope.is_measurement_only(p, at_base))
         return replace(scope, schema_paths=paths, bench_paths=bench_paths)
 
     @property
@@ -101,6 +102,22 @@ class ValidationScope:
             directory,
         )
         return tuple(sorted(os.fsdecode(p) for p in stdout.split(b"\0") if p))
+
+    def is_measurement_only(self, path: Path, at_base: frozenset[str]) -> bool:
+        """Skip an existing schema only when its authored fields match the base."""
+        relative = self.relative_path(path)
+        if relative not in at_base:
+            return False
+        base_text = self.text_at_base(relative)
+        try:
+            head = json.loads(path.read_bytes())
+            base = json.loads(base_text)
+            for schema in (head, base):
+                for workload in schema["workloads"]:
+                    workload.pop("evaluations", None)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return False
+        return head == base
 
     @functools.cached_property  # one git call per run, not per workload
     def is_first_release(self) -> bool:

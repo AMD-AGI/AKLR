@@ -42,14 +42,28 @@ class TracingRuntime:
     _instance: ClassVar[TracingRuntime | None] = None
     _cleanup_registered: ClassVar[bool] = False
     _env_initialized: ClassVar[bool] = False
+    _env_error: ClassVar[Exception | None] = None
+    _env_lock: ClassVar[threading.RLock] = threading.RLock()
 
     @classmethod
     def get_instance(cls) -> TracingRuntime | None:
-        """The active runtime; the first call starts one if AKLR_ENABLE_TRACING=1."""
-        if cls._instance is None and not cls._env_initialized:
-            cls._env_initialized = True
-            if RuntimeEnv().is_tracing_enabled:
-                cls().start()
+        """The active runtime; the first call starts one if AKLR_ENABLE_TRACING=1. An env it cannot start from
+        raises a RuntimeError from its error on every call."""
+        if cls._instance is None:
+            # a second thread waits for the first one's start; the flag set first stops a nested call starting again
+            with cls._env_lock:
+                if not cls._env_initialized:
+                    cls._env_initialized = True
+                    try:
+                        if RuntimeEnv().is_tracing_enabled:
+                            cls().start()
+                    except Exception as e:
+                        cls._env_error = e
+            if cls._instance is None and cls._env_error is not None:
+                # a new error each time: one raised again would keep every caller's frames in its traceback
+                raise RuntimeError(
+                    f"AKLR's tracing could not start from the environment: {cls._env_error}"
+                ) from cls._env_error
         return cls._instance
 
     def __init__(
@@ -217,13 +231,18 @@ class TracingRuntime:
                 continue
 
             definition = self._schemas[schema_name]
-            self._schema_collection.add_workloads(
-                [(definition, Workload(axes=entry.axes)) for entry in selected_entries]
-            )
-            layout = self._schema_collection.layout
-            # the json holds no standard: the dump keeps it beside, as modules that run without AKLR
-            if isinstance(layout, TraceDumpLayout) and definition.standard is not None:
-                definition.standard.save(layout.root / "standards" / schema_name)
+            try:
+                self._schema_collection.add_workloads(
+                    [(definition, Workload(axes=entry.axes)) for entry in selected_entries]
+                )
+                layout = self._schema_collection.layout
+                # the json holds no standard: the dump keeps it beside, as modules that run without AKLR
+                if isinstance(layout, TraceDumpLayout) and definition.standard is not None:
+                    definition.standard.save(layout.root / "standards" / schema_name)
+            except Exception:
+                # the policies are drained: one schema that cannot be written must not lose the others'
+                logger.exception(f"Flush of {schema_name} failed: {len(selected_entries)} workloads lost")
+                continue
             num_selected_entries += len(selected_entries)
 
         logger.info(f"Flush done. {num_selected_entries} entries selected")

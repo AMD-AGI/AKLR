@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import gc
+import os
+import subprocess
+import sys
+import types
+import weakref
 from dataclasses import replace
 from pathlib import Path
 
@@ -10,7 +16,7 @@ import torch
 import aklr.ops
 from aklr.core.platform import toolchain
 from aklr.core.platform.device import DeviceTarget
-from aklr.core.platform.env import ENV_MIN_SPEEDUP
+from aklr.core.platform.env import ENV_DISABLE, ENV_ENABLE_TRACING, ENV_MIN_SPEEDUP, RuntimeEnv
 from aklr.core.runtime.dispatch import (
     DispatchConfig,
     DispatchConfigRegistry,
@@ -75,6 +81,67 @@ class TestDispatcher:
             == "fallback"
         )
 
+    @pytest.mark.parametrize(
+        "change",
+        [
+            pytest.param(lambda a: a.to(torch.float16), id="another_dtype"),
+            pytest.param(lambda a: a[0], id="another_rank"),
+        ],
+    )
+    def test_falls_back_on_a_call_the_kernel_was_not_recorded_for(self, change) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(GEMM)
+        out = dispatcher(schema).call(
+            schema, {"a": change(call["a"]), "b": call["b"]}, fallback=lambda: "fallback"
+        )
+        assert out == "fallback"
+
+    def test_a_call_that_fell_back_is_freed_when_it_returns(self) -> None:
+        case = GEMM_SAMPLE
+        schema = case.served(GEMM)
+        serving = dispatcher(schema)
+        a = case.call()["a"][0].clone()  # of another rank: the schema cannot describe it
+        freed = weakref.ref(a)
+        gc.disable()  # a cycle would keep the call's tensors until a collection
+        try:
+            serving.call(schema, {"a": a, "b": case.call()["b"]}, fallback=lambda: "fallback")
+            del a
+            assert freed() is None
+        finally:
+            gc.enable()
+
+    def test_a_direct_call_the_schema_cannot_describe_raises_with_the_reason(self) -> None:
+        case = GEMM_SAMPLE
+        schema = case.served(GEMM)
+        with pytest.raises(RuntimeError, match="Dispatch miss") as raised:
+            dispatcher(schema).call(schema, {"a": case.call()["a"][0], "b": case.call()["b"]})
+        assert "defined dimension is 2" in str(raised.value.__cause__)
+
+    def test_a_tuner_runs_no_kernel_on_a_call_of_another_dtype(self) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(GEMM)
+        other = replace(schema, kernel=replace(schema.kernel, name="another"))
+        asked = []
+        tuner = types.SimpleNamespace(
+            choose=lambda op_name, key, candidates, run: asked.append(candidates) or candidates[0]
+        )
+        tuned = Dispatcher(SchemaCollection(schemas={schema.name: [schema, other]}), tuner=tuner)
+        half = {"a": call["a"].to(torch.float16), "b": call["b"]}
+        assert tuned.call(schema, half, fallback=lambda: "fallback") == "fallback"
+        assert asked == []
+        tuned.call(schema, {"a": call["a"], "b": call["b"]}, fallback=lambda: "fallback")
+        assert len(asked) == 1  # the tuner does choose for this key: a call of the recorded dtypes
+
+    def test_falls_back_on_a_disabled_op_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(ENV_DISABLE, "another_op,gemm_bf16_nt")
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(GEMM)
+        out = dispatcher(schema).call(schema, {"a": call["a"], "b": call["b"]}, fallback=lambda: "fallback")
+        assert out == "fallback"
+
     @pytest.mark.parametrize(("installed", "is_served"), [("3.8.0", True), ("3.7.0", False), (None, False)])
     def test_serves_only_a_kernel_whose_toolchain_is_installed(
         self, monkeypatch: pytest.MonkeyPatch, installed: str | None, is_served: bool
@@ -122,6 +189,42 @@ class TestDispatcher:
             schema, {"a": a, "b": b}, fallback=lambda: None
         )
         assert torch.equal(out, a @ b.mT)
+
+    def test_a_miss_runs_no_best_kernel_of_another_dtype(self) -> None:
+        case = GEMM_SAMPLE
+        schema = case.served(GEMM)
+        collection = SchemaCollection(schemas={schema.name: [schema]})
+        a, b = torch.ones(8, 64, dtype=torch.float16), case.call()["b"]
+        out = Dispatcher(collection, DispatchConfig(on_miss_policy="use_best_kernel")).call(
+            schema, {"a": a, "b": b}, fallback=lambda: "fallback"
+        )
+        assert out == "fallback"
+
+    def test_serves_each_dtype_its_own_kernel_at_the_same_axes(self) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        bf16 = case.served("def run(a, b, bias):\n    return 'bf16'\n", dps=False)
+        half = replace(
+            case.served("def run(a, b, bias):\n    return 'half'\n", dps=False),
+            inputs={**bf16.inputs, "a": replace(bf16.inputs["a"], dtype="float16")},
+        )
+        half = replace(half, kernel=replace(half.kernel, name="half"))
+        served = Dispatcher(SchemaCollection(schemas={bf16.name: [bf16, half]}))
+        assert served.call(bf16, {"a": call["a"], "b": call["b"]}, fallback=lambda: None) == "bf16"
+        assert (
+            served.call(bf16, {"a": call["a"].to(torch.float16), "b": call["b"]}, fallback=lambda: None)
+            == "half"
+        )
+
+    def test_falls_back_on_an_optional_tensor_the_kernel_was_recorded_without(self) -> None:
+        case = GEMM_SAMPLE
+        call = case.call()
+        schema = case.served(GEMM)
+        bias = torch.zeros(32, dtype=torch.bfloat16)
+        out = dispatcher(schema).call(
+            schema, {"a": call["a"], "b": call["b"], "bias": bias}, fallback=lambda: "fallback"
+        )
+        assert out == "fallback"
 
     def test_miss_without_fallback_raises(self) -> None:
         case = GEMM_SAMPLE
@@ -189,6 +292,63 @@ class TestOpApi:
 
             @aklr_api((template, replace(template, **change)))
             def gemm_bf16_nt_refused(a, b, bias=None, out=None, use_shuffled_weight=False): ...
+
+
+@pytest.mark.parametrize(
+    "runtime", ["aklr.core.runtime.dispatch.Dispatcher", "aklr.core.runtime.tracing.TracingRuntime"]
+)
+def test_a_runtime_the_env_cannot_start_raises_its_error_on_every_call(runtime: str) -> None:
+    schemas = RuntimeEnv().schema_path / "schemas"
+    schemas.mkdir()
+    (schemas / "unparsable.json").write_text("{")
+    module, _, name = runtime.rpartition(".")
+    script = (
+        f"from {module} import {name}\n"
+        "errors = []\n"
+        "for _ in range(2):\n"
+        "    try:\n"
+        f"        print({name}.get_instance())\n"
+        "    except Exception as e:\n"
+        "        errors.append(e)\n"
+        "        print('raised', type(e).__name__, 'from', type(e.__cause__).__name__)\n"
+        # one error raised again would keep every caller's frames, and their tensors, in its traceback
+        "print('distinct', errors[0] is not errors[1])\n"
+    )
+    # a process of its own: the env starts a runtime once per process
+    env = {**os.environ, ENV_DISABLE: "0", ENV_ENABLE_TRACING: "1"}
+    done = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, check=False
+    )
+    assert done.stdout.splitlines() == [
+        "raised RuntimeError from ValidationError",
+        "raised RuntimeError from ValidationError",
+        "distinct True",
+    ], done.stderr[-2000:]
+
+
+def test_a_thread_calling_while_the_env_starts_the_dispatcher_waits_for_it() -> None:
+    script = (
+        "import threading\nimport time\n"
+        "from aklr.core.runtime.dispatch import Dispatcher\n"
+        "from aklr.core.schema import SchemaCollection\n"
+        "load = SchemaCollection.from_path\n"
+        "def slow(*args, **kwargs):\n"
+        "    time.sleep(0.5)\n"
+        "    return load(*args, **kwargs)\n"
+        "SchemaCollection.from_path = slow\n"
+        "got = []\n"
+        "threads = [threading.Thread(target=lambda: got.append(Dispatcher.get_instance())) for _ in range(2)]\n"
+        "for thread in threads:\n"
+        "    thread.start()\n"
+        "for thread in threads:\n"
+        "    thread.join()\n"
+        "print([type(d).__name__ for d in got], got[0] is got[1])\n"
+    )
+    env = {**os.environ, ENV_DISABLE: "0"}
+    done = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, check=False
+    )
+    assert done.stdout.splitlines() == ["['Dispatcher', 'Dispatcher'] True"], done.stderr[-2000:]
 
 
 class TestOpVariants:

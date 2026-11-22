@@ -256,12 +256,10 @@ def _fused_moe(
             "hidden_states": Tensor(["n_tokens", "model_dim"], description="Token activations."),
             "w1": Tensor(
                 ["n_experts", "gate_up_rows", "packed_model_dim"],
-                dtype="float4_e2m1fn_x2",
                 description="Gate-up projection per expert, two values a byte.",
             ),
             "w2": Tensor(
                 ["n_experts", "model_dim", "packed_inter_dim"],
-                dtype="float4_e2m1fn_x2",
                 description="Down projection per expert, two values a byte.",
             ),
             "topk_weights": Tensor(
@@ -289,8 +287,8 @@ def _fused_moe(
                     " e8m0 scales: 'mxfp4', 'mxfp8' (e4m3), or None for none."
                 ),
             ),
-            "w1_scale": Tensor(w1_scale, dtype="float8_e8m0fnu", description="Per 1 x 32 block of w1."),
-            "w2_scale": Tensor(w2_scale, dtype="float8_e8m0fnu", description="Per 1 x 32 block of w2."),
+            "w1_scale": Tensor(w1_scale, description="Per 1 x 32 block of w1."),
+            "w2_scale": Tensor(w2_scale, description="Per 1 x 32 block of w2."),
             "swiglu_limit": Scalar(
                 "float32",
                 optional=True,

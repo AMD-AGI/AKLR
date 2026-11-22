@@ -96,7 +96,7 @@
         "n_heads",
         "nope_bytes"
       ],
-      "dtype": null,
+      "dtype": "uint8",
       "description": "Packed NoPE query rows."
     },
     "q_rope": {
@@ -105,7 +105,7 @@
         "n_heads",
         "rope_dim"
       ],
-      "dtype": null,
+      "dtype": "bfloat16",
       "description": "Query RoPE components."
     },
     "prefix_nope": {
@@ -113,7 +113,7 @@
         "prefix_rows",
         "nope_bytes"
       ],
-      "dtype": null,
+      "dtype": "uint8",
       "description": "Packed NoPE rows: 448 FP8 codes, 14 E8M0 scales, padding to 512 bytes."
     },
     "prefix_rope": {
@@ -121,21 +121,21 @@
         "prefix_rows",
         "rope_dim"
       ],
-      "dtype": null,
+      "dtype": "bfloat16",
       "description": "RoPE keys and values corresponding to the NoPE rows."
     },
     "prefix_indices": {
       "shape": [
         "prefix_nnz"
       ],
-      "dtype": null,
+      "dtype": "int32",
       "description": "CSR entries selecting rows of the pool."
     },
     "prefix_indptr": {
       "shape": [
         "n_offsets"
       ],
-      "dtype": null,
+      "dtype": "int32",
       "description": "Monotone CSR offsets for each query, beginning with zero."
     },
     "extend_nope": {
@@ -143,7 +143,7 @@
         "extend_rows",
         "nope_bytes"
       ],
-      "dtype": null,
+      "dtype": "uint8",
       "description": "Packed NoPE rows: 448 FP8 codes, 14 E8M0 scales, padding to 512 bytes."
     },
     "extend_rope": {
@@ -151,28 +151,28 @@
         "extend_rows",
         "rope_dim"
       ],
-      "dtype": null,
+      "dtype": "bfloat16",
       "description": "RoPE keys and values corresponding to the NoPE rows."
     },
     "extend_indices": {
       "shape": [
         "extend_nnz"
       ],
-      "dtype": null,
+      "dtype": "int32",
       "description": "CSR entries selecting rows of the pool."
     },
     "extend_indptr": {
       "shape": [
         "n_offsets"
       ],
-      "dtype": null,
+      "dtype": "int32",
       "description": "Monotone CSR offsets for each query, beginning with zero."
     },
     "sinks": {
       "shape": [
         "n_heads"
       ],
-      "dtype": null,
+      "dtype": "float32",
       "description": "Per-head softmax sink logits."
     },
     "softmax_scale": {
