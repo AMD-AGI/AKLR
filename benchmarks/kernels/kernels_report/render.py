@@ -14,7 +14,7 @@ from pathlib import Path
 from kernels_report.collect import SERVED, STATUSES, Context, ContractReport, PointReport
 
 LANGS = ("en", "zh")
-TITLE = {"en": "Kernel speedups", "zh": "Kernel 加速比"}
+TITLE = {"en": "Kernels", "zh": "Kernel"}
 STATUS_LABELS = {
     "ok": ("All served", "全部生效"),
     "partial": ("Partly served", "部分生效"),
@@ -275,7 +275,7 @@ def index_page(reports: list[ContractReport], context: Context, lang: str) -> st
         f'<div class="card" style="overflow-x:auto"><table><thead><tr>{head}</tr></thead>'
         f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
-    title = tr(lang, "Kernels", "Kernel")
+    title = TITLE[lang]
     return page(lang, escape(title), meta, body)
 
 
@@ -393,7 +393,7 @@ def contract_page(report: ContractReport, context: Context, lang: str) -> str:
         f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
     meta = (
-        f'<a href="../index.html?lang={lang}">← {tr(lang, "Kernel speedups", "Kernel 加速比")}</a> · '
+        f'<a href="../index.html?lang={lang}">← {TITLE[lang]}</a> · '
         f"{escape(report.op_type)} · main {commit_link(context, context.commit)} · "
         f"{tr(lang, 'generated', '生成于')} {escape(when(context.generated_at))}"
     )
