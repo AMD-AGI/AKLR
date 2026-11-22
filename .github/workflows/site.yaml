@@ -1,12 +1,12 @@
 name: AKLR-site
 
 # The only workflow that deploys GitHub Pages. CIs write their own section of the site-data branch
-# (agentx/, later accuracy/); this one deploys the branch tip with a home page built from each
-# section's section.json, so no CI's deploy replaces another's results.
+# (agentx/, kernels/, later accuracy/); this one deploys the branch tip with a home page built from
+# each section's section.json, so no CI's deploy replaces another's results.
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] reads only main's code and the site-data branch, never the triggering run's artifacts or code
     # Workflow names, not file names. workflow_run uses main's copy of this file.
-    workflows: [AKLR-agentx-ci]
+    workflows: [AKLR-agentx-ci, AKLR-CI]
     # completed, not success: a run whose targets failed may still have published.
     types: [completed]
     # The triggering run's head branch: PR runs never deploy.
@@ -23,10 +23,13 @@ concurrency:
 
 jobs:
   deploy:
-    # Only scheduled and manual runs on main write site-data.
+    # Only the runs that write site-data: AgentX's scheduled and manual runs, AKLR-CI's main pushes
+    # (publish-kernels).
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      contains(fromJSON('["schedule", "workflow_dispatch"]'), github.event.workflow_run.event)
+      github.event.workflow_run.name == 'AKLR-agentx-ci' &&
+      contains(fromJSON('["schedule", "workflow_dispatch"]'), github.event.workflow_run.event) ||
+      github.event.workflow_run.name == 'AKLR-CI' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
