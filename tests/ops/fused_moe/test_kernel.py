@@ -40,10 +40,7 @@ def test_minimax_tp8_kernel_matches_reference(rows, builder_registry):
     baseline = FUSED_MOE.baseline()(**call)
     # The baseline may write the same caller-provided output. Preserve its
     # values, then poison the candidate output so an unwritten result fails.
-    baseline = {
-        name: value.clone()
-        for name, value in FUSED_MOE.call_mutable_tensors(baseline, call).items()
-    }
+    baseline = {name: value.clone() for name, value in FUSED_MOE.call_mutable_tensors(baseline, call).items()}
     call["out"].fill_(float("nan"))
     runnable = BuilderRegistry.get_instance().build(matching[0])
     runnable(**call)
