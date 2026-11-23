@@ -170,7 +170,7 @@ time; every stage barrier also waits `lgkmcnt(0)`:
 
 `speedup` here is AKLR validate's one-sided lower bound of the aiter / kernel time ratio (measurement profile 19,
 `MEASUREMENT_PROFILE` in `aklr/core/validation/stages/_measure.py`; aiter's tuned `gemm_a16w16` through
-`gemm_baseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. Dispatch reads the `speedup` CI writes
+`GemmBaseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. Dispatch reads the `speedup` CI writes
 (`aklr/ops/README.md` § Workflow): 1.034–1.798 over the 23 Points (#125), each passing accuracy.
 
 | File | Points | Speedup over aiter | Highest |

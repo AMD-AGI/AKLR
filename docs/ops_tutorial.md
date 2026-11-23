@@ -39,10 +39,10 @@ flowchart TD
 
 Following `harness/skills/port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
 
-1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`.
-2. `reference.py`: `<contract>_reference(point, row_major_args)` in the op's dtypes, else float32 (for now float32, each input read through `semantics.to_float32`); integer outputs in their declared dtype. Rules: "Reference and baseline" in `aklr/ops/README.md`.
+1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`, and its `reference` and `baseline` (instances of the classes below).
+2. `reference.py`: one `OpReference` class per contract, whose `reference(self, *, <names>, **_)` takes the kernel's call by keyword and returns the mutable tensors by name, in the op's dtypes where torch has them, else float32 (for now float32); integer outputs in their declared dtype. Rules: "Reference and baseline" in `aklr/ops/README.md`.
 3. `api.py`: an `@api(<CONTRACT>)` stub (the body may only be `...`).
-4. `baseline.py`: one `<contract>_baseline` per contract that has a baseline, the engine's own call for the op. It takes the api's arguments (passed as the call's keyword arguments), imports AITER or SGLang inside the function, and returns the outputs the same way the api does; for an unsupported call it raises `NotImplementedError` (bench reports `baseline_failed`). Without this function the op is its own baseline, and the kernel has nothing to beat.
+4. `baseline.py`: one `OpBaseline` class per contract (every contract has exactly one), the engine's own call for the op. Its `baseline(self, *, <names>)` takes the kernel's call by keyword, imports AITER or SGLang inside the method, and returns the outputs by name; for an unsupported call it raises `NotImplementedError` (bench reports `baseline_failed`).
 5. `__init__.py`: exports the api.
 6. Add each contract's base small Point to `SMALL_POINTS` in `tests/ops/cases.py`, in contract order, then run `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` to regenerate `tests/ops/names.txt` and commit it with the rest.
 
@@ -104,7 +104,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - Correctness: for each workload, compares against the reference implementation on inputs sampled from the declared distributions;
   - Performance: compares against the baseline over multiple rounds under CUDA graph.
 
-**Thresholds**: every Point of a new kernel must reach ≥ **1.05** over the baseline (`<contract>_baseline` in `aklr/ops/<op>/baseline.py`) and ≥ **0.99** against the kernel already serving it, and runtime serving requires ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses the bar is only recorded in the report's demoted list and does not fail validate. The demoted list holds both performance misses and correctness failures (such as `numeric_mismatch`, `build_failed`, `candidate_crash`, which CI writes as `accuracy: failed`); both kinds need handling. Only when not a single workload qualifies does the schema report `no_qualifying_workload`.
+**Thresholds**: every Point of a new kernel must reach ≥ **1.05** over the baseline (the contract's `baseline`, a class in `aklr/ops/<op>/baseline.py`) and ≥ **0.99** against the kernel already serving it, and runtime serving requires ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses the bar is only recorded in the report's demoted list and does not fail validate. The demoted list holds both performance misses and correctness failures (such as `numeric_mismatch`, `build_failed`, `candidate_crash`, which CI writes as `accuracy: failed`); both kinds need handling. Only when not a single workload qualifies does the schema report `no_qualifying_workload`.
 
 ## 4. PR and CI
 

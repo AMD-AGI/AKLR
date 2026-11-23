@@ -105,9 +105,8 @@ below are of the earlier versions, but for E18 on `3f488296…`.
   rounds, its routing-weighted bf16 rows and its bf16 output at every m (`bits >> 16`); `f13fecf1…` at m ≥ 512, where
   it is not served, stores int8 rows with one fp32 scale per 32 values. `e33e2bc9…` (every Point), `3f488296…` (m
   1024–4096) and `17887718…` (every Point) store each route's stage-2 row as MXFP4, e2m1 with an E8M0 scale per 32,
-  before the route sum. The contract notes that the 33- and 65-expert kernels keep partials far off aiter's error
-  (`contract.py`, the FIXME at `out`'s `error_bounds`). The runs record `accuracy: passed`, not the SQNR. Against
-  aiter's error (the contract's `BaselineRelativeBound`), `fa7e6f02…`'s fp8 rows fail at 31.4–31.5 dB against aiter's
+  before the route sum. The runs record `accuracy: passed`, not the SQNR. Against a bound relative to aiter's own
+  error (the contract now has SQNR alone: 20 dB with MXFP8 activations, 10 dB with MXFP4), `fa7e6f02…`'s fp8 rows fail at 31.4–31.5 dB against aiter's
   46.9–47.3 dB, and its fp32 or bf16 rows pass; `d0d05b32…` fails at 26.5–30.3 dB, and rounding to nearest even
   instead of truncating moves it by under 0.1 dB, so rounding is not what limits it *(field, E19)*. The MXFP4 route
   rows are not measured against such a bound.

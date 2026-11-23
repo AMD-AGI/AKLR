@@ -56,8 +56,8 @@ def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_i
   - 输入：`forward_normal` 读取的内容，即 `hidden_states`；路由的 `router_weight` 和 `correction_bias`；专家的 `w1`、`w1_scale`、`w2`、`w2_scale`，共享专家放在最后一个位置（`n_experts = n_routed + 1`）；以及标量 `routed_scaling_factor`；
   - attr：路由设置 `topk`、`num_expert_group`、`topk_group`、`renormalize` 和 `scoring_func`；
   - 输出：`out`，即这一层在本卡上的输出，也就是多卡归约之前的结果。
-- `reference.py`：`deepseek_v2_mxfp4_moe_reference`，按 contract 的计算在 fp32 下实现。
-- `baseline.py`：`deepseek_v2_mxfp4_moe_baseline`，即 SGLang 目前执行第 1–9 步的方式：路由 GEMM、AITER 的分组 top-k、SGLang 追加共享专家、AITER 的 `fused_moe`。kernel 要快过的是这整条路径，而不只是 `fused_moe`。
+- `reference.py`：`DeepseekV2Mxfp4MoeReference`，按 contract 的计算在 fp32 下实现。
+- `baseline.py`：`DeepseekV2Mxfp4MoeBaseline`，即 SGLang 目前执行第 1–9 步的方式：路由 GEMM、AITER 的分组 top-k、SGLang 追加共享专家、AITER 的 `fused_moe`。kernel 要快过的是这整条路径，而不只是 `fused_moe`。
 - `api.py`：算子的入口函数 `@api(DEEPSEEK_V2_MXFP4_MOE)`，函数体为 `...`。
 
 ### 4. 编写 route

@@ -36,9 +36,9 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
   `gate_up_interleaved` (gate and up rows interleaved, 2-D scales). `act_quant` 4 quantizes the activations to MXFP4,
   8 to fp8 (SiTUv2 only); gate mode interleave keeps bf16 activations, and so does swiglu below 256 tokens.
 - The var axis is `n_tokens`; model dim, experts, top-k and inter dim are fixed per schema name.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, and for every activation but swiglu one whole-output
-  SQNR ≥ 13 dB bound against the reference (float32 in validation) rounded to the output dtype, with no bias test;
-  swiglu is bounded per element relative to aiter's own error (`BaselineRelativeBound`). Atomic accumulation passes
+- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, and one whole-output SQNR bound against the
+  reference (float32 in validation) rounded to the output dtype: 20 dB with MXFP8 activations (`act_quant` 8), 10 dB
+  with MXFP4 (`out`'s `error_bounds` in `aklr/ops/fused_moe/contract.py`). Atomic accumulation passes
   the SQNR bound, and so do fp8 partial rows and bf16 truncation
   ([fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md), Counter-signals).
 - Every AKLR kernel computes it in two GEMM stages. How the routes reach their expert's rows is the main choice at a
@@ -132,7 +132,7 @@ tokens per call. Reuse the mechanism and re-derive the number.
     (m ≥ 256) run at served Points.
   - `5d5b47d0…`: one stage-2 binary serves all four token counts; stage 1 compiles per count.
 - **aiter's FlyDSL MoE families** and their knobs: `../flydsl/kernels/flydsl_kernel_library.md` § Other
-  FlyDSL families in the baseline aiter (MoE). aiter is the baseline; price it through `fused_moe_baseline`, which
+  FlyDSL families in the baseline aiter (MoE). aiter is the baseline; price it through `FusedMoeBaseline`, which
   calls `aiter.fused_moe.fused_moe` (`grouped_sorted_tokens.md` §8).
 - **FlyDSL v0.3.2's `kernels/moe/`** and how aiter's copies differ: `../flydsl/moe.md` § grouped_sorted_tokens
   §1.

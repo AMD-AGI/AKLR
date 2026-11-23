@@ -19,7 +19,7 @@ linked, not restated (`aklr/ops/README.md` § The kernel section and ABI is the 
 - You write a new Triton or Gluon kernel for an AKLR schema (a core op under `aklr/ops/`, a plugin op under
   `aklr/plugins/sglang/`), or port one into a schema file, or your op has no contract yet (§3).
 - You choose between plain `tl.*` and Gluon, or are about to add a launch.
-- `python -m aklr validate` reports `schema_invalid` (`not at ...`), `source_rejected` (SA0–SA4), `build_failed`,
+- `python -m aklr validate` reports `schema_invalid` (`not at ...`), `source_rejected` (SA0–SA5), `build_failed`,
   `capture_unsafe`, `input_mutation` or `no_qualifying_workload`, or demotes a Point.
 - A kernel works eagerly and fails under graph capture or replay.
 
@@ -117,7 +117,7 @@ implementations, not of the languages, and not of preshuffled MXFP4.
 A new scenario starts from `python -m aklr export` or the script of `docs/ops_tutorial.md` § 1. B; a second kernel for a
 committed scenario from a copy of one of its files (`aklr/ops/README.md` § Workflow). Run from the repository root, this
 writes the copy at its uuid path in the exact text the audit requires (S9), which passes the schema-text and path checks
-when the source meets the `content` rule above; passing the source audit also needs the entry ABI and SA0–SA4 (§4):
+when the source meets the `content` rule above; passing the source audit also needs the entry ABI and SA0–SA5 (§4):
 
 ```python
 import json
@@ -154,7 +154,7 @@ and may take framework state as mutable inputs (`aklr/plugins/README.md` § Arch
 
 Dispatch calls `run` only with tensors in the stored layout, not negated, aligned (`data_ptr() % 16 == 0` in the source), on the table's device, no output byte overlapping an input (S10): on `gemm@1.0` a non-contiguous `row_major` input, a negated one, one 2 bytes off alignment, a CPU call against a `cuda:0` table and an output aliasing an input each fell back `out_of_contract` before `run` *(field, E7)*. So strides can be constexprs folded from the shape, and a scalar whose `ScalarSpec` in the op's `contract.py` declares one value can be hard-coded, as the DeepSeek MoE's entry hard-codes `routed_scaling_factor`, declared `(2.5,)` (S11): 2.0 and 3.5 fell back before `run`, 2.5 was served *(field, E7)*. Across six contracts, calls with a changed attr, an unlisted value of a non-`any_size` axis or another layout fell back before `run`, while GDN calls with 4 and with 8 slots, an `any_size` axis, were both served *(field, E7)*: do not hard-code an `any_size` axis. Pass a ranged scalar at run time: an RMSNorm copy (`cf637bff`) with `epsilon` hard-coded to 1e-5 passed validate, yet called with `epsilon` 1e-3 on inputs of scale 0.01 was off by up to 224%, the committed file exact *(field, E8)*.
 
-The audit's rules SA0–SA4 are stated in `aklr/ops/README.md` § The kernel section and ABI (their code: S12); a
+The audit's rules SA0–SA5 are stated in `aklr/ops/README.md` § The kernel section and ABI (their code: S12); a
 `source_rejected` finding names the rule, file and line. What they mean for a Triton or Gluon kernel:
 
 - A def whose single decorator is `@triton.jit` is device code (S13 lists `@gluon.jit` beside it): `torch.tensor`,
@@ -353,7 +353,7 @@ returns at once when `tile * BM >= gl.load(Total)`, the row count the GPU comput
    `gemm_n6144_k2048`: 16-byte loads in a `BlockedLayout`, masked `buffer_load` / `buffer_store`, one MFMA with an
    `AMDMFMALayout` accumulator and `DotOperandLayout` operands, the token count as a constexpr, one configuration
    function for kernel and launch. It compiles with Triton 3.8.0 for gfx950 at M = 2, 16, 32 and 64 without spills, and
-   passes SA0–SA4. Run at N 6144, K 2048 and M = 2, 3, 4, 8, 12, 16, 17, 32, 33, 48, 64, it was bitwise stable for one
+   passes SA0–SA5. Run at N 6144, K 2048 and M = 2, 3, 4, 8, 12, 16, 17, 32, 33, 48, 64, it was bitwise stable for one
    positive and one signed input per M over 20 eager calls, 20 graph replays and a second process, within 0–1 bf16 ulp
    on the positive input and at 0.960–0.984 of the bound 2^-8 |Σab| + 2^-18 Σ|ab| on the signed one. Exported as a
    `gemm_n6144_k2048` file and validated, it had no correctness, build or capture finding, but all six Points (m = 2, 4,
@@ -500,7 +500,7 @@ MoE plugins and the fp8 block-scaled GEMMs), and each output's error bound — a
 | Finding | Usually | § |
 |---|---|---|
 | `schema_invalid` | not at the uuid path, not the exact schema text, workloads half measured | 3, 11 |
-| `source_rejected` | SA0–SA4 | 4 |
+| `source_rejected` | SA0–SA5 | 4 |
 | `build_failed` | an import error, an entry wrapped so that it cannot take the call keys (a `run` missing a key is `source_rejected` already, SA4), a compile error at the first call, a first call over 16 GiB | 3, 6, 10 |
 | `candidate_crash` | a memory fault or segfault, an output of the wrong shape or dtype | 6, 10 |
 | `candidate_timeout` | a hang: a workgroup waiting inside a launch for another (§7), a device loop on a value never written (§6); reported after 900 s plus 300 s per Point of the batch (S41) | 6, 7 |

@@ -64,7 +64,7 @@ enumerated M ≤ 16.
 
 ## How the bf16 path is reached
 
-1. `aiter.tuned_gemm.gemm_a16w16` (`aiter/tuned_gemm.py:290`) is the entry, and the call AKLR's `gemm_baseline`
+1. `aiter.tuned_gemm.gemm_a16w16` (`aiter/tuned_gemm.py:290`) is the entry, and the call AKLR's `GemmBaseline`
    makes (`aklr/ops/gemm/baseline.py`): time aiter through it.
 2. The lookup (`get_GEMM_A16W16_config`, `tuned_gemm.py:130`) matches `(gfx, cu_num, M, N, K, bias, dtype,
    outdtype, scaleAB, bpreshuffle)`, with M as is, then padded twice by `get_padded_m` (the padding is in
@@ -160,7 +160,7 @@ serve; which run where: `../../moe/INDEX.md` § Kernels to start from.
 
 Same layout as the GEMMs: host wrapper in `aiter/ops/flydsl/`, body under `kernels/`, and nothing runs unless
 `is_flydsl_available()` (`aiter/ops/flydsl/utils.py:72`). `aiter.fused_moe.fused_moe` (`aiter/fused_moe.py:470`) is
-the call `fused_moe_baseline` makes (`aklr/ops/fused_moe/baseline.py`), in sglang's environment: price aiter's MoE
+the call `FusedMoeBaseline` makes (`aklr/ops/fused_moe/baseline.py`), in sglang's environment: price aiter's MoE
 through it. Only what § Not for gfx950 lists is kept off gfx950 by its source; the families were not each run on
 gfx950.
 

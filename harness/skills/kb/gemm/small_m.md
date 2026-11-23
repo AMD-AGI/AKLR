@@ -62,7 +62,7 @@ sources:
   forces queue profiling, and the floor holds there too: spin kernels of 1.8–3.5 µs back to back read 4.40–4.56 µs
   (`../pitfalls/aklr_dispatch_floor.md` E4). Time an empty kernel, the baseline and your candidate in pairs on main
   and back to back outside AKLR before deciding a Point at 4–5 µs has no headroom (`../SKILL.md` § Also in AKLR).
-- **Price aiter's rows through the deployed entry** (`aiter.tuned_gemm.gemm_a16w16`, the call `gemm_baseline`
+- **Price aiter's rows through the deployed entry** (`aiter.tuned_gemm.gemm_a16w16`, the call `GemmBaseline`
   makes), not a direct kernel call; time your own kernel through its `run` entry, as
   the benchmark calls it.
   *(field, E10)* A row that a direct call measured 0.76 µs faster was 0.34 µs slower through the entry, and in deployment

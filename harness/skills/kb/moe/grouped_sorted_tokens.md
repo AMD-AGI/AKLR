@@ -282,7 +282,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §6.
 - A call of a few tokens (as in decode) reads cold weights, runs under graph replay and pays a per-node floor:
   rotate weight copies past the
   MALL, time a replayed graph, and price through the deployed entry (`../gemm/small_m.md` §1). AKLR's
-  bench already replays a graph with a cache flush per call, and times aiter's MoE through `fused_moe_baseline`
+  bench already replays a graph with a cache flush per call, and times aiter's MoE through `FusedMoeBaseline`
   (`../flydsl/kernels/flydsl_kernel_library.md` § Other FlyDSL families in the baseline aiter).
 - *(field, E18)* A MoE scorer over 8–128 tokens read ~0.2% in-batch noise, but identical code drifted 0.3–0.4%
   between batches.

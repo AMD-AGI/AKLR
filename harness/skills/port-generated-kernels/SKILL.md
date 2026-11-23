@@ -21,7 +21,7 @@ Read the harness [rules](../../rules.md), [gates](../../gates.md), and current
 
 - Pin and record the exact source revision, generator context, and provenance.
 - Map the implementation to a AKLR contract and schema name, or add the op with
-  its `<contract>_baseline`.
+  its reference and baseline classes.
 - Deliver the kernel as one schema JSON whose `kernel.sources` are
   self-contained and pass the audit, with `kernel.author` naming the generator.
 - Replace numeric or opaque artifact names with meaningful operator, variant,

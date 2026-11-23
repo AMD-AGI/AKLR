@@ -39,10 +39,10 @@ flowchart TD
 
 参考仓库里的 `harness/skills/port-generated-kernels/references/new-op.md` 依次实现以下文件：
 
-1. `contract.py`：定义 `OpContract` 和 `CONTRACTS`（registry 会自动发现）；`op_type` 取目录名 `<op>`；按数学含义命名；多输出时不能有叫 `out` 的；每个输出给出 `error_bounds`，contract 给出 `determinism`。
-2. `reference.py`：`<contract>_reference(point, row_major_args)`，按算子声明的 dtype 算，做不到就用 float32（目前都是 float32，输入用 `semantics.to_float32` 读）；整数输出用声明的 dtype。规则见 `aklr/ops/README.md` 的 "Reference and baseline"。
+1. `contract.py`：定义 `OpContract` 和 `CONTRACTS`（registry 会自动发现）；`op_type` 取目录名 `<op>`；按数学含义命名；多输出时不能有叫 `out` 的；每个输出给出 `error_bounds`，contract 给出 `determinism`，以及它的 `reference` 和 `baseline`（下面两个类的实例）。
+2. `reference.py`：每个 contract 一个 `OpReference` 类，它的 `reference(self, *, <参数名>, **_)` 按关键字接收 kernel 的调用参数，按名字返回 mutable 张量；torch 有算子的 dtype 就用它算，没有就用 float32（目前都是 float32）；整数输出用声明的 dtype。规则见 `aklr/ops/README.md` 的 "Reference and baseline"。
 3. `api.py`：`@api(<CONTRACT>)` 存根（函数体只能是 `...`）。
-4. `baseline.py`：每个有基线的 contract 一个 `<contract>_baseline`，就是推理引擎对这个算子的实际调用；接收 api 的参数（以调用的关键字参数传入），在函数内部 import AITER 或 SGLang，像 api 一样返回输出；不支持的调用抛 `NotImplementedError`（bench 报 `baseline_failed`）。没有这个函数时算子以自己为基线，kernel 没有要超过的对象。
+4. `baseline.py`：每个 contract 一个 `OpBaseline` 类（每个 contract 必须有且只有一个），就是推理引擎对这个算子的实际调用；它的 `baseline(self, *, <参数名>)` 按关键字接收 kernel 的调用参数，在方法内部 import AITER 或 SGLang，按名字返回输出；不支持的调用抛 `NotImplementedError`（bench 报 `baseline_failed`）。
 5. `__init__.py`：导出 api。
 6. 在 `tests/ops/cases.py` 的 `SMALL_POINTS` 中按 contract 顺序加入各 contract 的 base 小 Point，然后运行 `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` 重新生成 `tests/ops/names.txt` 并一起提交。
 
@@ -104,7 +104,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - 正确性：对每个 workload 用分布采样的输入，参考实现进行比较；
   - 性能：在 CUDA graph 下与基线多轮对比。
 
-**门槛**：新 kernel 的每个 Point 相对基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`）要 ≥ **1.05**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
+**门槛**：新 kernel 的每个 Point 相对基线（contract 的 `baseline`，即 `aklr/ops/<op>/baseline.py` 里的类）要 ≥ **1.05**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
 
 ## 4. PR 与 CI
 

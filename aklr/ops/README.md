@@ -9,19 +9,19 @@ aklr/ops/
   README.md                    this file
   <op>/                        attention, gemm, fused_moe, mhc, mla, rms_norm, topk
     __init__.py                re-exports api.py's apis
-    contract.py                OpContract constants, CONTRACTS
-    reference.py               one <contract>_reference per contract
+    contract.py                OpContract constants, each with its reference and baseline; CONTRACTS
+    reference.py               one OpReference class per contract
     api.py                     one @api function per contract
-    baseline.py                one <contract>_baseline per contract that has a baseline
-    group.py                   one <contract>_group_init per ranks contract that needs a set-up
+    baseline.py                one OpBaseline class per contract
     impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
 ```
 
 - A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
   at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its
-  own inputs. Its reference is `<contract>_reference(point, group_args, rank)`, `group_args` every
-  rank's inputs in rank order, each on its rank's device (`cuda:<rank>`), and `group.py`'s `<contract>_group_init()`, if any, sets up on each rank what the
-  calls take for granted (as an engine does before the first, e.g. mori shmem).
+  own inputs. Its reference is a `DistOpReference`, whose `reference(calls, rank)` takes every rank's call in rank
+  order, each on its rank's device (`cuda:<rank>`), and returns rank `rank`'s outputs. Its baseline is a
+  `DistOpBaseline`, whose `setup()` sets up on each rank what the calls take for granted (as an engine does before
+  the first, e.g. mori shmem) and `teardown()` undoes it.
 
 - `<language>` equals the schema's `kernel.language` (`flydsl`, `hip`, `hsaco` or `triton`, `Language` in
   `aklr/core/contract/spec/_kernel.py`). `impls/` is not a Python package: it holds language directories, they hold
@@ -106,10 +106,11 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
 - A scalar input has `"shape": null`, `dtype`, `values` (an enumeration) or `interval`, an optional `default`, and
   `description`. A kernel must be correct for every value in the declared range.
 - A mutable tensor's `error_bounds` (in `contract.py`, not in the schema file; narrowing to the scenario
-  picks one) is one of `dot_product`, `output_rounding`, `baseline_relative`, `tolerance`, `sqnr` (whole-output
-  SQNR against the reference rounded to the output dtype); each formula is an `ErrorBound` kind in
-  `semantics/_compare.py`. An integer one has none: it must equal the reference, but where `id_scores` scores the two alike. `baseline_relative` needs
-  the baseline's output: outside the repository, call the contract's `<contract>_baseline` yourself.
+  picks one) is `tolerance` (`atol` and `rtol` per element, as torch's `assert_close`) or `sqnr` (whole-output
+  SQNR against the reference rounded to the output dtype); each is an `ErrorBound` kind in `semantics/_compare.py`.
+  The common bounds are there too (`tolerance(*dtypes)`, `GEMM_BF16_SNR`, `MOE_MXFP4_SNR`, ...): a contract uses
+  them, and writes its own numbers only where its op needs other ones. An integer one has none: it must equal the
+  reference, unless the reference's `check` says otherwise.
 - `compare.element_order` is `fixed` (element by element) or `any_in_full_rows` (integer outputs only: a row
   holding no padding may list its entries in any order); each is an `ElementOrder` member.
 - The reference and the baseline: [Reference and baseline](#reference-and-baseline).
@@ -119,37 +120,40 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
 The reference says what the op computes; the baseline is what the engine runs for it today. A kernel is checked
 against the first and timed against the second.
 
-The reference, `reference.py`'s `<contract>_reference(point, row_major_args) -> Tensor` (a tuple when there are
-several: the mutable tensors in order, each mutable input as the call leaves it):
+The reference, a class in `reference.py` subclassing `OpReference` (`aklr/core/contract/reference.py`), whose
+instance is the contract's `reference`:
 
-- Computes in the op's dtypes (a bf16 gemm as torch's bf16 matmul), or in float32 where torch cannot; in float64
-  or int64 only where the op declares them. For now every reference reads its inputs through
-  `semantics.to_float32(tensor, dtype)` and computes in float32.
+- `reference(self, *, <names>, **_)` takes the kernel's call by keyword: the inputs row-major, the outputs'
+  buffers, the scalars and the attrs the api takes; an absent optional input is `None`. It returns a dict of the
+  mutable tensors by name, each mutable input as the call leaves it, and may add what its `check` reads.
+- Computes in the op's dtypes where torch has them (a bf16 gemm as torch's bf16 matmul), else in float32; never in
+  float64. For now every reference computes in float32: `.float()` for a dtype torch casts,
+  `semantics.to_float32(tensor, dtype)` for a packed one (fp4, e8m0).
 - Rounds only where every correct kernel rounds (a router's logits to bf16, an fp8 linear's input), and lists those
   roundings in its docstring. No sum is computed exactly: engines sum in float32, each in its own order, and the
   difference is left to `compare`.
 - Returns each float output as computed (validation rounds it to the output dtype to compare), each integer output
   (an id, a slot) in its declared dtype.
 - Is written from the math, independent of the kernels and the baseline. It runs on the inputs' device (the GPU in
-  validation), reads only `point.axes`, `point.attrs` and `point.dtypes`, and never writes an input
-  (`to_float32` may return the very tensor it was given).
+  validation), reads each size from a tensor's shape, and never writes a tensor of the call.
+- `check(outputs, expected, criteria)` compares the kernel's outputs with `expected` under the error bounds
+  (`compare_outputs`). An op whose correct kernels can differ in a way no bound states overrides it:
+  `qwen2_moe_router`'s reference also returns its bf16 logits, and its `check` lets an id differ from the
+  reference's where the two experts' logits are equal or one bf16 value apart, as two engines' sums can round a
+  logit to either.
 
-An integer output must equal the reference's, unless `reference.py` also has `<contract>_id_scores(point,
-row_major_args) -> {output: scores}`: each row's candidate scores in their float dtype. An id that differs from the
-reference's then passes if its score equals the reference id's or is the next value of that dtype above or below
-it, the id is in range, and its row has no repeated id. Ids chosen by a summed score need this, as two engines'
-sums can round a score to either of two adjacent values (`qwen2_moe_router`: its bf16 logits).
+The baseline, a class in `baseline.py` subclassing `OpBaseline` (`aklr/core/contract/baseline.py`), whose instance
+is the contract's `baseline`; every contract has exactly one:
 
-The baseline, `baseline.py`'s `<contract>_baseline`:
-
-- Is what the engine (sglang, vLLM, aiter) calls for the op at the Point: the same function, the same arguments,
-  in the engine's precision. Nothing is reimplemented, and nothing is added that the engine does not do (a copy of
-  the output, a re-layout of a weight).
-- Takes the api's arguments as keyword arguments, imports the engine inside the function, returns the outputs as
-  the api does, and raises `NotImplementedError` for a call the engine does not serve (bench: `baseline_failed`).
-  Without one the op is its own baseline, and a kernel has nothing to beat.
-- Is for timing: kernels are checked against the reference, and validation reads the baseline's outputs only for
-  a `baseline_relative` bound.
+- `baseline(self, *, <names>, **_)` is what the engine (sglang, vLLM, aiter) calls for the op at the Point: the same
+  function, the same arguments, in the engine's precision. Nothing is reimplemented, and nothing is added that the
+  engine does not do (a copy of the output, a re-layout of a weight).
+- Takes the kernel's call by keyword, imports the engine inside the method, returns the outputs by name (a mutable
+  input it writes is read from the call), and raises `NotImplementedError` for a call the engine does not serve
+  (bench: `baseline_failed`).
+- `profile(fn)` times one call, the kernel's and the baseline's alike (a CUDA graph, cache flushes taken out);
+  validation computes the speedup.
+- Is for timing only: kernels are checked against the reference.
 
 An output's `error_bounds` allow the difference two correct implementations make (another float32 summation order,
 a rounding at a tie), measured at the op's shapes.
@@ -213,7 +217,10 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
   at its first use (SA3): call a pointer `inp` or `x`, not `input`.
 - Scratch space is allocated inside the call (`torch.empty`, `torch.zeros`, `torch.*_like`, `.new_*`, ...) on an
   argument's device, or once per shape in a compile function and rewritten whole by every call before it is read.
-  `torch.rand*`, `torch.tensor` and `torch.as_tensor` are rejected in launch code (SA3).- A device function, a def whose single decorator is `@flyc.kernel`, `@flyc.jit`, `@triton.jit` or `@gluon.jit`,
+  `torch.rand*`, `torch.tensor` and `torch.as_tensor` are rejected in launch code (SA3).
+- Import nothing of `aklr` but `aklr.core.jit`, its api for kernels: a kernel is checked and timed against aklr's
+  reference and baseline, and is served without them; a call the kernel does not run fast is one its schema does
+  not list (SA5).- A device function, a def whose single decorator is `@flyc.kernel`, `@flyc.jit`, `@triton.jit` or `@gluon.jit`,
   is compiled: its body skips the launch checks of SA2 and SA3, and every whole-file check still applies to
   it. With a second decorator (`@triton.autotune` or `@triton.heuristics` above
   `@triton.jit`) the def is host code whose body must pass SA2 and SA3; choose the config in a compile
@@ -253,7 +260,7 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
   globals and fails to compile a plain `BLOCK = 64` or an annotated `BLOCK: tl.constexpr = 64` read inside the
   kernel. Pass such a value as a `tl.constexpr` parameter (`_k[grid](..., BLOCK=BLOCK)`) or write it inside the
   device function.
-- The authority is `aklr/core/validation/stages/_audit/_rules.py`, whose rules SA0–SA4 every source must pass
+- The authority is `aklr/core/validation/stages/_audit/_rules.py`, whose rules SA0–SA5 every source must pass
   before it reaches a GPU; a source too deeply nested to audit (a few thousand chained operators) is rejected
   (SA0).
 
@@ -277,7 +284,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
   `Tensor(a!)`, and it returns `()`: aklr calls it as `run(**call)`, and the rules of `run` hold (it writes the
   preallocated outputs and the mutable inputs, reads its other inputs only and keeps nothing across calls).
 - Launch on `at::hip::getCurrentHIPStream()`; allocate scratch with `at::empty` on an argument's device.
-- Audit applies SH0–SH5 (`aklr/core/validation/stages/_audit/_hip.py`) instead of SA0–SA4, on the text with
+- Audit applies SH0–SH5 (`aklr/core/validation/stages/_audit/_hip.py`) instead of SA0–SA5, on the text with
   comments and literals blanked: no unterminated comment or literal (SH0); the one registration above, in the entry
   file, and no other library macro (SH1: a second library of one namespace aborts the process that loads it);
   includes are sources, `hip/`, `ATen/`, `c10/`, `torch/library.h` or a listed standard header (SH2); no
@@ -311,9 +318,9 @@ def run(*, a, b, trans_b, bias, out_dtype, out):
   arguments, laid out as the code object expects; HIP fills in the hidden arguments.
 - The launcher only supports regular launches through `hipModuleLaunchKernel`. Cooperative launches, cluster
   launches, and memory shared between ranks are not supported; kernels that need them require changes to
-  `aklr/core/jit/hsaco.py`, or for shared memory, to the op's `group_init`.
+  `aklr/core/jit/hsaco.py`, or for shared memory, to the op's `DistOpBaseline.setup`.
 - `requires` pins the HIP that loads the code objects, such as `{"hip": ">=7.15"}`.
-- Sources are audited like other Python kernels (SA0–SA4), then by SC1–SC2
+- Sources are audited like other Python kernels (SA0–SA5), then by SC1–SC2
   (`aklr/core/validation/stages/_audit/_hsaco.py`), so that kernel code reaches the GPU only through the launcher.
   SC1 limits imports to sibling sources, `aklr.core.jit.hsaco`, `torch`, and a few standard modules with no side
   effects. SC2 rejects `__import__`, `eval`, `exec`, `compile`, `globals`, `vars`, and the torch APIs that reach
@@ -334,7 +341,7 @@ once per file; changing it is rejected, not a way to change the inputs.
 axes in contract order, sorted by their values, each Point once. A var axis the contract declares `any_size`
 (the rows of a KV cache, which the kernel does not depend on) is served at every value of its domain: its workload
 values are only the sizes bench runs. `scalars` holds every present scalar input, a
-captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over `<contract>_baseline`) and
+captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over the contract's baseline) and
 `accuracy` are written by CI on every workload or none (a `failed` one may lack `speedup`; it is never dispatched),
 with one complete `kernel.targets` item. `microseconds` records the time behind that `speedup`: the kernel's median
 time per call in the same rounds against the baseline (graph timer, 3 significant digits), absent on a workload that
@@ -382,8 +389,6 @@ and tensor lifetimes are plain enums read by the json functions.
 
 Any input set name other than `workload` gives a default input set; the same `workload_hash` and name give the
 same values bit for bit.
-Only when an output has a `dot_product` bound, bench's `large_magnitude/0` inputs go through `magnified_inputs`, then
-`stored_inputs`.
 
 The existing first-capture and post-timing checks overwrite reused input buffers, including weights, through
 `.data.copy_()`: addresses and tensor versions stay unchanged. This exposes stale weight caches keyed by address

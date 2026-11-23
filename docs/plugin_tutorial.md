@@ -56,8 +56,8 @@ As in step 1. A of the ops tutorial. For this op:
   - inputs: what `forward_normal` reads, namely `hidden_states`; the router's `router_weight` and `correction_bias`; the experts' `w1`, `w1_scale`, `w2` and `w2_scale`, with the shared expert in the last slot (`n_experts = n_routed + 1`); and the scalar `routed_scaling_factor`;
   - attrs: the routing settings `topk`, `num_expert_group`, `topk_group`, `renormalize` and `scoring_func`;
   - output: `out`, the layer's output on this GPU, before the all-reduce.
-- `reference.py`: `deepseek_v2_mxfp4_moe_reference`, the contract's computation in fp32.
-- `baseline.py`: `deepseek_v2_mxfp4_moe_baseline`, what SGLang runs today for steps 1–9: the router GEMM, AITER's grouped top-k, SGLang's shared-expert append and AITER's `fused_moe`. A kernel has to beat this whole path, not `fused_moe` alone.
+- `reference.py`: `DeepseekV2Mxfp4MoeReference`, the contract's computation in fp32.
+- `baseline.py`: `DeepseekV2Mxfp4MoeBaseline`, what SGLang runs today for steps 1–9: the router GEMM, AITER's grouped top-k, SGLang's shared-expert append and AITER's `fused_moe`. A kernel has to beat this whole path, not `fused_moe` alone.
 - `api.py`: the entry function `@api(DEEPSEEK_V2_MXFP4_MOE)`, whose body is `...`.
 
 ### 4. Write the route

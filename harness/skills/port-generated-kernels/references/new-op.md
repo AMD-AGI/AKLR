@@ -7,21 +7,21 @@ each file are in `aklr/ops/README.md`; this is the order and the traps.
    inputs and outputs after the math, not after the baseline's arguments. A contract with several outputs
    names none of them `out` (`outputs are 'out' alone, or names other than 'out'`); give each output
    its `error_bounds` and the contract its `determinism` (`bitwise` unless the op's kernels need
-   atomics).
-2. **`reference.py`**: one `<contract>_reference(point, row_major_args)` per contract, in the op's
-   dtypes or else float32 (for now float32, each input read through `semantics.to_float32`),
-   returning the outputs in contract order. Only the roundings every correct kernel makes belong
+   atomics), and its `reference` and `baseline` (instances of the classes below).
+2. **`reference.py`**: one `OpReference` class per contract, whose `reference(self, *, <names>, **_)`
+   takes the kernel's call by keyword and returns the mutable tensors by name, in the op's dtypes
+   where torch has them, else float32 (for now float32). Only the roundings every correct kernel makes belong
    here ("Reference and baseline" in `aklr/ops/README.md`).
 3. **`api.py`**: one `@api(<CONTRACT>)` stub per contract. Example: `aklr/ops/gemm/api.py`.
 4. **`baseline.py`**: what kernels are timed against, the engine's own call for the op, one
-   `<contract>_baseline` per contract that has one. It takes the api's params (called with the
-   call's keyword arguments), imports AITER or SGLang inside the function and returns the outputs
-   as the api does; a call it does not serve raises `NotImplementedError` (bench:
-   `baseline_failed`). Example: `aklr/ops/gemm/baseline.py`. Without one the op is its own
-   baseline: a kernel has nothing to beat.
+   `OpBaseline` class per contract (every contract has exactly one). Its `baseline(self, *,
+   <names>)` takes the kernel's call by keyword, imports AITER or SGLang inside the method
+   and returns the outputs by name; a call it does not serve raises `NotImplementedError` (bench:
+   `baseline_failed`). Example: `aklr/ops/gemm/baseline.py`.
    An op every rank of a group calls together (expert parallelism, collectives) sets the contract's
-   `ranks` to the attr holding the group size; its reference takes `(point, group_args, rank)`,
-   and `group.py`'s `<contract>_group_init()` sets up what an engine would before the first call.
+   `ranks` to the attr holding the group size; its reference is a `DistOpReference`, whose
+   `reference(calls, rank)` takes every rank's call, and its baseline a `DistOpBaseline`, whose
+   `setup()` sets up what an engine would before the first call.
    See `aklr/ops/README.md`.
 5. **`__init__.py`**: export the api functions.
 6. **Tests**: add the contract's base Point, small, to `_SMALL_POINTS` in `tests/op_case.py` (contract

@@ -34,7 +34,7 @@ is the Point's number of requests.
   if each of them qualifies, serve every pool size and table width within the contract's bounds.
 - Compare: `determinism: bounded`, `max_violation_fraction` 0.0, logits within an SQNR of 30 dB of the reference
   (`SqnrBound`, `aklr/ops/mla/contract.py`).
-- Yardstick: `fp8_paged_mqa_logits_baseline` (`aklr/ops/mla/baseline.py`), aiter's
+- Yardstick: `Fp8PagedMqaLogitsBaseline` (`aklr/ops/mla/baseline.py`), aiter's
   `deepgemm_fp8_paged_mqa_logits` (`aiter/ops/triton/attention/pa_mqa_logits.py`) with `Preshuffle`, `KVBlockSize`
   64 and the logits' width as `max_model_len`; `ChunkK`, `WavePerEU` and the scheduling arguments stay at aiter's
   defaults, because the baseline does not pass them (S2). On gfx950 that function takes its Gluon kernel when
