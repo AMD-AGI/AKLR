@@ -612,3 +612,48 @@ jobs:
           else
             echo '::warning::Bot PR checks did not pass; left open for review'
           fi
+
+  # Rebuilds site-data/kernels from main's tip after every main push run, after publish-measurement
+  # (a bot squash merged there is on main by then; its [skip ci] starts no run of its own) and with
+  # nothing measured too: a PR may add or withdraw kernels. Reads only main's committed schemas.
+  publish-kernels:
+    needs: publish-measurement
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AKLR_BOT_LOGIN != ''
+    runs-on: ubuntu-latest
+    environment: bot
+    timeout-minutes: 15
+    # Writes use the App token, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    # Every CI that writes site-data shares this group.
+    concurrency:
+      group: site-data
+      cancel-in-progress: false
+    steps:
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      # main's tip, not this run's commit; the history holds the bot's measurement commits.
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - *setup_python
+      - *install_cpu_deps
+      - name: Rebuild site-data/kernels
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          PYTHONPATH=benchmarks/kernels bash .github/scripts/commit_site_data.sh kernels \
+            "kernels: main ${sha::12} (run $GITHUB_RUN_ID)" \
+            python3 -m kernels_report --run-id "$GITHUB_RUN_ID" --run-url "$RUN_URL"

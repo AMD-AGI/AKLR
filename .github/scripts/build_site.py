@@ -22,6 +22,8 @@ STATUS_LABELS = {
     "failed": ("Failed", "失败"),
     "resolve-failed": ("Resolve failed", "解析失败"),
     "not-run": ("Not selected", "本轮未选择"),
+    "not-served": ("Not served", "未生效"),
+    "not-measured": ("Not measured", "未测量"),
 }
 
 # Dark console theme. The palette, header and language switch are copied in
