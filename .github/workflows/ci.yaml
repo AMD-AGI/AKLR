@@ -30,6 +30,10 @@ env:
     from aklr.core.validation.stages.validation_scope import ValidationScope
     scope = ValidationScope.of_working_tree(sys.argv[1], None)
     sys.exit("core" in map(scope.path_kind, scope.changed_paths()))
+  AKLR_SAFE_API_URL: ${{ vars.AKLR_SAFE_API_URL }}
+  AKLR_SAFE_WORKSPACE: ${{ vars.AKLR_SAFE_WORKSPACE }}
+  AKLR_SAFE_RESOURCES: ${{ vars.AKLR_SAFE_RESOURCES }}
+  AKLR_SAFE_CA_URLS: ${{ vars.AKLR_SAFE_CA_URLS }}
 
 on:
   workflow_dispatch:
@@ -296,7 +300,7 @@ jobs:
           echo "::group::Run unit tests ($TESTS)"
           tests=0
           # shellcheck disable=SC2086 # TESTS is a list of paths
-          timeout -k 60s 25m python3 -m coverage run -m pytest -v $TESTS \
+          timeout -k 60s 45m python3 -m coverage run -m pytest -v $TESTS \
             --timeout=600 --timeout-method=thread \
             --junitxml="$reports/test-reports/aklr.xml" \
             2>&1 | tee "$reports/test-reports/aklr.log" || tests=$?
