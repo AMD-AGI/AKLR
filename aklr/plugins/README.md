@@ -24,8 +24,7 @@ aklr/plugins/
 │   │       ├── reference.py  reference implementation written from the math, used to verify kernel correctness
 │   │       ├── baseline.py   SGLang's original implementation, the baseline for kernel performance
 │   │       └── impls/        kernel implementations, one JSON file per kernel
-│   ├── layers/               mirrors SGLang's srt/layers/, with the same layout
-│   └── aiter_calls.py        routes on the aiter functions SGLang calls, for every model
+│   └── layers/               mirrors SGLang's srt/layers/, with the same layout
 ├── vllm/                     the vLLM plugin (AKLR_VLLM_PLUGIN=1)
 │   ├── __init__.py           entry: hooks the routes in each worker once its device is bound
 │   ├── hook.py               @vllm_route wraps the function a vLLM function looks up at run time
@@ -34,7 +33,7 @@ aklr/plugins/
 │   ├── layers/               routes from vLLM's layers to the ops of aklr/ops, mirrors vLLM's model_executor/layers/
 │   └── models/               routes from the model files vLLM runs uncompiled, mirrors vLLM's models/
 │       └── muse_spark/       Muse Spark on ROCm (vLLM's models/muse_spark/amd)
-└── aiter/                    aiter's arguments to an AKLR op call, shared by the routes both plugins put on aiter's functions
+└── aiter/                    AKLR on aiter's side: aiter's routed calls turned into AKLR op calls
     └── provider/             AKLR as a kernel plugin of aiter: one module per op family selects the calls of aiter's routed ops
 ```
 
@@ -42,6 +41,7 @@ aklr/plugins/
 
 aiter routes some of its public functions through its kernel plugin interface (`aiter.plugin`, RFC ROCm/aiter#7240): before running its own kernel, aiter asks each enabled provider whether it serves the call. `aklr/plugins/aiter/provider` is AKLR's provider, declared by the `aiter.plugins` entry point. It replaces no function: aiter keeps the call, and the provider answers from AKLR's dispatch table without running anything.
 
+- No route of a plugin wraps an aiter function aiter routes, or a framework function that only calls one: sglang and vLLM reach AKLR on those ops only through this provider, so one call is offered to AKLR once. Where the provider needs what only the framework knows, a route that runs nothing notes it for the provider (sglang's paged top-k calls `provider.mla.note_target_verify`). aiter functions aiter does not route (its Triton `unified_attention`) keep their framework routes.
 - Enabling: with `AKLR_AITER_PLUGIN=1` the sglang and vLLM plugins call `aklr.plugins.aiter.provider.enable()` at start-up, which puts AKLR first among the providers aiter asks and keeps the others; another host calls it itself. aiter's `AITER_PLUGINS=0` turns all routing off. An aiter without the interface leaves its ops to aiter.
 - Selecting: one selector per aiter op, registered with `@selector("<aiter op>", version=...)` at the version of aiter's contract. It unpacks the call by aiter's parameter names, declines what the AKLR contract does not take, and asks the op's api `serving(...)`: the kernel `dispatch` would run, or the `FallbackReason`, counted and traced as a fallback. Its `run` takes aiter's parameters exactly, since aiter checks them before the call, and returns what aiter's op returns.
 - Not falling back: once `run` starts, aiter does not fall back, so `run` asks the same table `select` asked and raises if it fell back. Inside a CUDA graph capture, a Point never run outside one is declined, so aiter's kernel is captured.
