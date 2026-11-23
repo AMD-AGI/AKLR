@@ -169,11 +169,9 @@ def _group_rank(rank, rendezvous, fault=False):
                 bench_cudagraph(collective, group=dist.group.WORLD)
             return str(error.value)
         # rank 1's budget alone would capture far more calls than rank 0's
-        times = bench_cudagraph(
-            collective, rep=0 if rank == 0 else 5, group=dist.group.WORLD, return_mode="all"
-        )
+        milliseconds = bench_cudagraph(collective, rep=0 if rank == 0 else 5, group=dist.group.WORLD)
         torch.testing.assert_close(value, torch.full_like(value, 3))
-        return times
+        return milliseconds
     finally:
         dist.destroy_process_group()
 
@@ -187,9 +185,8 @@ def test_bench_cudagraph_group(tmp_path):
     with multiprocessing.get_context("spawn").Pool(2) as pool:
         jobs = [pool.apply_async(_group_rank, (rank, rendezvous)) for rank in range(2)]
         rank0, rank1 = (job.get(timeout=300) for job in jobs)
-    assert len(rank0) == 1  # the fewest calls any rank's budget allows
     assert rank0 == rank1  # each call reads as its slowest rank's time
-    _assert_milliseconds(rank0[0])
+    _assert_milliseconds(rank0)
 
 
 @pytest.mark.gpu

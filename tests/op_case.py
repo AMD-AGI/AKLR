@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import functools
 import subprocess
 import tempfile
@@ -16,6 +17,7 @@ import pytest
 import torch
 
 from aklr.core.contract import semantics
+from aklr.core.contract.baseline import DistOpBaseline
 from aklr.core.contract.fastkey import CallArgs
 from aklr.core.contract.locate import op_dir
 from aklr.core.contract.op import OpContract
@@ -125,6 +127,29 @@ def hsaco_gemm_sources() -> dict[str, str]:
     """codeobjects.py, holding hsaco_gemm_code_object as GEMM, for HSACO_GEMM_KERNEL_SOURCE."""
     encoded = base64.b64encode(hsaco_gemm_code_object()).decode()
     return {"codeobjects.py": f'"""The gemm."""\n\nimport base64\n\nGEMM = base64.b64decode("{encoded}")\n'}
+
+
+@contextlib.contextmanager
+def _one_rank_group(is_needed: bool):
+    """A torch.distributed group of this process alone while the block runs, as validation puts a ranks
+    contract's one rank in, where ``is_needed`` and no group is up yet."""
+    import torch.distributed as dist
+
+    if not is_needed or dist.is_initialized():
+        yield
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        dist.init_process_group(
+            "cpu:gloo,cuda:nccl",
+            init_method=f"file://{tmp}/rendezvous",
+            rank=0,
+            world_size=1,
+            device_id=torch.device("cuda", torch.cuda.current_device()),
+        )
+        try:
+            yield
+        finally:
+            dist.destroy_process_group()
 
 
 _NO_OP_KERNEL_SOURCE = "def run(**call): ...\n"  # a schema's kernel no test runs
@@ -280,9 +305,12 @@ class OpCase:
         args = self.inputs()
         call = self.call(args, "cuda")
         baseline = self.contract.baseline
-        baseline.setup()
-        outputs = {**baseline.baseline(**call), **{n: call[n] for n in self.contract.mutable_inputs}}
-        baseline.teardown()
+        with _one_rank_group(isinstance(baseline, DistOpBaseline)):
+            baseline.setup()
+            try:
+                outputs = {**baseline.baseline(**call), **{n: call[n] for n in self.contract.mutable_inputs}}
+            finally:
+                baseline.teardown()
         results = self.compare(outputs, args)
         schema = self.request.schema
         integral = {
