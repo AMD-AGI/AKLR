@@ -32,7 +32,7 @@ is the Point's number of requests.
   1, 16 and 64 with a 262,144-page pool (2.2 GB, one Point per body), every one with 4097-page tables (262,208
   logits per request): 61 Points. `n_pages`, `max_blocks` and `max_seq_len` are `any_size`: a batch's Points,
   if each of them qualifies, serve every pool size and table width within the contract's bounds.
-- Compare: `determinism: bounded`, `max_violation_fraction` 0.0, logits within an SQNR of 30 dB of the reference
+- Compare: `determinism: bounded`, logits within an SQNR of 30 dB of the reference
   (`SqnrBound`, `aklr/ops/mla/contract.py`).
 - Yardstick: `Fp8PagedMqaLogitsBaseline` (`aklr/ops/mla/baseline.py`), aiter's
   `deepgemm_fp8_paged_mqa_logits` (`aiter/ops/triton/attention/pa_mqa_logits.py`) with `Preshuffle`, `KVBlockSize`

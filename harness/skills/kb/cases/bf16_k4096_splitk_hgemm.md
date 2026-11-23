@@ -45,7 +45,7 @@ are in that file. "m" is the Point's M.
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise: `determinism: bitwise`, `max_violation_fraction` 0.0
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise: `determinism: bitwise`
   (`CompareSpec` defaults, `GEMM` in `aklr/ops/gemm/contract.py`). Every reduction these kernels run at a served
   Point adds in a fixed order.
 - The four DeepSeek-V4 files: K = 4096 with N = 256, 512, 1024 or 2048, a weight of 2, 4, 8 or 16 MiB; each lists 13

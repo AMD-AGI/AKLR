@@ -248,7 +248,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §4.
   channels; its note puts the wider form at 4.25× the atomic traffic and 4.8× slower (`gemm2.py:434-443`).
 - **Atomics are not bit-reproducible**; gate on a tolerance against an independent reference
   (`../gemm/correctness.md` §8). AKLR's `fused_moe` contracts are `determinism: bounded`, gated on
-  output SQNR ≥ 13 dB with `max_violation_fraction` 1e-3 (`aklr/ops/fused_moe/contract.py`), so atomics are allowed
+  output SQNR ≥ 13 dB (`aklr/ops/fused_moe/contract.py`), so atomics are allowed
   there, unlike AKLR's GEMM contracts, all bitwise but `gemm_a8w8_blockwise_scaled`; a port's equivalence is judged
   by SQNR (`few_tokens.md` §3). AKLR's FlyDSL MoE kernels use both forms, some switching with the token count; where a
   kernel has a case page (`../cases/INDEX.md`), it says which form runs at each Point

@@ -48,7 +48,7 @@ names and kernels.
   takes `num_local_tokens`: the `has_num_local_tokens` names of this shape (m 1024 and 2048) have no kernel.
 - A token's expert ids are distinct (the `topk_ids` contract), and `99a7b2a5…` relies on it when it ORs a token's bit
   into each of its experts' bitmaps.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, whole-output SQNR ≥ 13 dB. The reference keeps the
+- Compare: `determinism: bounded`, whole-output SQNR ≥ 13 dB. The reference keeps the
   activations unrounded in this gate mode (`aklr/ops/fused_moe/reference.py`, its docstring); all three kernels
   quantize them to MX-fp8 (Counter-signals).
 - Points listed, one kernel file per name: m 1, 2, 4, 8, 16, 32, 64 (inter 384, `15ab9c15…`); m 1, 2, 4, 16, 32,

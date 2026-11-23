@@ -400,22 +400,22 @@ def test_stress_compares_as_the_schemas_determinism_asks(run):
     alone = torch.linspace(1, 64, 4096, dtype=torch.bfloat16)
     one_ulp = alone.clone()
     one_ulp.view(torch.int16)[::50] += 1  # the next bf16 value up: one ulp
-    assert not driver._agrees(one_ulp, alone, "bitwise", 0.0)
-    assert driver._agrees(one_ulp, alone, "bounded", 0.001)
+    assert not driver._agrees(one_ulp, alone, "bitwise")
+    assert driver._agrees(one_ulp, alone, "bounded")
     nan = one_ulp.clone()
     nan[7] = float("nan")
-    assert not driver._agrees(nan, alone, "bounded", 0.001)
+    assert not driver._agrees(nan, alone, "bounded")
     wrong = alone.clone()
     wrong[:100] += 8
-    assert not driver._agrees(wrong, alone, "bounded", 0.001)
+    assert not driver._agrees(wrong, alone, "bounded")
     ids = torch.arange(16)
-    assert driver._agrees(ids, ids.clone(), "bounded", 0.001)
+    assert driver._agrees(ids, ids.clone(), "bounded")
     huge = torch.full((4,), 2.0**127, dtype=torch.bfloat16)  # its bound past float32's range
-    assert not driver._agrees(torch.zeros_like(huge), huge, "bounded", 0.0)
-    at_fraction = torch.ones(2000, dtype=torch.bfloat16)
-    off = at_fraction.clone()
-    off[:2] = 2.0
-    assert driver._agrees(off, at_fraction, "bounded", 0.001)
+    assert not driver._agrees(torch.zeros_like(huge), huge, "bounded")
+    ones = torch.ones(2000, dtype=torch.bfloat16)
+    off = ones.clone()
+    off[:2] = 2.0  # 2 of 2000 elements off: no element may be
+    assert not driver._agrees(off, ones, "bounded")
 
 
 def test_stress_lets_full_rows_reorder_under_any_in_full_rows(run):
@@ -425,12 +425,12 @@ def test_stress_lets_full_rows_reorder_under_any_in_full_rows(run):
     driver = _import_driver(run)
     alone = torch.tensor([[3, 1, 2, 0], [5, 4, -1, -1]], dtype=torch.int32)
     full_reordered = torch.tensor([[0, 1, 2, 3], [5, 4, -1, -1]], dtype=torch.int32)
-    assert driver._agrees(full_reordered, alone, "bitwise", 0.0, "any_in_full_rows")
-    assert not driver._agrees(full_reordered, alone, "bitwise", 0.0, "fixed")
+    assert driver._agrees(full_reordered, alone, "bitwise", "any_in_full_rows")
+    assert not driver._agrees(full_reordered, alone, "bitwise", "fixed")
     short_reordered = torch.tensor([[3, 1, 2, 0], [4, 5, -1, -1]], dtype=torch.int32)
-    assert not driver._agrees(short_reordered, alone, "bitwise", 0.0, "any_in_full_rows")
+    assert not driver._agrees(short_reordered, alone, "bitwise", "any_in_full_rows")
     full_wrong = torch.tensor([[3, 1, 2, 7], [5, 4, -1, -1]], dtype=torch.int32)
-    assert not driver._agrees(full_wrong, alone, "bitwise", 0.0, "any_in_full_rows")
+    assert not driver._agrees(full_wrong, alone, "bitwise", "any_in_full_rows")
 
 
 def test_stress_reports_a_call_that_never_finishes_as_hung(real_run, monkeypatch, capsys):

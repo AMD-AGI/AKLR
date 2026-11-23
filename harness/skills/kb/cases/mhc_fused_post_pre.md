@@ -28,7 +28,7 @@ One FlyDSL kernel for `mhc_fused_post_pre@1.0`. The schema embeds it as `kernel.
   (T, 4, 4) in fp32, and the rms-normed `layer_input` (T, 4096) bf16.
 - Points: T = 1, 2, 4, …, 4096 (13), with the captured scalars eps 1e-6, `post_multiplier` 2.0 and
   `sinkhorn_iters` 20 in every workload.
-- Compare: `determinism: bounded`, `max_violation_fraction` 0.0, atol = rtol = 1e-2 on all four outputs
+- Compare: `determinism: bounded`, atol = rtol = 1e-2 on all four outputs
   (`aklr/ops/mhc/contract.py`).
 - Yardstick: `MhcFusedPostPreBaseline` (`aklr/ops/mhc/baseline.py`), aiter's
   `mhc_fused_post_pre` (`aiter/ops/mhc.py`): on gfx950 its fused HIP kernel below 1024 tokens, `mhc_post` then

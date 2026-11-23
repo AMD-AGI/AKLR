@@ -57,7 +57,7 @@ below are of the earlier versions, but for E18 on `3f488296…`.
   routing weight applied in stage 2, `act_quant` 4 (activations quantized to MXFP4); bf16 `out`
   (`aklr/ops/fused_moe/contract.py`, the `shuffled_16x16` variant). A token's 9 expert ids are distinct (the
   `topk_ids` contract); none of these names has an expert mask or `num_local_tokens`.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, and one bound on the whole output: SQNR ≥ 13 dB
+- Compare: `determinism: bounded`, and one bound on the whole output: SQNR ≥ 13 dB
   against the reference (float32 in validation) rounded to bf16, with no per-element bound and no bias test (`SqnrBound`,
   `aklr/core/contract/semantics/_compare.py`). Atomic accumulation is allowed.
 - The model: the commit that adds the 257-expert `5d5b47d0…` names it GLM-5.2's MXFP4 MoE (256 routed experts plus

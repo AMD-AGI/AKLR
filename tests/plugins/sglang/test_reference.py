@@ -34,3 +34,35 @@ def test_router_ids_of_equal_logits_may_swap() -> None:
     far = ids.clone()
     far[0, [0, -1]] = ids[0, [-1, 0]]
     assert not case.compare({**reference, "topk_ids": far}, args)["topk_ids"].is_passed
+
+
+@pytest.mark.parametrize("contract_id", ["dsa_indexer_key_prepare@1.0", "dsa_indexer_prepare@1.0"])
+def test_index_k_cache_key_at_twice_the_scale_stands_for_the_reference(contract_id: str) -> None:
+    """A key stored at twice the reference's scale, its fp8 values half, passes; at four times the
+    scale, or at twice it with the values left as they are, it still fails."""
+    import torch
+
+    from aklr.plugins.sglang.layers.dsa_indexer.reference import HEAD_DIM, PAGE_SIZE, _key_columns
+
+    case = OpCase.of(contract_id)
+    args = case.inputs()
+    reference = case.reference_outputs(args)
+    page, values, scales = (c[:1] for c in _key_columns(reference["written_slots"]))
+
+    def stored_at(factor: float, value_factor: float) -> dict:
+        pages = reference["index_k_cache"].clone().view(torch.uint8).reshape(-1, PAGE_SIZE * (HEAD_DIM + 4))
+        scale = pages[page, scales].contiguous().view(torch.float32) * factor
+        pages[page, scales] = scale.view(torch.uint8)
+        codes = pages[page, values].view(torch.float8_e4m3fn).float() * value_factor
+        pages[page, values] = codes.to(torch.float8_e4m3fn).view(torch.uint8)
+        return {
+            **reference,
+            "index_k_cache": pages.view(torch.float8_e4m3fn).reshape(args["index_k_cache"].shape),
+        }
+
+    def passes(outputs: dict) -> bool:
+        return case.compare(outputs, args)["index_k_cache"].is_passed
+
+    assert passes(stored_at(2.0, 0.5))
+    assert not passes(stored_at(4.0, 0.25))
+    assert not passes(stored_at(2.0, 1.0))

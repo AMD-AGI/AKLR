@@ -382,8 +382,8 @@ def _run_profile() -> int:
 # A stream limited to fewer CUs than a launch has workgroups: workgroups that wait for each other cannot all run.
 STRESS_CUS = (16, 64)
 STRESS_TRIES = 3
-# Under bounded determinism two runs may differ in the last bits (atomics land in another order): a difference counts
-# against the schema's violation fraction only beyond this many output ulps of the element plus the output's mean.
+# Under bounded determinism two runs may differ in the last bits (atomics land in another order): a difference fails
+# only beyond this many output ulps of the element plus the output's mean.
 STRESS_BOUNDED_ULPS = 8
 # A call under stress not finished after this long is taken as hung: its workgroups wait for each other.
 STRESS_SECONDS = 60.0
@@ -472,13 +472,9 @@ def _stress_conditions() -> dict:
     return conditions
 
 
-def _compare_spec() -> tuple[str, float, str]:
+def _compare_spec() -> tuple[str, str]:
     compare = json.loads(_candidate_text()[0]).get("compare") or {}
-    return (
-        compare.get("determinism", "bitwise"),
-        float(compare.get("max_violation_fraction", 0.0)),
-        compare.get("element_order", "fixed"),
-    )
+    return compare.get("determinism", "bitwise"), compare.get("element_order", "fixed")
 
 
 def _arranged(stressed, alone, element_order: str):
@@ -498,10 +494,10 @@ def _arranged(stressed, alone, element_order: str):
     )
 
 
-def _agrees(stressed, alone, determinism: str, max_fraction: float, element_order: str = "fixed") -> bool:
+def _agrees(stressed, alone, determinism: str, element_order: str = "fixed") -> bool:
     """Whether an output under contention agrees with the output alone as the schema's determinism asks: bit for bit
-    under ``bitwise``; under ``bounded``, no value turned non-finite and all but ``max_fraction`` of the elements
-    within a few ulps. Both are first arranged as the schema's ``element_order`` asks."""
+    under ``bitwise``; under ``bounded``, no value turned non-finite and every element within a few ulps. Both are
+    first arranged as the schema's ``element_order`` asks."""
     import torch
 
     stressed, alone = _arranged(stressed, alone, element_order)
@@ -517,8 +513,7 @@ def _agrees(stressed, alone, determinism: str, max_fraction: float, element_orde
     if 0 < peak < torch.inf:
         stressed, alone = stressed / peak, alone / peak
     bound = STRESS_BOUNDED_ULPS * unit * (alone.abs() + alone[finite].abs().mean())
-    off = finite & ((stressed - alone).abs() > bound)
-    return off.numel() == 0 or int(off.sum()) / off.numel() <= max_fraction
+    return not bool((finite & ((stressed - alone).abs() > bound)).any())
 
 
 def _run_stress(device: str = "cuda") -> int:
@@ -528,7 +523,7 @@ def _run_stress(device: str = "cuda") -> int:
     that does not finish is reported as hung and ends the check: the device is still running it."""
     candidate = _load_candidate()
     outputs = _output_names()
-    determinism, max_fraction, element_order = _compare_spec()
+    determinism, element_order = _compare_spec()
     conditions = _stress_conditions()
     failed = []
     for case_id, call in _calls(device).items():
@@ -543,7 +538,7 @@ def _run_stress(device: str = "cuda") -> int:
                     print("stress: FAIL")
                     return 1
                 agree = (
-                    _agrees(r[name], alone[name], determinism, max_fraction, element_order)
+                    _agrees(r[name], alone[name], determinism, element_order)
                     for r in results
                     for name in alone
                 )

@@ -293,7 +293,7 @@ FUSED_MOE = OpContract(
         }
     ),
     # Bounded, not bitwise: stage 2 often combines top-k with atomics (design §5.4).
-    compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     reference=FusedMoeReference(),
     baseline=FusedMoeBaseline(),
 )

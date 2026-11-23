@@ -19,9 +19,8 @@ if TYPE_CHECKING:
 
 
 class CompareResult(NamedTuple):
-    is_passed: bool  # violations within the limit, non-finite values matched
-    is_bound_exceeded: bool  # violation_fraction over max_violation_fraction
-    violation_fraction: float  # of the elements where the reference is finite
+    is_passed: bool  # no element past its bound, non-finite values matched
+    violation_fraction: float  # of the elements where the reference is finite, past their bound
     peak_bound_multiple: float  # max |error| / B
     n_nonfinite_mismatches: int
 
@@ -39,7 +38,6 @@ class CompareResult(NamedTuple):
         a: Tensor,
         y: Tensor,
         *,
-        is_bound_exceeded: bool,
         violation_fraction: float,
         peak_bound_multiple: float,
     ) -> CompareResult:
@@ -50,8 +48,7 @@ class CompareResult(NamedTuple):
         n_nonfinite_mismatches = int((~is_finite & ~is_same).sum())
         n_nonfinite_mismatches += int((is_finite & ~a.isfinite()).sum())
         return cls(
-            is_passed=n_nonfinite_mismatches == 0 and not is_bound_exceeded,
-            is_bound_exceeded=is_bound_exceeded,
+            is_passed=n_nonfinite_mismatches == 0 and violation_fraction == 0,
             violation_fraction=violation_fraction,
             peak_bound_multiple=peak_bound_multiple,
             n_nonfinite_mismatches=n_nonfinite_mismatches,
@@ -101,12 +98,10 @@ def mutable_tensor_declarations(schema: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def comparison_criteria(schema: Mapping[str, Any]) -> dict[str, Any]:
-    """What ``compare_outputs`` judges by, from a schema json: its ``compare`` settings and each
+    """What ``compare_outputs`` judges by, from a schema json: its ``element_order`` and each
     mutable tensor's error bound, in ``mutable_tensor_declarations`` order."""
-    compare = schema["compare"]
     return {
-        "element_order": compare["element_order"],
-        "max_violation_fraction": compare["max_violation_fraction"],
+        "element_order": schema["compare"]["element_order"],
         "outputs": {
             name: {"error_bound": declaration["error_bounds"][0][1]}
             for name, declaration in mutable_tensor_declarations(schema).items()
@@ -126,9 +121,7 @@ def compare_outputs(
     for name, output in criteria["outputs"].items():
         actual, expected = element_order.arrange(actual_outputs[name], reference_outputs[name])
         error_bound = _ERROR_BOUND_ADAPTER.validate_python(output["error_bound"])
-        results[name] = error_bound.compare(
-            actual, expected, max_violation_fraction=criteria["max_violation_fraction"]
-        )
+        results[name] = error_bound.compare(actual, expected)
     return results
 
 
@@ -155,20 +148,19 @@ class ErrorBound(FrozenModel):
     kind: str
 
     @abstractmethod
-    def compare(self, actual: Tensor, expected: Tensor, *, max_violation_fraction: float) -> CompareResult:
+    def compare(self, actual: Tensor, expected: Tensor) -> CompareResult:
         """Output ``actual`` against ``expected``, the reference's, both in the output's dtype."""
 
 
 class ToleranceBound(ErrorBound):
-    """B = absolute_tolerance + relative_tolerance * |y|, the largest |actual - y| allowed per
-    element, y the reference (both 0: equal): at most ``max_violation_fraction`` of the elements
-    where y is finite exceed it."""
+    """B = absolute_tolerance + relative_tolerance * |y|, the largest |actual - y| allowed at
+    each element where y, the reference, is finite (both 0: equal)."""
 
     kind: Literal["tolerance"] = "tolerance"
     absolute_tolerance: Annotated[float, Field(ge=0.0)]
     relative_tolerance: Annotated[float, Field(ge=0.0)]
 
-    def compare(self, actual, expected, *, max_violation_fraction):
+    def compare(self, actual, expected):
         # integers as integers: float32 holds an int exactly only up to 2**24
         a, y = (t.float() if t.is_floating_point() else t.long() for t in (actual, expected))
         is_finite = y.isfinite()
@@ -181,7 +173,6 @@ class ToleranceBound(ErrorBound):
         return CompareResult.of_measures(
             a.float(),
             y.float(),
-            is_bound_exceeded=violation_fraction > max_violation_fraction,
             violation_fraction=violation_fraction,
             peak_bound_multiple=peak_bound_multiple,
         )
@@ -195,7 +186,7 @@ class SqnrBound(ErrorBound):
     kind: Literal["sqnr"] = "sqnr"
     min_sqnr_db: float
 
-    def compare(self, actual, expected, *, max_violation_fraction):
+    def compare(self, actual, expected):
         import torch
 
         a, y = actual.float(), expected.float()
@@ -209,12 +200,10 @@ class SqnrBound(ErrorBound):
         else:
             # an all-zero reference allows no noise: -inf dB
             peak_bound_multiple = noise / allowed if allowed else math.inf
-        is_bound_exceeded = peak_bound_multiple > 1
         return CompareResult.of_measures(
             a,
             y,
-            is_bound_exceeded=is_bound_exceeded,
-            violation_fraction=float(is_bound_exceeded),
+            violation_fraction=float(peak_bound_multiple > 1),
             peak_bound_multiple=peak_bound_multiple,
         )
 

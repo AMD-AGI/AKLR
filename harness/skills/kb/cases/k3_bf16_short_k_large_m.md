@@ -35,7 +35,7 @@ None of the four splits K across workgroups. n2304's `_build` and n3072's `_buil
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0,
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`,
   the `CompareSpec` defaults), with the fp32 dot-product error bound of `_dot_k()` (`GEMM` in
   `aklr/ops/gemm/contract.py`). Every output is one fp32 sum in a fixed order.
 - Shapes:

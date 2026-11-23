@@ -300,8 +300,6 @@ class OpContract(FrozenModel):
         # a mutable tensor's dtypes are all integer or none (_check_distributions_and_bounds)
         integer_mutable = [o for o in self.mutable_tensors if DTYPE_TRAITS[self.dtypes_of(o)[0]].is_integral]
         compare = self.compare
-        if integer_mutable and compare.max_violation_fraction:
-            raise ValueError("compare: an integer mutable tensor allows no violation")
         if compare.element_order != ElementOrder.FIXED and (
             len(integer_mutable) < len(self.mutable_tensors)
             or compare.determinism == DeterminismLevel.BITWISE

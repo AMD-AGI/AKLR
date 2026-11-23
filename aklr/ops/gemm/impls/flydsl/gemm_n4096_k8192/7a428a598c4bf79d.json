@@ -267,7 +267,6 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
     "determinism": "bitwise",
     "element_order": "fixed"
   },

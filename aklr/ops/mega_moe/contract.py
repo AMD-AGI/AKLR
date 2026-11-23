@@ -148,7 +148,7 @@ MEGA_MOE = OpContract(
         by_name={n: FUSED_MOE.layout_variants.by_name[n] for n in ("row_major", "gate_up_interleaved")}
     ),
     # Bounded, not bitwise: the combine adds the top-k outputs in arrival order.
-    compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     ranks="ep_size",
     reference=MegaMoeReference(),
     baseline=MegaMoeBaseline(),

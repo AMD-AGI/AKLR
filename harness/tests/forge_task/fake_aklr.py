@@ -176,7 +176,6 @@ def schema_payload(
         "outputs": {"out": {"shape": [*batch, "m", 32], "dtype": "bfloat16"}},
         "workloads": [{"axes": {"m": int(case.split("=")[1])}} for case in CASES],
         "compare": {
-            "max_violation_fraction": 0.0,
             "determinism": "bitwise",
             "element_order": "fixed",
         },

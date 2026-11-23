@@ -40,7 +40,7 @@ top-2048) is another contract, with its own one-launch kernel:
   one `n_extra_pages` 105428–123163 in the extra-pool schemas): 61 Points per file. `n_pages` and `n_extra_pages`
   are var axes without `any_size`, so dispatch matches them exactly (`FastKeyCodec.match_key`): a pool of any other
   page count falls back with `no_workload`, though the kernel does not depend on it.
-- Compare: `determinism: bounded`, `max_violation_fraction` 0.0; `output` atol = rtol = 1e-2, `lse` atol = rtol =
+- Compare: `determinism: bounded`; `output` atol = rtol = 1e-2, `lse` atol = rtol =
   1e-3 (`aklr/ops/mla/contract.py`). The reference defines the fp8 → bf16 step as the same bit assembly the kernel
   does, so that step matches it exactly; the error left to `compare` comes from bf16 P, bf16 partials and the bf16
   output.

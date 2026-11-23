@@ -29,7 +29,7 @@ kernel (`_build_splitk`). The band kernels of the same decode sizes, which split
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16, `trans_b`,
-  no bias, bf16 `out`. The schema's `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0).
+  no bias, bf16 `out`. The schema's `compare` is bitwise (`determinism: bitwise`).
   Every reduction these kernels run at a listed Point adds in a fixed order, with no atomics on data.
 - N = 6144 with K = 4096 or 6144: 48 or 72 MiB of `b`, against at most 1.5 MiB of `a` at these m (estimated from the
   shapes), so each kernel gives every CU its own strip of `b`.

@@ -80,7 +80,7 @@ characters unescaped, a final newline. Anything else is rejected;
 | `outputs` | export | every output, narrowed to this scenario; always row-major |
 | `workloads` | export, author, CI | one item per Point served (see Workloads) |
 | `layout_variants` | export | this scenario's layout variant alone |
-| `compare` | export | `max_violation_fraction`, `determinism`, `element_order` |
+| `compare` | export | `determinism`, `element_order` |
 | `kernel` | export (`language`, `targets`, `entry_point`, `"sources": []`), author (`sources`, `requires`, `author`) | the kernel section; empty `sources` in the repository make a definition: loaded and audited, never served or benched |
 
 Every key written by export alone is derived from the Python contract and checked against it (`export check`). Editing one directly only produces an error. A committed file and its
@@ -140,7 +140,9 @@ instance is the contract's `reference`:
   (`compare_outputs`). An op whose correct kernels can differ in a way no bound states overrides it:
   `qwen2_moe_router`'s reference also returns its bf16 logits, and its `check` lets an id differ from the
   reference's where the two experts' logits are equal or one bf16 value apart, as two engines' sums can round a
-  logit to either.
+  logit to either; the DSA indexer's references also return the slots they write, and their `check` restates a
+  key stored at twice or half the reference's fp8 scale, its values half or twice, at the reference's scale. The
+  bounds themselves never change in a `check`.
 
 The baseline, a class in `baseline.py` subclassing `OpBaseline` (`aklr/core/contract/baseline.py`), whose instance
 is the contract's `baseline`; every contract has exactly one:

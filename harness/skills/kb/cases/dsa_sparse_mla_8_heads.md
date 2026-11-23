@@ -30,7 +30,7 @@ written one that qualifies (`aklr/ops/README.md` § Environment variables). It e
   `row_major`: q (tokens, 8, 576) and the pool (n_slots, 576) float8_e4m3fn, unscaled, a row being 512 latent
   values then 64 RoPE values; top-k (tokens, 2048) int32, distinct, −1 for none; `sm_scale` fp32; output (tokens,
   8, 512) bf16, 0 for a token that reads no row. `compare`: `determinism: bitwise` (two runs bit-identical),
-  `max_violation_fraction` 0, output SQNR ≥ 20 dB against the reference (S9).
+  output SQNR ≥ 20 dB against the reference (S9).
 - Points, three pairs and nothing between them: (n_tokens, n_slots) = (32, 65536), (128, 262144) and (256,
   524288), each with `sm_scale` 0.0625. Dispatch matches `n_tokens` exactly. `n_slots` is `any_size`, so once a
   Point is served, its token count is served at every pool size (`aklr/ops/README.md` § Inputs and workloads);

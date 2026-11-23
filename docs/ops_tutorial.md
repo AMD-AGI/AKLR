@@ -145,7 +145,7 @@ How the example steps map to the sections above: steps 0 and 1 correspond to 1. 
 - Inputs: `hidden_states` (bf16/fp16, `(n_tokens, model_dim)`); `w1` (fp4 `float4_e2m1`, `(n_experts, gate_up_rows, model_dim)`, gate rows first, then up rows) and `w2` (fp4, `(n_experts, model_dim, inter_dim)`); `w1_scale`/`w2_scale` (e8m0, one value per 1×32 block).
 - Routing inputs: `topk_weights` (fp32/bf16/fp16) and `topk_ids` (int32/int64, distinct within each row), both of shape `(n_tokens, topk)`.
 - layout: `row_major`, `shuffled_16x16` (w1/w2 get a 16×16 preshuffle, and both scales are shuffled and padded to (256, 8); detected when `w1.is_shuffled` and `w2.is_shuffled` are true and `w1_scale.ndim == 3`), `gate_up_interleaved`.
-- Accuracy requirements: SQNR of `out` ≥ 13 dB; `determinism` is `bounded`, with a `max_violation_fraction` of 1e-3.
+- Accuracy requirements: SQNR of `out` ≥ 13 dB; `determinism` is `bounded`.
 
 Fix GLM-5's MXFP4 MoE layer at TP8: `model_dim=6144`; `n_experts=257`, the 256 routed experts plus the shared one, which sglang appends as the last expert; `topk=9`, 8 routed experts plus the shared one; `inter_dim=256`, GLM-5's 2048 split over 8 GPUs; without EP (`global_experts=1`, `expert_mask`/`num_local_tokens` absent). The attrs are `silu`, `per_1x32`, `doweight_stage1=False`, `separated`, `act_quant=4`; the dtypes are bf16 activations, fp32 `topk_weights` and int32 `topk_ids`; the layout is `shuffled_16x16`. This scenario is already in the repository, so what you generate can be checked against the committed file.
 
@@ -198,7 +198,7 @@ Running `python ~/make_moe_schema.py` writes `aklr/ops/fused_moe/impls/flydsl/fu
 "workloads": [{"axes": {"n_tokens": 1}}, ..., {"axes": {"n_tokens": 4096}}],
 "layout_variants": {"by_name": {"shuffled_16x16": {"layouts": {"w1": {"kind": "preshuffle", "tile": [16, 16]}, ...,
     "w1_scale": {"kind": "e8m0_scales", "block_size": 32, "pad_to": [256, 8], "shuffled": true}, ...}, ...}}},
-"compare": {"max_violation_fraction": 0.001, "determinism": "bounded", "element_order": "fixed"},
+"compare": {"determinism": "bounded", "element_order": "fixed"},
 "kernel": {"language": "flydsl", "targets": [{"arch": "gfx950", "hardware": "MI355X"}], "entry_point": "kernel.py::run", "sources": []}
 ```
 

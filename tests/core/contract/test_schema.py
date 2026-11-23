@@ -311,7 +311,7 @@ class TestMutableInput:
         flat = actual["delta_state"].view(-1)
         flat[0] = 0.0 if flat[0].abs() > 1 else 100.0
         results = compare()
-        assert results["normalized"].is_passed and results["delta_state"].is_bound_exceeded
+        assert results["normalized"].is_passed and not results["delta_state"].is_passed
 
 
 def _with_tensor(contract: OpContract, name: str, **update: object) -> OpContract:

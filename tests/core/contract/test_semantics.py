@@ -100,7 +100,7 @@ class TestCompareOutputs:
         flat[0] += 1e3 * (1 + flat.abs().max()) if flat.is_floating_point() else 1
         results = case.compare(actual, args)
         assert not results[corrupted].is_passed
-        assert results[corrupted].is_bound_exceeded
+        assert results[corrupted].violation_fraction > 0
 
 
 def _compare(schema: dict, *args, **kwargs) -> dict[str, semantics.CompareResult]:
@@ -108,10 +108,10 @@ def _compare(schema: dict, *args, **kwargs) -> dict[str, semantics.CompareResult
 
 
 def _schema(dtype: str, error_bound: dict | None = None) -> dict:
-    """A one-output schema, ``max_violation_fraction`` 0."""
+    """A one-output schema."""
     out = {"dtype": {"any_of": [dtype]}, "error_bounds": [[None, error_bound]]}
     return {
-        "compare": {"max_violation_fraction": 0.0, "element_order": "fixed"},
+        "compare": {"element_order": "fixed"},
         "inputs": {},
         "outputs": {"out": out},
     }
@@ -146,21 +146,20 @@ class TestErrorBounds:
         assert result.violation_fraction == 1 / 16
         assert not result.is_passed
 
-    def test_violations_at_the_allowed_fraction_pass(self) -> None:
-        """2 of 2000 elements past B under ``max_violation_fraction`` 1e-3: exactly the fraction
-        allowed, which a float32 mean would put above it."""
+    def test_two_elements_past_the_bound_fail(self) -> None:
+        """2 of 2000 elements past B: the output fails, its violation_fraction exactly 1e-3, which a
+        float32 mean would miss."""
         y = torch.zeros(2000)
         actual = y.clone()
         actual[:2] = 1.0
         schema = _schema("float32", {"kind": "tolerance", "absolute_tolerance": 0.5, "relative_tolerance": 0})
-        schema["compare"]["max_violation_fraction"] = 1e-3
         result = _compare(schema, {"out": actual}, {"out": y})["out"]
         assert result.violation_fraction == 1e-3
-        assert not result.is_bound_exceeded
+        assert not result.is_passed
 
 
 _SQNR_SCHEMA = {
-    "compare": {"max_violation_fraction": 1e-3, "element_order": "fixed"},
+    "compare": {"element_order": "fixed"},
     "inputs": {},
     "outputs": {
         "out": {
@@ -174,30 +173,12 @@ _SQNR_SCHEMA = {
 class TestSqnrBound:
     """``sqnr``: the whole output passes at an SQNR of at least ``min_sqnr_db``."""
 
-    @pytest.mark.parametrize(
-        ("noise_db", "max_violation_fraction", "is_passed"),
-        [
-            (None, 1e-3, True),
-            (20.0, 1e-3, True),
-            (6.0, 1e-3, False),
-            (6.0, 1.0, False),
-        ],
-    )
-    def test_passes_at_threshold(
-        self, noise_db: float | None, max_violation_fraction: float, is_passed: bool
-    ) -> None:
-        """The rounded reference, ~20 dB of biased noise pass; ~6 dB fails, whatever
-        ``max_violation_fraction`` allows."""
-        schema = {
-            **_SQNR_SCHEMA,
-            "compare": {
-                **_SQNR_SCHEMA["compare"],
-                "max_violation_fraction": max_violation_fraction,
-            },
-        }
+    @pytest.mark.parametrize(("noise_db", "is_passed"), [(None, True), (20.0, True), (6.0, False)])
+    def test_passes_at_threshold(self, noise_db: float | None, is_passed: bool) -> None:
+        """The reference rounded to bf16 and ~20 dB of biased noise pass; ~6 dB fails."""
         y = torch.randn(64, 128, generator=torch.manual_seed(0))
         actual = y if noise_db is None else y + y.norm() / y.numel() ** 0.5 * 10 ** (-noise_db / 20)
-        result = _compare(schema, {"out": actual.bfloat16()}, {"out": y})["out"]
+        result = _compare(_SQNR_SCHEMA, {"out": actual.bfloat16()}, {"out": y})["out"]
         assert result.is_passed is is_passed
         assert result.violation_fraction == float(not is_passed)
 

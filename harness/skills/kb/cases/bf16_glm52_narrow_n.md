@@ -32,7 +32,7 @@ the Point's M.
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0;
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`;
   `GEMM` in `aklr/ops/gemm/contract.py`). Every reduction these kernels run at a served Point adds in a fixed order.
 - K = 6144 with N = 32, 128 or 256: a weight of 384 KiB, 1.5 MiB or 3 MiB, a narrow-N row bound by launch,
   reduction and memory latency rather than by reading `b` (`../gemm/small_m.md` §2).

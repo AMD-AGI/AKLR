@@ -104,25 +104,65 @@ def _keys(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, cos, sin):
     return k, _scales(k)
 
 
+def _key_columns(slots):
+    """(page [n, 1], value columns [n, HEAD_DIM], scale columns [n, 4]) of each slot's key in a
+    page's bytes."""
+    slots = slots.long()
+    page, key = slots // PAGE_SIZE, slots % PAGE_SIZE
+    d = torch.arange(HEAD_DIM, device=slots.device)
+    # aiter's preshuffled page: [key // 16, d // 16, key % 16, d % 16], then the scales
+    values = (key // _TILE * (_TILE * HEAD_DIM) + key % _TILE * _TILE)[:, None] + (
+        d // _TILE * (_TILE * _TILE) + d % _TILE
+    )[None, :]
+    scales = (PAGE_SIZE * HEAD_DIM + key * 4)[:, None] + torch.arange(4, device=slots.device)[None, :]
+    return page[:, None], values, scales
+
+
 def _stored_cache(index_k_cache, out_cache_loc, keys, scales):
     """index_k_cache after the call: each token's fp8 values (keys / scale) and the bytes of its
     fp32 scale at its slot."""
     pages = index_k_cache.float().reshape(-1, _PAGE_BYTES).clone()
-    slots = out_cache_loc.long()
-    page, key = slots // PAGE_SIZE, slots % PAGE_SIZE
-    d = torch.arange(HEAD_DIM, device=slots.device)
-    # aiter's preshuffled page: [key // 16, d // 16, key % 16, d % 16], then the scales
-    columns = (key // _TILE * (_TILE * HEAD_DIM) + key % _TILE * _TILE)[:, None] + (
-        d // _TILE * (_TILE * _TILE) + d % _TILE
-    )[None, :]
-    pages[page[:, None], columns] = keys / scales[:, None]
-    scale_bytes = scales[:, None].view(torch.uint8).view(torch.float8_e4m3fn).float()
-    scale_columns = (PAGE_SIZE * HEAD_DIM + key * 4)[:, None] + torch.arange(4, device=slots.device)[None, :]
-    pages[page[:, None], scale_columns] = scale_bytes
+    page, value_columns, scale_columns = _key_columns(out_cache_loc)
+    pages[page, value_columns] = keys / scales[:, None]
+    pages[page, scale_columns] = scales[:, None].view(torch.uint8).view(torch.float8_e4m3fn).float()
     return pages.reshape(index_k_cache.shape).to(torch.float8_e4m3fn)
 
 
-class DsaIndexerPrepareReference(OpReference):
+def _restated_scale_steps(cache, expected, slots):
+    """``cache`` with each key at ``slots`` whose fp32 scale is twice or half ``expected``'s
+    restated at ``expected``'s scale: its fp8 values times that ratio (exact but in fp8's
+    subnormals, a power of two moving only the exponent) and its scale bytes ``expected``'s."""
+    pages = cache.view(torch.uint8).reshape(-1, _PAGE_BYTES)
+    expected_pages = expected.view(torch.uint8).reshape(-1, _PAGE_BYTES)
+    page, value_columns, scale_columns = _key_columns(slots)
+    ratio = (
+        pages[page, scale_columns].contiguous().view(torch.float32)
+        / expected_pages[page, scale_columns].contiguous().view(torch.float32)
+    )[:, 0]
+    stepped = ((ratio == 2) | (ratio == 0.5)).nonzero(as_tuple=True)[0]
+    if not stepped.numel():
+        return cache
+    pages = pages.clone()
+    page, value_columns, scale_columns = page[stepped], value_columns[stepped], scale_columns[stepped]
+    values = pages[page, value_columns].view(torch.float8_e4m3fn).float() * ratio[stepped, None]
+    pages[page, value_columns] = values.to(torch.float8_e4m3fn).view(torch.uint8)
+    pages[page, scale_columns] = expected_pages[page, scale_columns]
+    return pages.view(cache.dtype).reshape(cache.shape)
+
+
+class _IndexKCacheReference(OpReference):
+    def check(self, outputs, expected, criteria):
+        """``OpReference.check``, but a key stored at twice or half the reference's scale, its fp8
+        values half or twice, stands for the reference's key: a kernel that sums a projection in
+        another order rounds a few values to the next bf16, and a key's amax can then cross a power
+        of two times 448. Any other scale or value still differs."""
+        cache = _restated_scale_steps(
+            outputs["index_k_cache"], expected["index_k_cache"], expected["written_slots"]
+        )
+        return super().check({**outputs, "index_k_cache": cache}, expected, criteria)
+
+
+class DsaIndexerPrepareReference(_IndexKCacheReference):
     def reference(
         self,
         *,
@@ -143,7 +183,7 @@ class DsaIndexerPrepareReference(OpReference):
     ):
         """Each query head bf16(q_lora wq_b^T), turned and transformed as the key, over its
         scale; head_weights bf16(bf16(x weights_proj^T) * n_heads^-0.5) * that scale *
-        HEAD_DIM^-0.5; the keys stored at their slots."""
+        HEAD_DIM^-0.5; the keys stored at their slots, and the slots, for check."""
         n_heads = weights_proj.shape[0]
         cos, sin = _rotary(positions, cos_cache, sin_cache)
         keys, key_scales = _keys(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, cos, sin)
@@ -155,10 +195,11 @@ class DsaIndexerPrepareReference(OpReference):
             "q_fp8": (q / q_scales[..., None]).to(torch.float8_e4m3fn),
             "head_weights": gate * q_scales * HEAD_DIM**-0.5,
             "index_k_cache": _stored_cache(index_k_cache, out_cache_loc, keys, key_scales),
+            "written_slots": out_cache_loc,
         }
 
 
-class DsaIndexerKeyPrepareReference(OpReference):
+class DsaIndexerKeyPrepareReference(_IndexKCacheReference):
     def reference(
         self,
         *,
@@ -174,8 +215,12 @@ class DsaIndexerKeyPrepareReference(OpReference):
         k_norm_eps,
         **_,
     ):
-        """Nothing, and the keys stored at their slots."""
+        """Nothing, the keys stored at their slots, and the slots, for check."""
         cos, sin = _rotary(positions, cos_cache, sin_cache)
         keys, key_scales = _keys(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, cos, sin)
         cache = _stored_cache(index_k_cache, out_cache_loc, keys, key_scales)
-        return {"no_values": torch.zeros(0, device=cache.device), "index_k_cache": cache}
+        return {
+            "no_values": torch.zeros(0, device=cache.device),
+            "index_k_cache": cache,
+            "written_slots": out_cache_loc,
+        }

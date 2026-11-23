@@ -193,7 +193,6 @@ ArgSpec = Annotated[TensorSpec | ScalarSpec, Field(discriminator="kind")]
 
 
 class CompareSpec(FrozenModel):
-    max_violation_fraction: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
     determinism: DeterminismLevel = DeterminismLevel.BITWISE
     element_order: ElementOrder = ElementOrder.FIXED
 

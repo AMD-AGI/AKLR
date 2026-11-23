@@ -36,7 +36,7 @@ N 28672 × K 512 the `_build` and `_plan` of `gemm_n3072_k512`
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16, `trans_b`,
-  no bias, bf16 `out`. The schema's `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0).
+  no bias, bf16 `out`. The schema's `compare` is bitwise (`determinism: bitwise`).
   Each output is one MFMA chain over K in a fixed order (at N 2048 × K 2048, m 256, plus a fixed-order fold of four
   K waves); no split-K across workgroups, no atomics.
 - Weights: N 2048 × K 2048 (8 MiB), N 3584 × K 512 (3.5 MiB), N 7168 × K 512 (7 MiB), N 28672 × K 512 (28 MiB),

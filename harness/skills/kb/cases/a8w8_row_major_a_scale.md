@@ -31,7 +31,7 @@ sources:
 - (N, K) = (512, 4096), (1024, 4096), (4096, 256) and (4096, 512), each its own schema serving m = 1, 2, 4, …,
   4096. The same shapes in the column-major variant are in [a8w8_small_n_large_k.md](../cases/a8w8_small_n_large_k.md) and
   [a8w8_n4096_k_sweep.md](../cases/a8w8_n4096_k_sweep.md).
-- Compare: each schema's `compare` block is `determinism: bounded`, `max_violation_fraction: 0.0`, against the
+- Compare: each schema's `compare` block is `determinism: bounded`, against the
   contract's tolerance (atol = rtol = 1e-2 for bf16 out; `aklr/ops/gemm/contract.py`). The reductions in these four
   kernels run in a fixed order; run-to-run bit equality is not measured.
 

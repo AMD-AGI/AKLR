@@ -169,7 +169,7 @@ MUSE_SPARK_MOE = OpContract(
         }
     ),
     # stage 2 combines with atomics
-    compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     reference=MuseSparkMoeReference(),
     baseline=MuseSparkMoeBaseline(),
 )

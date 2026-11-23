@@ -153,7 +153,7 @@ SITUV2_A4W4_MOE = OpContract(
         }
     ),
     # stage 2 combines with atomics
-    compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     reference=Situv2A4w4MoeReference(),
     baseline=Situv2A4w4MoeBaseline(),
 )

@@ -258,7 +258,6 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.001,
     "determinism": "bounded",
     "element_order": "fixed"
   },

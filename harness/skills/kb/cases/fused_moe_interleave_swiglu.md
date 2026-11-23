@@ -64,7 +64,7 @@ is one (token, expert) pair, 6m per call; how many land on one expert depends on
   `has_num_local_tokens` names of this shape (m 1024 and 2048) have no kernel.
 - Every workload passes `swiglu_limit` 10.0. The contract's interval starts at 7.0, but its comment validates the
   interleave gate mode from DeepSeek-V4's 10 only, since aiter's CK-Tile decode path does not clamp.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, whole-output SQNR ≥ 13 dB (`SqnrBound`). The
+- Compare: `determinism: bounded`, whole-output SQNR ≥ 13 dB (`SqnrBound`). The
   1–8-token kernel reduces in a fixed order with no atomics; the 16–256-token kernels add into `out` with atomics,
   except `de33eb69…` at 16 and 32 tokens.
 - Points. Served on main: m 1, 2 (expert parallel) and m 1, 2, 4, 8 (all local), by the 1–8-token files

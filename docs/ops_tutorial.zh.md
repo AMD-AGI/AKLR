@@ -145,7 +145,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - 输入：`hidden_states`（bf16/fp16，`(n_tokens, model_dim)`）；`w1`（fp4 `float4_e2m1`，`(n_experts, gate_up_rows, model_dim)`，gate 行在前、up 行在后）和 `w2`（fp4，`(n_experts, model_dim, inter_dim)`）；`w1_scale`/`w2_scale`（e8m0，每 1×32 块一个值）。
 - 路由输入：`topk_weights`（fp32/bf16/fp16）和 `topk_ids`（int32/int64，每行互不相同），形状都是 `(n_tokens, topk)`。
 - layout：`row_major`、`shuffled_16x16`（w1/w2 做 16×16 preshuffle，两个 scale 做 shuffle 并 pad 到 (256, 8)；检测条件是 `w1.is_shuffled`、`w2.is_shuffled` 为真且 `w1_scale.ndim == 3`）、`gate_up_interleaved`。
-- 精度要求：`out` 的 SQNR ≥ 13 dB；`determinism` 是 `bounded`，`max_violation_fraction` 为 1e-3。
+- 精度要求：`out` 的 SQNR ≥ 13 dB；`determinism` 是 `bounded`。
 
 固定为 GLM-5 MXFP4 MoE 层在 TP8 下的形状：`model_dim=6144`；`n_experts=257`，即 256 个路由专家加 1 个共享专家，sglang 把共享专家追加为最后一个专家；`topk=9`，即 8 个路由专家加共享专家；`inter_dim=256`，即 GLM-5 的 2048 分到 8 张卡；不带 EP（`global_experts=1`，`expert_mask`/`num_local_tokens` 不存在）。attr 取 `silu`、`per_1x32`、`doweight_stage1=False`、`separated`、`act_quant=4`，dtype 取 bf16 激活、fp32 `topk_weights`、int32 `topk_ids`，layout 取 `shuffled_16x16`。仓库中已有这个场景，生成的结果可以和已提交的文件对照。
 
@@ -198,7 +198,7 @@ print(path)
 "workloads": [{"axes": {"n_tokens": 1}}, ..., {"axes": {"n_tokens": 4096}}],
 "layout_variants": {"by_name": {"shuffled_16x16": {"layouts": {"w1": {"kind": "preshuffle", "tile": [16, 16]}, ...,
     "w1_scale": {"kind": "e8m0_scales", "block_size": 32, "pad_to": [256, 8], "shuffled": true}, ...}, ...}}},
-"compare": {"max_violation_fraction": 0.001, "determinism": "bounded", "element_order": "fixed"},
+"compare": {"determinism": "bounded", "element_order": "fixed"},
 "kernel": {"language": "flydsl", "targets": [{"arch": "gfx950", "hardware": "MI355X"}], "entry_point": "kernel.py::run", "sources": []}
 ```
 
