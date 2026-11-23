@@ -216,7 +216,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.466
+      "speedup": 2.449,
+      "microseconds": 9.05
     },
     {
       "axes": {
@@ -228,7 +229,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.498
+      "speedup": 2.452,
+      "microseconds": 9.02
     }
   ],
   "layout_variants": {

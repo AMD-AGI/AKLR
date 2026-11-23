@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on gfx950 for Kimi-K3.
+"""What sglang 0.5.23 runs on gfx950 for Kimi-K3.
 
 kimi_k3_latent_moe: on aiter, KimiK3MoE._forward_fused up to its
 all-reduce, on one stream: the merged front GEMM (_k3_bf16_gemm), the shared experts'
@@ -152,7 +152,7 @@ def kimi_k3_latent_moe_baseline(
 def kimi_k3_mla_vc_output_gate_baseline(latent, vc_weight, gate, output=None):
     """rocm_absorb_v_bmm on bf16 weights, then the fused output gate."""
     import torch
-    from sglang.kernels.ops.attention import mla_output_gate
+    from sglang.kernels.ops.elementwise import mla_output_gate
 
     tokens, heads = latent.shape[0], latent.shape[1]
     buffer = latent.new_empty((tokens, heads, vc_weight.shape[1]))
@@ -183,8 +183,8 @@ def kimi_k3_mla_prefill_gate_baseline(
 ):
     """extend_attention_fwd with forward_extend's arguments on a zero prefix, then the gate."""
     import torch
-    from sglang.kernels.ops.attention import mla_output_gate
     from sglang.kernels.ops.attention.extend_attention import extend_attention_fwd
+    from sglang.kernels.ops.elementwise import mla_output_gate
 
     tokens, heads = q.shape[0], q.shape[1]
     k_pool, v_pool = _fp8_pool(q.device)

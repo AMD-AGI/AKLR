@@ -117,6 +117,25 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's MLA verify on vLLM under decode context parallelism shrunk: 3 queries of 16 heads
+    # a request, two ranks, so this rank holds two of a request's three query tokens
+    PointSpec(
+        contract_id="mla_decode_fwd_cprr@1.0",
+        axes={"batch": 2, "query_length": 3, "n_heads": 16, "n_slots": 64, "n_indices": 40, "n_offsets": 3},
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_buffer": "float8_e4m3fn",
+            "kv_indptr": "int32",
+            "kv_indices": "int32",
+            "g_kv_indptr": "int32",
+            "q_scale": "float32",
+            "kv_scale": "float32",
+            "o": "bfloat16",
+            "lse": "float32",
+        },
+        attrs={"cp_world_size": 2},
+        layout_variant_name="row_major",
+    ),
     # Kimi-K3's MLA prefill after kv_b, two sequences: 12 heads, which aiter's fp8 path tiles to 16
     PointSpec(
         contract_id="mla_prefill_varlen@1.0",
@@ -231,6 +250,27 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         axes={
             "batch": 2,
             "n_heads": 64,
+            "n_pages": 4,
+            "max_blocks": 2,
+            "max_seq_len": 128,
+        },
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_cache": "uint8",
+            "weights": "float32",
+            "context_lens": "int32",
+            "block_tables": "int32",
+            "logits": "float32",
+        },
+        attrs={"page_size": 64, "preshuffled": True},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="fp8_paged_mqa_logits_verify@1.0",
+        axes={
+            "batch": 2,
+            "next_n": 3,
+            "n_heads": 32,
             "n_pages": 4,
             "max_blocks": 2,
             "max_seq_len": 128,
@@ -730,6 +770,40 @@ SMALL_POINTS += (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # vLLM's preshuffled per-token fp8 weights, as aiter's gemm_a8w8_bpreshuffle reads them (aiter
+    # a6c759b1f's heuristic dispatch does not pad n: its tile is 32 wide from k = 512, 256 below)
+    PointSpec(
+        contract_id="gemm_a8w8@1.0",
+        axes={"m": 4, "n": 32, "k": 512},
+        dtypes={
+            "a": "float8_e4m3fn",
+            "b": "float8_e4m3fn",
+            "a_scale": "float32",
+            "b_scale": "float32",
+            "bias": None,
+            "out": "bfloat16",
+        },
+        attrs={"trans_b": True, "has_bias": False},
+        layout_variant_name="b_shuffled",
+    ),
+    # Kimi-K3's KDA short convolution shrunk to 128 channels a part: two sequences in vLLM's paged conv state
+    PointSpec(
+        contract_id="kimi_k3_kda_conv@1.0",
+        axes={"n_tokens": 70, "n_seqs": 2, "n_offsets": 3, "n_slots": 3, "proj": 128, "width": 4},
+        dtypes={
+            "x": "bfloat16",
+            "weight": "float32",
+            "conv_state": "bfloat16",
+            "state_indices": "int32",
+            "has_initial_state": "bool",
+            "cu_seqlens": "int32",
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 
 GFX950_CONTRACT_IDS = frozenset(
@@ -739,11 +813,19 @@ GFX950_CONTRACT_IDS = frozenset(
         "mega_moe@1.0",
         "flash_mla_with_kvcache@1.0",
         "mla_decode_fwd@1.0",  # aiter's ASM MLA
+        "mla_decode_fwd_cprr@1.0",
         "mla_prefill_varlen@1.0",
         "mla_prefill_varlen_lse@1.0",
         "fp8_paged_mqa_logits@1.0",  # gfx942 reads its fp8 bytes as e4m3fnuz
+        "fp8_paged_mqa_logits_verify@1.0",
         "per_group_quant_fp8@1.0",
         "per_group_quant_mxfp8@1.0",
         "sparse_prefill_mxfp8@1.0",
+    }
+)
+# layout variants whose backend runs only on gfx950, of contracts whose other Points run anywhere
+GFX950_LAYOUT_VARIANTS = frozenset(
+    {
+        ("gemm_a8w8@1.0", "b_shuffled"),  # aiter's gemm_a8w8_bpreshuffle reads e4m3fn bytes only on gfx950
     }
 )

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What vLLM 0.33.0 runs on aiter on gfx950 from MuseSpark1xMoE._pool's norm to
+"""What vLLM 0.34.0 runs on aiter on gfx950 from MuseSparkMoE._pool's norm to
 the experts' per-route output: fused_rmsnorm_expand, then MuseSparkAiterExperts.apply's
 routes paired with the always-masked slot and its cached unit weights, into aiter's
 fused_moe at per_1x32 (rocm_aiter_fused_experts' arguments for MXFP4 w4a4 experts).

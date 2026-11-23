@@ -12,6 +12,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
+from packaging.version import Version
 
 import aklr.plugins.sglang as plugin
 from aklr.core.contract.locate import op_packages
@@ -23,7 +24,6 @@ from aklr.plugins.sglang import hook
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
-importlib.import_module("aklr.plugins.sglang.aiter_calls")
 importlib.import_module("aklr.plugins.sglang.models.kimi_k3_torch_gemm")
 importlib.import_module("aklr.plugins.sglang.models.dspark_torch_gemm")
 importlib.import_module("aklr.plugins.sglang.layers.logits_processor_torch_gemm")
@@ -44,10 +44,20 @@ def installed_sglang():
         pytest.skip("sglang is not installed")
 
 
+def model_image_only(versions):
+    """A route declared only for development builds: a model image's sglang, where it was tested."""
+    return all(Version(v).is_devrelease for v in versions)
+
+
 def test_every_route_was_tested_on_the_installed_sglang():
     """A new sglang image needs the routes adapted."""
     installed = installed_sglang()
-    assert [target for target, versions, _ in DECLARED if installed not in versions] == []
+    untested = [
+        target
+        for target, versions, _ in DECLARED
+        if installed not in versions and not model_image_only(versions)
+    ]
+    assert untested == []
 
 
 # aiter's options that pick a kernel's schedule, not its result
@@ -61,11 +71,10 @@ def parameters(fn, *, defaults=True):
     ]
 
 
-@pytest.mark.parametrize(
-    ("target", "route"), [(t, r) for t, _, r in DECLARED], ids=[t for t, _, _ in DECLARED]
-)
-def test_every_route_takes_its_targets_parameters(target, route):
-    installed_sglang()
+@pytest.mark.parametrize(("target", "versions", "route"), DECLARED, ids=[t for t, _, _ in DECLARED])
+def test_every_route_takes_its_targets_parameters(target, versions, route):
+    if installed_sglang() not in versions:
+        pytest.skip("declared for another sglang, which holds its target")
     if not target.startswith("aiter."):
         assert parameters(route) == parameters(pkgutil.resolve_name(target))
         return
@@ -83,18 +92,6 @@ def test_every_route_takes_its_targets_parameters(target, route):
             "inspect",
         ):
             assert routes[p.name] == p.default, p.name
-
-
-def test_the_fused_moe_route_passes_sglangs_output_to_the_op(monkeypatch):
-    """CI's aiter lacks ``output``, so the parameter test cannot see it: the route must take
-    sglang's ``output`` (MoRI EP's combine buffer) and pass it on."""
-    from aklr.plugins.sglang import aiter_calls
-
-    passed = {}
-    monkeypatch.setattr(aiter_calls.aklr_aiter, "fused_moe", lambda *args, **kwargs: passed.update(kwargs))
-    out = torch.empty(0)
-    aiter_calls._fused_moe(*[None] * 5, output=out)
-    assert passed["output"] is out
 
 
 @pytest.mark.parametrize(
@@ -278,7 +275,6 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     routes = (
         [
             "aklr.plugins.sglang.x.y.api",
-            "aklr.plugins.sglang.aiter_calls",
             "aklr.plugins.sglang.models.kimi_k3_torch_gemm",
             "aklr.plugins.sglang.models.dspark_torch_gemm",
             "aklr.plugins.sglang.layers.logits_processor_torch_gemm",

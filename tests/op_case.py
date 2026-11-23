@@ -7,11 +7,12 @@ import base64
 import functools
 import subprocess
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Iterable, Mapping
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
+import pytest
 import torch
 
 from aklr.core.contract import semantics
@@ -23,6 +24,7 @@ from aklr.core.contract.semantics import CompareResult
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
 from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
 from tests.ops import cases as ops_cases
+from tests.plugins.aiter import cases as aiter_cases
 from tests.plugins.sglang import cases as sglang_cases
 from tests.plugins.vllm import cases as vllm_cases
 
@@ -133,12 +135,20 @@ _NO_OP_KERNEL_SOURCE = "def run(**call): ...\n"  # a schema's kernel no test run
 # contract order: each contract's base Point first
 _SMALL_POINTS: tuple[PointSpec, ...] = tuple(
     sorted(
-        (*ops_cases.SMALL_POINTS, *sglang_cases.SMALL_POINTS, *vllm_cases.SMALL_POINTS),
+        (
+            *ops_cases.SMALL_POINTS,
+            *sglang_cases.SMALL_POINTS,
+            *vllm_cases.SMALL_POINTS,
+            *aiter_cases.SMALL_POINTS,
+        ),
         key=lambda point: point.contract_id,
     )
 )
 _GFX950_CONTRACT_IDS = (
-    ops_cases.GFX950_CONTRACT_IDS | sglang_cases.GFX950_CONTRACT_IDS | vllm_cases.GFX950_CONTRACT_IDS
+    ops_cases.GFX950_CONTRACT_IDS
+    | sglang_cases.GFX950_CONTRACT_IDS
+    | vllm_cases.GFX950_CONTRACT_IDS
+    | aiter_cases.GFX950_CONTRACT_IDS
 )
 
 
@@ -161,6 +171,16 @@ class OpCase:
         return tuple(cls(point) for point in _SMALL_POINTS)
 
     @classmethod
+    def params(cls, points: Iterable[PointSpec]) -> list[Any]:
+        """The cases of ``points`` in contract order as pytest params: the contract id, and ``gfx950``
+        where the backend runs the Point only there."""
+        cases = [cls(point) for point in sorted(points, key=lambda point: point.contract_id)]
+        return [
+            pytest.param(case, id=case.contract_id, marks=[pytest.mark.gfx950] if case.needs_gfx950 else [])
+            for case in cases
+        ]
+
+    @classmethod
     def of(cls, contract_id: str) -> OpCase:
         """The first case of ``contract_id``; ``KeyError`` for a contract without one."""
         case = next((c for c in cls.all() if c.contract_id == contract_id), None)
@@ -176,7 +196,14 @@ class OpCase:
     @property
     def needs_gfx950(self) -> bool:
         """Whether the backend runs the Point only on gfx950."""
-        return self.contract_id in _GFX950_CONTRACT_IDS
+        return (
+            self.contract_id in _GFX950_CONTRACT_IDS
+            or (
+                self.contract_id,
+                self.point.layout_variant_name,
+            )
+            in ops_cases.GFX950_LAYOUT_VARIANTS
+        )
 
     def schema(
         self,
@@ -230,16 +257,14 @@ class OpCase:
         """The api call of ``row_major_args`` on ``device`` (``TrialRequest.assemble_call``)."""
         return self.request.assemble_call(row_major_args, device)
 
-    def reference_outputs(
-        self, row_major_args: Mapping[str, Any], decode: Callable[[Any, str], Any] = semantics.to_float32
-    ) -> dict[str, Any]:
-        """The op's reference of ``row_major_args``, in float32 as validation computes it unless
-        ``decode`` says otherwise, by name in ``contract.mutable_tensors``: one rank's call."""
+    def reference_outputs(self, row_major_args: Mapping[str, Any]) -> dict[str, Any]:
+        """The op's reference of ``row_major_args``, by name in ``contract.mutable_tensors``: one
+        rank's call."""
         # shortcut: one rank's inputs only, so no group of more; draw every rank's (rank= of
         # row_major_inputs) when a ranks contract gets a Small Point
         if (n_ranks := self.contract.ranks_at(self.point)) > 1:
             raise NotImplementedError(f"{self.contract.contract_id}: a group of {n_ranks} ranks")
-        return self.contract.reference_outputs(self.point, [row_major_args], 0, decode)
+        return self.contract.reference_outputs(self.point, [row_major_args], 0)
 
     def compare(
         self,
@@ -247,26 +272,52 @@ class OpCase:
         row_major_args: Mapping[str, Any],
         *,
         baseline_outputs: Mapping[str, Any] | None = None,
-        decode: Callable[[Any, str], Any] = semantics.to_float32,
     ) -> dict[str, CompareResult]:
         """``compare_outputs`` of ``actual_outputs`` against the reference of ``row_major_args``, on the CPU."""
-        compare_kwargs = {"reference_outputs": self.reference_outputs(row_major_args, decode)}
+        compare_kwargs = {"reference_outputs": self.reference_outputs(row_major_args)}
         if self.request.has_error_bound("dot_product"):
             magnitudes = {
                 n: semantics.absolute_value(v, self.point.dtypes[n])
                 for n, v in row_major_args.items()
                 if torch.is_tensor(v)
             }
-            compare_kwargs["magnitude_outputs"] = self.reference_outputs(
-                {**row_major_args, **magnitudes}, decode
-            )
+            compare_kwargs["magnitude_outputs"] = self.reference_outputs({**row_major_args, **magnitudes})
         if baseline_outputs is not None:
             compare_kwargs["baseline_outputs"] = baseline_outputs
         compare_kwargs = {
             kind: {o: t.cpu() for o, t in tensors.items()} for kind, tensors in compare_kwargs.items()
         }
+        id_scores = self.contract.id_scores(self.point, [row_major_args], 0)
         return semantics.compare_outputs(
             self.request.schema_json,
             {o: t.cpu() for o, t in actual_outputs.items()},
             **compare_kwargs,
+            id_scores={o: s.cpu() for o, s in id_scores.items()},
         )
+
+    def check_backend_matches_reference(self) -> None:
+        """The backend, an implementation independent of the reference, checks the reference: equal
+        integer outputs, floating ones at an SQNR, the contract's own min_sqnr_db where it
+        declares one. Other bounds are the kernels', per element; the backend is held to 20 dB."""
+        args = self.inputs()
+        call = self.call(args, "cuda")
+        outputs = self.contract.call_mutable_tensors(self.contract.baseline()(**call), call)
+        results = self.compare(outputs, args, baseline_outputs=outputs)
+        output_specs = semantics.mutable_tensor_declarations(self.request.schema_json)
+        integral = {
+            o
+            for o, spec in output_specs.items()
+            if semantics.DTYPE_TRAITS[spec["dtype"]["any_of"][0]].is_integral
+        }
+        assert {o: results[o].detail for o in integral if not results[o].is_passed} == {}
+        reference = self.reference_outputs(args)
+        for o in output_specs.keys() - integral:
+            bound = output_specs[o]["error_bounds"][0][1]
+            # shortcut: 20 dB uncalibrated (MI300X skips), set from the gfx950 SQNRs once measured
+            min_sqnr_db = bound["min_sqnr_db"] if bound["kind"] == "sqnr" else 20.0
+            error = (outputs[o].cpu().float() - reference[o]).norm()
+            assert error <= 10 ** (-min_sqnr_db / 20) * reference[o].norm(), (
+                o,
+                min_sqnr_db,
+                (20 * (reference[o].norm() / error).log10()).item(),
+            )

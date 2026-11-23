@@ -29,7 +29,7 @@ on:
         type: string
         default: ''
       publish:
-        description: Deploy the report to GitHub Pages (scheduled runs always do)
+        description: Publish the measured targets to the site (scheduled runs always do)
         type: boolean
         default: false
 
@@ -37,7 +37,9 @@ permissions:
   contents: read
 
 concurrency:
-  # Ignored PR events must not replace a requested run waiting for the GPU runner.
+  # Ignored PR events and refused manual runs must not replace a requested run waiting for the
+  # GPU runner. The allowlist here must match benchmarks/agentx/allowlist.yaml (a test checks it);
+  # the plan job still authorizes against main's allowlist.yaml.
   group: >-
     ${{ github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
@@ -45,6 +47,11 @@ concurrency:
         (github.event.action != 'labeled' || github.event.label.name == 'ci:agentx-mi355x') &&
         format('agentx-pr-{0}', github.event.pull_request.number) ||
         github.event_name == 'pull_request' && format('agentx-ignored-{0}', github.run_id) ||
+        github.event_name == 'workflow_dispatch' &&
+        (github.ref != 'refs/heads/main' ||
+         !contains(fromJSON('["RuibinCheung", "xiaobochen-amd", "jiejingzhangamd", "zhenhuang12", "kyle-256"]'),
+                   github.triggering_actor)) &&
+        format('agentx-refused-{0}', github.run_id) ||
         'agentx-weekly' }}
   # A new commit on a labeled PR supersedes its running AgentX run; ignored PR events have a
   # group of their own, and scheduled and manual runs still queue.
@@ -75,6 +82,8 @@ jobs:
       matrix: ${{ steps.resolve.outputs.matrix }}
       count: ${{ steps.resolve.outputs.count }}
       skipped: ${{ steps.resolve.outputs.skipped }}
+      # "Re-run failed jobs" reuses this plan without its checks; later jobs need this attempt's plan.
+      attempt: ${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,13 +93,23 @@ jobs:
           python-version: '3.12'
       - name: Install PyYAML
         run: python -m pip install pyyaml==6.0.3
-      - name: Read the PR description's AgentX models
-        # Read it now rather than from the event, so a re-run after editing the description uses the edit.
+      - name: Read main's AgentX allowlist
+        # Authorize against main, not the checked-out copy a PR or an older commit can carry.
+        if: github.event_name != 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            "repos/$GITHUB_REPOSITORY/contents/benchmarks/agentx/allowlist.yaml?ref=main" > "$RUNNER_TEMP/allowlist.yaml"
+      - name: Read the PR comments that may authorize AgentX
+        # Read them now rather than from the event, so a re-run after a reviewer's comment uses it.
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | {user: .user.login, body: (.body // ""), url: .html_url}' | jq -s . > "$RUNNER_TEMP/pr-comments.json"
       - name: Plan selected model/target/framework runs from recipe files
         id: resolve
         env:
@@ -102,13 +121,18 @@ jobs:
           DURATION_S: ${{ github.event_name == 'pull_request' && '600' || inputs.duration_s }}
           # Verify the recipe duration without a smoke override, preserving baseline eligibility.
           REQUIRE_RECIPE_DURATION: ${{ github.event_name == 'schedule' && '3600' || '' }}
-          PR_BODY: ${{ github.event_name == 'pull_request' && 'pr-body.md' || '' }}
+          PR_COMMENTS: ${{ github.event_name == 'pull_request' && 'pr-comments.json' || '' }}
+          # A manual run needs an allowlisted reviewer (who clicked Run or Re-run) and main.
+          MANUAL_ACTOR: ${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || '' }}
+          ALLOWLIST: ${{ github.event_name != 'schedule' && 'allowlist.yaml' || '' }}
         run: |
           python3 -m agentx_bench plan --models "$MODELS" --targets "$TARGETS" --frameworks "$FRAMEWORKS" \
             ${RUNNER_LABEL:+--runner-label "$RUNNER_LABEL"} \
             ${POINTS:+--points "$POINTS"} ${DURATION_S:+--duration "$DURATION_S"} \
             ${REQUIRE_RECIPE_DURATION:+--require-recipe-duration "$REQUIRE_RECIPE_DURATION"} \
-            ${PR_BODY:+--pr-body "$RUNNER_TEMP/$PR_BODY"} \
+            ${PR_COMMENTS:+--pr-comments "$RUNNER_TEMP/$PR_COMMENTS"} \
+            ${MANUAL_ACTOR:+--manual-actor "$MANUAL_ACTOR" --manual-ref "$GITHUB_REF"} \
+            ${ALLOWLIST:+--allowlist "$RUNNER_TEMP/$ALLOWLIST"} \
             --out "$RUNNER_TEMP/plan"
       - uses: actions/upload-artifact@v4
         if: steps.resolve.outputs.skipped != 'true'
@@ -118,7 +142,7 @@ jobs:
 
   sweep:
     needs: plan
-    if: ${{ needs.plan.outputs.count != '0' }}
+    if: ${{ needs.plan.outputs.count != '0' && needs.plan.outputs.attempt == github.run_attempt }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -171,9 +195,11 @@ jobs:
 
   report:
     needs: [plan, sweep]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.skipped != 'true' }}
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.skipped != 'true' &&
+          needs.plan.outputs.attempt == github.run_attempt }}
     outputs:
-      publish_ready: ${{ steps.pages_artifact.outcome == 'success' }}
+      site_ready: ${{ steps.site_artifact.outcome == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -199,22 +225,15 @@ jobs:
           pattern: agentx-results-*
           merge-multiple: true
           path: ${{ runner.temp }}/results
-      - name: Render target reports and the combined index
-        env:
-          PAGES_URL: ${{ vars.AGENTX_PAGES_URL }}
+      # Only this run: no previous site or baselines are read, so nothing is compared across runs.
+      - name: Render this run's target reports and index
         run: |
-          owner=${GITHUB_REPOSITORY_OWNER,,}
-          url=${PAGES_URL:-https://$owner.github.io/${GITHUB_REPOSITORY#*/}}
           python3 -m agentx_bench report --plan "$RUNNER_TEMP/plan/manifest.json" \
-            --results "$RUNNER_TEMP/results" --baseline-url "$url" --out "$RUNNER_TEMP/site"
+            --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/site"
       - uses: actions/upload-artifact@v4
+        id: site_artifact
         with:
           name: agentx-site
-          path: ${{ runner.temp }}/site/
-      - uses: actions/upload-pages-artifact@v3
-        id: pages_artifact
-        if: github.event_name == 'schedule' || inputs.publish
-        with:
           path: ${{ runner.temp }}/site/
       - name: Summarize and check target outcomes after saving reports
         # Sweep owns measurement failures; plan and report errors must still fail CI.
@@ -226,17 +245,56 @@ jobs:
           jq -e 'all(.targets[]; .failure_stage == null)' "$RUNNER_TEMP/site/manifest.json"
           test "$RESULTS_DOWNLOAD_OUTCOME" != failure
 
-  pages:
+  # Every result on the site comes from main: a PR run (the ci:agentx-mi355x label) only uploads
+  # agentx-site. The agentx-bot environment holds the aklr-agentx-ci App key and deploys only from
+  # main; site.yaml then deploys site-data to Pages after this workflow completes.
+  publish:
     needs: report
-    if: ${{ !cancelled() && needs.report.outputs.publish_ready == 'true' && (github.event_name == 'schedule' || inputs.publish) }}
+    if: >-
+      ${{ !cancelled() && needs.report.outputs.site_ready == 'true' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.publish) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    environment: agentx-bot
+    timeout-minutes: 15
+    # Writes use the App token, not GITHUB_TOKEN.
     permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      contents: read
+    # Every CI that writes site-data shares this group.
+    concurrency:
+      group: site-data
+      cancel-in-progress: false
     steps:
-      - id: deploy
-        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+        with:
+          # Detached at this run's commit, so checkout leaves origin/main at main's tip for the check below.
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check that this run measured a commit on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentx-site
+          path: ${{ runner.temp }}/site
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_AGENTX_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_AGENTX_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Replace this run's targets in site-data/agentx
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_AGENTX_BOT_LOGIN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bash ../../.github/scripts/commit_site_data.sh agentx \
+            "agentx: publish run $GITHUB_RUN_ID of ${GITHUB_SHA::12}" \
+            python3 -m agentx_bench publish --site "$RUNNER_TEMP/site" --run-id "$GITHUB_RUN_ID" \
+            --run-url "$RUN_URL" --commit "$GITHUB_SHA" --ref "$GITHUB_REF" --event "$GITHUB_EVENT_NAME" --section

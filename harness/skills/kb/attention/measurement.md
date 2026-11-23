@@ -126,6 +126,9 @@ In FlyDSL: `../flydsl/attention.md` § measurement §7.
   takes. A window covering the whole sequence is normalised to full causal; a framework's default backend may not
   be your kernel, so the probe never reaches the change.
   - A command that pins the backend and one that resolves it automatically are different rulers.
+- **Check that the Points' per-request lengths and pool sizes reach every branch of the kernel.** A paged decode
+  kernel whose fast path assumes one KV length per request was stored faster than aiter on Points that all gave every
+  request that length, and was several times slower at realistic lengths (`../pitfalls/degenerate_points.md`).
 
 ## 9. Helper kernels in concurrent traces
 - **Do not divide a helper kernel's trace duration by its bytes when it runs beside the main body.** *(field, E24)* A

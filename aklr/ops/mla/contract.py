@@ -7,6 +7,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
     BaselineRelativeBound,
+    BoundedCuSeqlensDistribution,
     CuSeqlensDistribution,
     Deepseekv4Fp8KvCacheDistribution,
     Deepseekv4KvPages,
@@ -32,7 +33,14 @@ from aklr.core.contract.spec import (
     axis,
 )
 
-__all__ = ["CONTRACTS", "FLASH_MLA_WITH_KVCACHE", "FP8_PAGED_MQA_LOGITS", "MLA_DECODE_FWD"]
+__all__ = [
+    "CONTRACTS",
+    "FLASH_MLA_WITH_KVCACHE",
+    "FP8_PAGED_MQA_LOGITS",
+    "FP8_PAGED_MQA_LOGITS_VERIFY",
+    "MLA_DECODE_FWD",
+    "MLA_DECODE_FWD_CPRR",
+]
 
 _FINITE_DISTRIBUTION = FiniteDistribution()
 _INT32 = DTypeSpec(any_of=(DType.INT32,))
@@ -416,6 +424,73 @@ FP8_PAGED_MQA_LOGITS = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
+# the pool, its attrs and the logits' width are fp8_paged_mqa_logits'
+FP8_PAGED_MQA_LOGITS_VERIFY = OpContract(
+    contract_id="fp8_paged_mqa_logits_verify@1.0",
+    description=(
+        "DSA indexer logits of a speculative verify: request b's next_n query rows share its "
+        "block table row, and row (b, j) scores its first context_lens[b, j] cached tokens t with "
+        "the sum over heads h of weights[b, j, h] * relu(q[b, j, h] . k_t) * scale_t, over a paged "
+        "pool of fp8 keys with an fp32 scale per token."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis("Requests, next_n query rows each.", 1, 65536, is_var=True),
+        "next_n": axis("Query rows of each request: its tokens under verification.", 1, 1024),
+        "n_heads": FP8_PAGED_MQA_LOGITS.axes["n_heads"],
+        "n_pages": FP8_PAGED_MQA_LOGITS.axes["n_pages"],
+        "max_blocks": FP8_PAGED_MQA_LOGITS.axes["max_blocks"],
+        "max_seq_len": axis(
+            "Logits per query row: every token of its request's block table row.",
+            1,
+            _MQA_CONTEXT_LIMIT,
+            is_var=True,
+            any_size=True,
+        ),
+    },
+    attrs=FP8_PAGED_MQA_LOGITS.attrs,
+    constraints=FP8_PAGED_MQA_LOGITS.constraints,
+    inputs={
+        "q": TensorSpec(
+            description="The query rows of each request.",
+            shape=("batch", "next_n", "n_heads", 128),
+            dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_cache": FP8_PAGED_MQA_LOGITS.inputs["kv_cache"],
+        "weights": TensorSpec(
+            description="Per-head weight of each query row.",
+            shape=("batch", "next_n", "n_heads"),
+            dtype=_FLOAT32,
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "context_lens": TensorSpec(
+            description="Cached tokens each query row scores.",
+            shape=("batch", "next_n"),
+            dtype=_INT32,
+            # shortcut: full block tables only, as fp8_paged_mqa_logits; past a row's context
+            # aiter leaves its logits unspecified (sglang's top-k reads none of them)
+            distribution=IntRangeDistribution(lo="max_seq_len", hi="max_seq_len"),
+        ),
+        "block_tables": TensorSpec(
+            description="The pages of each request, in context order; its query rows share them.",
+            shape=("batch", "max_blocks"),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_pages - 1"),
+        ),
+    },
+    outputs={
+        "logits": TensorSpec(
+            description="The logits of each query row's cached tokens.",
+            shape=("batch", "next_n", "max_seq_len"),
+            dtype=_FLOAT32,
+            error_bounds=SqnrBound(min_sqnr_db=30.0),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
 
 
@@ -514,4 +589,131 @@ MLA_DECODE_FWD = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
-CONTRACTS = (FLASH_MLA_WITH_KVCACHE, FP8_PAGED_MQA_LOGITS, MLA_DECODE_FWD)
+# Bench draws every request the same shard of ceil_div(n_indices, batch) rows here and the
+# global length whose round robin puts exactly that many on rank 0, its last token included.
+_SHARD_ROWS = "ceil_div(n_indices, batch)"
+_GLOBAL_TOKENS = f"({_SHARD_ROWS} - 1) * cp_world_size + 1"
+
+MLA_DECODE_FWD_CPRR = OpContract(
+    contract_id="mla_decode_fwd_cprr@1.0",
+    description=(
+        "aiter's MLA decode of several causal queries a request on one rank of decode context "
+        "parallelism over a round-robin KV shard (aiter.mla.mla_decode_fwd with g_kv_indptr, "
+        "cp_world_size and cp_rank, as vLLM verifies draft tokens): request b reads pool rows "
+        "kv_indices[kv_indptr[b]:kv_indptr[b + 1]], its local row j holding global position "
+        "j * cp_world_size + cp_rank; of G = g_kv_indptr[b + 1] - g_kv_indptr[b] global tokens, "
+        "its query i sits at global position G - query_length + i and reads the local rows at or "
+        "before it. Logits are q . row * q_scale * kv_scale * sm_scale over the 576 values, the "
+        "rope part last, and values row[:512] * kv_scale. A query reading no row: o 0, lse -inf."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis("Requests.", 1, 65536, is_var=True),
+        "query_length": axis("Queries a request: the last token and its drafts.", 2, 16),
+        "n_heads": axis(
+            "Query heads: every rank's, gathered, as the caller pads them.", 16, 128, multiple_of=16
+        ),
+        "n_slots": axis("Rows of the KV pool.", 1, _SLOT_LIMIT - 1, is_var=True, any_size=True),
+        "n_indices": axis(
+            "Entries of kv_indices; the first kv_indptr[batch] are read.",
+            1,
+            _SLOT_LIMIT - 1,
+            is_var=True,
+            any_size=True,
+        ),
+        "n_offsets": axis("Entries of kv_indptr and g_kv_indptr: batch + 1.", 2, 65537, is_var=True),
+    },
+    attrs={
+        "cp_world_size": attr(
+            "Ranks of the decode context parallel group: global token t is on rank t % cp_world_size.",
+            8,
+            2,
+            4,
+            param_name="cp_world_size",
+            abbrev="cp",
+        ),
+    },
+    constraints=(
+        "n_offsets == batch + 1",
+        # aiter's round-robin kernels (vLLM's _NATIVE_CPRR_HEADS); vLLM pads other counts up to them
+        "n_heads == 16 or n_heads == 32 or n_heads == 64 or n_heads == 128",
+    ),
+    inputs={
+        "q": TensorSpec(
+            description="Each request's queries: the absorbed no-rope part, then the rope part.",
+            shape=("batch", "query_length", "n_heads", 576),
+            dtype=_FP8,
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_buffer": TensorSpec(
+            description="The KV pool: a 576-value row a slot, the rope part last.",
+            shape=("n_slots", 1, 1, 576),
+            dtype=_FP8,
+            distribution=_FINITE_DISTRIBUTION,
+            lifetime="weight",
+        ),
+        "kv_indptr": TensorSpec(
+            description=(
+                "Where each request's shard on this rank starts in kv_indices, then where the last "
+                "ends; a shard may run past the global length, its later rows read by no query."
+            ),
+            shape=("n_offsets",),
+            dtype=_INT32,
+            distribution=BoundedCuSeqlensDistribution(total="n_indices", max_seqlen=_SHARD_ROWS),
+        ),
+        "kv_indices": TensorSpec(
+            description="Pool rows, each request's shard back to back in global order.",
+            shape=("n_indices",),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_slots - 1"),
+        ),
+        "g_kv_indptr": TensorSpec(
+            description="Cumulative global token counts of the requests, the queries' tokens included.",
+            shape=("n_offsets",),
+            dtype=_INT32,
+            distribution=BoundedCuSeqlensDistribution(
+                total=f"batch * ({_GLOBAL_TOKENS})", max_seqlen=_GLOBAL_TOKENS
+            ),
+        ),
+        "q_scale": _scale("Multiplies every q value."),
+        "kv_scale": _scale("Multiplies every KV value, in the logits and the values."),
+        # always passed: present_when gives the api default None, which declines
+        "sm_scale": ScalarSpec(
+            description="Multiplies every logit.",
+            dtype=DType.FLOAT32,
+            interval=_POSITIVE_FLOAT32,
+            present_when="True",
+        ),
+        "cp_rank": ScalarSpec(
+            description="This rank in the decode context parallel group.",
+            dtype=DType.INT32,
+            interval=(0, 7),
+            default=0,
+        ),
+    },
+    outputs={
+        "o": TensorSpec(
+            description="Softmax-weighted sum of the read values.",
+            shape=("batch", "query_length", "n_heads", 512),
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            # aiter rounds the softmax weights to fp8 before it sums the values
+            error_bounds=BaselineRelativeBound(),
+        ),
+        "lse": TensorSpec(
+            description="Natural log-sum-exp of the scaled logits a query reads.",
+            shape=("batch", "query_length", "n_heads"),
+            dtype=_FLOAT32,
+            error_bounds=ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+CONTRACTS = (
+    FLASH_MLA_WITH_KVCACHE,
+    FP8_PAGED_MQA_LOGITS,
+    MLA_DECODE_FWD,
+    FP8_PAGED_MQA_LOGITS_VERIFY,
+    MLA_DECODE_FWD_CPRR,
+)

@@ -56,7 +56,7 @@ def muse_routes(monkeypatch):
                 monkeypatch.setattr(owner, child, modules[name], raising=False)
         return modules[name]
 
-    class MuseSpark1xMoE:
+    class MuseSparkMoE:
         def _pool(self, *args):
             from vllm.models.muse_spark.amd.model import fused_rmsnorm_expand
 
@@ -70,7 +70,7 @@ def muse_routes(monkeypatch):
             return experts.apply(*args)
 
     model = module("vllm.models.muse_spark.amd.model")
-    model.MuseSpark1xMoE = MuseSpark1xMoE
+    model.MuseSparkMoE = MuseSparkMoE
     module("vllm.models.muse_spark.amd.muse_moe_runner").MuseSparkAiterExperts = MuseSparkAiterExperts
     module(
         "vllm.model_executor.layers.fused_moe.modular_kernel"
@@ -79,7 +79,7 @@ def muse_routes(monkeypatch):
         yield SimpleNamespace(
             registry=registry,
             model=model,
-            pool=MuseSpark1xMoE(),
+            pool=MuseSparkMoE(),
             experts=MuseSparkAiterExperts(),
             runner=FusedMoEKernelModularImpl(),
         )

@@ -11,7 +11,7 @@ basis: measured N=1
 measured:
   - {metric: "speedup over aiter (mhc_fused_post_pre), CI, per Point", value: "1.100–1.510; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "mhc_fused_post_pre_has_norm_weight_hidden_size4096, n_tokens 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
-  - aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json
+  - aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json
 ---
 
 # mHC fused post + pre at hidden 4096: one pass over the residual, a Gram for the norm
@@ -33,7 +33,8 @@ One FlyDSL kernel for `mhc_fused_post_pre@1.0`. The schema embeds it as `kernel.
 - Yardstick: `mhc_fused_post_pre_baseline` (`aklr/ops/mhc/baseline.py`), aiter's
   `mhc_fused_post_pre` (`aiter/ops/mhc.py`): on gfx950 its fused HIP kernel below 1024 tokens, `mhc_post` then
   `mhc_pre` from 1024 on (read from the source). This file is the only one of its schema name, in any language; the
-  hidden-7168 schema of the same contract has a HIP kernel for T 1–16 beside a FlyDSL definition with no kernel (S9).
+  hidden-7168 schema of the same contract has a HIP kernel for T 1–16, a FlyDSL definition with no kernel (S9) and
+  #202's FlyDSL kernel for T 1–128 (`a2a5a2db`, S10).
 
 ## Counter-signals
 
@@ -49,6 +50,14 @@ One FlyDSL kernel for `mhc_fused_post_pre@1.0`. The schema embeds it as `kernel.
   not on an argument's device, and the cache key holds no device. The projection kernel rewrites every row of it
   before `k_fin` reads it, but every call of a T shares it, so two streams calling one Point at once would race
   (`../pitfalls/state_kept_across_calls.md`).
+- **NaN when the residual streams cancel, until the Gram form was clamped.** In 2827fc56, the file before
+  this one, `_kfin_epilogue` fed `Σ_{a,b} pre[a] · pre[b] · G[a][b]` straight to `_rsq`. The form is ≥ 0 exactly,
+  but where `Σ_a pre[a] · next_residual[a]` is near 0 its fp32 sum is rounding residue of either sign, and below
+  `−4096 · norm_eps` the rsqrt, and with it every `layer_input` element of the token, is NaN. *(field, E3)* With
+  streams that cancel exactly and the workloads' norm_eps 1e-6, 1034 of 6400 tokens (T 64) and 7616 of 51200
+  (T 512) came out NaN; with the clamp at 0 that #202's hidden-7168 kernel (`a2a5a2db`) puts before the same rsqrt
+  (S10), none. The contract's own draws did not reach it, so CI's check passed. This file clamps the form at 0
+  before `_rsq` (S6), as the hidden-7168 kernel does.
 - **An LDS reservation that guards correctness.** `k_mm_p` reserves 96 KiB of LDS so one workgroup sits on a CU;
   its comment reports wrong `next_residual` values when two co-resided, and also with 8 waves per workgroup. The
   cause is not given and was not reproduced here. A port that drops the reservation or raises the wave count needs
@@ -139,7 +148,7 @@ On an MI355X, in a checkout that holds this file (on AKLR main its workloads hol
 table's numbers):
 
 ```
-python -m aklr validate aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json
+python -m aklr validate aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json
 ```
 
 It runs the audit and bench stages and writes `aklr_validation/report.md` with the per-Point speedup
@@ -151,25 +160,29 @@ measurement is the one dispatch reads.
 ## Rollback
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
-`AKLR_DISABLE=mhc_fused_post_pre@1.0` drops this kernel and the hidden-7168 schema's HIP kernel, which serves the
-same contract (S9). A
+`AKLR_DISABLE=mhc_fused_post_pre@1.0` drops this kernel and the hidden-7168 schema's HIP and FlyDSL kernels, which
+serve the same contract (S9, S10). A
 Point CI measures below 1.05 stops being served without a rollback. Roll back for a wrong result CI does not catch,
-such as a model whose scalars differ from the captured ones and are first seen inside a graph capture, a process that
-calls the kernel on two devices or two streams, or a FlyDSL or LLVM upgrade that changes LDS residency.
+such as NaN from residual streams that cancel (Counter-signals), a model whose scalars differ from the captured ones
+and are first seen inside a graph capture, a process that calls the kernel on two devices or two streams, or a FlyDSL
+or LLVM upgrade that changes LDS residency.
 
 ## Evidence
 
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schema embeds; `<schema>` is
-aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.
+aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9. E1 and E2 measured
+2827fc56, the same kernel without the clamp's two lines (:803–804).
 
 - E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 1.100–1.510, 13 of 13 ≥ 1.03; T 1 1.167, 2 1.185, 4 1.117, 8 1.144, 16 1.125, 32 1.132, 64 1.100, 128 1.225, 256 1.325, 512 1.393, 1024 1.423, 2048 1.397, 4096 1.510 (mhc_fused_post_pre_has_norm_weight_hidden_size4096, T 1–4096)
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=5, the predecessor repository's CI] per-Point range and served count in commit order: 1.042–1.217, 1.134–1.439, 1.095–1.504, 1.134–1.451, 1.100–1.510, 13 of 13 each time; the kernel text is the same in all five (mhc_fused_post_pre_has_norm_weight_hidden_size4096, under the file's name before the rename)
+- E3 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=100 calls per T and input family, the shipped file and a copy with the clamp inserted before its `_rsq` on the same inputs, outputs checked for non-finite values and against the contract's reference] inputs whose four residual streams cancel exactly (`x` 0, `comb_mix` the identity, equal pre gates: the true form and `layer_input` are 0), the workloads' norm_eps 1e-6: tokens with a non-finite `layer_input` as shipped 1034 of 6400 at T 64 and 7616 of 51200 at T 512, with `ssq = max(ssq, 0)` 0; the contract's own draws at the same T: none in either build (mhc_fused_post_pre_has_norm_weight_hidden_size4096)
 - S1 aklr/ops/mhc/contract.py:227 compare `BOUNDED`; tolerance atol = rtol = 1e-2 at :39, on all four outputs at :151–169
 - S2 aklr/ops/mhc/baseline.py:79 `mhc_fused_post_pre_baseline` calls aiter's `mhc_fused_post_pre`; aiter/ops/mhc.py:560 aiter runs `mhc_post` and `mhc_pre` from 1024 tokens on gfx950
 - S3 aklr/ops/mhc/reference.py:103 the reference rounds `next_residual` to bf16 before the pre step
-- S4 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:1783 `_config`; `_PCFG` at :1818; NK at :1839; `part` on `torch.device("cuda")` at :1843; per-scalar compile in `launch` at :1855
-- S5 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:1247 `_make_kmm_p`: weight slab to bf16 LDS at :1372, 96 KiB reservation at :1270 with its comment at :1265, Gram MFMAs at T 512 and 2048 at :1262
-- S6 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:788 `_kfin_epilogue`: sum of squares from the Gram at :796–803; rms from the Gram diagonal at :637
-- S7 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:589 `_sinkhorn_el` with DPP row and column sums; fixed reduction tree in `_reduce_all` at :173
-- S8 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:832 `ROLE`, `WSPLIT` at :835, `R32` at :836, `SKW` at :848, generic `k_fin` body from :1123; `_KFIN_W4_KW = 1` at :377
-- S9 aklr/ops/mhc/impls/hip/mhc_fused_post_pre_has_norm_weight_hidden_size7168/be760df4df24a189.json:4 `contract_id` `mhc_fused_post_pre@1.0`, a HIP kernel at :293, Points n_tokens 1, 2, 4, 7, 8, 16; aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size7168/138d8923d8bbd221.json:315 empty `sources`; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids
+- S4 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json#kernel.py:1785 `_config`; `_PCFG` at :1820; NK at :1841; `part` on `torch.device("cuda")` at :1845; per-scalar compile in `launch` at :1857
+- S5 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json#kernel.py:1249 `_make_kmm_p`: weight slab to bf16 LDS at :1374, 96 KiB reservation at :1272 with its comment at :1267, Gram MFMAs at T 512 and 2048 at :1264
+- S6 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json#kernel.py:788 `_kfin_epilogue`: sum of squares from the Gram at :796–802, clamped at 0 at :804 before `_rsq` at :805; rms from the Gram diagonal at :637
+- S7 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json#kernel.py:589 `_sinkhorn_el` with DPP row and column sums; fixed reduction tree in `_reduce_all` at :173
+- S8 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json#kernel.py:834 `ROLE`, `WSPLIT` at :837, `R32` at :838, `SKW` at :850, generic `k_fin` body from :1125; `_KFIN_W4_KW = 1` at :377
+- S9 aklr/ops/mhc/impls/hip/mhc_fused_post_pre_has_norm_weight_hidden_size7168/d89d285ad73a24cc.json:4 `contract_id` `mhc_fused_post_pre@1.0`, a HIP kernel at :298, Points n_tokens 1, 2, 4, 7, 8, 16; aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size7168/138d8923d8bbd221.json:315 empty `sources`; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids
+- S10 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size7168/a2a5a2db565a78df.json#kernel.py:314 `ssq` clamped at 0 (`arith.MaximumFOp`) before the same `_rsq` (:315), under the comment "the Gram quadratic form is >= 0 exactly but can round below 0 when the streams cancel" (:313); the form summed at :306-312

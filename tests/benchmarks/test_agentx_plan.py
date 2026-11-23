@@ -5,29 +5,17 @@ from __future__ import annotations
 
 import argparse
 import copy
-import importlib
-import io
 import json
-import os
-import sys
-import tempfile
-import unittest
-from contextlib import redirect_stderr, redirect_stdout
+import re
 from pathlib import Path
 from unittest import mock
 
+import pytest
 import yaml
 
 AGENTX = Path(__file__).resolve().parents[2] / "benchmarks/agentx"
-with mock.patch.object(sys, "path", [str(AGENTX), *sys.path]):
-    plan = importlib.import_module("agentx_ci.plan")
-    sc = importlib.import_module("agentx_ci.serving_config")
-    ci_image = importlib.import_module("agentx_ci.ci_image")
-
-try:
-    import jsonschema
-except ImportError:
-    jsonschema = None
+from agentx_ci import ci_image, plan
+from agentx_ci import serving_config as sc
 
 RUNNER_LABEL = "agentx-mi355x"
 IMAGE = "example.invalid/server@sha256:" + "a" * 64
@@ -62,9 +50,11 @@ def model(targets, **extra):
     }
 
 
-class AgentXRecipeTestCase(unittest.TestCase):
-    def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+class PlanCase:
+    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch, run_image: mock.Mock) -> None:
+        self.root = root
+        self.monkeypatch = monkeypatch
+        self.run_image = run_image
         self.config = self.root / "agentx.yaml"
         self.definition = {
             "models": {
@@ -84,9 +74,7 @@ class AgentXRecipeTestCase(unittest.TestCase):
         }
         self.write_config()
         self.durations = {}
-        self.enterContext(redirect_stdout(io.StringIO()))
-        self.enterContext(redirect_stderr(io.StringIO()))
-        self.run_image = self.enterContext(mock.patch.object(ci_image, "run_image", return_value=IMAGE))
+        self.next_run = 0
 
     def write_config(self):
         self.config.write_text(yaml.safe_dump(self.definition, sort_keys=False))
@@ -134,243 +122,6 @@ class AgentXRecipeTestCase(unittest.TestCase):
         for run in runs:
             plan.write_json(self.recipe_file(*run), self.recipe(*run))
 
-
-class AgentXRecipeContractTests(AgentXRecipeTestCase):
-    def test_build_run_adds_plan_owned_fields(self):
-        recipe = self.recipe()
-        spec = sc.build_run(recipe, self.definition_of())
-        self.assertNotIn("hashes", recipe["points"][0])
-        self.assertEqual(
-            spec["points"][0]["launch"]["env"],
-            {"AKLR_SGLANG_PLUGIN": "1", "HF_HUB_OFFLINE": "1", "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7"},
-        )
-        definition = self.definition_of()
-        for key in sc.AGENTX_TOP:
-            self.assertEqual(spec[key], definition[key])
-        fixed = sc.template()
-        self.assertEqual(spec["client"], fixed["client"])
-        self.assertEqual(spec["points"][1]["trace"], fixed["trace"])
-        self.assertEqual(spec["points"][1]["client_env"]["WEKA_LOADER_OVERRIDE"], fixed["trace"]["loader"])
-        self.assertEqual(spec["selection"]["points"], ["tp8:1", "tp8:2"])
-        self.assertEqual(spec["arms"]["tp8"]["concs"], [1, 2])
-        self.assertTrue(spec["arms"]["tp8"]["arm_serve_sha256"])
-        self.assertTrue(spec["grid_sha256"])
-        self.assertEqual(spec["selection"]["policy"], sc.POLICY)
-        self.assertIsNone(spec["selection"]["duration"])
-        self.assertEqual([sc.point_id(p) for p in sc.selected_points(spec)], ["tp8:1", "tp8:2"])
-
-    def test_serve_identity_ignores_advisory_env_and_tracks_recipe_changes(self):
-        base = sc.build_run(self.recipe(), self.definition_of())
-        self.definition["models"]["first"]["advisory_env"] = {"EXTRA": "x"}
-        self.write_config()
-        advisory = sc.build_run(self.recipe(), self.definition_of())
-        self.assertEqual(base["selection"]["selection_sha256"], advisory["selection"]["selection_sha256"])
-        changed = self.recipe()
-        changed["points"][0]["launch"]["command"].append("--enforce-eager")
-        changed = sc.build_run(changed, self.definition_of())
-        self.assertNotEqual(base["selection"]["serve_sha256"], changed["selection"]["serve_sha256"])
-        self.assertNotEqual(base["points"][0]["hashes"], changed["points"][0]["hashes"])
-        # Point-by-point settings decide which points still compare; the selected points are unchanged.
-        self.assertEqual(base["selection"]["selection_sha256"], changed["selection"]["selection_sha256"])
-
-    def test_invalid_recipes_are_rejected(self):
-        cases = {
-            "plan-owned": lambda r: r.update(grid_sha256="0" * 64),
-            "plan-owned fields: ['hashes']": lambda r: r["points"][0].update(hashes={}),
-            "plan-owned fields: ['selection']": lambda r: r.update(selection={"method": "measured-frontier"}),
-            "plan-owned fields: ['arms']": lambda r: r.update(arms={"tp8": {}}),
-            "plan-owned fields: ['trace']": lambda r: r["points"][0].update(trace={}),
-            "unknown fields: ['recipe_fingerprint']": lambda r: r["points"][0].update(recipe_fingerprint="f"),
-            "fixed in serving.schema.json: ['client']": lambda r: r.update(client=sc.template()["client"]),
-            "fixed in serving.schema.json: ['trace']": lambda r: r.update(trace=sc.template()["trace"]),
-            "plan-owned keys": lambda r: r["points"][0]["client_env"].update(WEKA_LOADER_OVERRIDE="x"),
-            "must not set devices": lambda r: r["points"][0]["launch"]["env"].update(HIP_VISIBLE_DEVICES="0"),
-            "agentx.yaml-owned fields: ['model']": lambda r: r.update(model={"id": "first"}),
-            "agentx.yaml-owned fields: ['hardware']": lambda r: r.update(hardware={}),
-            "plan reads from stack.json: ['image']": lambda r: r.update(image={"run": IMAGE}),
-            "source.kind": lambda r: r["source"].update(kind="other"),
-            "source.kind must be 'cookbook'": lambda r: r["source"].update(kind="inferencex"),
-            "source.url must be": lambda r: r["source"].update(url="https://elsewhere.invalid/model.json"),
-            "holds only kind and url; remove ['ref']": lambda r: r["source"].update(ref="v1"),
-            "unique": lambda r: r["points"].append(copy.deepcopy(r["points"][0])),
-            "arm name": lambda r: r["points"][0].update(arm=""),
-            "fit the target": lambda r: r["points"][0].update(gpus=16),
-            "advisory env": lambda r: r["points"][0]["launch"]["env"].update(AKLR_SGLANG_PLUGIN="0"),
-            "FRAMEWORK must be 'sglang'": lambda r: r["points"][1]["client_env"].update(FRAMEWORK="vllm"),
-            "client_env.TP must be": lambda r: r["points"][0]["client_env"].pop("TP"),
-            "client_env.DCP_SIZE must be": lambda r: r["points"][0]["client_env"].update(DCP_SIZE="0"),
-            "must equal gpus": lambda r: r["points"][0]["client_env"].update(TP="4"),
-            "DP_ATTENTION must be": lambda r: r["points"][0]["client_env"].update(DP_ATTENTION="True"),
-            "plan-owned fields: ['exp_name']": lambda r: r["points"][0].update(exp_name="first-tp8-c1"),
-            "AIPERF_EXPERIMENTAL_FAST must be '0'": lambda r: r["points"][0]["client_env"].update(
-                AIPERF_EXPERIMENTAL_FAST="1"
-            ),
-            "CONC must equal its conc": lambda r: r["points"][0]["client_env"].update(CONC="999"),
-            "TOTAL_CPU_DRAM_GB must be digits": lambda r: r["points"][0]["client_env"].pop(
-                "TOTAL_CPU_DRAM_GB"
-            ),
-            "runtime.ready_timeout_s needs": lambda r: r["points"][0].update(runtime={}),
-            "runtime.port is required": lambda r: r["points"][0]["runtime"].pop("port"),
-            "runtime.port must be null or a TCP port": lambda r: r["points"][0]["runtime"].update(port=70000),
-            "runtime.poll_s needs": lambda r: r["points"][0]["runtime"].update(poll_s=float("nan")),
-        }
-        for message, mutate in cases.items():
-            with self.subTest(message=message):
-                recipe = self.recipe()
-                mutate(recipe)
-                with self.assertRaisesRegex(sc.RecipeError, message.replace("[", r"\[").replace("]", r"\]")):
-                    sc.build_run(recipe, self.definition_of())
-
-    def test_client_and_trace_come_from_the_schema(self):
-        schema = json.loads(sc.RECIPE_SCHEMA.read_text())
-        cases = {
-            "40-character sha": lambda d: d["client"]["const"].update(sha="main"),
-            "owner/name repo": lambda d: d["client"]["const"].update(repo="https://evil.invalid/x"),
-            "pinned revision": lambda d: d["trace"]["const"].update(revision="main"),
-            "needs loader": lambda d: d.pop("trace"),
-        }
-        for message, mutate in cases.items():
-            with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp:
-                broken = copy.deepcopy(schema)
-                mutate(broken["$defs"])
-                path = Path(tmp) / "serving.schema.json"
-                path.write_text(json.dumps(broken))
-                with self.assertRaisesRegex(sc.RecipeError, message):
-                    sc.template(path)
-                with mock.patch.object(sc, "RECIPE_SCHEMA", path):
-                    with self.assertRaisesRegex(sc.RecipeError, message):
-                        sc.build_run(self.recipe(), self.definition_of())
-
-    def test_plan_names_each_point_from_model_arm_and_conc(self):
-        spec = sc.build_run(self.recipe(), self.definition_of())
-        self.assertEqual([p["exp_name"] for p in spec["points"]], ["first-tp8-c1", "first-tp8-c2"])
-
-    def test_arms_cannot_leave_the_point_directory(self):
-        for name in ("/agentx/cache", "..", ".", "a/../b", "a\\b", "", ".hidden", "tp8:1"):
-            with self.subTest(name=name):
-                recipe = self.recipe()
-                recipe["points"][0]["arm"] = name
-                with self.assertRaisesRegex(sc.RecipeError, "arm name"):
-                    sc.build_run(recipe, self.definition_of())
-
-    def test_inferencex_recipes_must_match_the_configured_entry(self):
-        expect = {"config_file": "configs/master.yaml", "recipe": "recipes/model.yaml"}
-        configured = {
-            "kind": "inferencex",
-            "repo": "example/upstream",
-            "ref": "main",
-            "config_key": "model-key",
-        }
-        self.definition["models"]["first"]["targets"]["mi355x"]["frameworks"]["sglang"]["recipe_source"] = {
-            **configured,
-            "expect": expect,
-        }
-        self.write_config()
-        source = {"kind": "inferencex", "config_key": "model-key"}
-        recipe = self.recipe()
-        recipe["source"] = source
-        sc.build_run(recipe, self.definition_of())
-        cases = {
-            "source.config_key must be": lambda s: s.update(config_key="other-key"),
-            r"holds only kind and config_key; remove \['files', 'repo', 'sha'\]": lambda s: s.update(
-                repo=configured["repo"], sha="e" * 40, files={path: "f" * 40 for path in expect.values()}
-            ),
-        }
-        for message, mutate in cases.items():
-            with self.subTest(message=message):
-                recipe = self.recipe()
-                recipe["source"] = copy.deepcopy(source)
-                mutate(recipe["source"])
-                with self.assertRaisesRegex(sc.RecipeError, message):
-                    sc.build_run(recipe, self.definition_of())
-
-    @unittest.skipIf(jsonschema is None, "jsonschema is not installed")
-    def test_json_schema_matches_the_contract(self):
-        schema = json.loads((AGENTX / "recipes/serving.schema.json").read_text())
-        jsonschema.Draft202012Validator.check_schema(schema)
-        validator = jsonschema.Draft202012Validator(schema)
-        validator.validate(self.recipe())
-        for path in (AGENTX / "recipes").glob("*/*/*/serving.*.json"):
-            validator.validate(json.loads(path.read_text()))
-        run = sc.build_run(self.recipe(), self.definition_of())
-        self.assertFalse(validator.is_valid(run))
-
-    def test_repository_recipes_match_agentx_yaml(self):
-        config = plan.load_config(AGENTX / "agentx.yaml")
-        paths = sorted((AGENTX / "recipes").glob("*/*/*/serving.*.json"))
-        self.assertTrue(paths)
-        self.assertEqual(len(paths), len(plan.select_runs(config)))
-        for path in paths:
-            model_id = path.name.removeprefix("serving.").removesuffix(".json")
-            target_id, framework_id = path.parent.parent.name, path.parent.name
-            with self.subTest(recipe=f"{model_id}/{target_id}/{framework_id}"):
-                definition = plan.model_config(config, model_id, target_id, framework_id)
-                self.assertEqual(sc.recipe_path(AGENTX / "agentx.yaml", definition), path)
-                spec = sc.build_run(plan.read_json(path), definition)
-                self.assertTrue(sc.selected_points(spec))
-
-    def test_recipes_are_kept_by_model_family(self):
-        self.assertEqual(
-            self.recipe_file("first", "other"), self.root / "recipes/Example/other/sglang/serving.first.json"
-        )
-        for family in (None, "", "../GLM", "GLM/5"):
-            with self.subTest(family=family):
-                self.definition["models"]["first"]["family"] = family
-                self.write_config()
-                with self.assertRaisesRegex(plan.ConfigError, "family must name its recipes/ directory"):
-                    self.definition_of()
-
-    def test_frameworks_are_a_separate_layer(self):
-        self.assertEqual(
-            self.recipe_file("first", "mi355x", "vllm"),
-            self.root / "recipes/Example/mi355x/vllm/serving.first.json",
-        )
-        sglang = self.definition_of()
-        vllm = self.definition_of(framework_id="vllm")
-        self.assertEqual((sglang["framework"], vllm["framework"]), ({"id": "sglang"}, {"id": "vllm"}))
-        self.assertEqual(sglang["advisory_env"], {"AKLR_SGLANG_PLUGIN": "1"})
-        self.assertEqual(vllm["advisory_env"], {})
-        spec = sc.build_run(self.recipe(framework_id="vllm"), vllm)
-        self.assertEqual(spec["framework"], {"id": "vllm"})
-        self.assertNotIn("AKLR_SGLANG_PLUGIN", spec["points"][0]["launch"]["env"])
-        with self.assertRaisesRegex(plan.ConfigError, "select exactly one framework for first/mi355x"):
-            plan.model_config(plan.load_config(self.config), "first", "mi355x")
-        self.assertEqual(self.definition_of("first", "other", None)["framework"], {"id": "sglang"})
-        config = plan.load_config(self.config)
-        self.assertEqual(plan.select_runs(config), list(RUNS))
-        self.assertEqual(
-            plan.select_runs(config, frameworks="vllm"), [run for run in RUNS if run[2] == "vllm"]
-        )
-        with self.assertRaisesRegex(
-            plan.ConfigError, "unknown or disabled frameworks in the selection: sglang"
-        ):
-            plan.select_runs(config, models="second", frameworks="sglang")
-
-    def test_framework_ids_and_flags_are_validated(self):
-        frameworks = self.definition["models"]["first"]["targets"]["mi355x"]["frameworks"]
-        frameworks["vllm"]["enabled"] = False
-        self.write_config()
-        self.assertEqual(self.definition_of("first", "mi355x", None)["framework"], {"id": "sglang"})
-        with self.assertRaisesRegex(plan.ConfigError, "unknown or disabled framework first/mi355x/vllm"):
-            self.definition_of(framework_id="vllm")
-        with self.assertRaisesRegex(plan.ConfigError, "invalid framework id 'trtllm'"):
-            plan.select_runs(plan.load_config(self.config), frameworks="trtllm")
-        frameworks["trtllm"] = framework()
-        self.write_config()
-        with self.assertRaisesRegex(plan.ConfigError, "invalid framework id 'trtllm'"):
-            self.definition_of()
-        del self.definition["models"]["first"]["targets"]["mi355x"]["frameworks"]
-        self.write_config()
-        with self.assertRaisesRegex(plan.ConfigError, "frameworks must map sglang or vllm"):
-            self.definition_of()
-
-
-class AgentXPlanTests(AgentXRecipeTestCase):
-    def setUp(self):
-        super().setUp()
-        self.write_recipes()
-        self.next_run = 0
-
     def args(self, **overrides):
         self.next_run += 1
         values = {
@@ -398,273 +149,60 @@ class AgentXPlanTests(AgentXRecipeTestCase):
             (args.out / plan.target_path(model_id, target_id, framework_id) / "serving.json").read_text()
         )
 
-    def test_runner_filter_selects_across_models_and_persists_only_matches(self):
-        args = self.args(runner_label=RUNNER_LABEL)
-        manifest = plan.build(args)
-        expected = [run for run in RUNS if run[1] != "other"]
-        self.assertEqual(self.runs(manifest), expected)
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
-        self.assertEqual(json.loads((args.out / "manifest.json").read_text()), manifest)
-        self.assertEqual(
-            {str(path.relative_to(args.out)) for path in args.out.rglob("serving.json")},
-            {f"models/{m}/targets/{t}/frameworks/{f}/serving.json" for m, t, f in expected},
-        )
-        self.assertEqual(manifest["schema"], 4)
-        for item, run in zip(manifest["targets"], expected):
-            spec = self.serving_of(args, *run)
-            self.assertEqual(spec["framework"], item["framework"])
-            self.assertEqual(item["point_policy"], sc.POLICY)
-            self.assertEqual(item["point_ids"], ["tp8:1", "tp8:2"])
-            self.assertEqual(item["image"], IMAGE)
-            self.assertEqual(spec["image"], {"run": IMAGE})
-            self.assertEqual(item["serving_sha256"], plan.sha256_json(spec))
-            self.assertEqual(item["selection_manifest_sha256"], spec["selection"]["manifest_sha256"])
-            self.assertTrue(spec["plan_id"])
-        # One stack.json read per framework, shared by its runs.
-        self.assertEqual(sorted(c.args[0] for c in self.run_image.call_args_list), ["sglang", "vllm"])
-
-    def test_execution_image_comes_from_the_ci_image_of_the_framework(self):
-        vllm = "example.invalid/vllm@sha256:" + "b" * 64
-        self.run_image.side_effect = lambda framework: vllm if framework == "vllm" else IMAGE
-        args = self.args()
-        manifest = plan.build(args)
-        for item in manifest["targets"]:
-            expected = vllm if item["framework"]["id"] == "vllm" else IMAGE
-            self.assertEqual(item["image"], expected)
-            run = (item["model"]["id"], item["target"]["id"], item["framework"]["id"])
-            self.assertEqual(self.serving_of(args, *run)["image"], {"run": expected})
-        with self.assertRaisesRegex(sc.RecipeError, "must be pinned by digest"):
-            sc.build_run(self.recipe(), self.definition_of(), "example.invalid/server:latest")
-        self.run_image.side_effect = ValueError(
-            "stack.json: vllm_image must be an image tag pinned by digest"
-        )
-        failed = plan.build(self.args())
-        self.assertEqual({item["status"] for item in failed["targets"]}, {"resolve-failed"})
-        self.assertIn("vllm_image", failed["targets"][0]["error"])
-
-    def test_default_selection_works_without_runner_label_attribute(self):
-        args = self.args()
-        self.assertFalse(hasattr(args, "runner_label"))
-        manifest = plan.build(args)
-        self.assertEqual(self.runs(manifest), list(RUNS))
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
-
-    def test_missing_runner_fails_before_manifest_creation(self):
-        args = self.args(runner_label="agentx-missing")
-        with self.assertRaisesRegex(plan.ConfigError, "no selected runs use runner label 'agentx-missing'"):
-            plan.build(args)
-        self.assertFalse((args.out / "manifest.json").exists())
-
-    def test_missing_or_stale_recipe_only_fails_that_target(self):
-        self.recipe_file("second", "different-target-id", "vllm").unlink()
-        self.definition["models"]["first"]["targets"]["other"]["hardware"]["gpu_count"] = 4
-        self.write_config()
-        manifest = plan.build(self.args())
-        self.assertEqual(
-            [item["status"] for item in manifest["targets"]],
-            ["resolved", "resolved", "resolve-failed", "resolve-failed"],
-        )
-        self.assertIn("fit the target hardware", manifest["targets"][2]["error"])
-        self.assertIn("must be generated and reviewed", manifest["targets"][3]["error"])
-
-    def test_cli_filter_limits_manifest_and_github_job_matrix(self):
-        output = self.root / "github-output"
-        out = self.root / "cli-plan"
-        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
-            code = plan.main(
-                [
-                    "--config",
-                    str(self.config),
-                    "--runner-label",
-                    RUNNER_LABEL,
-                    "--out",
-                    str(out),
-                    "--run-id",
-                    "fixture",
-                ]
-            )
-        self.assertEqual(code, 0)
-        values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-        self.assertEqual(values["count"], "3")
-        jobs = json.loads(values["matrix"])["include"]
-        self.assertEqual(
-            [(job["model"], job["target"], job["framework"], job["runner"]) for job in jobs],
-            [(*run, RUNNER_LABEL) for run in RUNS if run[1] != "other"],
-        )
-        manifest = json.loads((out / "manifest.json").read_text())
-        self.assertEqual(
-            self.runs(manifest), [(job["model"], job["target"], job["framework"]) for job in jobs]
-        )
-
-    def run_with_pr_body(self, body: str, *extra: str):
+    def run_with_comment(self, body: str, *extra: str, comments: list[dict] | None = None):
         output, summary = self.root / "github-output", self.root / "github-summary"
         output.unlink(missing_ok=True)
         summary.unlink(missing_ok=True)
-        pr_body = self.root / "pr-body.md"
-        pr_body.write_text(body)
+        pr_comments = self.root / "pr-comments.json"
+        if comments is None:
+            comments = [{"user": "author", "body": "Ready."}, {"user": "RuibinCheung", "body": body}]
+        pr_comments.write_text(json.dumps(comments))
+        allowlist = self.root / "allowlist.yaml"
+        allowlist.write_text("reviewers: [RuibinCheung, xiaobochen-amd, jiejingzhangamd]\n")
         self.next_run += 1
         out = self.root / f"pr-plan-{self.next_run}"
         env = {"GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)}
-        with mock.patch.dict(os.environ, env):
-            code = plan.main(
-                [
-                    "--config",
-                    str(self.config),
-                    "--runner-label",
-                    RUNNER_LABEL,
-                    "--pr-body",
-                    str(pr_body),
-                    *extra,
-                    "--out",
-                    str(out),
-                ]
-            )
+        for name, value in env.items():
+            self.monkeypatch.setenv(name, value)
+        code = plan.main(
+            [
+                "--config",
+                str(self.config),
+                "--runner-label",
+                RUNNER_LABEL,
+                "--pr-comments",
+                str(pr_comments),
+                "--allowlist",
+                str(allowlist),
+                *extra,
+                "--out",
+                str(out),
+            ]
+        )
         values = (
             dict(line.split("=", 1) for line in output.read_text().splitlines()) if output.exists() else {}
         )
         return code, values, out
 
-    def test_pr_description_selects_only_its_declared_models(self):
-        code, values, out = self.run_with_pr_body("## Risk\nAffects: decode\n**AgentX**: `second`\n")
-        self.assertEqual(code, 0)
-        self.assertEqual(values["skipped"], "false")
-        jobs = json.loads(values["matrix"])["include"]
-        expected = [("second", "different-target-id", "vllm")]
-        self.assertEqual([(job["model"], job["target"], job["framework"]) for job in jobs], expected)
-        self.assertEqual(self.runs(json.loads((out / "manifest.json").read_text())), expected)
-        self.assertIn("selects second;", (self.root / "github-summary").read_text())
-
-    def test_pr_description_all_runs_every_enabled_model(self):
-        for body in ("AgentX: all\n", "AgentX: `ALL`\n"):
-            with self.subTest(body=body):
-                code, values, _ = self.run_with_pr_body(body)
-                self.assertEqual(code, 0)
-                self.assertEqual(values["count"], "3")
-
-    def test_pr_description_scope_problems_warn_on_github(self):
-        cases = (
-            ("AgentX: first, missing\n", "Not an enabled model id, skipped: `missing`."),
-            ("AgentX: missing\n", "selects no model"),
-            ("No line\n", "selects no model"),
-        )
-        for body, message in cases:
-            with self.subTest(body=body), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
-                stdout = io.StringIO()
-                with redirect_stdout(stdout):
-                    code, _, _ = self.run_with_pr_body(body)
-                self.assertEqual(code, 0)
-                warnings = [line for line in stdout.getvalue().splitlines() if line.startswith("::warning")]
-                self.assertEqual(len(warnings), 1)
-                self.assertIn(message, warnings[0])
-        stdout = io.StringIO()
-        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), redirect_stdout(stdout):
-            self.run_with_pr_body("AgentX: first\n")
-        self.assertNotIn("::warning", stdout.getvalue())
-
-    def test_pr_description_without_models_skips_without_a_plan(self):
-        template = "AgentX: <!-- model ids from agentx.yaml,\nor all -->\n"
-        for body in ("## Why\nNo AgentX line.\n", template, "AgentX:\n"):
-            with self.subTest(body=body):
-                code, values, out = self.run_with_pr_body(body)
-                self.assertEqual(code, 0)
-                self.assertEqual(values, {"matrix": '{"include": []}', "count": "0", "skipped": "true"})
-                self.assertFalse(out.exists())
-                self.assertIn(
-                    "selects no model on an `AgentX:` line; skipping AgentX.",
-                    (self.root / "github-summary").read_text(),
-                )
-
-    def test_pr_description_never_fails_the_plan(self):
-        cases = (
-            ("AgentX: first, missing\n", "2", ["first", "first"], "skipped: `missing`."),
-            ("AgentX: all, first\n", "2", ["first", "first"], "skipped: `all`."),
-            ("AgentX: FIRST\n", "2", ["first", "first"], "selects first;"),
-            ("AgentX: first\n* AgentX: second\n", "3", ["first", "first", "second"], "selects first,second"),
-            ("AgentX: none, second\n", "1", ["second"], "skipped: `none`."),
-        )
-        for body, count, models, note in cases:
-            with self.subTest(body=body):
-                code, values, _ = self.run_with_pr_body(body)
-                self.assertEqual(code, 0)
-                self.assertEqual(values["count"], count)
-                self.assertEqual([job["model"] for job in json.loads(values["matrix"])["include"]], models)
-                self.assertIn(note, (self.root / "github-summary").read_text())
-
-    def test_pr_description_matching_nothing_skips(self):
-        for body in ("AgentX: none\n", "AgentX: missing\n", "AgentX: -, other\n"):
-            with self.subTest(body=body):
-                code, values, out = self.run_with_pr_body(body)
-                self.assertEqual(code, 0)
-                self.assertEqual(values["skipped"], "true")
-                self.assertFalse(out.exists())
-                self.assertIn("skipping AgentX", (self.root / "github-summary").read_text())
-        self.assertIn("skipped: `-`, `other`.", (self.root / "github-summary").read_text())
-
-    def test_pr_body_with_explicit_models_is_a_cli_error(self):
-        code, values, _ = self.run_with_pr_body("AgentX: first\n", "--models", "second")
-        self.assertEqual((code, values), (1, {}))
-
-    def test_pr_description_parsing(self):
-        enabled = ["first", "second"]
-        self.assertEqual(
-            plan.declared_models("- AgentX: second, first,, second\n", enabled), ("second,first", [])
-        )
-        self.assertEqual(plan.declared_models("AgentX: `first` second\n", enabled), ("first,second", []))
-        self.assertEqual(plan.declared_models("**AgentX:** NONE\n", enabled), ("", ["NONE"]))
-        self.assertEqual(plan.declared_models("", enabled), ("", []))
-        self.assertEqual(plan.declared_models("Uses AgentX: later.\n## AgentX: first\n", enabled), ("", []))
-
-    def test_pr_description_matches_model_ids_ignoring_case(self):
-        enabled = ["glm52-fp4", "minimaxm31flash-fp4"]
-        body = "AgentX: glm52, GLM52-FP4, minimax, glm52-fp4\n"
-        self.assertEqual(plan.declared_models(body, enabled), ("glm52-fp4", ["glm52", "minimax"]))
-        self.assertEqual(
-            plan.declared_models("AgentX: glm52-fp4 not all of them\n", enabled),
-            ("glm52-fp4", ["not", "all", "of", "them"]),
-        )
-
-    def test_smoke_points_narrow_the_selection(self):
-        full = self.serving_of_built()
-        args = self.args(
-            models="first", frameworks="sglang", runner_label=RUNNER_LABEL, points="tp8:2", duration=60
-        )
-        manifest = plan.build(args)
-        item = manifest["targets"][0]
-        self.assertEqual((item["status"], item["point_ids"]), ("resolved", ["tp8:2"]))
-        spec = self.serving_of(args)
-        self.assertEqual(spec["selection"]["points"], ["tp8:2"])
-        self.assertEqual(spec["selection"]["points_requested"], "tp8:2")
-        self.assertEqual(spec["selection"]["duration"], 60)
-        self.assertNotEqual(spec["selection"]["selection_sha256"], full["selection"]["selection_sha256"])
-        self.assertEqual([sc.point_id(p) for p in sc.selected_points(spec)], ["tp8:2"])
+    def run_manual(self, actor: str, ref: str):
+        allowlist = self.root / "allowlist.yaml"
+        allowlist.write_text("reviewers: [RuibinCheung, xiaobochen-amd]\n")
+        summary = self.root / "github-summary"
+        summary.unlink(missing_ok=True)
+        self.next_run += 1
+        out = self.root / f"manual-plan-{self.next_run}"
+        argv = ["--config", str(self.config), "--runner-label", RUNNER_LABEL, "--allowlist", str(allowlist)]
+        argv += ["--manual-actor", actor, "--manual-ref", ref, "--out", str(out)]
+        self.monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+        self.monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        code = plan.main(argv)
+        return code, out, summary.read_text() if summary.exists() else ""
 
     def serving_of_built(self):
         args = self.args(models="first", targets="mi355x", frameworks="sglang")
         plan.build(args)
         return self.serving_of(args)
 
-    def test_smoke_points_require_one_run_and_recipe_ids(self):
-        for options in ({}, {"runner_label": RUNNER_LABEL}):
-            with self.subTest(options=options):
-                with self.assertRaisesRegex(plan.ConfigError, "smoke filters require exactly one"):
-                    plan.build(self.args(models="first", points="tp8:1", **options))
-        manifest = plan.build(
-            self.args(models="first", frameworks="vllm", runner_label=RUNNER_LABEL, points="tp8:3")
-        )
-        self.assertEqual(manifest["targets"][0]["status"], "resolve-failed")
-        self.assertIn("not in the recipe selection", manifest["targets"][0]["error"])
-
-    def test_duration_override_applies_to_every_target(self):
-        args = self.args(duration=600)
-        manifest = plan.build(args)
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
-        for path in args.out.rglob("serving.json"):
-            selection = json.loads(path.read_text())["selection"]
-            self.assertEqual(selection["duration"], 600)
-            self.assertIsNone(selection["points_requested"])
-
-
-class AgentXRecipeDurationTests(AgentXRecipeTestCase):
     def plan(self, **overrides):
         self.write_recipes()
         values = {
@@ -680,43 +218,708 @@ class AgentXRecipeDurationTests(AgentXRecipeTestCase):
         values.update(overrides)
         return plan.build(argparse.Namespace(**values))
 
-    def test_requirement_preserves_recipe_duration_without_an_override(self):
-        manifest = self.plan(require_recipe_duration=3600)
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
-        for path in (self.root / "plan").rglob("serving.json"):
-            self.assertIsNone(json.loads(path.read_text())["selection"]["duration"])
 
-    def test_mismatch_is_reported_per_target(self):
-        self.durations[("second", 1)] = "1200"
-        manifest = self.plan(runner_label=RUNNER_LABEL, require_recipe_duration=3600)
-        self.assertEqual(
-            [item["status"] for item in manifest["targets"]], ["resolved", "resolved", "resolve-failed"]
+@pytest.fixture
+def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    run_image = mock.Mock(return_value=IMAGE)
+    monkeypatch.setattr(ci_image, "run_image", run_image)
+    return PlanCase(tmp_path, monkeypatch, run_image)
+
+
+@pytest.fixture
+def planned(case: PlanCase) -> PlanCase:
+    """The case with every run's recipe on disk, as plan reads them."""
+    case.write_recipes()
+    return case
+
+
+def test_build_run_adds_plan_owned_fields(case):
+    recipe = case.recipe()
+    spec = sc.build_run(recipe, case.definition_of())
+    assert "hashes" not in recipe["points"][0]
+    assert spec["points"][0]["launch"]["env"] == {
+        "AKLR_SGLANG_PLUGIN": "1",
+        "HF_HUB_OFFLINE": "1",
+        "HIP_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+    }
+    definition = case.definition_of()
+    for key in sc.AGENTX_TOP:
+        assert spec[key] == definition[key]
+    fixed = sc.template()
+    assert spec["client"] == fixed["client"]
+    assert spec["points"][1]["trace"] == fixed["trace"]
+    assert spec["points"][1]["client_env"]["WEKA_LOADER_OVERRIDE"] == fixed["trace"]["loader"]
+    assert spec["selection"]["points"] == ["tp8:1", "tp8:2"]
+    assert spec["arms"]["tp8"]["concs"] == [1, 2]
+    assert spec["arms"]["tp8"]["arm_serve_sha256"]
+    assert spec["grid_sha256"]
+    assert spec["selection"]["policy"] == sc.POLICY
+    assert spec["selection"]["duration"] is None
+    assert [sc.point_id(p) for p in sc.selected_points(spec)] == ["tp8:1", "tp8:2"]
+
+
+def test_serve_identity_ignores_advisory_env_and_tracks_recipe_changes(case):
+    base = sc.build_run(case.recipe(), case.definition_of())
+    case.definition["models"]["first"]["advisory_env"] = {"EXTRA": "x"}
+    case.write_config()
+    advisory = sc.build_run(case.recipe(), case.definition_of())
+    assert base["selection"]["selection_sha256"] == advisory["selection"]["selection_sha256"]
+    changed = case.recipe()
+    changed["points"][0]["launch"]["command"].append("--enforce-eager")
+    changed = sc.build_run(changed, case.definition_of())
+    assert base["selection"]["serve_sha256"] != changed["selection"]["serve_sha256"]
+    assert base["points"][0]["hashes"] != changed["points"][0]["hashes"]
+    # Point-by-point settings decide which points still compare; the selected points are unchanged.
+    assert base["selection"]["selection_sha256"] == changed["selection"]["selection_sha256"]
+
+
+INVALID_RECIPES = {
+    "plan-owned": lambda r: r.update(grid_sha256="0" * 64),
+    "plan-owned fields: ['hashes']": lambda r: r["points"][0].update(hashes={}),
+    "plan-owned fields: ['selection']": lambda r: r.update(selection={"method": "measured-frontier"}),
+    "plan-owned fields: ['arms']": lambda r: r.update(arms={"tp8": {}}),
+    "plan-owned fields: ['trace']": lambda r: r["points"][0].update(trace={}),
+    "unknown fields: ['recipe_fingerprint']": lambda r: r["points"][0].update(recipe_fingerprint="f"),
+    "fixed in serving.schema.json: ['client']": lambda r: r.update(client=sc.template()["client"]),
+    "fixed in serving.schema.json: ['trace']": lambda r: r.update(trace=sc.template()["trace"]),
+    "plan-owned keys": lambda r: r["points"][0]["client_env"].update(WEKA_LOADER_OVERRIDE="x"),
+    "must not set devices": lambda r: r["points"][0]["launch"]["env"].update(HIP_VISIBLE_DEVICES="0"),
+    "agentx.yaml-owned fields: ['model']": lambda r: r.update(model={"id": "first"}),
+    "agentx.yaml-owned fields: ['hardware']": lambda r: r.update(hardware={}),
+    "plan reads from stack.json: ['image']": lambda r: r.update(image={"run": IMAGE}),
+    "source.kind": lambda r: r["source"].update(kind="other"),
+    "source.kind must be 'cookbook'": lambda r: r["source"].update(kind="inferencex"),
+    "source.url must be": lambda r: r["source"].update(url="https://elsewhere.invalid/model.json"),
+    "holds only kind and url; remove ['ref']": lambda r: r["source"].update(ref="v1"),
+    "unique": lambda r: r["points"].append(copy.deepcopy(r["points"][0])),
+    "arm name": lambda r: r["points"][0].update(arm=""),
+    "fit the target": lambda r: r["points"][0].update(gpus=16),
+    "advisory env": lambda r: r["points"][0]["launch"]["env"].update(AKLR_SGLANG_PLUGIN="0"),
+    "FRAMEWORK must be 'sglang'": lambda r: r["points"][1]["client_env"].update(FRAMEWORK="vllm"),
+    "client_env.TP must be": lambda r: r["points"][0]["client_env"].pop("TP"),
+    "client_env.DCP_SIZE must be": lambda r: r["points"][0]["client_env"].update(DCP_SIZE="0"),
+    "must equal gpus": lambda r: r["points"][0]["client_env"].update(TP="4"),
+    "DP_ATTENTION must be": lambda r: r["points"][0]["client_env"].update(DP_ATTENTION="True"),
+    "plan-owned fields: ['exp_name']": lambda r: r["points"][0].update(exp_name="first-tp8-c1"),
+    "AIPERF_EXPERIMENTAL_FAST must be '0'": lambda r: r["points"][0]["client_env"].update(
+        AIPERF_EXPERIMENTAL_FAST="1"
+    ),
+    "CONC must equal its conc": lambda r: r["points"][0]["client_env"].update(CONC="999"),
+    "TOTAL_CPU_DRAM_GB must be digits": lambda r: r["points"][0]["client_env"].pop("TOTAL_CPU_DRAM_GB"),
+    "runtime.ready_timeout_s needs": lambda r: r["points"][0].update(runtime={}),
+    "runtime.port is required": lambda r: r["points"][0]["runtime"].pop("port"),
+    "runtime.port must be null or a TCP port": lambda r: r["points"][0]["runtime"].update(port=70000),
+    "runtime.poll_s needs": lambda r: r["points"][0]["runtime"].update(poll_s=float("nan")),
+}
+
+
+@pytest.mark.parametrize(("message", "mutate"), INVALID_RECIPES.items(), ids=INVALID_RECIPES)
+def test_invalid_recipes_are_rejected(case, message, mutate):
+    recipe = case.recipe()
+    mutate(recipe)
+    with pytest.raises(sc.RecipeError, match=message.replace("[", r"\[").replace("]", r"\]")):
+        sc.build_run(recipe, case.definition_of())
+
+
+@pytest.mark.parametrize(
+    ("message", "mutate"),
+    [
+        ("40-character sha", lambda d: d["client"]["const"].update(sha="main")),
+        ("owner/name repo", lambda d: d["client"]["const"].update(repo="https://evil.invalid/x")),
+        ("pinned revision", lambda d: d["trace"]["const"].update(revision="main")),
+        ("needs loader", lambda d: d.pop("trace")),
+    ],
+    ids=["client-sha", "client-repo", "trace-revision", "no-trace"],
+)
+def test_client_and_trace_come_from_the_schema(case, message, mutate):
+    broken = json.loads(sc.RECIPE_SCHEMA.read_text())
+    mutate(broken["$defs"])
+    path = case.root / "serving.schema.json"
+    path.write_text(json.dumps(broken))
+    with pytest.raises(sc.RecipeError, match=message):
+        sc.template(path)
+    case.monkeypatch.setattr(sc, "RECIPE_SCHEMA", path)
+    with pytest.raises(sc.RecipeError, match=message):
+        sc.build_run(case.recipe(), case.definition_of())
+
+
+def test_plan_names_each_point_from_model_arm_and_conc(case):
+    spec = sc.build_run(case.recipe(), case.definition_of())
+    assert [p["exp_name"] for p in spec["points"]] == ["first-tp8-c1", "first-tp8-c2"]
+
+
+@pytest.mark.parametrize(
+    "name", ["/agentx/cache", "..", ".", "a/../b", "a\\b", "", ".hidden", "tp8:1"], ids=repr
+)
+def test_arms_cannot_leave_the_point_directory(case, name):
+    recipe = case.recipe()
+    recipe["points"][0]["arm"] = name
+    with pytest.raises(sc.RecipeError, match="arm name"):
+        sc.build_run(recipe, case.definition_of())
+
+
+@pytest.mark.parametrize(
+    ("message", "extra"),
+    [
+        ("source.config_key must be", {"config_key": "other-key"}),
+        (
+            r"holds only kind and config_key; remove \['files', 'repo', 'sha'\]",
+            {
+                "repo": "example/upstream",
+                "sha": "e" * 40,
+                "files": {"configs/master.yaml": "f" * 40, "recipes/model.yaml": "f" * 40},
+            },
+        ),
+    ],
+    ids=["other-config-key", "resolved-fields"],
+)
+def test_inferencex_recipes_must_match_the_configured_entry(case, message, extra):
+    case.definition["models"]["first"]["targets"]["mi355x"]["frameworks"]["sglang"]["recipe_source"] = {
+        "kind": "inferencex",
+        "repo": "example/upstream",
+        "ref": "main",
+        "config_key": "model-key",
+        "expect": {"config_file": "configs/master.yaml", "recipe": "recipes/model.yaml"},
+    }
+    case.write_config()
+    source = {"kind": "inferencex", "config_key": "model-key"}
+    recipe = case.recipe()
+    recipe["source"] = source
+    sc.build_run(recipe, case.definition_of())
+    recipe = case.recipe()
+    recipe["source"] = {**source, **extra}
+    with pytest.raises(sc.RecipeError, match=message):
+        sc.build_run(recipe, case.definition_of())
+
+
+def test_json_schema_matches_the_contract(case):
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((AGENTX / "recipes/serving.schema.json").read_text())
+    jsonschema.Draft202012Validator.check_schema(schema)
+    validator = jsonschema.Draft202012Validator(schema)
+    validator.validate(case.recipe())
+    for path in (AGENTX / "recipes").glob("*/*/*/serving.*.json"):
+        validator.validate(json.loads(path.read_text()))
+    run = sc.build_run(case.recipe(), case.definition_of())
+    assert not validator.is_valid(run)
+
+
+@pytest.mark.usefixtures("case")  # build_run reads the run image: keep stack.json out of this test
+def test_repository_recipes_match_agentx_yaml():
+    config = plan.load_config(AGENTX / "agentx.yaml")
+    paths = sorted((AGENTX / "recipes").glob("*/*/*/serving.*.json"))
+    assert paths
+    assert len(paths) == len(plan.select_runs(config))
+    # A loop, not parametrize: an empty recipes/ must fail here, and an empty parameter set is skipped.
+    for path in paths:
+        model_id = path.name.removeprefix("serving.").removesuffix(".json")
+        target_id, framework_id = path.parent.parent.name, path.parent.name
+        definition = plan.model_config(config, model_id, target_id, framework_id)
+        assert sc.recipe_path(AGENTX / "agentx.yaml", definition) == path, path
+        spec = sc.build_run(plan.read_json(path), definition)
+        assert sc.selected_points(spec), path
+
+
+@pytest.mark.parametrize("family", [None, "", "../GLM", "GLM/5"], ids=repr)
+def test_recipes_are_kept_by_model_family(case, family):
+    assert case.recipe_file("first", "other") == case.root / "recipes/Example/other/sglang/serving.first.json"
+    case.definition["models"]["first"]["family"] = family
+    case.write_config()
+    with pytest.raises(plan.ConfigError, match="family must name its recipes/ directory"):
+        case.definition_of()
+
+
+def test_frameworks_are_a_separate_layer(case):
+    assert (
+        case.recipe_file("first", "mi355x", "vllm")
+        == case.root / "recipes/Example/mi355x/vllm/serving.first.json"
+    )
+    sglang = case.definition_of()
+    vllm = case.definition_of(framework_id="vllm")
+    assert (sglang["framework"], vllm["framework"]) == ({"id": "sglang"}, {"id": "vllm"})
+    assert sglang["advisory_env"] == {"AKLR_SGLANG_PLUGIN": "1"}
+    assert vllm["advisory_env"] == {}
+    spec = sc.build_run(case.recipe(framework_id="vllm"), vllm)
+    assert spec["framework"] == {"id": "vllm"}
+    assert "AKLR_SGLANG_PLUGIN" not in spec["points"][0]["launch"]["env"]
+    with pytest.raises(plan.ConfigError, match="select exactly one framework for first/mi355x"):
+        plan.model_config(plan.load_config(case.config), "first", "mi355x")
+    assert case.definition_of("first", "other", None)["framework"] == {"id": "sglang"}
+    config = plan.load_config(case.config)
+    assert plan.select_runs(config) == list(RUNS)
+    assert plan.select_runs(config, frameworks="vllm") == [run for run in RUNS if run[2] == "vllm"]
+    with pytest.raises(plan.ConfigError, match="unknown or disabled frameworks in the selection: sglang"):
+        plan.select_runs(config, models="second", frameworks="sglang")
+
+
+def test_framework_ids_and_flags_are_validated(case):
+    frameworks = case.definition["models"]["first"]["targets"]["mi355x"]["frameworks"]
+    frameworks["vllm"]["enabled"] = False
+    case.write_config()
+    assert case.definition_of("first", "mi355x", None)["framework"] == {"id": "sglang"}
+    with pytest.raises(plan.ConfigError, match="unknown or disabled framework first/mi355x/vllm"):
+        case.definition_of(framework_id="vllm")
+    with pytest.raises(plan.ConfigError, match="invalid framework id 'trtllm'"):
+        plan.select_runs(plan.load_config(case.config), frameworks="trtllm")
+    frameworks["trtllm"] = framework()
+    case.write_config()
+    with pytest.raises(plan.ConfigError, match="invalid framework id 'trtllm'"):
+        case.definition_of()
+    del case.definition["models"]["first"]["targets"]["mi355x"]["frameworks"]
+    case.write_config()
+    with pytest.raises(plan.ConfigError, match="frameworks must map sglang or vllm"):
+        case.definition_of()
+
+
+def test_runner_filter_selects_across_models_and_persists_only_matches(planned):
+    args = planned.args(runner_label=RUNNER_LABEL)
+    manifest = plan.build(args)
+    expected = [run for run in RUNS if run[1] != "other"]
+    assert planned.runs(manifest) == expected
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
+    assert json.loads((args.out / "manifest.json").read_text()) == manifest
+    assert {str(path.relative_to(args.out)) for path in args.out.rglob("serving.json")} == {
+        f"models/{m}/targets/{t}/frameworks/{f}/serving.json" for m, t, f in expected
+    }
+    assert manifest["schema"] == 4
+    for item, run in zip(manifest["targets"], expected):
+        spec = planned.serving_of(args, *run)
+        assert spec["framework"] == item["framework"]
+        assert item["point_policy"] == sc.POLICY
+        assert item["point_ids"] == ["tp8:1", "tp8:2"]
+        assert item["image"] == IMAGE
+        assert spec["image"] == {"run": IMAGE}
+        assert item["serving_sha256"] == plan.sha256_json(spec)
+        assert item["selection_manifest_sha256"] == spec["selection"]["manifest_sha256"]
+        assert spec["plan_id"]
+    # One stack.json read per framework, shared by its runs.
+    assert sorted(c.args[0] for c in planned.run_image.call_args_list) == ["sglang", "vllm"]
+
+
+def test_execution_image_comes_from_the_ci_image_of_the_framework(planned):
+    vllm = "example.invalid/vllm@sha256:" + "b" * 64
+    planned.run_image.side_effect = lambda framework: vllm if framework == "vllm" else IMAGE
+    args = planned.args()
+    manifest = plan.build(args)
+    for item in manifest["targets"]:
+        expected = vllm if item["framework"]["id"] == "vllm" else IMAGE
+        assert item["image"] == expected
+        run = (item["model"]["id"], item["target"]["id"], item["framework"]["id"])
+        assert planned.serving_of(args, *run)["image"] == {"run": expected}
+    with pytest.raises(sc.RecipeError, match="must be pinned by digest"):
+        sc.build_run(planned.recipe(), planned.definition_of(), "example.invalid/server:latest")
+    planned.run_image.side_effect = ValueError("stack.json: vllm_image must be an image tag pinned by digest")
+    failed = plan.build(planned.args())
+    assert {item["status"] for item in failed["targets"]} == {"resolve-failed"}
+    assert "vllm_image" in failed["targets"][0]["error"]
+
+
+def test_default_selection_works_without_runner_label_attribute(planned):
+    args = planned.args()
+    assert not hasattr(args, "runner_label")
+    manifest = plan.build(args)
+    assert planned.runs(manifest) == list(RUNS)
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
+
+
+def test_missing_runner_fails_before_manifest_creation(planned):
+    args = planned.args(runner_label="agentx-missing")
+    with pytest.raises(plan.ConfigError, match="no selected runs use runner label 'agentx-missing'"):
+        plan.build(args)
+    assert not (args.out / "manifest.json").exists()
+
+
+def test_missing_or_stale_recipe_only_fails_that_target(planned):
+    planned.recipe_file("second", "different-target-id", "vllm").unlink()
+    planned.definition["models"]["first"]["targets"]["other"]["hardware"]["gpu_count"] = 4
+    planned.write_config()
+    manifest = plan.build(planned.args())
+    assert [item["status"] for item in manifest["targets"]] == [
+        "resolved",
+        "resolved",
+        "resolve-failed",
+        "resolve-failed",
+    ]
+    assert "fit the target hardware" in manifest["targets"][2]["error"]
+    assert "must be generated and reviewed" in manifest["targets"][3]["error"]
+
+
+def test_cli_filter_limits_manifest_and_github_job_matrix(planned):
+    output = planned.root / "github-output"
+    out = planned.root / "cli-plan"
+    planned.monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    code = plan.main(
+        [
+            "--config",
+            str(planned.config),
+            "--runner-label",
+            RUNNER_LABEL,
+            "--out",
+            str(out),
+            "--run-id",
+            "fixture",
+        ]
+    )
+    assert code == 0
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert values["count"] == "3"
+    jobs = json.loads(values["matrix"])["include"]
+    assert [(job["model"], job["target"], job["framework"], job["runner"]) for job in jobs] == [
+        (*run, RUNNER_LABEL) for run in RUNS if run[1] != "other"
+    ]
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert planned.runs(manifest) == [(job["model"], job["target"], job["framework"]) for job in jobs]
+
+
+def test_comment_selects_only_its_requested_models(planned):
+    code, values, out = planned.run_with_comment("/agentx-mi355x `second`\r\nDecode changed.\n")
+    assert code == 0
+    assert values["skipped"] == "false"
+    jobs = json.loads(values["matrix"])["include"]
+    expected = [("second", "different-target-id", "vllm")]
+    assert [(job["model"], job["target"], job["framework"]) for job in jobs] == expected
+    assert planned.runs(json.loads((out / "manifest.json").read_text())) == expected
+    assert "selects second;" in (planned.root / "github-summary").read_text()
+
+
+@pytest.mark.parametrize(
+    "body", ["/agentx-mi355x all\n", "/agentx-mi355x `ALL`\n"], ids=["all", "quoted-uppercase"]
+)
+def test_comment_all_runs_every_enabled_model(planned, body):
+    code, values, _ = planned.run_with_comment(body)
+    assert code == 0
+    assert values["count"] == "3"
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("/agentx-mi355x first, missing\n", "Not an enabled model id, skipped: `missing`."),
+        ("/agentx-mi355x missing\n", "selects no model"),
+        ("/agentx-mi355x\n", "selects no model"),
+    ],
+    ids=["one-unknown-id", "only-unknown-ids", "no-ids"],
+)
+def test_comment_scope_problems_warn_on_github(planned, capsys, body, message):
+    planned.monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    code, _, _ = planned.run_with_comment(body)
+    assert code == 0
+    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith("::warning")]
+    assert len(warnings) == 1
+    assert message in warnings[0]
+    planned.run_with_comment("/agentx-mi355x first\n")
+    assert "::warning" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "body", ["/agentx-mi355x\nfirst\n", "/agentx-mi355x , \n"], ids=["ids-on-the-next-line", "only-commas"]
+)
+def test_comment_without_models_skips_without_a_plan(planned, body):
+    code, values, out = planned.run_with_comment(body)
+    assert code == 0
+    assert values == {"matrix": '{"include": []}', "count": "0", "skipped": "true"}
+    assert not out.exists()
+    assert (
+        "@RuibinCheung's `/agentx-mi355x` comment selects no model; skipping AgentX."
+        in (planned.root / "github-summary").read_text()
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "count", "models", "note"),
+    [
+        ("/agentx-mi355x first, missing\n", "2", ["first", "first"], "skipped: `missing`."),
+        ("/agentx-mi355x all, first\n", "2", ["first", "first"], "skipped: `all`."),
+        ("/agentx-mi355x FIRST\n", "2", ["first", "first"], "selects first;"),
+        ("/AgentX-MI355X first\n/agentx-mi355x second\n", "2", ["first", "first"], "selects first;"),
+        ("/agentx-mi355x none, second\n", "1", ["second"], "skipped: `none`."),
+    ],
+    ids=["unknown-id", "all-beside-an-id", "uppercase-id", "first-line-only", "none-beside-an-id"],
+)
+def test_comment_never_fails_the_plan(planned, body, count, models, note):
+    code, values, _ = planned.run_with_comment(body)
+    assert code == 0
+    assert values["count"] == count
+    assert [job["model"] for job in json.loads(values["matrix"])["include"]] == models
+    assert note in (planned.root / "github-summary").read_text()
+
+
+@pytest.mark.parametrize(
+    ("body", "note"),
+    [
+        ("/agentx-mi355x none\n", "skipping AgentX"),
+        ("/agentx-mi355x missing\n", "skipping AgentX"),
+        ("/agentx-mi355x -, other\n", "skipped: `-`, `other`."),
+    ],
+    ids=["none", "unknown-id", "dash-and-unknown-id"],
+)
+def test_comment_matching_nothing_skips(planned, body, note):
+    code, values, out = planned.run_with_comment(body)
+    assert code == 0
+    assert values["skipped"] == "true"
+    assert not out.exists()
+    assert "skipping AgentX" in (planned.root / "github-summary").read_text()
+    assert note in (planned.root / "github-summary").read_text()
+
+
+def test_comment_with_explicit_models_is_a_cli_error(planned):
+    code, values, _ = planned.run_with_comment("/agentx-mi355x first\n", "--models", "second")
+    assert (code, values) == (1, {})
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("/agentx-mi355x\tsecond, first,, second\n", ("second,first", [])),
+        ("/agentx-mi355x `first` second\n", ("first,second", [])),
+        ("/agentx-mi355x NONE\n", ("", ["NONE"])),
+        ("", ("", [])),
+        ("- /agentx-mi355x first\n", ("", [])),
+        ("AgentX: first\n", ("", [])),
+        ("    /agentx-mi355x first\n", ("", [])),
+        (" /agentx-mi355x first\n", ("", [])),
+    ],
+    ids=[
+        "tab-and-repeats",
+        "quoted-id",
+        "unknown-id",
+        "empty",
+        "list-item",
+        "old-line",
+        "code-indent",
+        "one-space",
+    ],
+)
+def test_comment_parsing(body, expected):
+    assert plan.requested_models(body, ["first", "second"]) == expected
+
+
+def test_comment_matches_model_ids_ignoring_case():
+    enabled = ["glm52-fp4", "minimaxm31flash-fp4"]
+    body = "/agentx-mi355x glm52, GLM52-FP4, minimax, glm52-fp4\n"
+    assert plan.requested_models(body, enabled) == ("glm52-fp4", ["glm52", "minimax"])
+    assert plan.requested_models("/agentx-mi355x glm52-fp4 not all of them\n", enabled) == (
+        "glm52-fp4",
+        ["not", "all", "of", "them"],
+    )
+
+
+@pytest.mark.parametrize(
+    "comments",
+    [
+        [],
+        [{"user": "author", "body": "/agentx-mi355x all"}],
+        [{"user": "RuibinCheung", "body": "Looks good.\n/agentx-mi355x first"}],
+        [{"user": "RuibinCheung", "body": "/agentx-mi355xfirst"}],
+        [{"user": "RuibinCheung", "body": "    /agentx-mi355x all"}],
+        [{"user": "RuibinCheung", "body": "\t/agentx-mi355x all"}],
+        [{"user": "RuibinCheung", "body": "```\n/agentx-mi355x all\n```"}],
+        [{"user": "RuibinCheung", "body": "LGTM"}, {"user": "someone", "body": "/agentx-mi355x first"}],
+    ],
+    ids=[
+        "no-comments",
+        "author-only",
+        "not-on-the-first-line",
+        "no-space-after-command",
+        "space-indented",
+        "tab-indented",
+        "code-fenced",
+        "outsider-after-reviewer",
+    ],
+)
+def test_plan_fails_without_an_allowlisted_reviewers_request(planned, capsys, comments):
+    planned.monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    code, values, out = planned.run_with_comment("", comments=comments)
+    assert (code, values) == (1, {})
+    assert not out.exists()
+    message = "No AgentX reviewer has authorized this PR. Ask one of @RuibinCheung, @xiaobochen-amd, @jiejingzhangamd"
+    captured = capsys.readouterr()
+    assert message in (planned.root / "github-summary").read_text()
+    assert message in captured.err
+    errors = [line for line in captured.out.splitlines() if line.startswith("::error")]
+    assert len(errors) == 1
+    assert "re-run this workflow" in errors[0]
+
+
+def test_latest_allowlisted_request_selects_the_models(planned):
+    comments = [
+        {"user": "xiaobochen-amd", "body": "/agentx-mi355x all"},
+        {"user": "JIEJINGZHANGAMD", "body": "/agentx-mi355x second", "url": "https://example.invalid/c/2"},
+        {"user": "author", "body": "/agentx-mi355x first"},
+        {"user": "RuibinCheung", "body": "Thanks.\n/agentx-mi355x first"},
+    ]
+    code, values, _ = planned.run_with_comment("", comments=comments)
+    assert code == 0
+    assert [job["model"] for job in json.loads(values["matrix"])["include"]] == ["second"]
+    assert (
+        "@JIEJINGZHANGAMD's `/agentx-mi355x` comment (https://example.invalid/c/2) selects second;"
+        in (planned.root / "github-summary").read_text()
+    )
+
+
+def test_manual_run_by_an_allowlisted_reviewer_on_main_plans(planned):
+    code, out, _ = planned.run_manual("ruibincheung", "refs/heads/main")
+    assert code == 0
+    assert (out / "manifest.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("actor", "ref", "message"),
+    [
+        (
+            "someone",
+            "refs/heads/main",
+            "@someone may not start AgentX manually. Ask one of @RuibinCheung, @xiaobochen-amd",
+        ),
+        ("RuibinCheung", "refs/heads/feature", "Manual AgentX runs use main only, not refs/heads/feature"),
+    ],
+    ids=["outsider", "other-ref"],
+)
+def test_manual_run_is_refused_off_the_allowlist_or_off_main(planned, capsys, actor, ref, message):
+    code, out, summary = planned.run_manual(actor, ref)
+    assert code == 1
+    assert not out.exists()
+    assert message in summary
+    assert any(
+        line.startswith("::error") and message in line for line in capsys.readouterr().out.splitlines()
+    )
+
+
+def test_manual_actor_needs_its_ref(case):
+    with pytest.raises(SystemExit, match="2"):
+        plan.main(
+            ["--config", str(case.config), "--manual-actor", "RuibinCheung", "--out", str(case.root / "x")]
         )
-        self.assertIn("recipe DURATION must be 3600", manifest["targets"][2]["error"])
-        self.assertIn("tp8:1='1200'", manifest["targets"][2]["error"])
-
-    def test_requirement_only_checks_selected_points(self):
-        self.durations[("first", 1)] = "1200"
-        manifest = self.plan(
-            models="first",
-            frameworks="sglang",
-            runner_label=RUNNER_LABEL,
-            points="tp8:2",
-            require_recipe_duration=3600,
-        )
-        self.assertEqual(manifest["targets"][0]["status"], "resolved")
-        self.assertEqual(manifest["targets"][0]["point_ids"], ["tp8:2"])
-
-    def test_requirement_rejects_invalid_or_overridden_values(self):
-        for options in (
-            {"require_recipe_duration": 0},
-            {"require_recipe_duration": -1},
-            {"require_recipe_duration": 3600, "duration": 3600},
-        ):
-            with self.subTest(options=options):
-                with self.assertRaisesRegex(plan.ConfigError, "--require-recipe-duration"):
-                    self.plan(**options)
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize(
+    "text",
+    ["{}", "reviewers: []\n", "reviewers: [ok, 'not a login']\n", "reviewers: [Ok, ok]\n"],
+    ids=["no-reviewers-key", "empty", "invalid-login", "duplicate-ignoring-case"],
+)
+def test_reviewers_file_must_list_distinct_github_logins(tmp_path, text):
+    path = tmp_path / "allowlist.yaml"
+    path.write_text(text)
+    with pytest.raises(plan.ConfigError, match=re.escape(str(path))):
+        plan.load_reviewers(path)
+
+
+def agentx_workflow():
+    return yaml.safe_load((AGENTX.parents[1] / ".github/workflows/agentx-ci.yaml").read_text())
+
+
+def test_allowlist_and_workflow_read_the_pr_comments():
+    assert "RuibinCheung" in plan.load_reviewers()
+    steps = agentx_workflow()["jobs"]["plan"]["steps"]
+    read = next(
+        step for step in steps if step.get("name") == "Read the PR comments that may authorize AgentX"
+    )
+    assert "issues/$PR_NUMBER/comments" in read["run"]
+    assert "--paginate" in read["run"]
+    resolve = next(step for step in steps if step.get("id") == "resolve")
+    assert '--pr-comments "$RUNNER_TEMP/$PR_COMMENTS"' in resolve["run"]
+    assert '--manual-actor "$MANUAL_ACTOR" --manual-ref "$GITHUB_REF"' in resolve["run"]
+    assert (
+        resolve["env"]["MANUAL_ACTOR"]
+        == "${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || '' }}"
+    )
+    main_allowlist = next(step for step in steps if step.get("name") == "Read main's AgentX allowlist")
+    assert main_allowlist["if"] == "github.event_name != 'schedule'"
+    assert "contents/benchmarks/agentx/allowlist.yaml?ref=main" in main_allowlist["run"]
+    assert '> "$RUNNER_TEMP/allowlist.yaml"' in main_allowlist["run"]
+    assert '--allowlist "$RUNNER_TEMP/$ALLOWLIST"' in resolve["run"]
+
+
+def test_workflow_queue_allowlist_matches_the_allowlist_file():
+    group = agentx_workflow()["concurrency"]["group"]
+    lists = re.findall(r"fromJSON\('(\[[^']*\])'\),\s*github\.triggering_actor\)", group)
+    assert len(lists) == 1
+    assert json.loads(lists[0]) == plan.load_reviewers()
+    assert "github.ref != 'refs/heads/main'" in group
+    assert "format('agentx-refused-{0}', github.run_id)" in group
+
+
+def test_sweep_and_report_need_this_attempts_plan():
+    jobs = agentx_workflow()["jobs"]
+    assert jobs["plan"]["outputs"]["attempt"] == "${{ github.run_attempt }}"
+    for job in ("sweep", "report"):
+        assert "needs.plan.outputs.attempt == github.run_attempt" in jobs[job]["if"]
+
+
+def test_smoke_points_narrow_the_selection(planned):
+    full = planned.serving_of_built()
+    args = planned.args(
+        models="first", frameworks="sglang", runner_label=RUNNER_LABEL, points="tp8:2", duration=60
+    )
+    manifest = plan.build(args)
+    item = manifest["targets"][0]
+    assert (item["status"], item["point_ids"]) == ("resolved", ["tp8:2"])
+    spec = planned.serving_of(args)
+    assert spec["selection"]["points"] == ["tp8:2"]
+    assert spec["selection"]["points_requested"] == "tp8:2"
+    assert spec["selection"]["duration"] == 60
+    assert spec["selection"]["selection_sha256"] != full["selection"]["selection_sha256"]
+    assert [sc.point_id(p) for p in sc.selected_points(spec)] == ["tp8:2"]
+
+
+@pytest.mark.parametrize("options", [{}, {"runner_label": RUNNER_LABEL}], ids=["any-runner", "one-runner"])
+def test_smoke_points_require_one_run_and_recipe_ids(planned, options):
+    with pytest.raises(plan.ConfigError, match="smoke filters require exactly one"):
+        plan.build(planned.args(models="first", points="tp8:1", **options))
+    manifest = plan.build(
+        planned.args(models="first", frameworks="vllm", runner_label=RUNNER_LABEL, points="tp8:3")
+    )
+    assert manifest["targets"][0]["status"] == "resolve-failed"
+    assert "not in the recipe selection" in manifest["targets"][0]["error"]
+
+
+def test_duration_override_applies_to_every_target(planned):
+    args = planned.args(duration=600)
+    manifest = plan.build(args)
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
+    for path in args.out.rglob("serving.json"):
+        selection = json.loads(path.read_text())["selection"]
+        assert selection["duration"] == 600
+        assert selection["points_requested"] is None
+
+
+def test_requirement_preserves_recipe_duration_without_an_override(case):
+    manifest = case.plan(require_recipe_duration=3600)
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
+    for path in (case.root / "plan").rglob("serving.json"):
+        assert json.loads(path.read_text())["selection"]["duration"] is None
+
+
+def test_mismatch_is_reported_per_target(case):
+    case.durations[("second", 1)] = "1200"
+    manifest = case.plan(runner_label=RUNNER_LABEL, require_recipe_duration=3600)
+    assert [item["status"] for item in manifest["targets"]] == ["resolved", "resolved", "resolve-failed"]
+    assert "recipe DURATION must be 3600" in manifest["targets"][2]["error"]
+    assert "tp8:1='1200'" in manifest["targets"][2]["error"]
+
+
+def test_requirement_only_checks_selected_points(case):
+    case.durations[("first", 1)] = "1200"
+    manifest = case.plan(
+        models="first",
+        frameworks="sglang",
+        runner_label=RUNNER_LABEL,
+        points="tp8:2",
+        require_recipe_duration=3600,
+    )
+    assert manifest["targets"][0]["status"] == "resolved"
+    assert manifest["targets"][0]["point_ids"] == ["tp8:2"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"require_recipe_duration": 0},
+        {"require_recipe_duration": -1},
+        {"require_recipe_duration": 3600, "duration": 3600},
+    ],
+    ids=["zero", "negative", "with-duration-override"],
+)
+def test_requirement_rejects_invalid_or_overridden_values(case, options):
+    with pytest.raises(plan.ConfigError, match="--require-recipe-duration"):
+        case.plan(**options)

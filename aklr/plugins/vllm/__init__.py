@@ -29,6 +29,10 @@ def register() -> None:
 def _register() -> None:
     # Validate switches before changing any framework bindings.
     env = RuntimeEnv()
+    if env.is_aiter_plugin_enabled and not env.is_all_disabled:
+        from aklr.plugins.aiter.provider import enable
+
+        enable("AKLR vllm plugin, AKLR_AITER_PLUGIN=1")
     enabled = not env.is_all_disabled and env.is_vllm_plugin_enabled
     _register_runtime_hook()
     registry = _hooks.HookRegistry.default()

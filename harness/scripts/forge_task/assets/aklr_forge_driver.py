@@ -490,27 +490,53 @@ def _stress_conditions() -> dict:
     return conditions
 
 
-def _compare_spec() -> tuple[str, float]:
+def _compare_spec() -> tuple[str, float, str]:
     compare = json.loads(_candidate_text()[0]).get("compare") or {}
-    return compare.get("determinism", "bitwise"), float(compare.get("max_violation_fraction", 0.0))
+    return (
+        compare.get("determinism", "bitwise"),
+        float(compare.get("max_violation_fraction", 0.0)),
+        compare.get("element_order", "fixed"),
+    )
 
 
-def _agrees(stressed, alone, determinism: str, max_fraction: float) -> bool:
-    """Whether an output under contention agrees with the output alone as the schema's determinism asks: bit for bit
-    under ``bitwise``; under ``bounded``, no value turned non-finite and all but ``max_fraction`` of the elements
-    within a few ulps."""
+def _arranged(stressed, alone, element_order: str):
+    """``stressed`` and ``alone`` arranged as AKLR's compare arranges an output and its reference: under
+    ``any_in_full_rows``, a row whose elements are all set (none negative in the output alone) is sorted, as its order
+    is free; a row padded with negatives keeps its order."""
     import torch
 
+    if element_order == "fixed":
+        return stressed, alone
+    if element_order != "any_in_full_rows":
+        raise ValueError(f"unknown element_order {element_order!r}")
+    is_full = (alone >= 0).all(dim=-1, keepdim=True)
+    return (
+        torch.where(is_full, stressed.sort(dim=-1).values, stressed),
+        torch.where(is_full, alone.sort(dim=-1).values, alone),
+    )
+
+
+def _agrees(stressed, alone, determinism: str, max_fraction: float, element_order: str = "fixed") -> bool:
+    """Whether an output under contention agrees with the output alone as the schema's determinism asks: bit for bit
+    under ``bitwise``; under ``bounded``, no value turned non-finite and all but ``max_fraction`` of the elements
+    within a few ulps. Both are first arranged as the schema's ``element_order`` asks."""
+    import torch
+
+    stressed, alone = _arranged(stressed, alone, element_order)
     if determinism == "bitwise" or not alone.is_floating_point():
         return torch.equal(stressed.contiguous().view(torch.uint8), alone.contiguous().view(torch.uint8))
     unit = torch.finfo(alone.dtype).eps / 2
-    stressed, alone = stressed.double(), alone.double()
+    stressed, alone = stressed.float(), alone.float()
     finite = torch.isfinite(alone)
     if bool((finite & ~torch.isfinite(stressed)).any()):
         return False
+    # both over the peak first: the bound and the difference can pass float32's range
+    peak = alone[finite].abs().max() if bool(finite.any()) else torch.tensor(0.0)
+    if 0 < peak < torch.inf:
+        stressed, alone = stressed / peak, alone / peak
     bound = STRESS_BOUNDED_ULPS * unit * (alone.abs() + alone[finite].abs().mean())
     off = finite & ((stressed - alone).abs() > bound)
-    return float(off.double().mean()) <= max_fraction
+    return off.numel() == 0 or int(off.sum()) / off.numel() <= max_fraction
 
 
 def _run_stress(device: str = "cuda") -> int:
@@ -520,7 +546,7 @@ def _run_stress(device: str = "cuda") -> int:
     that does not finish is reported as hung and ends the check: the device is still running it."""
     candidate = _load_candidate()
     outputs = _output_names()
-    determinism, max_fraction = _compare_spec()
+    determinism, max_fraction, element_order = _compare_spec()
     conditions = _stress_conditions()
     failed = []
     for case_id, call in _calls(device).items():
@@ -535,7 +561,7 @@ def _run_stress(device: str = "cuda") -> int:
                     print("stress: FAIL")
                     return 1
                 agree = (
-                    _agrees(r[name], alone[name], determinism, max_fraction)
+                    _agrees(r[name], alone[name], determinism, max_fraction, element_order)
                     for r in results
                     for name in alone
                 )

@@ -29,12 +29,15 @@ aklr = "aklr.plugins.sglang:register"
 [project.entry-points."vllm.general_plugins"]
 aklr = "aklr.plugins.vllm:register"
 
+[project.entry-points."aiter.plugins"]
+aklr = "aklr.plugins.aiter.provider:provider"
+
 [tool.setuptools.packages.find]
 include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
 "aklr.ops" = ["*/impls/*/*/*.json"]
-"aklr.plugins" = ["*/*/*/impls/*/*/*.json"]
+"aklr.plugins" = ["*/*/*/impls/*/*/*.json", "*/*/*/*.hip"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]
@@ -58,6 +61,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+
+[tool.pytest.ini_options]
+# The AgentX tests import the agentx_ci package from benchmarks/agentx.
+pythonpath = ["benchmarks/agentx"]
 
 [tool.coverage.run]
 branch = true

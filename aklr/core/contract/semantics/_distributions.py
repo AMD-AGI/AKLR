@@ -14,7 +14,7 @@ from pydantic import Field, TypeAdapter
 
 from aklr.core.contract import expr
 
-from ._dtypes import DTYPE_TRAITS, DType, to_float64, torch_dtypes
+from ._dtypes import DTYPE_TRAITS, DType, to_float32, torch_dtypes
 from ._frozen_model import FrozenModel
 
 if TYPE_CHECKING:
@@ -91,7 +91,7 @@ class FiniteDistribution(Distribution):
         return torch.randn(shape, generator=generator).to(storage_dtype)
 
     def contains(self, tensor, dtype):
-        return bool(to_float64(tensor, dtype).isfinite().all())
+        return bool(to_float32(tensor, dtype).isfinite().all())
 
 
 class LogUniformDistribution(Distribution):
@@ -136,7 +136,7 @@ class LogUniformDistribution(Distribution):
         return torch.exp2(exponents).to(storage_dtype)
 
     def contains(self, tensor, dtype):
-        decoded = to_float64(tensor, dtype)
+        decoded = to_float32(tensor, dtype)
         return bool((decoded.isfinite() & (decoded > 0)).all())
 
 
@@ -196,6 +196,60 @@ class IntRangeDistribution(Distribution):
         return bool((ordered[..., 1:] != ordered[..., :-1]).all())
 
 
+# rows per step of CausalTopkDistribution.sample
+_CAUSAL_TOPK_ROWS = 256
+
+
+class CausalTopkDistribution(Distribution):
+    """Top-k KV slots of a causal sequence's tokens: distinct slots in [0, hi], -1 for none.
+    Drawn as one new sequence: a row names every position it sees, in order, while they fit,
+    else k of them in a random order. Bit-exact per seed (distinct keys, stable sort)."""
+
+    kind: Literal["causal_topk"] = "causal_topk"
+    hi: str | int
+    prefix: int = 0
+    expr_fields = ("hi",)
+
+    def accepts_dtype(self, dtype):
+        import torch
+
+        if not DTYPE_TRAITS[dtype].is_integral or torch_dtypes(dtype)[0] == torch.bool:
+            return False
+        limits = torch.iinfo(torch_dtypes(dtype)[0])
+        hi = self.constant_value("hi")
+        return limits.min <= -1 and (hi is None or hi <= limits.max)
+
+    def sample(self, shape, dtype, generator):
+        import torch
+
+        *batch, rows, k = shape
+        positions = self.prefix + rows
+        if positions > self.hi + 1:
+            raise ValueError(f"{positions} positions hold no run of slots in [0, {self.hi}]")
+        base = int(torch.randint(self.hi + 2 - positions, (), generator=generator))
+        keys = torch.randperm(positions, generator=generator)
+        out = torch.full((math.prod(batch), rows, k), -1, dtype=torch.int64)
+        for start in range(0, rows, _CAUSAL_TOPK_ROWS):
+            seen = torch.arange(start, min(rows, start + _CAUSAL_TOPK_ROWS)) + self.prefix + 1
+            width = min(int(seen[-1]), k)
+            column = torch.arange(int(seen[-1]))
+            scores = torch.where(column < seen[:, None], keys[: int(seen[-1])], -1)
+            picked = scores.topk(width, dim=-1).indices
+            order = torch.rand(picked.shape, generator=generator).argsort(dim=-1, stable=True)
+            picked = picked.gather(-1, order)
+            # rows that fit: all positions, in order
+            in_order = torch.where(column[:width] < seen[:, None], column[:width], -1)
+            picked = torch.where((seen <= k)[:, None], in_order, picked)
+            out[:, start : start + seen.numel(), :width] = torch.where(picked >= 0, picked + base, -1)
+        return out.reshape(shape).to(torch_dtypes(dtype)[0])
+
+    def contains(self, tensor, dtype):
+        if not bool(((tensor >= -1) & (tensor <= self.hi)).all()):
+            return False
+        ordered = tensor.sort(dim=-1).values
+        return bool(((ordered[..., 1:] != ordered[..., :-1]) | (ordered[..., 1:] < 0)).all())
+
+
 class ExpertMaskDistribution(Distribution):
     """One expert-parallel rank's mask: 1 for ``local_experts`` experts, 0 elsewhere;
     drawn as one block at a random multiple of ``local_experts``, as sglang assigns."""
@@ -243,10 +297,10 @@ class CuSeqlensDistribution(Distribution):
         spare = self.total - parts * self.min_seqlen
         if spare < 0:
             raise ValueError(f"{self.total} rows hold no {parts} parts of {self.min_seqlen}")
-        # float64 keeps the split exact past 2**24 rows; the last offset is pinned
-        weights = torch.randn(parts, generator=generator, dtype=torch.float64)
+        # rounding is monotone, so the ends stay ordered; at most spare, the last one pinned
+        weights = torch.randn(parts, generator=generator)
         shares = weights.clamp(-2, 2).exp().cumsum(0)
-        ends = (shares / shares[-1:] * spare).floor().long()
+        ends = (shares / shares[-1:] * spare).floor().long().clamp(max=spare)
         ends[-1:] = spare
         ends += self.min_seqlen * torch.arange(1, parts + 1)
         offsets = torch.cat((ends.new_zeros(1), ends))
@@ -344,7 +398,7 @@ class PermutationDistribution(Distribution):
         n = shape[-1]
         draws = torch.rand((math.prod(shape[:-1]), n), generator=generator)
         permutations = draws.argsort(dim=-1).reshape(shape)
-        return (permutations.double() / n).to(torch_dtypes(dtype)[0])
+        return (permutations.float() / n).to(torch_dtypes(dtype)[0])
 
     # every decoded value is finite; rows need not be permutations
     contains = FiniteDistribution.contains
@@ -524,6 +578,7 @@ DistributionUnion = Annotated[
     FiniteDistribution
     | LogUniformDistribution
     | IntRangeDistribution
+    | CausalTopkDistribution
     | ExpertMaskDistribution
     | CuSeqlensDistribution
     | BoundedCuSeqlensDistribution
