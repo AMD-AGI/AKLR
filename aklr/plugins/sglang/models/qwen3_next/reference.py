@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The contracts' computation in the float dtype ``decode`` gives, between their BF16 and FP8
-rounding points, written from the math and independent of the kernels and of sglang's.
+"""The contracts' computation in float32, between their BF16 and FP8 rounding points, written
+from the math and independent of the kernels and of sglang's.
 
 GDN rounding points: the convolution's SiLU to BF16; in prefill, the L2-normalized Q and K
 to BF16 too; beta and the core output to BF16; the gated RMS-normalized output to BF16. The
@@ -15,6 +15,7 @@ import itertools
 import torch
 import torch.nn.functional as F
 
+from aklr.core.contract.semantics import to_float32
 from aklr.plugins.sglang.models.qwen3_5.contract import ROTARY_DIM
 
 __all__ = [
@@ -199,14 +200,14 @@ def reference_decode(
     return normalized, conv_result, state_result, values, scales
 
 
-def _reference(function, point, row_major_args, decode):
+def _reference(function, point, row_major_args):
     names = inspect.signature(function).parameters
     args = {
-        k: decode(v, point.dtypes[k]) if torch.is_tensor(v) and v.is_floating_point() else v
+        k: to_float32(v, point.dtypes[k]) if torch.is_tensor(v) and v.is_floating_point() else v
         for k, v in row_major_args.items()
         if k in names
     }
-    # decode may return its input itself: the pools are written in copies
+    # to_float32 may return its input itself: the pools are written in copies
     normalized, conv, state, values, scales = function(**args)
     results = {
         "normalized": normalized,
@@ -218,14 +219,14 @@ def _reference(function, point, row_major_args, decode):
     return tuple(results.values())
 
 
-def qwen3_next_gdn_prefill_group_fp8_quant_reference(point, row_major_args, decode):
+def qwen3_next_gdn_prefill_group_fp8_quant_reference(point, row_major_args):
     """The outputs, then both final state pools."""
-    return _reference(reference_prefill, point, row_major_args, decode)
+    return _reference(reference_prefill, point, row_major_args)
 
 
-def qwen3_next_gdn_decode_group_fp8_quant_reference(point, row_major_args, decode):
+def qwen3_next_gdn_decode_group_fp8_quant_reference(point, row_major_args):
     """The outputs, then both final state pools."""
-    return _reference(reference_decode, point, row_major_args, decode)
+    return _reference(reference_decode, point, row_major_args)
 
 
 def _rounded(x, dtype):
@@ -246,9 +247,9 @@ def _gemma_norm_rope(x, weight, eps, cos, sin):
     return torch.cat((_rounded(rotated, torch.bfloat16), normalized[..., ROTARY_DIM:]), dim=-1)
 
 
-def qwen3_next_gated_attention_decode_group_fp8_quant_reference(point, row_major_args, decode):
-    """The contract's decode in ``decode``'s float dtype; the grouped FP8 values (before
-    their E4M3FN rounding) and scales, then both pools as the call leaves them.
+def qwen3_next_gated_attention_decode_group_fp8_quant_reference(point, row_major_args):
+    """The contract's decode in float32; the grouped FP8 values (before their E4M3FN
+    rounding) and scales, then both pools as the call leaves them.
 
     Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
     keeps between its kernels), the keys and values to E4M3FN in the pools, the attention
@@ -261,23 +262,23 @@ def qwen3_next_gated_attention_decode_group_fp8_quant_reference(point, row_major
     heads = (qkv_dim - 2 * kv_width) // (2 * head_dim)
     width = heads * head_dim
     eps, scale = args["eps"], args["scale"]
-    qkv = decode(args["projected_qkv"], dtypes["projected_qkv"])
+    qkv = to_float32(args["projected_qkv"], dtypes["projected_qkv"])
     rows, device = qkv.shape[0], qkv.device
     query_gate = qkv[:, : 2 * width].reshape(rows, heads, 2, head_dim)
     keys = qkv[:, 2 * width : 2 * width + kv_width].reshape(rows, kv_heads, head_dim)
     values = qkv[:, 2 * width + kv_width :].reshape(rows, kv_heads, head_dim)
 
     # each row's cosines and sines, at its one position
-    angles = decode(args["cos_sin_cache"], dtypes["cos_sin_cache"])[args["positions"]]
+    angles = to_float32(args["cos_sin_cache"], dtypes["cos_sin_cache"])[args["positions"]]
     cos, sin = angles[:, : ROTARY_DIM // 2], angles[:, ROTARY_DIM // 2 : ROTARY_DIM]
-    q_weight = decode(args["q_norm_weight"], dtypes["q_norm_weight"])
-    k_weight = decode(args["k_norm_weight"], dtypes["k_norm_weight"])
+    q_weight = to_float32(args["q_norm_weight"], dtypes["q_norm_weight"])
+    k_weight = to_float32(args["k_norm_weight"], dtypes["k_norm_weight"])
     query = _gemma_norm_rope(query_gate[:, :, 0], q_weight, eps, cos, sin)
     keys = _gemma_norm_rope(keys, k_weight, eps, cos, sin)
 
-    # decode may return its input itself: the pools are written in copies
-    key_cache = decode(args["key_cache"], dtypes["key_cache"]).clone()
-    value_cache = decode(args["value_cache"], dtypes["value_cache"]).clone()
+    # to_float32 may return its input itself: the pools are written in copies
+    key_cache = to_float32(args["key_cache"], dtypes["key_cache"]).clone()
+    value_cache = to_float32(args["value_cache"], dtypes["value_cache"]).clone()
     slots = args["cache_locations"]
     key_cache[slots] = _rounded(keys, torch.float8_e4m3fn)
     value_cache[slots] = _rounded(values, torch.float8_e4m3fn)

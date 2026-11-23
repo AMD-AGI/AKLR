@@ -48,22 +48,26 @@ def _log_once(key: tuple, message: str, *args) -> None:
 
 
 def _flash_with_lse(q, k, v, layer, ps):
-    """(output, lse) of the pass over bf16 flash attention, lse as merge_state reads it: [tokens, heads]."""
+    """(output, lse) of the pass over bf16 flash attention, lse as merge_state reads it: [tokens, heads].
+    AKLR has declined the pass by now: aiter's provider must not take it in fp8 instead."""
     from aiter import flash_attn_varlen_func
 
-    output, lse = flash_attn_varlen_func(
-        q,
-        k,
-        v,
-        ps.qo_indptr,
-        ps.kv_indptr,
-        ps.max_q_len,
-        # the key rows bound the longest sequence's keys without reading the offsets
-        k.shape[0],
-        softmax_scale=layer.scaling,
-        causal=ps.is_causal,
-        return_lse=True,
-    )[:2]
+    from aklr.plugins.aiter.provider import declining
+
+    with declining():
+        output, lse = flash_attn_varlen_func(
+            q,
+            k,
+            v,
+            ps.qo_indptr,
+            ps.kv_indptr,
+            ps.max_q_len,
+            # the key rows bound the longest sequence's keys without reading the offsets
+            k.shape[0],
+            softmax_scale=layer.scaling,
+            causal=ps.is_causal,
+            return_lse=True,
+        )[:2]
     return output, lse.transpose(0, 1).contiguous()
 
 

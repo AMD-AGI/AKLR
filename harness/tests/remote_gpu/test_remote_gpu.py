@@ -4,6 +4,8 @@ The fake `ssh` runs its command here, so the paths "on the cluster" are local pa
 has a holder that starts bg tasks; n1 has none, so a task never starts there.
 """
 
+import base64
+import json
 import os
 import re
 import shutil
@@ -180,7 +182,7 @@ def start_holder(env, *, idle=0):
 
 def stop_holder(holder):
     if holder.poll() is None:
-        holder.terminate()
+        os.killpg(holder.pid, signal.SIGTERM)  # the group: a pod's entry point is a shell around the holder
         try:
             holder.wait(timeout=25)
         finally:
@@ -663,7 +665,7 @@ def test_git_seed_rejects_options_and_non_network_transports(env, tmp_path, orig
 
 
 def test_all_embedded_remote_scripts_parse():
-    for path in (RG, RG.parents[1] / "templates/slurm.sh"):
+    for path in (RG, *sorted((RG.parents[1] / "schedulers").glob("*.sh"))):
         text = path.read_text()
         for match in re.finditer(r"read -r -d '' (\w+) <<'([^']+)'\n(.*?)\n\2\n", text, re.S):
             result = subprocess.run(["bash", "-n"], input=match[3], capture_output=True, text=True)
@@ -676,7 +678,7 @@ def embedded_script(path, name):
 
 
 def test_slurm_query_normalizes_nodes_start_estimate_and_pending_count(env):
-    library = embedded_script(RG.parents[1] / "templates/slurm.sh", "CLUSTER_RLIB")
+    library = embedded_script(RG.parents[1] / "schedulers/slurm.sh", "CLUSTER_RLIB")
     script = r"""
 C=fake REL=$HOME B=$HOME/work HOME_FULL=0 DOCKER_FLAGS=''
 squeue() {
@@ -698,7 +700,7 @@ scontrol() { printf '%s\n' n0 n1; }
 
 
 def test_slurm_submit_passes_the_selected_pair_holder_and_scheduler_options(env):
-    library = embedded_script(RG.parents[1] / "templates/slurm.sh", "CLUSTER_RLIB")
+    library = embedded_script(RG.parents[1] / "schedulers/slurm.sh", "CLUSTER_RLIB")
     script = r"""
 C=fake REL=$HOME B=$HOME/work HOME_FULL=0 DOCKER_FLAGS='' GPUS_PER_NODE=8
 sbatch() { printf '%s\n' "$@" >"$HOME/submit_args"; echo '42;site'; }
@@ -868,3 +870,190 @@ def test_bg_refused_for_its_arguments_leaves_the_name_free(env):
         assert result.returncode == 0, result.stderr
     finally:
         stop_holder(holder)
+
+
+SAFE_ENV = """\
+DESCRIPTION='fake safe'
+HOST=fakehost
+LOGIN_HOSTS=''
+LOGIN_PROFILE=0
+PRIORITY=1
+WORK_ROOT=$HOME/work
+SCHEDULER=safe
+PARTITION=team-ws
+MAX_TIME=24:00:00
+GPUS_PER_NODE=0
+GPU_ARCH=gfx950
+SAFE_URL=https://safe.invalid
+SAFE_KIND=PyTorchJob
+SAFE_IMAGE=registry.invalid/rocm:1
+SAFE_RESOURCES='{"cpu":"96","memory":"512Gi"}'
+"""
+
+# A SaFE API of one workload: its phase is the file $HOME/safe/phase, DELETE makes it a 404.
+FAKE_SAFE_CURL = r"""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+
+args, root = sys.argv[1:], Path(os.environ["HOME"]) / "safe"
+root.mkdir(exist_ok=True)
+method = args[args.index("-X") + 1]
+url = next(a for a in args if a.startswith("https://safe.invalid/api/v1"))
+path = url.removeprefix("https://safe.invalid/api/v1")
+with open(root / "calls", "a") as log:
+    log.write(" ".join(args) + "\n")
+code, reply = 200, {}
+if method == "POST":
+    (root / "post.json").write_text(args[args.index("--data-binary") + 1])
+    reply = {"workloadId": "rg-abc12"}
+elif path.startswith("/nodes"):
+    free = {"phase": "Ready", "available": True, "availResources": {"amd.com/gpu": 8}}
+    reply = {"items": [free, dict(free, available=False)]}
+elif (root / "gateway-404").exists():
+    print((root / "gateway-404").read_text())
+    print(404, end="")
+    sys.exit()
+elif (root / "deleted").exists():
+    code, reply = 404, {"errorCode": "Primus.01001", "errorMessage": "Workload rg-abc12 not found."}
+elif method == "DELETE":
+    (root / "deleted").touch()
+else:
+    phase = (root / "phase").read_text().strip() if (root / "phase").exists() else "Pending"
+    pods = [{"phase": "Running", "adminNodeName": "n0"}] if phase == "Running" else []
+    reply = {"phase": phase, "pods": pods, "timeout": 14400, "secondsUntilTimeout": 14000,
+             "startTime": "2026-01-01T00:00:00", "workspaceId": "team-ws", "message": "in | queue"}
+print(json.dumps(reply))
+print(code, end="")
+"""
+
+
+def test_safe_adapter_allocates_a_workload_runs_in_its_pod_and_deletes_it(env):
+    home = Path(env["HOME"])
+    cluster = home / ".remote-gpu/clusters/fake"
+    (cluster / "cluster.env").write_text(SAFE_ENV)
+    (cluster / "cluster.sh").unlink()  # SCHEDULER=safe alone selects schedulers/safe.sh
+    (home / ".remote-gpu/fake.key").write_text("ak-test\n")
+    curl = Path(env["PATH"].split(":")[0]) / "curl"
+    curl.write_text(FAKE_SAFE_CURL)
+    curl.chmod(0o755)
+
+    # What the type lacks is refused before anything reaches the login node or the API.
+    for command in (
+        ["alloc", "-N", "2"],
+        ["exec", "-j", "fake:1", "--image", "img", "--", "true"],
+        ["shell", "-j", "fake:1"],
+        ["extend", "-j", "fake:1", "-t", "1:00:00"],
+    ):
+        result = rg(env, *command)
+        assert (result.returncode, "code=UNSUPPORTED" in result.stderr) == (200, True), (
+            command,
+            result.stderr,
+        )
+    assert not (home / "safe/calls").exists()
+
+    assert "free=1 " in rg(env, "free").stdout
+
+    result = rg(env, "alloc", "--no-wait", "-t", "2:00:00", "-x", "bad-node")
+    assert result.returncode == 0, result.stderr
+    job = re.search(r"job=(fake:\d+) state=PENDING", result.stdout)[1]
+    post = json.loads((home / "safe/post.json").read_text())
+    assert post["groupVersionKind"]["kind"] == "PyTorchJob"
+    assert (post["workspaceId"], post["images"], post["timeout"]) == (
+        "team-ws",
+        ["registry.invalid/rocm:1"],
+        7200,
+    )
+    assert post["resources"] == [{"cpu": "96", "memory": "512Gi", "replica": 1, "gpu": "0"}]
+    assert post["excludedNodes"] == ["bad-node"]
+    assert "ak-test" not in (home / "safe/calls").read_text()
+
+    # The pod: SaFE runs the entry point, which is the shared holder.
+    pod = subprocess.Popen(
+        ["bash", "-c", base64.b64decode(post["entryPoints"][0]).decode()], env=env, start_new_session=True
+    )
+    try:
+        (home / "safe/phase").write_text("Running")
+        result = rg(env, "ready", "-j", job, "--wait", "60")
+        assert result.returncode == 0, result.stderr
+        assert "nodes=n0 " in result.stdout
+        assert job.split(":")[1] in rg(env, "ls").stdout
+
+        # A 404 that is not SaFE's own answer is a controller failure: the job keeps its handle.
+        for body in ("<html>not found</html>", ""):
+            (home / "safe/gateway-404").write_text(body)
+            rg(env, "ls")
+            (home / "safe/gateway-404").unlink()
+            assert job.split(":")[1] in rg(env, "ls").stdout, repr(body)
+
+        result = rg(
+            env, "exec", "-j", job, "--", "bash", "-c", 'echo "out $1"; echo err >&2; exit 7', "_", "a b"
+        )
+        assert (result.returncode, result.stdout) == (7, "out a b\n"), result.stderr
+        assert "err" in result.stderr
+
+        # A killed caller stops its command in the pod, which no signal from the login node reaches.
+        caller = subprocess.Popen([str(RG), "exec", "-j", job, "--", "sleep", "4321"], env=env)
+        in_pod = ["pgrep", "-fx", "sleep 4321"]
+        deadline = time.time() + 20
+        while subprocess.run(in_pod, capture_output=True).returncode and time.time() < deadline:
+            time.sleep(0.5)
+        caller.terminate()
+        caller.wait(timeout=10)
+        deadline = time.time() + 20
+        while subprocess.run(in_pod, capture_output=True).returncode == 0 and time.time() < deadline:
+            time.sleep(0.5)
+        assert subprocess.run(in_pod, capture_output=True).returncode == 1
+
+        result = rg(env, "release", "-j", job)
+        assert "OK released" in result.stdout, result.stderr
+        assert (home / "safe/deleted").exists()
+        assert pod.wait(timeout=30) == 0  # the entry point ends, so the workload does
+    finally:
+        stop_holder(pod)
+    assert rg(env, "exec", "-j", job, "--", "true").returncode == 203
+
+
+def test_safe_deployment_job_never_idles_out_of_its_pod(env):
+    home = Path(env["HOME"])
+    cluster = home / ".remote-gpu/clusters/fake"
+    (cluster / "cluster.env").write_text(SAFE_ENV.replace("SAFE_KIND=PyTorchJob", "SAFE_KIND=Deployment"))
+    (cluster / "cluster.sh").unlink()
+    (home / ".remote-gpu/fake.key").write_text("ak-test\n")
+    curl = Path(env["PATH"].split(":")[0]) / "curl"
+    curl.write_text(FAKE_SAFE_CURL)
+    curl.chmod(0o755)
+
+    result = rg(env, "alloc", "--no-wait", "--idle", "5")
+    assert result.returncode == 0, result.stderr
+    assert "an idle job keeps its node" in result.stderr
+    entry = base64.b64decode(json.loads((home / "safe/post.json").read_text())["entryPoints"][0]).decode()
+    # The pod outlives the holder, so a holder that idled out would leave a job nothing can run in.
+    holder, sleep = entry.split("\n")[1:3]
+    assert (holder.split()[2], sleep) == ("0", "exec sleep infinity")
+    rg(env, "release", "-j", re.search(r"job=(fake:\d+)", result.stdout)[1])
+
+
+def test_a_cluster_sh_redefines_one_hook_of_its_scheduler_type(env):
+    cluster = Path(env["HOME"]) / ".remote-gpu/clusters/fake"
+    with (cluster / "cluster.env").open("a") as manifest:
+        manifest.write("SCHEDULER=slurm\n")
+    (cluster / "cluster.sh").write_text(
+        "read -r -d '' CLUSTER_RLIB <<'EOF'\nscheduler_capacity() { echo \"OK cluster=$C free=7 site=1\"; }\nEOF\n"
+    )
+    result = rg(env, "free")
+    assert "free=7 site=1" in result.stdout, result.stderr
+
+
+def test_spur_is_slurm_with_its_own_submit_and_history(env):
+    script = r"""
+C=fake REL=$HOME B=$HOME/work HOME_FULL=0 DOCKER_FLAGS='' GPUS_PER_NODE=8
+source "$1"; eval "$CLUSTER_RLIB"
+squeue() { :; }
+spur() { printf '%s\n' "$@" >"$HOME/spur_args.$1"; case $1 in submit) echo 42 ;; history) echo COMPLETED ;; esac; }
+scheduler_submit 1 1:00:00 name part acct qos /holder 5 && scheduler_query 42
+"""
+    spur = str(RG.parents[1] / "schedulers/spur.sh")
+    result = subprocess.run(["bash", "-c", script, "_", spur], env=env, capture_output=True, text=True)
+    assert result.stdout.split() == ["42", "COMPLETED|||||||||||||"], result.stderr
+    submitted = (Path(env["HOME"]) / "spur_args.submit").read_text().split("\n")
+    assert "--exclusive" in submitted and "--no-requeue" not in submitted

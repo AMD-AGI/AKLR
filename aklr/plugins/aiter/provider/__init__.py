@@ -19,9 +19,9 @@ import pkgutil
 from collections.abc import Mapping
 from typing import Any
 
-from aklr.plugins.aiter.provider._base import NAME, SELECTORS, ready
+from aklr.plugins.aiter.provider._base import NAME, SELECTORS, declining, is_declining, ready
 
-__all__ = ["NAME", "Provider", "enable", "provider"]
+__all__ = ["NAME", "Provider", "declining", "enable", "provider"]
 
 _LOGGER = logging.getLogger("aklr.plugins.aiter")
 
@@ -41,7 +41,7 @@ class Provider:
     def select(self, op: Any, args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> Any:
         """AKLR's candidate for this call, or ``None`` for aiter to run its own kernel."""
         entry = SELECTORS.get(op.name)
-        if entry is None or not ready():
+        if entry is None or is_declining() or not ready():
             return None
         return entry[1](args, kwargs)
 
