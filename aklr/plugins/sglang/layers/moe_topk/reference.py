@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 __all__ = ["deepseek_v4_router_reference"]
 
@@ -15,7 +17,6 @@ if TYPE_CHECKING:
 def deepseek_v4_router_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """(topk_weights, topk_ids): each token's topk routed experts by biased sqrtsoftplus score,
     then the shared experts; padded rows keep only the shared ids.
@@ -27,30 +28,30 @@ def deepseek_v4_router_reference(
     smaller value, so equal values keep the network's order, not the ids'), and the lanes' lists
     merge by value, the lower lane first on equal values. Distinct bf16 logits can round to one
     float32 score, so the ranking is part of the op. The renormalization divides by the weights'
-    sum floored at 1e-20, as the kernel does; the sum and the scaling are exact here.
+    sum floored at 1e-20, as the kernel does, in float32 like the kernel.
     """
     import torch
 
     n_experts, n_shared = point.axes["n_experts"], point.attrs["n_shared"]
     topk = point.axes["n_slots"] - n_shared
-    logits = decode(row_major_args["router_logits"], point.dtypes["router_logits"]).float()
-    bias = decode(row_major_args["correction_bias"], point.dtypes["correction_bias"]).float()
+    logits = to_float32(row_major_args["router_logits"], point.dtypes["router_logits"])
+    bias = to_float32(row_major_args["correction_bias"], point.dtypes["correction_bias"])
     x = logits.clamp(max=torch.finfo(torch.float32).max)
     softplus = torch.where(
         x > 20.0, x, torch.log2(1.0 + torch.exp2(x * 1.4426950408889634)) * 0.6931471805599453
     )
     scores = softplus.sqrt()
     chosen = _aiter_topk_order(scores + bias, topk)
-    weights = scores.gather(-1, chosen).double()
+    weights = scores.gather(-1, chosen)
     if point.attrs["renormalize"]:
         weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-20)
     weights = weights * row_major_args["routed_scaling_factor"]
 
     n_tokens = logits.shape[0]
-    shared_ids = torch.arange(n_experts, n_experts + n_shared, dtype=torch.float64, device=logits.device)
-    ids = torch.cat([chosen.double(), shared_ids.expand(n_tokens, n_shared)], dim=-1)
+    shared_ids = torch.arange(n_experts, n_experts + n_shared, dtype=chosen.dtype, device=logits.device)
+    ids = torch.cat([chosen, shared_ids.expand(n_tokens, n_shared)], dim=-1)
     shared_weights = torch.full(
-        (n_tokens, n_shared), row_major_args["shared_scale"], dtype=torch.float64, device=logits.device
+        (n_tokens, n_shared), row_major_args["shared_scale"], dtype=torch.float32, device=logits.device
     )
     weights = torch.cat([weights, shared_weights], dim=-1)
 
