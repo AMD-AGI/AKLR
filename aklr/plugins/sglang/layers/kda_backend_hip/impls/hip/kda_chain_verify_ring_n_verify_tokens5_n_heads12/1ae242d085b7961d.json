@@ -1,0 +1,481 @@
+{
+  "schema_version": 5,
+  "name": "kda_chain_verify_ring_n_verify_tokens5_n_heads12",
+  "contract_id": "kda_chain_verify_ring@1.0",
+  "description": "Kimi-K3's KDA chain verify in ReplaySSM ring mode. Request r verifies tokens r * T to r * T + T - 1 (T = n_verify_tokens) from its distinct slot s = cache_indices[r]; a request whose slot is -1 is padding: it changes no slot or line, and its output is zero. A live request's convolution input is conv_state[s]'s three rows, oldest first, then its tokens: token t's channel c is SiLU of the exact sum of the four inputs ending at it times conv_weight[c], oldest first, rounded to BF16, and conv_window[window_indices[r], t] takes the last three inputs, oldest first. Head h takes the token's query, key and value channels: q is L2-normalized (epsilon 1e-6 added to the sum of squares) and multiplied by scale, k is L2-normalized. The gate is g = lower_bound * sigmoid(exp(a_log[h]) * (a + dt_bias[h])), or without a lower bound -exp(a_log[h]) times softplus of a + dt_bias[h] at softplus_beta, linear where softplus_beta times its input exceeds softplus_threshold; beta = sigmoid(b). From S = ssm_state[s, h] ([value, key]), each token in turn: S = S * exp(g) along the key, S = S + ((v - S k) * beta) outer k, output = S q. Rows 0 to T - 1 of slot s's rings take each token's convolved value (ring_v), convolved key before its normalization (ring_k), g (ring_g) and beta (ring_beta). ssm_state, conv_state, the other ring rows, unindexed slots and lines and all other inputs are preserved.",
+  "op_type": "kda_backend_hip",
+  "axes": {
+    "n_requests": {
+      "type": "var",
+      "description": "Requests verified, sglang's graph padding requests included."
+    },
+    "n_verify_tokens": {
+      "type": "const",
+      "value": 5,
+      "description": "Tokens a request verifies: its draft chain."
+    },
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens verified."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 12,
+      "description": "KDA heads on this rank, query, key and value alike."
+    },
+    "conv_dim": {
+      "type": "const",
+      "value": 4608,
+      "description": "Convolution channels: every query head's, then every key head's, then every value head's."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Allocated state slots."
+    },
+    "n_lines": {
+      "type": "var",
+      "description": "Allocated convolution window lines."
+    },
+    "ring_len": {
+      "type": "var",
+      "description": "Rows of a slot's ring per head."
+    }
+  },
+  "attrs": {
+    "has_lower_bound": true
+  },
+  "inputs": {
+    "mixed_qkv": {
+      "shape": [
+        "n_tokens",
+        "conv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's convolution input: every query head's channels, then every key head's, then every value head's; a request's tokens are consecutive rows, in chain order."
+    },
+    "conv_weight": {
+      "shape": [
+        "conv_dim",
+        4
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each channel's four causal taps, the oldest input's first."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        3,
+        "conv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each slot's last three convolution inputs, oldest first."
+    },
+    "cache_indices": {
+      "shape": [
+        "n_requests"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each request's distinct state slot, or -1 for a padding request."
+    },
+    "conv_window": {
+      "shape": [
+        "n_lines",
+        "n_verify_tokens",
+        3,
+        "conv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Convolution windows: a live request's line holds, after each of its tokens, the last three convolution inputs, oldest first."
+    },
+    "window_indices": {
+      "shape": [
+        "n_requests"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_lines - 1",
+        "distinct": true
+      },
+      "description": "Each request's distinct window line."
+    },
+    "a": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        128
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The gate's input, one per key channel."
+    },
+    "b": {
+      "shape": [
+        "n_tokens",
+        "n_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Beta's input."
+    },
+    "a_log": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Log of each head's gate scale."
+    },
+    "dt_bias": {
+      "shape": [
+        "n_heads",
+        128
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The gate's bias, one per key channel."
+    },
+    "ssm_state": {
+      "shape": [
+        "n_slots",
+        "n_heads",
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each slot's recurrent state at its last committed token, value dimension first."
+    },
+    "ring_v": {
+      "shape": [
+        "n_slots",
+        "n_heads",
+        "ring_len",
+        128
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each slot's ReplaySSM ring of convolved values, a row per token: a live request's tokens write rows 0 on of its slot, the other rows stay."
+    },
+    "ring_k": {
+      "shape": [
+        "n_slots",
+        "n_heads",
+        "ring_len",
+        128
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each slot's ReplaySSM ring of convolved keys before their normalization, a row per token: a live request's tokens write rows 0 on of its slot, the other rows stay."
+    },
+    "ring_g": {
+      "shape": [
+        "n_slots",
+        "n_heads",
+        "ring_len",
+        128
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each slot's ReplaySSM ring of gates (log decays), a row per token: a live request's tokens write rows 0 on of its slot, the other rows stay."
+    },
+    "ring_beta": {
+      "shape": [
+        "n_slots",
+        "n_heads",
+        "ring_len"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each slot's ReplaySSM ring of betas, a row per token: a live request's tokens write rows 0 on of its slot, the other rows stay."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Query scale."
+    },
+    "lower_bound": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "The gate's lower bound (Kimi-K3's checkpoints: gate_lower_bound)."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        128
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's attention output, zero for a padding request's tokens."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_requests": 6,
+        "n_tokens": 30,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 7,
+        "n_tokens": 35,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 8,
+        "n_tokens": 40,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 9,
+        "n_tokens": 45,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 10,
+        "n_tokens": 50,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 11,
+        "n_tokens": 55,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 12,
+        "n_tokens": 60,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 13,
+        "n_tokens": 65,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 14,
+        "n_tokens": 70,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 15,
+        "n_tokens": 75,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 16,
+        "n_tokens": 80,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 17,
+        "n_tokens": 85,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 18,
+        "n_tokens": 90,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 19,
+        "n_tokens": 95,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_requests": 20,
+        "n_tokens": 100,
+        "n_slots": 64,
+        "n_lines": 21,
+        "ring_len": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "hip": ">=7.0"
+    },
+    "author": "Hyperloom",
+    "entry_point": "kernel.hip::run",
+    "sources": [
+      {
+        "path": "kernel.hip",
+        "content": "// KDA chain spec-verify on gfx950 with sglang's ReplaySSM ring (Kimi-K3's linear attention), one launch\n// for a batch of requests of kT verify tokens each. Per request and head: the width-4 causal conv1d of\n// the slot's three-token history and the tokens' packed q | k | v channels, SiLU and the bf16 round trip\n// of its outputs; q and k l2-normalized, q times scale; the gate g = lower_bound * sigmoid(exp(A_log) *\n// (a + dt_bias)), or the softplus gate, and beta = sigmoid(b); the ring rows (raw v, raw k, g, beta) and\n// the conv windows; then each token's output of the gated delta rule from the slot's state h0, read only,\n// without a serial recurrence. With D_t the running product of the decays exp(g), a_t = (D_t k_t) . h0\n// and b_t = (D_t q_t) . h0 per value column, and A_ts (s < t) / B_ts (s <= t) the sums over K rows of\n// k_t k_s / q_t k_s times the decays of tokens s + 1 .. t: vn_t = (v_t - a_t - sum_{s<t} A_ts vn_s) *\n// beta_t (a kT x kT lower-triangular solve) and o_t = b_t + sum_{s<=t} B_ts vn_s. A padding request\n// (cache index < 0) writes zero output and nothing else.\n//\n// Block = 4 waves on one (request, head) and 32 * kC value columns, 4 / kC consecutive blocks a head.\n// Phase 1 computes everything that does not depend on the state for all kT tokens at once (conv outputs,\n// q / k norms, gate decays, beta) into LDS and writes the ring and conv-window rows; phase 1b the decayed\n// q / k and the A / B entries (16-lane partial sums); phase 2 the h0 products of each lane's kC value\n// columns (lane (cg = lane / 8, j = lane % 8) holds K rows {32 m + 4 j + e}) and the solve, lane j\n// storing token j.\n//\n// source: Kimi-K3.1-Pro kernel drop (Hyperloom), code/sglang/3-C_kda.diff\n// file: python/sglang/kernels/jit/csrc/attention/hl_kda_verify_gfx950.cuh, instantiated with kFB = kON = false\n// variant of: sglang's python/sglang/kernels/jit/csrc/attention/kda_verify_gfx950.cuh (sglang 0.5.24.dev809, Apache-2.0)\n\n#include <ATen/ATen.h>\n#include <ATen/hip/HIPContext.h>\n#include <ATen/hip/impl/HIPGuardImplMasqueradingAsCUDA.h>\n#include <c10/hip/HIPException.h>\n#include <hip/hip_runtime.h>\n#include <torch/library.h>\n\n#include <cstdint>\n#include <optional>\n\nnamespace {\n\nconstexpr int kKdaK = 128;\nconstexpr int kKdaV = 128;\nconstexpr int kWave = 64;\n\nstruct HlKdaVerifyParams {\n  const uint16_t* __restrict__ x;              // [seq_len, dim] bf16, pre-conv q | k | v\n  const float* __restrict__ conv_w;            // [dim, 4]\n  const uint16_t* __restrict__ conv_state;     // [slots, 3, dim] bf16, dim contiguous\n  const int32_t* __restrict__ cache_indices;   // [B] conv / ssm / ring slot, < 0 = padded row\n  uint16_t* __restrict__ window;               // [lines, steps, 3, dim] bf16, dim contiguous\n  const int32_t* __restrict__ window_indices;  // [B]\n  const uint16_t* __restrict__ a;              // [seq_len, HV * K] bf16\n  const uint16_t* __restrict__ b;              // [seq_len, HV] bf16\n  const float* __restrict__ A_log;             // [HV]\n  const float* __restrict__ dt_bias;           // [HV * K]\n  const float* __restrict__ state;             // [slots, HV, V, K]\n  uint16_t* __restrict__ rawv;                 // [slots, HV, L, V] bf16\n  uint16_t* __restrict__ rawk;                 // [slots, H, L, K] bf16\n  float* __restrict__ ring_g;                  // [slots, HV, L, K]\n  float* __restrict__ ring_beta;               // [slots, HV, L]\n  uint16_t* __restrict__ o;                    // [seq_len, HV, V] bf16\n  int64_t stride_x_tok;\n  int64_t stride_cs_line;\n  int64_t stride_cs_win;\n  int64_t stride_iw_line;\n  int64_t stride_iw_step;\n  int64_t stride_iw_win;\n  int64_t stride_a_tok;\n  int64_t stride_b_tok;\n  int64_t stride_state_slot;\n  int64_t stride_rawv_slot;\n  int64_t stride_rawk_slot;\n  int64_t stride_g_slot;\n  int64_t stride_beta_slot;\n  float scale;\n  float lower_bound;\n  float softplus_beta;\n  float softplus_threshold;\n  int32_t num_heads;\n  int32_t ring_len;\n};\n\n__device__ __forceinline__ float bf16_to_f32(uint16_t v) {\n  return __uint_as_float(static_cast<uint32_t>(v) << 16);\n}\n\n// Round to nearest even, as torch / Triton fp32 -> bf16 (inputs are finite).\n__device__ __forceinline__ uint16_t f32_to_bf16(float f) {\n  uint32_t u = __float_as_uint(f);\n  u += 0x7fffu + ((u >> 16) & 1u);\n  return static_cast<uint16_t>(u >> 16);\n}\n\ntemplate <int kCtrl>\n__device__ __forceinline__ float dpp_add(float x) {\n  const int moved = __builtin_amdgcn_update_dpp(0, __float_as_int(x), kCtrl, 0xf, 0xf, false);\n  return x + __int_as_float(moved);\n}\n\n// Butterfly sum over aligned groups of kLanes (4, 8 or 16) lanes inside a DPP row; every lane of\n// the group ends with the group total.\ntemplate <int kLanes>\n__device__ __forceinline__ float group_sum(float x) {\n  x = dpp_add<0xb1>(x);                               // quad_perm [1, 0, 3, 2]\n  x = dpp_add<0x4e>(x);                               // quad_perm [2, 3, 0, 1]\n  if constexpr (kLanes >= 8) x = dpp_add<0x141>(x);   // row_half_mirror\n  if constexpr (kLanes >= 16) x = dpp_add<0x140>(x);  // row_mirror\n  return x;\n}\n\n__device__ __forceinline__ float sigmoid(float x) {\n  return 1.0f / (1.0f + __expf(-x));\n}\n\n// c0 * w0 + c1 * w1 + c2 * w2 + x * w3 in float32, then SiLU (the bf16 round trip of its output is the\n// caller's).\n__device__ __forceinline__ float conv_silu(float c0, float c1, float c2, float xt, const float (&w)[4]) {\n  const float acc = c0 * w[0] + c1 * w[1] + c2 * w[2] + xt * w[3];\n  return acc / (1.0f + __expf(-acc));\n}\n\ntemplate <bool kLowerBound>\n__device__ __forceinline__ float kda_gate(float a, float dt_bias, float exp_a_log, const HlKdaVerifyParams& p) {\n  const float x = a + dt_bias;\n  if constexpr (kLowerBound) {\n    return p.lower_bound * sigmoid(exp_a_log * x);\n  } else {\n    const float bx = p.softplus_beta * x;\n    const float sp = bx <= p.softplus_threshold ? (1.0f / p.softplus_beta) * __logf(1.0f + __expf(bx)) : x;\n    return -exp_a_log * sp;\n  }\n}\n\n// The gate where exp(A_log) passes float32 (a head-uniform, rare path): its products with exp(A_log) from logs,\n// so a zero factor gives 0 rather than inf * 0.\ntemplate <bool kLowerBound>\n__device__ __forceinline__ float kda_gate_wide(float a, float dt_bias, float a_log, const HlKdaVerifyParams& p) {\n  const float x = a + dt_bias;\n  if constexpr (kLowerBound) {\n    return p.lower_bound * sigmoid(x == 0.0f ? 0.0f : copysignf(expf(a_log + logf(fabsf(x))), x));\n  } else {\n    const float bx = p.softplus_beta * x;\n    // log(softplus): bx - log(beta) where exp(bx) is below float32's epsilon, as log1p(e) = e there\n    const float lsp = bx < -20.0f ? bx - logf(p.softplus_beta)\n                      : logf(bx <= p.softplus_threshold ? log1pf(expf(bx)) / p.softplus_beta : x);\n    return -expf(a_log + lsp);\n  }\n}\n\n__device__ __forceinline__ float bf16_lane(const uint4& v, int i) {\n  const uint32_t w = (&v.x)[i >> 1];\n  return __uint_as_float((i & 1) ? (w & 0xffff0000u) : (w << 16));\n}\n\n__device__ __forceinline__ uint4 pack_bf16x8(const float (&f)[8]) {\n  uint4 r;\n#pragma unroll\n  for (int i = 0; i < 4; ++i) {\n    (&r.x)[i] = static_cast<uint32_t>(f32_to_bf16(f[2 * i])) | (static_cast<uint32_t>(f32_to_bf16(f[2 * i + 1])) << 16);\n  }\n  return r;\n}\n\ntemplate <typename T>\n__device__ __forceinline__ T load_as(const void* ptr) {\n  return *reinterpret_cast<const T*>(ptr);\n}\n\ntemplate <typename T>\n__device__ __forceinline__ void store_as(void* ptr, const T& value) {\n  *reinterpret_cast<T*>(ptr) = value;\n}\n\n// Raw bf16 input of channel `ch` at position `pos` of the conv sequence [cs0, cs1, cs2, x0, x1, ...]:\n// the conv state for pos < 3, else token pos - 3.\n__device__ __forceinline__ const uint16_t* seq_ptr(const HlKdaVerifyParams& p, const uint16_t* cs, int64_t bos, int pos, int64_t ch) {\n  return pos < 3 ? cs + ch + pos * p.stride_cs_win : p.x + (bos + pos - 3) * p.stride_x_tok + ch;\n}\n\n// Conv + SiLU + bf16 round trip over 8 channels for one token: hist = sequence positions t .. t + 3.\n__device__ __forceinline__ void conv_octet(const uint4 (&hist)[4], const float4 (&w)[8], float (&y)[8]) {\n#pragma unroll\n  for (int i = 0; i < 8; ++i) {\n    const float wi[4] = {w[i].x, w[i].y, w[i].z, w[i].w};\n    y[i] = bf16_to_f32(f32_to_bf16(\n        conv_silu(bf16_lane(hist[0], i), bf16_lane(hist[1], i), bf16_lane(hist[2], i), bf16_lane(hist[3], i), wi)));\n  }\n}\n\n// Block = 4 waves sharing one head's state-independent work (phase 1) for 4 * BV value columns;\n// each wave then takes its own [K, BV] slice of h0 (phase 2).\ntemplate <int kC, int kT, bool kLowerBound>\n__global__ __launch_bounds__(256) void hl_kda_verify_kernel(const HlKdaVerifyParams p) {\n  constexpr int K = kKdaK;\n  constexpr int V = kKdaV;\n  constexpr int kWaves = 4;\n  constexpr int kBlock = kWave * kWaves;\n  // phase 2: lane (cg = lane / 8, j = lane % 8) holds kC value columns x K rows {32 m + 4 j + e};\n  // the K reductions stay inside the 8-lane group, and each LDS vector read feeds kC columns.\n  constexpr int kBV = 8 * kC;          // value columns per wave\n  constexpr int kCols = kWaves * kBV;  // value columns per block\n  constexpr int kBlocksPerHead = V / kCols;\n  constexpr int kVIters = (kCols * kT + kBlock - 1) / kBlock;\n  // The gate and the q / k conv map the block onto 8 token groups; groups past kT idle.\n  constexpr int kTokenGroups = 8;\n  constexpr int kGateLanes = kBlock / kTokenGroups;  // lanes per token for the gate, kGateRows rows each\n  constexpr int kGateRows = K / kGateLanes;\n  static_assert(kC == 1 || kC == 2 || kC == 4, \"1, 2 or 4 columns per lane\");\n  static_assert(kT >= 1 && kT <= kTokenGroups, \"T must be 1..8\");\n  static_assert(kGateRows * kGateLanes == K && kGateRows % 2 == 0, \"unsupported gate mapping\");\n\n  __shared__ float s_q[kT][K];\n  __shared__ float s_k[kT][K];\n  __shared__ float s_decay[kT][K];\n  __shared__ float s_v[kT][kCols];\n  __shared__ float s_beta[kT];\n  __shared__ float s_kd[kT][K];  // D_t * k_t\n  __shared__ float s_qd[kT][K];  // D_t * q_t\n  constexpr int kNA = kT * (kT - 1) / 2, kNB = kT * (kT + 1) / 2, kNAB = kNA + kNB;\n  __shared__ float s_part[8][kNAB];  // per 16-lane row partial sums of A, B (waves 0-1)\n  __shared__ float s_ab[kNAB];\n\n  const int tid = threadIdx.x;\n  const int wave = tid / kWave;\n  const int lane = tid % kWave;\n  // one-dimensional grid in the order of a (kBlocksPerHead, B * H) grid\n  const int i_v = static_cast<int>(blockIdx.x % kBlocksPerHead);\n  const int byy = static_cast<int>(blockIdx.x / kBlocksPerHead);\n  const int H = p.num_heads;\n  const int i_n = byy / H;\n  const int hv = byy % H;\n  const int slot = p.cache_indices[i_n];\n  const int64_t slot_ld = slot < 0 ? 0 : slot;  // padded row: load from slot 0, store no state\n  const int j = lane & 7;\n  const int cg = lane >> 3;\n  const int col0 = i_v * kCols + wave * kBV + cg * kC;\n  const int64_t bos = static_cast<int64_t>(i_n) * kT;\n  const bool owner = i_v == 0;\n  const int widx = p.window_indices[i_n];\n  const uint16_t* cs = p.conv_state + slot_ld * p.stride_cs_line;\n\n  // ---- global loads, all issued before the first global store (on CDNA vmcnt also counts\n  // stores, so a load behind a store waits for its acknowledgement) ----\n  // q / k conv: DPP row r (16 lanes x 8 channels = one head) takes token r % 8 of q (r < 8) or k.\n  const int row = (tid >> 4) & 15;  // threads past 256 duplicate rows 0..15 and store nothing\n  const int conv_t = min(row & 7, kT - 1);\n  const bool conv_valid = (row & 7) < kT && tid < 256;\n  const bool is_k = row >= 8;\n  const int c8 = (tid & 15) * 8;\n  const int64_t cch = (is_k ? static_cast<int64_t>(H) * K : 0) + static_cast<int64_t>(hv) * K + c8;\n  uint4 hist[4];\n  float4 w[8];\n#pragma unroll\n  for (int i = 0; i < 8; ++i)\n    w[i] = load_as<float4>(p.conv_w + (cch + i) * 4);\n\n  // gate: token tid / kGateLanes, K rows [g0, g0 + kGateRows)\n  const int gate_t = min(tid / kGateLanes, kT - 1);\n  const bool gate_valid = tid / kGateLanes < kT;\n  const int g0 = (tid % kGateLanes) * kGateRows;\n  uint32_t a_raw[kGateRows / 2];\n  float dt[kGateRows];\n#pragma unroll\n  for (int i = 0; i < kGateRows; i += 2) {\n    a_raw[i / 2] = load_as<uint32_t>(p.a + (bos + gate_t) * p.stride_a_tok + hv * K + g0 + i);\n    const float2 d = load_as<float2>(p.dt_bias + hv * K + g0 + i);\n    dt[i] = d.x;\n    dt[i + 1] = d.y;\n  }\n  const float a_log = p.A_log[hv];\n  const float b_raw = bf16_to_f32(p.b[(bos + min(tid, kT - 1)) * p.stride_b_tok + hv]);\n\n  // v conv: one (column, token) per lane and iteration\n  uint16_t v_hist[kVIters][4];\n  float4 wv[kVIters];\n#pragma unroll\n  for (int it = 0; it < kVIters; ++it) {\n    const int idx = min(tid + it * kBlock, kCols * kT - 1);\n    const int64_t vc = 2LL * H * K + static_cast<int64_t>(hv) * V + i_v * kCols + idx % kCols;\n#pragma unroll\n    for (int i = 0; i < 4; ++i)\n      v_hist[it][i] = *seq_ptr(p, cs, bos, idx / kCols + i, vc);\n    wv[it] = load_as<float4>(p.conv_w + vc * 4);\n  }\n#pragma unroll\n  for (int i = 0; i < 4; ++i)\n    hist[i] = load_as<uint4>(seq_ptr(p, cs, bos, conv_t + i, cch));\n  float h[kC][16];  // lane (cg = lane / 8, j = lane % 8): kC columns x rows {32 m + 4 j + e}\n  {\n    const float* hp = p.state + slot_ld * p.stride_state_slot + (static_cast<int64_t>(hv) * V + col0) * K + j * 4;\n#pragma unroll\n    for (int cc = 0; cc < kC; ++cc)\n#pragma unroll\n      for (int m = 0; m < 4; ++m) {\n        const float4 x = load_as<float4>(hp + cc * K + 32 * m);\n        h[cc][4 * m] = x.x; h[cc][4 * m + 1] = x.y; h[cc][4 * m + 2] = x.z; h[cc][4 * m + 3] = x.w;\n      }\n  }\n\n  asm volatile(\"\" ::: \"memory\");  // keep every load above ahead of the compute and stores below\n  if (slot < 0) {  // padded graph row: zero output, no state or window written\n    for (int idx = tid; idx < kCols * kT; idx += kBlock)\n      p.o[((bos + idx / kCols) * H + hv) * V + i_v * kCols + idx % kCols] = 0;\n    return;\n  }\n\n  // ---- phase 1: state-independent work for all T tokens ----\n  float y[8];\n  conv_octet(hist, w, y);\n  float ss = 0.0f;\n#pragma unroll\n  for (int i = 0; i < 8; ++i)\n    ss += y[i] * y[i];\n  ss = group_sum<16>(ss);\n  float rn;\n  if (__builtin_isinf(ss)) {\n    // the squares pass float32 (a rare path, uniform over the 16 lanes of the row): summed again scaled by 2^-100,\n    // exactly; past 2^62 the norm leaves eps, and any square 2^-120 or more below the largest, beneath its ulp\n    float s2 = 0.0f;\n#pragma unroll\n    for (int i = 0; i < 8; ++i) {\n      const float t = y[i] * 0x1p-100f;\n      s2 += t * t;\n    }\n    rn = 0x1p-100f / sqrtf(group_sum<16>(s2));\n  } else {\n    rn = 1.0f / sqrtf(ss + 1e-6f);\n  }\n  rn *= is_k ? 1.0f : p.scale;\n  if (conv_valid) {\n    float* dst = is_k ? &s_k[conv_t][c8] : &s_q[conv_t][c8];\n    store_as<float4>(dst, make_float4(y[0] * rn, y[1] * rn, y[2] * rn, y[3] * rn));\n    store_as<float4>(dst + 4, make_float4(y[4] * rn, y[5] * rn, y[6] * rn, y[7] * rn));\n  }\n  const float exp_a_log = __expf(a_log);\n  float g[kGateRows];\n#pragma unroll\n  for (int i = 0; i < kGateRows; ++i) {\n    const uint32_t pair = a_raw[i / 2];\n    const float a_i = __uint_as_float((i & 1) ? (pair & 0xffff0000u) : (pair << 16));\n    g[i] = kda_gate<kLowerBound>(a_i, dt[i], exp_a_log, p);\n  }\n  if (__builtin_expect(__builtin_isinf(exp_a_log), 0)) {\n    for (int i = 0; i < kGateRows; ++i) {\n      const uint32_t pair = a_raw[i / 2];\n      const float a_i = __uint_as_float((i & 1) ? (pair & 0xffff0000u) : (pair << 16));\n      g[i] = kda_gate_wide<kLowerBound>(a_i, dt[i], a_log, p);\n    }\n  }\n#pragma unroll\n  for (int i = 0; i < kGateRows; ++i)\n    if (gate_valid) s_decay[gate_t][g0 + i] = __expf(g[i]);\n  const float beta = sigmoid(b_raw);\n  if (tid < kT) s_beta[tid] = beta;\n  uint16_t v_out[kVIters];\n#pragma unroll\n  for (int it = 0; it < kVIters; ++it) {\n    const int idx = tid + it * kBlock;\n    const float wi[4] = {wv[it].x, wv[it].y, wv[it].z, wv[it].w};\n    v_out[it] = f32_to_bf16(conv_silu(\n        bf16_to_f32(v_hist[it][0]),\n        bf16_to_f32(v_hist[it][1]),\n        bf16_to_f32(v_hist[it][2]),\n        bf16_to_f32(v_hist[it][3]),\n        wi));\n    if (idx < kCols * kT) s_v[idx / kCols][idx % kCols] = bf16_to_f32(v_out[it]);\n  }\n\n  // pin the state registers: their loads complete before any store is issued (vmcnt counts stores)\n#pragma unroll\n  for (int cc = 0; cc < kC; ++cc)\n#pragma unroll\n    for (int i = 0; i < 16; ++i) asm volatile(\"\" : \"+v\"(h[cc][i]));\n  // ---- global stores: conv windows and ReplaySSM ring rows ----\n  uint16_t* iw = p.window + static_cast<int64_t>(widx) * p.stride_iw_line;\n  const int64_t ring_head = static_cast<int64_t>(hv) * p.ring_len;\n  if (owner) {\n    if (conv_valid) {\n      if (widx >= 0) {\n        uint16_t* wp = iw + conv_t * p.stride_iw_step + cch;\n#pragma unroll\n        for (int i = 0; i < 3; ++i)\n          store_as<uint4>(wp + i * p.stride_iw_win, hist[i + 1]);\n      }\n      if (is_k && conv_t < p.ring_len) {\n        store_as<uint4>(p.rawk + slot * p.stride_rawk_slot + (ring_head + conv_t) * K + c8, pack_bf16x8(y));\n      }\n    }\n    if (gate_valid && gate_t < p.ring_len) {\n      float* gp = p.ring_g + slot * p.stride_g_slot + (ring_head + gate_t) * K + g0;\n#pragma unroll\n      for (int i = 0; i < kGateRows; i += 2)\n        store_as<float2>(gp + i, make_float2(g[i], g[i + 1]));\n    }\n    if (tid < kT && tid < p.ring_len) p.ring_beta[slot * p.stride_beta_slot + ring_head + tid] = beta;\n  }\n#pragma unroll\n  for (int it = 0; it < kVIters; ++it) {\n    const int idx = tid + it * kBlock;\n    const int t = idx / kCols;\n    const int vcol = i_v * kCols + idx % kCols;\n    if (idx < kCols * kT) {\n      if (widx >= 0) {\n        uint16_t* wp = iw + t * p.stride_iw_step + 2LL * H * K + static_cast<int64_t>(hv) * V + vcol;\n#pragma unroll\n        for (int i = 0; i < 3; ++i)\n          wp[i * p.stride_iw_win] = v_hist[it][i + 1];\n      }\n      if (t < p.ring_len) p.rawv[slot * p.stride_rawv_slot + (ring_head + t) * V + vcol] = v_out[it];\n    }\n  }\n  // LDS visibility only needs lgkmcnt; __syncthreads() would also wait for the ring / window\n  // stores above to be acknowledged.\n  asm volatile(\"s_waitcnt lgkmcnt(0)\" ::: \"memory\");\n  __builtin_amdgcn_s_barrier();\n\n  // ---- phase 1b: decayed q / k vectors (threads 0..127, one K row each) ----\n  if (tid < K) {\n    float D = 1.0f;\n#pragma unroll\n    for (int t = 0; t < kT; ++t) {\n      D *= s_decay[t][tid];\n      s_kd[t][tid] = s_k[t][tid] * D;\n      s_qd[t][tid] = s_q[t][tid] * D;\n    }\n  }\n  asm volatile(\"s_waitcnt lgkmcnt(0)\" ::: \"memory\");\n  __builtin_amdgcn_s_barrier();\n  // A_ts = sum_i k_t k_s prod_{r=s+1..t} d_r (s < t), B_ts = sum_i q_t k_s prod_{r=s+1..t} d_r (s <= t):\n  // thread tid takes row tid % 128 and the entries of half tid / 128; 16-lane partials to s_part.\n  {\n    const int i = tid & (K - 1);\n    const int half = tid >> 7;\n    float d[kT], kk[kT], qq[kT];\n#pragma unroll\n    for (int t = 0; t < kT; ++t) {\n      d[t] = s_decay[t][i];\n      kk[t] = s_k[t][i];\n      qq[t] = s_q[t][i];\n    }\n    float ab[kNAB];\n#pragma unroll\n    for (int sx = 0; sx < kT; ++sx) {\n      float prod = 1.0f;\n#pragma unroll\n      for (int t = sx; t < kT; ++t) {\n        if (t > sx) {\n          prod *= d[t];\n          ab[t * (t - 1) / 2 + sx] = kk[t] * kk[sx] * prod;\n        }\n        ab[kNA + t * (t + 1) / 2 + sx] = qq[t] * kk[sx] * prod;\n      }\n    }\n    constexpr int kH0 = (kNAB + 1) / 2;\n    if (half == 0) {\n#pragma unroll\n      for (int e = 0; e < kH0; ++e) ab[e] = group_sum<16>(ab[e]);\n      if ((tid & 15) == 0) {\n#pragma unroll\n        for (int e = 0; e < kH0; ++e) s_part[i >> 4][e] = ab[e];\n      }\n    } else {\n#pragma unroll\n      for (int e = kH0; e < kNAB; ++e) ab[e] = group_sum<16>(ab[e]);\n      if ((tid & 15) == 0) {\n#pragma unroll\n        for (int e = kH0; e < kNAB; ++e) s_part[i >> 4][e] = ab[e];\n      }\n    }\n  }\n\n  // ---- phase 2: a_t = kd_t . h0[:, c], b_t = qd_t . h0[:, c] over this lane's rows, packed fp32 ----\n  typedef float f2 __attribute__((ext_vector_type(2)));\n  f2 a2[kT][kC], b2[kT][kC];\n#pragma unroll\n  for (int t = 0; t < kT; ++t)\n#pragma unroll\n    for (int cc = 0; cc < kC; ++cc) {\n      a2[t][cc] = f2{0.0f, 0.0f};\n      b2[t][cc] = f2{0.0f, 0.0f};\n    }\n#pragma unroll\n  for (int m = 0; m < 4; ++m) {\n#pragma unroll\n    for (int t = 0; t < kT; ++t) {\n      const float4 kd = load_as<float4>(&s_kd[t][32 * m + 4 * j]);\n      const float4 qd = load_as<float4>(&s_qd[t][32 * m + 4 * j]);\n      const f2 kd0 = {kd.x, kd.y}, kd1 = {kd.z, kd.w}, qd0 = {qd.x, qd.y}, qd1 = {qd.z, qd.w};\n#pragma unroll\n      for (int cc = 0; cc < kC; ++cc) {\n        const f2 h0 = {h[cc][4 * m], h[cc][4 * m + 1]}, h1 = {h[cc][4 * m + 2], h[cc][4 * m + 3]};\n        a2[t][cc] = __builtin_elementwise_fma(h0, kd0, a2[t][cc]);\n        a2[t][cc] = __builtin_elementwise_fma(h1, kd1, a2[t][cc]);\n        b2[t][cc] = __builtin_elementwise_fma(h0, qd0, b2[t][cc]);\n        b2[t][cc] = __builtin_elementwise_fma(h1, qd1, b2[t][cc]);\n      }\n    }\n  }\n  float av[kT][kC], bv[kT][kC];\n#pragma unroll\n  for (int t = 0; t < kT; ++t)\n#pragma unroll\n    for (int cc = 0; cc < kC; ++cc) {\n      av[t][cc] = group_sum<8>(a2[t][cc].x + a2[t][cc].y);\n      bv[t][cc] = group_sum<8>(b2[t][cc].x + b2[t][cc].y);\n    }\n  asm volatile(\"s_waitcnt lgkmcnt(0)\" ::: \"memory\");\n  __builtin_amdgcn_s_barrier();\n  if (tid < kNAB) {\n    float acc = s_part[0][tid];\n#pragma unroll\n    for (int r = 1; r < 8; ++r) acc += s_part[r][tid];\n    s_ab[tid] = acc;\n  }\n  asm volatile(\"s_waitcnt lgkmcnt(0)\" ::: \"memory\");\n  __builtin_amdgcn_s_barrier();\n\n  // ---- the kT-step solve per column (every lane of the 8-lane group; lane j stores token j) ----\n  const int vloc = wave * kBV + cg * kC;\n  float ab[kNAB];\n#pragma unroll\n  for (int e = 0; e < kNAB; ++e) ab[e] = s_ab[e];\n  float vn[kT][kC];\n#pragma unroll\n  for (int t = 0; t < kT; ++t) {\n    float vv[kC];\n#pragma unroll\n    for (int cc = 0; cc < kC; ++cc) vv[cc] = s_v[t][vloc + cc];\n    const float bt = s_beta[t];\n    float os[kC];\n#pragma unroll\n    for (int cc = 0; cc < kC; ++cc) {\n      float u = av[t][cc];\n#pragma unroll\n      for (int sx = 0; sx < t; ++sx) u += ab[t * (t - 1) / 2 + sx] * vn[sx][cc];\n      vn[t][cc] = (vv[cc] - u) * bt;\n      float o = bv[t][cc];\n#pragma unroll\n      for (int sx = 0; sx <= t; ++sx) o += ab[kNA + t * (t + 1) / 2 + sx] * vn[sx][cc];\n      os[cc] = o;\n    }\n    if (j == t) {\n      uint16_t* op = p.o + ((bos + t) * H + hv) * V + col0;\n      if constexpr (kC == 4) {\n        uint2 pk;\n        pk.x = static_cast<uint32_t>(f32_to_bf16(os[0])) | (static_cast<uint32_t>(f32_to_bf16(os[1])) << 16);\n        pk.y = static_cast<uint32_t>(f32_to_bf16(os[2])) | (static_cast<uint32_t>(f32_to_bf16(os[3])) << 16);\n        store_as<uint2>(op, pk);\n      } else if constexpr (kC == 2) {\n        store_as<uint32_t>(op, static_cast<uint32_t>(f32_to_bf16(os[0])) | (static_cast<uint32_t>(f32_to_bf16(os[1])) << 16));\n      } else {\n        *op = f32_to_bf16(os[0]);\n      }\n    }\n  }\n}\n\ntemplate <int kC, int kT, bool kLowerBound>\nvoid launch(const HlKdaVerifyParams& params, int64_t heads_total, hipStream_t stream) {\n  const dim3 grid(static_cast<uint32_t>((4 / kC) * heads_total));\n  hl_kda_verify_kernel<kC, kT, kLowerBound><<<grid, dim3(256), 0, stream>>>(params);\n}\n\ntemplate <int kC, int kT>\nvoid launch_gate(bool lower_bound, const HlKdaVerifyParams& params, int64_t heads_total, hipStream_t stream) {\n  if (lower_bound) {\n    launch<kC, kT, true>(params, heads_total, stream);\n  } else {\n    launch<kC, kT, false>(params, heads_total, stream);\n  }\n}\n\ntemplate <int kC>\nvoid launch_steps(int64_t steps, bool lower_bound, const HlKdaVerifyParams& params, int64_t heads_total,\n                  hipStream_t stream) {\n  switch (steps) {\n  case 2: launch_gate<kC, 2>(lower_bound, params, heads_total, stream); break;\n  case 3: launch_gate<kC, 3>(lower_bound, params, heads_total, stream); break;\n  case 4: launch_gate<kC, 4>(lower_bound, params, heads_total, stream); break;\n  case 5: launch_gate<kC, 5>(lower_bound, params, heads_total, stream); break;\n  case 6: launch_gate<kC, 6>(lower_bound, params, heads_total, stream); break;\n  case 7: launch_gate<kC, 7>(lower_bound, params, heads_total, stream); break;\n  case 8: launch_gate<kC, 8>(lower_bound, params, heads_total, stream); break;\n  default: TORCH_CHECK(false, \"verify tokens must be 2..8, got \", steps);\n  }\n}\n\nvoid check_tensor(const at::Tensor& t, at::ScalarType dtype, const at::Tensor& like, const char* name) {\n  TORCH_CHECK(t.scalar_type() == dtype, name, \" must be \", dtype, \", got \", t.scalar_type());\n  TORCH_CHECK(t.device() == like.device(), name, \" is on another device\");\n}\n\nvoid run(const at::Tensor& mixed_qkv, const at::Tensor& conv_weight, const at::Tensor& conv_state,\n         const at::Tensor& cache_indices, at::Tensor& conv_window, const at::Tensor& window_indices,\n         const at::Tensor& a, const at::Tensor& b, const at::Tensor& a_log, const at::Tensor& dt_bias,\n         const at::Tensor& ssm_state, at::Tensor& ring_v, at::Tensor& ring_k, at::Tensor& ring_g,\n         at::Tensor& ring_beta, double scale, std::optional<double> lower_bound,\n         std::optional<double> softplus_beta, std::optional<double> softplus_threshold, at::Tensor& output) {\n  const int64_t seq_len = mixed_qkv.size(0);\n  const int64_t batch = cache_indices.size(0);\n  const int64_t steps = conv_window.size(1);\n  const int64_t heads = ssm_state.size(1);\n  TORCH_CHECK(mixed_qkv.is_cuda(), \"tensors must be on the GPU\");\n  check_tensor(mixed_qkv, at::kBFloat16, mixed_qkv, \"mixed_qkv\");\n  check_tensor(conv_weight, at::kFloat, mixed_qkv, \"conv_weight\");\n  check_tensor(conv_state, at::kBFloat16, mixed_qkv, \"conv_state\");\n  check_tensor(cache_indices, at::kInt, mixed_qkv, \"cache_indices\");\n  check_tensor(conv_window, at::kBFloat16, mixed_qkv, \"conv_window\");\n  check_tensor(window_indices, at::kInt, mixed_qkv, \"window_indices\");\n  check_tensor(a, at::kBFloat16, mixed_qkv, \"a\");\n  check_tensor(b, at::kBFloat16, mixed_qkv, \"b\");\n  check_tensor(a_log, at::kFloat, mixed_qkv, \"a_log\");\n  check_tensor(dt_bias, at::kFloat, mixed_qkv, \"dt_bias\");\n  check_tensor(ssm_state, at::kFloat, mixed_qkv, \"ssm_state\");\n  check_tensor(ring_v, at::kBFloat16, mixed_qkv, \"ring_v\");\n  check_tensor(ring_k, at::kBFloat16, mixed_qkv, \"ring_k\");\n  check_tensor(ring_g, at::kFloat, mixed_qkv, \"ring_g\");\n  check_tensor(ring_beta, at::kFloat, mixed_qkv, \"ring_beta\");\n  check_tensor(output, at::kBFloat16, mixed_qkv, \"output\");\n  TORCH_CHECK(batch * steps == seq_len, \"seq_len must be requests x verify tokens\");\n  TORCH_CHECK(window_indices.size(0) == batch, \"a window line per request\");\n  TORCH_CHECK(mixed_qkv.size(1) == 3 * heads * kKdaK && mixed_qkv.stride(1) == 1, \"mixed_qkv must be [seq_len, 3 * H * 128]\");\n  TORCH_CHECK(conv_state.size(1) == 3 && conv_state.size(2) == mixed_qkv.size(1) && conv_state.stride(2) == 1,\n              \"conv_state must be [slots, 3, dim]\");\n  TORCH_CHECK(conv_window.size(2) == 3 && conv_window.size(3) == mixed_qkv.size(1) && conv_window.stride(3) == 1,\n              \"conv_window must be [lines, steps, 3, dim]\");\n  TORCH_CHECK(conv_weight.size(0) == mixed_qkv.size(1) && conv_weight.size(1) == 4 && conv_weight.stride(0) == 4 &&\n                  conv_weight.stride(1) == 1,\n              \"conv weight must be a dense [dim, 4]\");\n  TORCH_CHECK(mixed_qkv.stride(0) % 8 == 0 && conv_state.stride(1) % 8 == 0 && conv_window.stride(2) % 8 == 0 &&\n                  a.stride(0) % 8 == 0,\n              \"channel octets must be 16-byte aligned\");\n  TORCH_CHECK(a.dim() == 3 && a.size(0) == seq_len && a.size(1) == heads && a.size(2) == kKdaK && a.stride(2) == 1 &&\n                  a.stride(1) == kKdaK,\n              \"a must be [seq_len, H, 128] with contiguous rows\");\n  TORCH_CHECK(b.dim() == 2 && b.size(0) == seq_len && b.size(1) == heads && b.stride(1) == 1,\n              \"b must be [seq_len, H] with contiguous rows\");\n  TORCH_CHECK(a_log.numel() == heads && dt_bias.numel() == heads * kKdaK && a_log.is_contiguous() && dt_bias.is_contiguous(),\n              \"a_log must be [H], dt_bias [H, 128]\");\n  TORCH_CHECK(ssm_state.size(2) == kKdaV && ssm_state.size(3) == kKdaK && ssm_state.stride(3) == 1 &&\n                  ssm_state.stride(2) == kKdaK && ssm_state.stride(1) == kKdaK * kKdaV,\n              \"state must be [slots, HV, V, K] with contiguous heads\");\n  const int64_t ring_len = ring_v.size(2);\n  TORCH_CHECK(ring_len >= steps && ring_k.size(2) == ring_len && ring_g.size(2) == ring_len && ring_beta.size(2) == ring_len,\n              \"rings must hold the verify tokens\");\n  TORCH_CHECK(ring_v.stride(2) == kKdaV && ring_k.stride(2) == kKdaK && ring_g.stride(2) == kKdaK &&\n                  ring_v.stride(1) == ring_len * kKdaV && ring_k.stride(1) == ring_len * kKdaK &&\n                  ring_g.stride(1) == ring_len * kKdaK && ring_beta.stride(1) == ring_len && ring_beta.stride(2) == 1,\n              \"ring rows must be contiguous\");\n  TORCH_CHECK(output.is_contiguous() && output.numel() == seq_len * heads * kKdaV, \"output must be [seq_len, H, 128]\");\n  TORCH_CHECK(lower_bound.has_value() || (softplus_beta.has_value() && softplus_threshold.has_value()),\n              \"a lower bound, or the softplus gate's beta and threshold\");\n  TORCH_CHECK(4 * batch * heads <= INT32_MAX, \"too many requests x heads\");\n  if (batch == 0) {\n    return;\n  }\n  const at::hip::OptionalHIPGuardMasqueradingAsCUDA guard(mixed_qkv.device());\n  const hipStream_t stream = at::hip::getCurrentHIPStream();\n  HlKdaVerifyParams params{};\n  params.x = static_cast<const uint16_t*>(mixed_qkv.data_ptr());\n  params.conv_w = conv_weight.data_ptr<float>();\n  params.conv_state = static_cast<const uint16_t*>(conv_state.data_ptr());\n  params.cache_indices = cache_indices.data_ptr<int32_t>();\n  params.window = static_cast<uint16_t*>(conv_window.data_ptr());\n  params.window_indices = window_indices.data_ptr<int32_t>();\n  params.a = static_cast<const uint16_t*>(a.data_ptr());\n  params.b = static_cast<const uint16_t*>(b.data_ptr());\n  params.A_log = a_log.data_ptr<float>();\n  params.dt_bias = dt_bias.data_ptr<float>();\n  params.state = ssm_state.data_ptr<float>();\n  params.rawv = static_cast<uint16_t*>(ring_v.data_ptr());\n  params.rawk = static_cast<uint16_t*>(ring_k.data_ptr());\n  params.ring_g = ring_g.data_ptr<float>();\n  params.ring_beta = ring_beta.data_ptr<float>();\n  params.o = static_cast<uint16_t*>(output.data_ptr());\n  params.stride_x_tok = mixed_qkv.stride(0);\n  params.stride_cs_line = conv_state.stride(0);\n  params.stride_cs_win = conv_state.stride(1);\n  params.stride_iw_line = conv_window.stride(0);\n  params.stride_iw_step = conv_window.stride(1);\n  params.stride_iw_win = conv_window.stride(2);\n  params.stride_a_tok = a.stride(0);\n  params.stride_b_tok = b.stride(0);\n  params.stride_state_slot = ssm_state.stride(0);\n  params.stride_rawv_slot = ring_v.stride(0);\n  params.stride_rawk_slot = ring_k.stride(0);\n  params.stride_g_slot = ring_g.stride(0);\n  params.stride_beta_slot = ring_beta.stride(0);\n  params.scale = static_cast<float>(scale);\n  params.lower_bound = static_cast<float>(lower_bound.value_or(0.0));\n  params.softplus_beta = static_cast<float>(softplus_beta.value_or(1.0));\n  params.softplus_threshold = static_cast<float>(softplus_threshold.value_or(20.0));\n  params.num_heads = static_cast<int32_t>(heads);\n  params.ring_len = static_cast<int32_t>(ring_len);\n  // value columns per lane: 1 (4 blocks per head) at B <= 5, 2 at B <= 10, else 4 (1 block per head)\n  const int64_t heads_total = batch * heads;\n  const bool gate = lower_bound.has_value();\n  if (batch <= 5) {\n    launch_steps<1>(steps, gate, params, heads_total, stream);\n  } else if (batch <= 10) {\n    launch_steps<2>(steps, gate, params, heads_total, stream);\n  } else {\n    launch_steps<4>(steps, gate, params, heads_total, stream);\n  }\n  C10_HIP_CHECK(hipGetLastError());\n}\n\n}  // namespace\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n  m.def(\"run(Tensor mixed_qkv, Tensor conv_weight, Tensor conv_state, Tensor cache_indices, \"\n        \"Tensor(a!) conv_window, Tensor window_indices, Tensor a, Tensor b, Tensor a_log, Tensor dt_bias, \"\n        \"Tensor ssm_state, Tensor(a!) ring_v, Tensor(a!) ring_k, Tensor(a!) ring_g, Tensor(a!) ring_beta, \"\n        \"float scale, float? lower_bound, float? softplus_beta, float? softplus_threshold, \"\n        \"Tensor(a!) output) -> ()\",\n        &run);\n}\n"
+      }
+    ]
+  }
+}

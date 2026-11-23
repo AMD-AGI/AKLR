@@ -31,7 +31,7 @@ class ReferenceWorkloadResult(FrozenModel):
 
 class WorkloadEvaluation:
     """One workload's outputs, as the candidate left them in the lent tensors, against the
-    float32 reference (float64 where float32 overflows), on their device; a group's, each
+    float32 reference, on their device; a group's, each
     rank's on its own."""
 
     request: TrialRequest
@@ -112,19 +112,12 @@ class WorkloadEvaluation:
                     for args in group_args
                 ]
             for rank in ranks:
-                for decode in (semantics.to_float32, semantics.to_float64):
-                    compare_kwargs = {
-                        "reference_outputs": contract.reference_outputs(point, group_args, rank, decode)
-                    }
-                    if request.has_error_bound("dot_product"):
-                        compare_kwargs["magnitude_outputs"] = contract.reference_outputs(
-                            point, magnitudes, rank, decode
-                        )
-                    # float32 overflows where the op's value can be finite (a sum that cancels): float64 then
-                    if all(
-                        t.isfinite().all() for outputs in compare_kwargs.values() for t in outputs.values()
-                    ):
-                        break
+                compare_kwargs = {
+                    "reference_outputs": contract.reference_outputs(point, group_args, rank),
+                    "id_scores": contract.id_scores(point, group_args, rank),
+                }
+                if request.has_error_bound("dot_product"):
+                    compare_kwargs["magnitude_outputs"] = contract.reference_outputs(point, magnitudes, rank)
                 if request.has_error_bound("baseline_relative"):  # no ranks: OpContract._check_ranks
                     baseline = contract.baseline()
                     if baseline is None:

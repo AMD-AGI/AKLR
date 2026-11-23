@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""aiter's calls to AKLR ops: what is taken, what goes back to aiter, and SiTUv2's activations."""
+"""aiter's fused_moe calls to AKLR's op: what is taken, what goes back to aiter, and SiTUv2's activations."""
 
 import enum
 import importlib
@@ -16,9 +16,6 @@ from aklr.plugins import aiter as aklr_aiter
 
 # the package's names are the functions; the modules hold what the tests replace
 moe_module = importlib.import_module("aklr.plugins.aiter.fused_moe")
-gemm_module = importlib.import_module("aklr.plugins.aiter.tuned_gemm")
-triton_gemm_module = importlib.import_module("aklr.plugins.aiter.triton_gemm")
-blockscale_gemm_module = importlib.import_module("aklr.plugins.aiter.blockscale_gemm")
 
 
 class ActivationType(enum.Enum):
@@ -40,9 +37,6 @@ def op_calls(monkeypatch):
         return "aklr"
 
     monkeypatch.setattr(moe_module, "aklr_fused_moe", op)
-    monkeypatch.setattr(gemm_module, "gemm", op)
-    monkeypatch.setattr(triton_gemm_module, "gemm", op)
-    monkeypatch.setattr(blockscale_gemm_module, "gemm_a8w8_blockwise_scaled", op)
     return calls
 
 
@@ -224,63 +218,3 @@ def test_the_callers_buffer_and_dtype_reach_the_op(op_calls):
     assert call["out_dtype"] is torch.bfloat16
     # vLLM's 0.0 is no limit
     assert call["swiglu_limit"] is None
-
-
-def mm_call(**changed):
-    call = {"bias": None, "otype": None, "scale_a": None, "scale_b": None, "scale_c": None} | changed
-    return aklr_aiter.mm(torch.zeros(4, 8), torch.zeros(6, 8), **call)
-
-
-@pytest.mark.parametrize("scale", ["scale_a", "scale_b", "scale_c"])
-def test_a_scaled_gemm_goes_back_to_aiter(op_calls, scale):
-    assert mm_call(**{scale: torch.ones(1)}) is FallbackReason.OUT_OF_CONTRACT
-    assert op_calls == []
-
-
-def test_a_gemm_reaches_the_op_with_the_callers_buffer(op_calls):
-    out = torch.empty(4, 6)
-    assert mm_call(otype=torch.bfloat16, out=out) == "aklr"
-    (call,) = op_calls
-    assert call["out"] is out
-    assert call["out_dtype"] is torch.bfloat16
-
-
-def triton_call(**changed):
-    call = {
-        "bias": None,
-        "dtype": torch.bfloat16,
-        "y": None,
-        "activation": None,
-        "skip_reduce": False,
-    } | changed
-    return aklr_aiter.gemm_a16w16(torch.zeros(4, 8), torch.zeros(6, 8), **call)
-
-
-@pytest.mark.parametrize(
-    "changed", [{"activation": "gelu"}, {"skip_reduce": True}], ids=lambda c: next(iter(c))
-)
-def test_a_triton_gemm_with_more_than_the_product_goes_back_to_aiter(op_calls, changed):
-    assert triton_call(**changed) is FallbackReason.OUT_OF_CONTRACT
-    assert op_calls == []
-
-
-def test_a_triton_gemm_reaches_the_op_with_the_callers_buffer(op_calls):
-    y = torch.empty(4, 6)
-    assert triton_call(y=y, dtype=torch.float16) == "aklr"
-    (call,) = op_calls
-    assert call["out"] is y
-    assert call["out_dtype"] is torch.float16
-
-
-def test_a_shuffled_block_scaled_gemm_reaches_the_op_with_the_callers_buffer(op_calls):
-    out = torch.empty(4, 256, dtype=torch.bfloat16)
-    x, w = torch.zeros(4, 256, dtype=FP8), torch.zeros(256, 256, dtype=FP8)
-    x_scale, w_scale = torch.ones(2, 4).T, torch.ones(2, 2)
-    assert (
-        aklr_aiter.gemm_a8w8_blockscale_bpreshuffle(x, w, x_scale, w_scale, dtype=torch.bfloat16, out=out)
-        == "aklr"
-    )
-    (call,) = op_calls
-    assert call["out"] is out
-    assert call["out_dtype"] is torch.bfloat16
-    assert call["operand_format"] == "none:preshuffled"

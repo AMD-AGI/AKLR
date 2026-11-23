@@ -99,8 +99,8 @@
       "scalars": {
         "sm_scale": 0.0625
       },
-      "accuracy": "failed",
-      "speedup": 1.413,
+      "accuracy": "passed",
+      "speedup": 1.421,
       "microseconds": 9.11
     }
   ],

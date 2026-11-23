@@ -12,6 +12,7 @@ import torch
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang.models.deepseek_v2 import api as deepseek_v2
 from aklr.plugins.sglang.models.qwen3_5 import api as qwen3_5
+from aklr.plugins.sglang.models.qwen3_moe import api as qwen3_moe
 from aklr.plugins.sglang.models.qwen3_next import api as qwen3_next
 
 
@@ -54,6 +55,22 @@ def test_a_deepseek_v2_moe_whose_output_sum_is_left_stays_on_sglang(moe_checks):
         is FallbackReason.OUT_OF_CONTRACT
     )
     assert moe_checks == []
+
+
+@pytest.mark.parametrize(
+    ("bound", "masked"), [(None, False), (torch.tensor([3]), True)], ids=["no_padding", "padded_rows"]
+)
+def test_a_qwen3_moe_whose_padded_rows_sglang_masks_stays_on_sglang(monkeypatch, bound, masked):
+    """sglang 0.5.23's top-k masks padded rows by the forward context's bound, a bound 0.5.22's
+    Qwen3-MoE forward_normal never passed it."""
+    reached = []
+    monkeypatch.setattr(qwen3_moe.moe_blocks, "runtime_falls_back", lambda: reached.append(True) or True)
+    monkeypatch.setattr(qwen3_moe, "qwen3_moe_fp8_moe", lambda **_: pytest.fail("an op was asked"))
+    forward_context(monkeypatch, bound)
+    assert (
+        qwen3_moe._moe_forward_normal(SimpleNamespace(), torch.zeros(4, 8)) is FallbackReason.OUT_OF_CONTRACT
+    )
+    assert reached == ([] if masked else [True])
 
 
 @pytest.mark.parametrize("api", [qwen3_5, qwen3_next], ids=["qwen3_5", "qwen3_next"])
