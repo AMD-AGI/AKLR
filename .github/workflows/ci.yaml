@@ -313,11 +313,7 @@ jobs:
           [[ ${MEASURED_BY_BOT:-} != true ]] || flags+=(--allow-measured-edits)
           if [[ -n ${AKLR_BASELINE_AITER:-} ]]; then
             echo '::group::Validate aklr/ops'
-            # FIXME: mega_moe's baseline JIT-builds mori's device bitcode, which misses TheRock's
-            # <libdrm/drm.h> (mori/jit/core.py::_collect_include_dirs, ROCm/mori 29e0c086); measure
-            # mega_moe again once the image ships a mori that finds it.
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --exclude aklr/ops/mega_moe \
-              --out "$reports/validation-report"
+            python3 -m aklr validate "${flags[@]}" --under aklr/ops --out "$reports/validation-report"
           else
             : "${PLUGINS:?}"
             echo "::group::Validate plugins ($PLUGINS), check aklr/ops"
