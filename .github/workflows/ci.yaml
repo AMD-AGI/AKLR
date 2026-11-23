@@ -641,6 +641,7 @@ jobs:
         with:
           app-id: ${{ secrets.AKLR_BOT_APP_ID }}
           private-key: ${{ secrets.AKLR_BOT_PRIVATE_KEY }}
+          permission-contents: write
       # main's tip, not this run's commit; the history holds the bot's measurement commits.
       - name: Checkout main
         uses: actions/checkout@v4

@@ -269,7 +269,12 @@ def index_page(reports: list[ContractReport], context: Context, lang: str) -> st
     meta = (
         f'<a href="../index.html?lang={lang}">← {tr(lang, "AKLR Weekly Report", "AKLR 每周报告")}</a> · '
         f"main {commit_link(context, context.commit)}{latest} · "
-        f"{tr(lang, 'generated', '生成于')} {escape(when(context.generated_at))}"
+        f"{tr(lang, 'generated', '生成于')} {escape(when(context.generated_at))}<br>"
+        + tr(
+            lang,
+            "Served assumes the installed stack meets each kernel's <code>kernel.requires</code>.",
+            "“生效”以所装软件栈满足各 kernel 的 <code>kernel.requires</code> 为前提。",
+        )
     )
     body = (
         f'<div class="card" style="overflow-x:auto"><table><thead><tr>{head}</tr></thead>'
@@ -284,6 +289,8 @@ def chart(lang: str, report: ContractReport) -> str:
         (p for p in report.points if p.reason == SERVED and p.speedup is not None), key=lambda p: p.speedup
     )
     if not served:
+        if report.baseline is None:
+            return f'<p class="muted">{tr(lang, "No baseline, so no speedup to chart.", "没有 baseline，没有可画的加速比。")}</p>'
         return (
             f'<p class="muted">{tr(lang, "No served point has a speedup.", "没有带 speedup 的生效点。")}</p>'
         )
@@ -325,6 +332,10 @@ def chart(lang: str, report: ContractReport) -> str:
     return f'<svg class="chart" viewBox="0 0 {width} {height}" role="img">{grid}{refs}{dots}{axis}</svg>'
 
 
+def requires_text(requires: dict[str, str] | None) -> str:
+    return ", ".join(f"{name}{specifier}" for name, specifier in (requires or {}).items())
+
+
 def point_order(p: PointReport) -> tuple:
     return (p.reason != SERVED, -(p.speedup or 0), list(REASON_LABELS).index(p.reason), dims_text(p.dims))
 
@@ -336,11 +347,16 @@ def contract_page(report: ContractReport, context: Context, lang: str) -> str:
         kernel = "—"
         if served:
             link = f"{context.repo_url}/blob/{context.commit}/{p.path}"
+            requires = requires_text(p.requires)
             kernel = (
                 f'<a href="{escape(link)}"><code>{escape(p.kernel or "")}</code></a><br>'
                 f'<span class="muted">{escape(p.language or "")} · {escape(Path(p.path or "").stem)}</span>'
+                + (
+                    f'<br><span class="muted">{tr(lang, "requires", "依赖")} <code>{escape(requires)}</code></span>'
+                    if requires
+                    else ""
+                )
             )
-        baseline_us = p.microseconds * p.speedup if served and p.microseconds and p.speedup else None
         rows.append(
             f"<tr><td><code>{escape(dims_text(p.dims))}</code></td>"
             f"<td>{status_badge(lang, REASON_CLASS[p.reason], REASON_LABELS[p.reason])}</td>"
@@ -348,7 +364,7 @@ def contract_page(report: ContractReport, context: Context, lang: str) -> str:
             f'<td class="num{" good" if served and p.speedup and p.speedup >= 1 else ""}">'
             f"{speedup_text(p.speedup if served else None)}</td>"
             f'<td class="num">{number(p.microseconds if served else None)}</td>'
-            f'<td class="num">{number(baseline_us)}</td><td class="num">{p.candidates}</td></tr>'
+            f'<td class="num">{p.candidates}</td></tr>'
         )
     headers = (
         (tr(lang, "Point", "点"), ""),
@@ -356,7 +372,6 @@ def contract_page(report: ContractReport, context: Context, lang: str) -> str:
         (tr(lang, "Serving kernel", "胜出 kernel"), ""),
         (tr(lang, "Speedup", "加速比"), "num"),
         (tr(lang, "Kernel µs", "Kernel µs"), "num"),
-        (tr(lang, "Baseline µs", "Baseline µs"), "num"),
         (tr(lang, "Candidates", "候选数"), "num"),
     )
     head = "".join(f'<th class="{css}">{label}</th>' for label, css in headers)
@@ -372,6 +387,15 @@ def contract_page(report: ContractReport, context: Context, lang: str) -> str:
     details = (
         ("Baseline", "Baseline", escape(report.baseline) if report.baseline else tr(lang, "none", "无")),
         ("Serving threshold", "生效门槛", threshold_text(lang, report)),
+        (
+            "Assumes",
+            "前提",
+            tr(
+                lang,
+                "the installed stack meets each serving kernel's <code>kernel.requires</code>; dispatch skips a kernel whose requirements are unmet",
+                "所装软件栈满足各胜出 kernel 的 <code>kernel.requires</code>；不满足时 dispatch 会跳过该 kernel",
+            ),
+        ),
         ("Package", "所在包", f"<code>{escape(report.op_package)}</code>"),
         ("Fixed for all points", "所有点相同", f"<code>{escape(dims_text(report.fixed))}</code>"),
         ("Kernels", "Kernel 数", str(report.kernels)),

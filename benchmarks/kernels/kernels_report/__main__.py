@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aklr.core.platform.env import DEFAULT_MIN_SPEEDUP
+from aklr.core.platform.env import RuntimeEnv
 from kernels_report.collect import Context, SchemaErrors, collect, read_measurements
 from kernels_report.render import write_section
 
@@ -27,9 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-url", default=f"{server}/{repository}")
     parser.add_argument("--ref", default=os.environ.get("GITHUB_REF", ""))
     parser.add_argument("--event", default=os.environ.get("GITHUB_EVENT_NAME", ""))
-    parser.add_argument("--min-speedup", type=float, default=DEFAULT_MIN_SPEEDUP)
+    # dispatch's threshold: AKLR_MIN_SPEEDUP, else its default
+    parser.add_argument("--min-speedup", type=float, default=None)
     parser.add_argument("section", type=Path, help="kernels/ in a site-data checkout; replaced")
     args = parser.parse_args(argv)
+    min_speedup = args.min_speedup if args.min_speedup is not None else RuntimeEnv().min_speedup
 
     root = Path.cwd()
     commit = subprocess.run(
@@ -45,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         event=args.event,
     )
     try:
-        reports = collect(root, min_speedup=args.min_speedup, measurements=read_measurements(root))
+        reports = collect(root, min_speedup=min_speedup, measurements=read_measurements(root))
     except SchemaErrors as e:
         print(f"main's schemas do not load:\n{e}", file=sys.stderr)
         return 1

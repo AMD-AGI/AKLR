@@ -70,8 +70,14 @@ def test_each_point_reports_what_dispatch_serves(gemm_schemas):
     served = by_m["1"]
     assert (served.reason, served.path, served.speedup, served.microseconds) == ("served", path_a, 1.3, 2.0)
     assert (served.kernel, served.candidates) == (a.name, 2)
+    assert served.requires == dict(a.kernel.requires)
     # not qualified outranks inaccurate, as dispatch's fallback reason does
-    assert (by_m["2"].reason, by_m["2"].kernel, by_m["2"].speedup) == ("not_qualified", None, None)
+    assert (by_m["2"].reason, by_m["2"].kernel, by_m["2"].speedup, by_m["2"].requires) == (
+        "not_qualified",
+        None,
+        None,
+        None,
+    )
     assert (by_m["4"].reason, by_m["4"].speedup) == ("inaccurate", None)
     assert (by_m["8"].reason, by_m["8"].speedup) == ("not_measured", None)
     assert (report.served, len(report.points), report.status) == (1, 4, "partial")
@@ -87,7 +93,30 @@ def test_without_a_baseline_every_point_not_failed_is_served(gemm_schemas):
 
     reasons = {p.dims["m"]: p.reason for p in report.points}
     assert reasons == {"1": "served", "2": "served", "4": "inaccurate"}
-    assert report.geomean == pytest.approx(0.8)
+    # validation's speedup without a baseline is no baseline speedup: the report shows none
+    assert all(p.speedup is None for p in report.points)
+    assert report.geomean is None
+
+
+@pytest.mark.parametrize(
+    ("env", "argv", "expected"), [("1.2", [], 1.2), ("1.2", ["--min-speedup", "1.1"], 1.1)]
+)
+def test_threshold_defaults_to_aklr_min_speedup(monkeypatch, tmp_path, env, argv, expected):
+    import kernels_report.__main__ as cli
+
+    seen = {}
+
+    def collect_at(root, *, min_speedup, measurements):
+        seen["t"] = min_speedup
+        return []
+
+    monkeypatch.setenv("AKLR_MIN_SPEEDUP", env)
+    monkeypatch.setattr(cli, "read_measurements", lambda root: {})
+    monkeypatch.setattr(cli, "collect", collect_at)
+    monkeypatch.setattr(cli, "write_section", lambda *args: {"status_counts": {}})
+
+    assert cli.main([*argv, str(tmp_path / "kernels")]) == 0
+    assert seen["t"] == expected
 
 
 @pytest.mark.parametrize(
@@ -170,5 +199,10 @@ def test_section_pages_show_a_dash_for_points_not_served(tmp_path, gemm_schemas)
     assert not (out / "contracts" / "withdrawn-1.0.html").exists()
     page = (out / "contracts" / "gemm-1.0.html").read_text()
     assert "1.300" in page and "1.021" not in page
+    # speedup times kernel µs is no baseline latency: no such column
+    assert "Baseline µs" not in page
+    assert "kernel.requires" in page
     index = (out / "index.html").read_text()
     assert "contracts/gemm-1.0.html" in index and "1/2" in index
+    contracts = json.loads((out / "data.json").read_text())["contracts"]
+    assert contracts[0]["points"][0]["requires"] == dict(a.kernel.requires)

@@ -68,8 +68,11 @@ class PointReport:
     kernel: str | None
     language: str | None
     path: str | None
+    # speedup over the baseline; None when not served or the op has no baseline
     speedup: float | None
     microseconds: float | None
+    # the serving kernel's kernel.requires: dispatch skips it where the installed stack misses them
+    requires: dict[str, str] | None
     # committed kernels with a workload at this Point
     candidates: int
 
@@ -169,9 +172,20 @@ def summarize(
             ]
             # the rank dispatch serves the key at: the lowest among its any_size workloads
             workload = min(same, key=schema.rank_key)
-            row = (SERVED, schema.name, schema.kernel.language, path, workload.speedup, workload.microseconds)
+            # without a baseline, validation's speedup is untimed or over an incumbent: it ranks only
+            speedup = workload.speedup if baseline is not None else None
+            requires = dict(schema.kernel.requires)
+            row = (
+                SERVED,
+                schema.name,
+                schema.kernel.language,
+                path,
+                speedup,
+                workload.microseconds,
+                requires,
+            )
         else:
-            row = (table.fallback_reasons[key].value, None, None, None, None, None)
+            row = (table.fallback_reasons[key].value, None, None, None, None, None, None)
         rows.append((labels[key], *row, candidates[key]))
 
     names = list(dict.fromkeys(name for dims, *_ in rows for name in dims))
