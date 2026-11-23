@@ -24,7 +24,6 @@ from aklr.plugins.sglang import hook
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
-importlib.import_module("aklr.plugins.sglang.aiter_calls")
 importlib.import_module("aklr.plugins.sglang.models.kimi_k3_torch_gemm")
 importlib.import_module("aklr.plugins.sglang.models.dspark_torch_gemm")
 importlib.import_module("aklr.plugins.sglang.layers.logits_processor_torch_gemm")
@@ -93,18 +92,6 @@ def test_every_route_takes_its_targets_parameters(target, versions, route):
             "inspect",
         ):
             assert routes[p.name] == p.default, p.name
-
-
-def test_the_fused_moe_route_passes_sglangs_output_to_the_op(monkeypatch):
-    """CI's aiter lacks ``output``, so the parameter test cannot see it: the route must take
-    sglang's ``output`` (MoRI EP's combine buffer) and pass it on."""
-    from aklr.plugins.sglang import aiter_calls
-
-    passed = {}
-    monkeypatch.setattr(aiter_calls.aklr_aiter, "fused_moe", lambda *args, **kwargs: passed.update(kwargs))
-    out = torch.empty(0)
-    aiter_calls._fused_moe(*[None] * 5, output=out)
-    assert passed["output"] is out
 
 
 @pytest.mark.parametrize(
@@ -288,7 +275,6 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     routes = (
         [
             "aklr.plugins.sglang.x.y.api",
-            "aklr.plugins.sglang.aiter_calls",
             "aklr.plugins.sglang.models.kimi_k3_torch_gemm",
             "aklr.plugins.sglang.models.dspark_torch_gemm",
             "aklr.plugins.sglang.layers.logits_processor_torch_gemm",

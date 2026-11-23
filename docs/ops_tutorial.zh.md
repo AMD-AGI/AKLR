@@ -40,9 +40,9 @@ flowchart TD
 参考仓库里的 `harness/skills/port-generated-kernels/references/new-op.md` 依次实现以下文件：
 
 1. `contract.py`：定义 `OpContract` 和 `CONTRACTS`（registry 会自动发现）；`op_type` 取目录名 `<op>`；按数学含义命名；多输出时不能有叫 `out` 的；每个输出给出 `error_bounds`，contract 给出 `determinism`。
-2. `reference.py`：float64 的 `<contract>_reference(point, row_major_args, to_float64)`。
+2. `reference.py`：`<contract>_reference(point, row_major_args)`，按算子声明的 dtype 算，做不到就用 float32（目前都是 float32，输入用 `semantics.to_float32` 读）；整数输出用声明的 dtype。规则见 `aklr/ops/README.md` 的 "Reference and baseline"。
 3. `api.py`：`@api(<CONTRACT>)` 存根（函数体只能是 `...`）。
-4. `baseline.py`：每个有基线的 contract 一个 `<contract>_baseline`，接收 api 的参数（以调用的关键字参数传入），在函数内部 import AITER 或 SGLang，像 api 一样返回输出；不支持的调用抛 `NotImplementedError`（bench 报 `baseline_failed`）。没有这个函数时算子以自己为基线，kernel 没有要超过的对象。
+4. `baseline.py`：每个有基线的 contract 一个 `<contract>_baseline`，就是推理引擎对这个算子的实际调用；接收 api 的参数（以调用的关键字参数传入），在函数内部 import AITER 或 SGLang，像 api 一样返回输出；不支持的调用抛 `NotImplementedError`（bench 报 `baseline_failed`）。没有这个函数时算子以自己为基线，kernel 没有要超过的对象。
 5. `__init__.py`：导出 api。
 6. 在 `tests/ops/cases.py` 的 `SMALL_POINTS` 中按 contract 顺序加入各 contract 的 base 小 Point，然后运行 `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` 重新生成 `tests/ops/names.txt` 并一起提交。
 

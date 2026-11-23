@@ -1,0 +1,264 @@
+{
+  "schema_version": 5,
+  "name": "sparse_prefill_mxfp8_n_heads128",
+  "contract_id": "sparse_prefill_mxfp8@1.0",
+  "description": "Sparse attention over two CSR ranges. NoPE uses block-scaled E4M3FN and RoPE BF16; each head's sink contributes only to the softmax denominator.",
+  "op_type": "mla_prefill",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Query rows."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 128,
+      "description": "Query heads."
+    },
+    "prefix_rows": {
+      "type": "var",
+      "description": "Rows of the prefix pool."
+    },
+    "extend_rows": {
+      "type": "var",
+      "description": "Rows of the extend pool."
+    },
+    "prefix_nnz": {
+      "type": "var",
+      "description": "Prefix CSR entries."
+    },
+    "extend_nnz": {
+      "type": "var",
+      "description": "Extend CSR entries."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "CSR offsets, queries plus one."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q_nope": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        512
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "mxfp8_nope_rows"
+      },
+      "description": "Packed NoPE query rows."
+    },
+    "q_rope": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        64
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Query RoPE components."
+    },
+    "prefix_nope": {
+      "shape": [
+        "prefix_rows",
+        512
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "mxfp8_nope_rows"
+      },
+      "description": "Packed NoPE rows: 448 FP8 codes, 14 E8M0 scales, padding to 512 bytes."
+    },
+    "prefix_rope": {
+      "shape": [
+        "prefix_rows",
+        64
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "RoPE keys and values corresponding to the NoPE rows."
+    },
+    "prefix_indices": {
+      "shape": [
+        "prefix_nnz"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "prefix_rows - 1",
+        "distinct": false
+      },
+      "description": "CSR entries selecting rows of the pool."
+    },
+    "prefix_indptr": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 0,
+        "total": "prefix_nnz"
+      },
+      "description": "Monotone CSR offsets for each query, beginning with zero."
+    },
+    "extend_nope": {
+      "shape": [
+        "extend_rows",
+        512
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "mxfp8_nope_rows"
+      },
+      "description": "Packed NoPE rows: 448 FP8 codes, 14 E8M0 scales, padding to 512 bytes."
+    },
+    "extend_rope": {
+      "shape": [
+        "extend_rows",
+        64
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "RoPE keys and values corresponding to the NoPE rows."
+    },
+    "extend_indices": {
+      "shape": [
+        "extend_nnz"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "extend_rows - 1",
+        "distinct": false
+      },
+      "description": "CSR entries selecting rows of the pool."
+    },
+    "extend_indptr": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 0,
+        "total": "extend_nnz"
+      },
+      "description": "Monotone CSR offsets for each query, beginning with zero."
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head softmax sink logits."
+    },
+    "softmax_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplier of the combined QK score."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "description": "Weighted sum of 448 dequantized NoPE and 64 RoPE values."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 344,
+        "prefix_rows": 162436,
+        "extend_rows": 2699,
+        "prefix_nnz": 220160,
+        "extend_nnz": 44032,
+        "n_offsets": 345
+      },
+      "scalars": {
+        "softmax_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 344,
+        "prefix_rows": 4927942,
+        "extend_rows": 2699,
+        "prefix_nnz": 396288,
+        "extend_nnz": 44032,
+        "n_offsets": 345
+      },
+      "scalars": {
+        "softmax_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2048,
+        "prefix_rows": 162436,
+        "extend_rows": 16384,
+        "prefix_nnz": 524288,
+        "extend_nnz": 262144,
+        "n_offsets": 2049
+      },
+      "scalars": {
+        "softmax_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2048,
+        "prefix_rows": 4927942,
+        "extend_rows": 16384,
+        "prefix_nnz": 2359296,
+        "extend_nnz": 262144,
+        "n_offsets": 2049
+      },
+      "scalars": {
+        "softmax_scale": 0.04419417306780815
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "GEAK; AKLR port by Codex",
+    "entry_point": "kernel.hip::run",
+    "sources": []
+  }
+}
