@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -18,19 +20,18 @@ _CHUNK_ELEMENTS = 2**28
 def fp8_mqa_logits_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """(no_values, logits): nothing, and logits with each row's window rewritten, the scale
     applied before relu as aiter does."""
     import torch
 
-    q = decode(row_major_args["q"], point.dtypes["q"])
-    kv = decode(row_major_args["kv"], point.dtypes["kv"])
-    scales = decode(row_major_args["kv_scales"], "float32")
-    weights = decode(row_major_args["weights"], "float32")
+    q = to_float32(row_major_args["q"], point.dtypes["q"])
+    kv = to_float32(row_major_args["kv"], point.dtypes["kv"])
+    scales = to_float32(row_major_args["kv_scales"], "float32")
+    weights = to_float32(row_major_args["weights"], "float32")
     starts = row_major_args["cu_starts"].long()
     ends = row_major_args["cu_ends"].long()
-    out = decode(row_major_args["logits"], "float32").clone()
+    out = to_float32(row_major_args["logits"], "float32").clone()
     n_q, n_heads = q.shape[:2]
     n_k = kv.shape[0]
     columns = torch.arange(n_k, device=q.device)
