@@ -294,11 +294,13 @@ class TestMutableInput:
         args = case.inputs()
         shape = case.contract.storage_shape_of("normalized", case.point)
         reference = {
-            "normalized": torch.randn(shape, generator=torch.Generator().manual_seed(0), dtype=torch.float64),
-            "conv_state": semantics.to_float64(args["conv_state"], "bfloat16"),
-            "delta_state": semantics.to_float64(args["delta_state"], "float32"),
+            "normalized": torch.randn(shape, generator=torch.Generator().manual_seed(0)),
+            "conv_state": semantics.to_float32(args["conv_state"], "bfloat16"),
+            "delta_state": semantics.to_float32(args["delta_state"], "float32"),
         }
-        actual = {r: t.to(semantics.torch_dtypes(case.point.dtypes[r])[0]) for r, t in reference.items()}
+        actual = {
+            r: t.to(semantics.torch_dtypes(case.point.dtypes[r])[0], copy=True) for r, t in reference.items()
+        }
 
         def compare() -> dict[str, semantics.CompareResult]:
             return semantics.compare_outputs(case.request.schema_json, actual, reference)

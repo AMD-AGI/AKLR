@@ -246,7 +246,7 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
         for rank, message in enumerate(errors):
             if message is not None:
                 raise RuntimeError(f"rank {rank}: {message}")
-        slowest = torch.tensor(times, dtype=torch.float64, device="cuda")
+        slowest = torch.tensor(times, dtype=torch.float32, device="cuda")
         dist.all_reduce(slowest, dist.ReduceOp.MAX, group=group)
         times = slowest.tolist()
     return _summarize_statistics(times, quantiles, return_mode)

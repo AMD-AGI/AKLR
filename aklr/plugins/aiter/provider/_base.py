@@ -6,14 +6,16 @@ the one-time start of AKLR's dispatch."""
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import Callable, Mapping
+import threading
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
 
-__all__ = ["NAME", "SELECTORS", "offer", "ready", "selector", "served"]
+__all__ = ["NAME", "SELECTORS", "declining", "is_declining", "offer", "ready", "selector", "served"]
 
 NAME = "aklr"
 _QUALIFICATION = "https://github.com/AMD-AGI/AKLR"
@@ -23,6 +25,7 @@ Selector = Callable[[tuple[Any, ...], Mapping[str, Any]], Any]
 # aiter's op name -> (the contract version served, the selector)
 SELECTORS: dict[str, tuple[int, Selector]] = {}
 _is_ready: bool | None = None
+_declining = threading.local()
 
 
 def selector(op: str, version: int = 1) -> Callable[[Selector], Selector]:
@@ -75,3 +78,20 @@ def served(result: Any) -> Any:
     if isinstance(result, FallbackReason):
         raise RuntimeError(f"aklr: an accepted aiter call fell back ({result.value})")
     return result
+
+
+@contextlib.contextmanager
+def declining() -> Iterator[None]:
+    """AKLR declines the aiter calls made in this block on this thread: a framework route that asked
+    AKLR and fell back runs aiter's own kernel, without its call being offered to AKLR again."""
+    previous = getattr(_declining, "active", False)
+    _declining.active = True
+    try:
+        yield
+    finally:
+        _declining.active = previous
+
+
+def is_declining() -> bool:
+    """Whether this thread is in :func:`declining`."""
+    return getattr(_declining, "active", False)

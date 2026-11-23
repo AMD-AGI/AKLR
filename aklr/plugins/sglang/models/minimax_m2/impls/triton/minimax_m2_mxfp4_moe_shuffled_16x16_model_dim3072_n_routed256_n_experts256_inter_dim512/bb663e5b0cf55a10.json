@@ -161,8 +161,8 @@
         "expert_offset": 0
       },
       "accuracy": "passed",
-      "speedup": 1.306,
-      "microseconds": 169.0
+      "speedup": 1.336,
+      "microseconds": 165.0
     }
   ],
   "layout_variants": {

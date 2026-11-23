@@ -246,15 +246,15 @@ jobs:
           test "$RESULTS_DOWNLOAD_OUTCOME" != failure
 
   # Every result on the site comes from main: a PR run (the ci:agentx-mi355x label) only uploads
-  # agentx-site. The bot environment holds the App key and deploys only from main; site.yaml then
-  # deploys site-data to Pages after this workflow completes.
+  # agentx-site. The agentx-bot environment holds the aklr-agentx-ci App key and deploys only from
+  # main; site.yaml then deploys site-data to Pages after this workflow completes.
   publish:
     needs: report
     if: >-
       ${{ !cancelled() && needs.report.outputs.site_ready == 'true' && github.ref == 'refs/heads/main' &&
           (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.publish) }}
     runs-on: ubuntu-latest
-    environment: bot
+    environment: agentx-bot
     timeout-minutes: 15
     # Writes use the App token, not GITHUB_TOKEN.
     permissions:
@@ -285,13 +285,13 @@ jobs:
         id: token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ secrets.AKLR_BOT_APP_ID }}
-          private-key: ${{ secrets.AKLR_BOT_PRIVATE_KEY }}
+          app-id: ${{ secrets.AKLR_AGENTX_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_AGENTX_BOT_PRIVATE_KEY }}
           permission-contents: write
       - name: Replace this run's targets in site-data/agentx
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
-          BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
+          BOT_LOGIN: ${{ vars.AKLR_AGENTX_BOT_LOGIN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           bash ../../.github/scripts/commit_site_data.sh agentx \

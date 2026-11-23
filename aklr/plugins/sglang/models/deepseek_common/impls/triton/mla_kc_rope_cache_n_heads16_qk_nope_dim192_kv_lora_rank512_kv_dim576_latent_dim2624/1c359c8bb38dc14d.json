@@ -199,7 +199,7 @@
         "n_positions": 65536
       },
       "accuracy": "passed",
-      "speedup": 2.117,
+      "speedup": 2.065,
       "microseconds": 10.5
     }
   ],

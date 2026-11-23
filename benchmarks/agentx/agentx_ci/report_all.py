@@ -190,7 +190,9 @@ def index_page(manifest: dict, lang: str, title: str, home: str | None = None) -
         tr(lang, "Source (main)", "来源（main）"),
         tr(lang, "Baselines", "有效基线"),
     )
-    back = f'<a href="{escape(home)}">← {tr(lang, "AKLR results", "AKLR 测试结果")}</a> · ' if home else ""
+    back = (
+        f'<a href="{escape(home)}">← {tr(lang, "AKLR Weekly Report", "AKLR 每周报告")}</a> · ' if home else ""
+    )
     return f"""<div class="page" data-page="{lang}" lang="{tr(lang, "en", "zh-CN")}">
 <header><div class="top"><h1>{escape(title)}</h1>{language_switch(lang)}</div>
 <div class="meta">{back}{tr(lang, "Run", "运行")} {escape(manifest["run_id"])} · {

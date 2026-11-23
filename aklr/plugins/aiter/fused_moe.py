@@ -13,7 +13,7 @@ from aklr.core.runtime.dispatch import FallbackReason
 from aklr.ops.fused_moe.api import fused_moe as aklr_fused_moe
 from aklr.ops.fused_moe.reference import _SWIGLU_BF16_ROWS
 
-__all__ = ["fused_moe"]
+__all__ = ["fused_moe", "op_kwargs"]
 
 
 def fused_moe(
@@ -72,6 +72,49 @@ def fused_moe(
         or herd_topk
     ):
         return FallbackReason.OUT_OF_CONTRACT
+    kwargs = op_kwargs(
+        hidden_states,
+        w1,
+        expert_mask=expert_mask,
+        activation=activation,
+        quant_type=quant_type,
+        doweight_stage1=doweight_stage1,
+        w1_scale=w1_scale,
+        w2_scale=w2_scale,
+        num_local_tokens=num_local_tokens,
+        dtype=dtype,
+        swiglu_limit=swiglu_limit,
+        beta=beta,
+        linear_beta=linear_beta,
+        gate_mode=gate_mode,
+        output=output,
+    )
+    if isinstance(kwargs, FallbackReason):
+        return kwargs
+    return aklr_fused_moe(hidden_states, w1, w2, topk_weight, topk_ids, **kwargs)
+
+
+def op_kwargs(
+    hidden_states,
+    w1,
+    *,
+    expert_mask,
+    activation,
+    quant_type,
+    doweight_stage1,
+    w1_scale,
+    w2_scale,
+    num_local_tokens,
+    dtype,
+    swiglu_limit,
+    beta,
+    linear_beta,
+    gate_mode,
+    output,
+):
+    """AKLR's ``fused_moe`` keyword arguments, after its five tensors, for a call of aiter's fused MoE
+    passing nothing else, or why aiter computes it. ``activation`` and ``quant_type`` are aiter's
+    enums."""
     act_quant = 4
     name = attr_value(activation)
     # aiter picks SiTUv2's activation dtype at each call (AITER_SITUV2_A8W4, AITER_SITUV2_A4W4): fp8 is
@@ -92,28 +135,23 @@ def fused_moe(
         rounds = _aiter_rounds_swiglu(hidden_states, w1, activation=activation, quant_type=quant_type)
         if rounds != (hidden_states.shape[0] >= _SWIGLU_BF16_ROWS):
             return FallbackReason.OUT_OF_CONTRACT
-    return aklr_fused_moe(
-        hidden_states,
-        w1,
-        w2,
-        topk_weight,
-        topk_ids,
-        expert_mask=expert_mask,
-        activation=activation,
-        quant_type=quant_type,
-        doweight_stage1=doweight_stage1,
-        w1_scale=w1_scale,
-        w2_scale=w2_scale,
+    return {
+        "expert_mask": expert_mask,
+        "activation": activation,
+        "quant_type": quant_type,
+        "doweight_stage1": doweight_stage1,
+        "w1_scale": w1_scale,
+        "w2_scale": w2_scale,
         # vLLM passes 0.0 for no limit
-        swiglu_limit=swiglu_limit or None,
-        beta=beta,
-        linear_beta=linear_beta,
-        gate_mode=gate_mode,
-        out_dtype=dtype,
-        num_local_tokens=num_local_tokens,
-        act_quant=act_quant,
-        out=output,
-    )
+        "swiglu_limit": swiglu_limit or None,
+        "beta": beta,
+        "linear_beta": linear_beta,
+        "gate_mode": gate_mode,
+        "out_dtype": dtype,
+        "num_local_tokens": num_local_tokens,
+        "act_quant": act_quant,
+        "out": output,
+    }
 
 
 def _aiter_rounds_swiglu(hidden_states, w1, *, activation, quant_type) -> bool:

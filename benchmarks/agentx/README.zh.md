@@ -346,7 +346,7 @@ unset RUNNER_TOKEN
 
 所选 target 在 `agentx.yaml` 中的 `runner_label` 必须与注册时的 `--label` 一致；本例均为 `agentx-mi355x`。
 
-2. 需要发布报告时，在 **Settings → Pages** 将构建与部署来源设为 **GitHub Actions**；`github-pages` environment 要允许 `main`。publish job 会从 `bot` environment 读取 `AKLR_BOT_APP_ID` 和 `AKLR_BOT_PRIVATE_KEY`（这个 environment 的部署分支只允许 `main`），并读取变量 `AKLR_BOT_LOGIN`。App 需要 `contents: write` 权限。
+2. 需要发布报告时，在 **Settings → Pages** 将构建与部署来源设为 **GitHub Actions**；`github-pages` environment 要允许 `main`。publish job 以 GitHub App `aklr-agentx-ci` 的身份推送，它从 `agentx-bot` environment（部署分支只允许 `main`）读取 secret `AKLR_AGENTX_BOT_APP_ID`、`AKLR_AGENTX_BOT_PRIVATE_KEY` 和变量 `AKLR_AGENTX_BOT_LOGIN`（`aklr-agentx-ci[bot]`）。App 只需要 `contents: write` 权限，并且要在 `site-data` 的 ruleset 中允许它绕过。
 
 确认 runner 在 GitHub 页面显示 Online / Idle，并在主机检查服务：
 
