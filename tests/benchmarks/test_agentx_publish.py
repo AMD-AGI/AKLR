@@ -160,7 +160,14 @@ def test_only_main_schedules_and_manual_runs_publish():
     job = jobs["publish"]
     assert "github.ref == 'refs/heads/main'" in job["if"]
     assert "pull_request" not in job["if"]
-    assert job["environment"] == "bot"
+    assert job["environment"] == "agentx-bot"
+    token = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/create-github-app-token")
+    )
+    assert token["with"]["app-id"] == "${{ secrets.AKLR_AGENTX_BOT_APP_ID }}"
+    assert token["with"]["private-key"] == "${{ secrets.AKLR_AGENTX_BOT_PRIVATE_KEY }}"
+    publish = next(step for step in job["steps"] if "commit_site_data.sh agentx" in step.get("run", ""))
+    assert publish["env"]["BOT_LOGIN"] == "${{ vars.AKLR_AGENTX_BOT_LOGIN }}"
     assert job["concurrency"] == {"group": "site-data", "cancel-in-progress": False}
     runs = [step.get("run", "") for step in job["steps"]]
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout"))
@@ -172,8 +179,13 @@ def test_only_main_schedules_and_manual_runs_publish():
 def test_the_site_workflow_deploys_only_after_main_runs():
     site = workflow("site.yaml")
     run = site[True]["workflow_run"]
-    assert (run["workflows"], run["types"], run["branches"]) == (["AKLR-agentx-ci"], ["completed"], ["main"])
+    assert (run["workflows"], run["types"], run["branches"]) == (
+        ["AKLR-agentx-ci", "AKLR-CI"],
+        ["completed"],
+        ["main"],
+    )
     assert workflow("agentx-ci.yaml")["name"] == "AKLR-agentx-ci"
+    assert workflow("ci.yaml")["name"] == "AKLR-CI"
     assert site["jobs"]["deploy"]["permissions"]["pages"] == "write"
     assert "github.event.workflow_run.event" in site["jobs"]["deploy"]["if"]
     data = next(step for step in site["jobs"]["deploy"]["steps"] if step.get("id") == "data")

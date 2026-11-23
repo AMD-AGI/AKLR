@@ -1,17 +1,13 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""aiter's public functions served by AKLR ops, for the sglang and vLLM plugins.
+"""aiter's fused_moe call turned into AKLR's fused_moe op, for the aiter provider.
 
-Both frameworks call some of the same aiter functions. One function here per aiter function turns a
-call's arguments into an AKLR op call and returns the op's result, or the
-:class:`~aklr.core.runtime.dispatch.FallbackReason` that sends the call back to aiter. Each framework's
-plugin declares its route on the releases it was tested on, with the parameters of the aiter in that
-release's image, and passes every argument by name."""
+The provider (``aklr.plugins.aiter.provider``) serves aiter's routed ops; sglang and vLLM reach AKLR
+through it once they enable aiter's kernel plugin interface, with no route of their own on an aiter
+function. :func:`fused_moe` turns a routed call's arguments into the op call and returns the op's
+result, or the :class:`~aklr.core.runtime.dispatch.FallbackReason` that sends the call back to aiter."""
 
 from aklr.plugins.aiter.fused_moe import fused_moe
-from aklr.plugins.aiter.mla import mla_decode_fwd
-from aklr.plugins.aiter.triton_gemm import gemm_a16w16
-from aklr.plugins.aiter.tuned_gemm import mm
 
-__all__ = ["fused_moe", "gemm_a16w16", "mla_decode_fwd", "mm"]
+__all__ = ["fused_moe"]

@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -57,20 +59,20 @@ def _mxfp4(x: Tensor) -> Tensor:
     return (value * torch.exp2(exponent.float())).flatten(-2).to(x.dtype)
 
 
-def _mx_weight(args: Mapping[str, Any], name: str, expert: int, decode: Callable) -> Tensor:
-    w = decode(args[name][expert], "float4_e2m1")
-    scale = decode(args[f"{name}_scale"][expert], "float8_e8m0")
+def _mx_weight(args: Mapping[str, Any], name: str, expert: int) -> Tensor:
+    w = to_float32(args[name][expert], "float4_e2m1")
+    scale = to_float32(args[f"{name}_scale"][expert], "float8_e8m0")
     return w * scale.repeat_interleave(32, dim=-1)
 
 
-def _attention(args: Mapping[str, Any], window: int, scale: float, decode: Callable) -> Tensor:
+def _attention(args: Mapping[str, Any], window: int, scale: float) -> Tensor:
     """One rank's heads: each row over its request's keys, causal among the step's rows,
     the probabilities rounded to bf16; query head h reads KV head h // (heads / KV heads)."""
     import torch
 
-    q = decode(args["q"], "bfloat16")
-    k_cache = decode(args["k_cache"], "float8_e4m3fn")
-    v_cache = decode(args["v_cache"], "float8_e4m3fn")
+    q = to_float32(args["q"], "bfloat16")
+    k_cache = to_float32(args["k_cache"], "float8_e4m3fn")
+    v_cache = to_float32(args["v_cache"], "float8_e4m3fn")
     table, lens = args["page_table"].long(), args["context_lens"].long()
     rows = q.shape[0]
     out = torch.empty_like(q)
@@ -99,13 +101,13 @@ def _gated(o: Tensor, gate: Tensor) -> Tensor:
     return _bf16(_rms(o, _RMS_EPS) * torch.sigmoid(gate)).flatten(1)
 
 
-def _route(x: Tensor, args: Mapping[str, Any], decode: Callable) -> tuple[Tensor, Tensor]:
+def _route(x: Tensor, args: Mapping[str, Any]) -> tuple[Tensor, Tensor]:
     """The top-8 of sigmoid + bias (a tie to the lower id) and their normalized sigmoids."""
     import torch
 
-    logits = x @ decode(args["router_hi"], "bfloat16").T + x @ decode(args["router_lo"], "bfloat16").T
+    logits = x @ to_float32(args["router_hi"], "bfloat16").T + x @ to_float32(args["router_lo"], "bfloat16").T
     sigmoid = torch.sigmoid(logits * _ROUTER_MULT)
-    biased = sigmoid + decode(args["router_bias"], "float32")
+    biased = sigmoid + to_float32(args["router_bias"], "float32")
     ids = torch.argsort(biased, dim=-1, descending=True, stable=True)[:, :_TOP_K]
     picks = sigmoid.gather(1, ids)
     return ids, picks / (picks.sum(-1, keepdim=True) + _ROUTE_EPS)
@@ -116,7 +118,6 @@ def _experts(
     ids: Tensor,
     scores: Tensor,
     group_args: Sequence[Mapping[str, Any]],
-    decode: Callable,
     inter_dim: int,
 ) -> Tensor:
     """Each pick's down(silu(gate) * up) on the experts the ranks' slices make whole, MXFP4
@@ -125,16 +126,16 @@ def _experts(
     import torch.nn.functional as F
 
     device = pooled.device
-    gain = decode(group_args[0]["expert_norm_weight"], "bfloat16").to(
+    gain = to_float32(group_args[0]["expert_norm_weight"], "bfloat16").to(
         device
     )  # shared: rank 0's is every rank's
     x = _mxfp4(pooled)
     out = torch.zeros_like(pooled)
     for expert in ids.unique().tolist():
         # rank r holds the r-th slice of w13's gate rows and of its up rows, of w2's rows
-        halves = [_mx_weight(a, "w13", expert, decode).to(device).chunk(2) for a in group_args]
+        halves = [_mx_weight(a, "w13", expert).to(device).chunk(2) for a in group_args]
         w13 = torch.cat([h[0] for h in halves] + [h[1] for h in halves])
-        w2 = torch.cat([_mx_weight(a, "w2", expert, decode).to(device) for a in group_args])
+        w2 = torch.cat([_mx_weight(a, "w2", expert).to(device) for a in group_args])
         tokens, slot = (ids == expert).nonzero(as_tuple=True)
         gate, up = (x[tokens] @ w13.T).split(inter_dim, dim=-1)
         y = _bf16(_mxfp4(_bf16(F.silu(gate) * up)) @ w2.T)
@@ -157,7 +158,6 @@ def muse_spark_layer_reference(
     point: Any,
     group_args: Sequence[Mapping[str, Any]],
     rank: int,
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, ...]:
     """The layer for ``rank``: next_input, next_k, next_v, then q, o_gate, residual,
     next_k_cache and next_v_cache as the call leaves them.
@@ -177,22 +177,22 @@ def muse_spark_layer_reference(
     window, scale = int(args["sliding_window"]), float(args["scale"])
 
     def shared(name: str, dtype: str) -> Tensor:
-        return decode(args[name], dtype)
+        return to_float32(args[name], dtype)
 
     # attention and o_proj, summed over the ranks in rank order
     projected = torch.zeros_like(shared("residual", "float32"))
     for a in group_args:
-        gated = _gated(_attention(a, window, scale, decode), decode(a["o_gate"], "bfloat16"))
-        projected += _bf16(gated.to(device) @ decode(a["o_proj"], "bfloat16").to(device).T)
+        gated = _gated(_attention(a, window, scale), to_float32(a["o_gate"], "bfloat16"))
+        projected += _bf16(gated.to(device) @ to_float32(a["o_proj"], "bfloat16").to(device).T)
     branch = _bf16(_rms(_bf16(projected), _POST_EPS))
     residual = shared("alpha", "float32") * shared("residual", "float32") + shared("beta", "float32") * branch
     x = _bf16(_rms(residual, _RMS_EPS) * shared("pre_norm_weight", "bfloat16"))
 
     # router, pooler and experts
-    ids, scores = _route(x, args, decode)
+    ids, scores = _route(x, args)
     pooled = _bf16(x @ shared("pooler", "bfloat16").T)
     pooled = _bf16(_rms(pooled, _RMS_EPS) * shared("pooled_norm_weight", "bfloat16"))
-    expert_sum = _experts(pooled, ids, scores, group_args, decode, point.axes["inter_dim"])
+    expert_sum = _experts(pooled, ids, scores, group_args, point.axes["inter_dim"])
     unpooled = _bf16(expert_sum @ shared("unpooler", "bfloat16").T)
     branch = _bf16(_rms(_bf16(unpooled * shared("post_ffn_weight", "bfloat16")), _POST_EPS))
     residual = shared("alpha2", "float32") * residual + shared("beta2", "float32") * branch

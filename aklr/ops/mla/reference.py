@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -24,12 +26,11 @@ _CHUNK_ELEMENTS = 2**26
 def flash_mla_with_kvcache_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """Each head of a query attends over the KV rows its row reads."""
     import torch
 
-    q = decode(row_major_args["q"], point.dtypes["q"])
+    q = to_float32(row_major_args["q"], point.dtypes["q"])
     batch, query_length = q.shape[:2]
     if point.attrs["kv_cache_format"] == "dsv4_fp8":
         pools = []
@@ -93,11 +94,11 @@ def flash_mla_with_kvcache_reference(
 
         def keys_of(rows: slice) -> Tensor:
             """The 576 values of each pool row the rows read, decoded."""
-            return decode(pool[table[rows]], point.dtypes["kv_cache"])
+            return to_float32(pool[table[rows]], point.dtypes["kv_cache"])
 
         empty_lse = -torch.inf
     sinks = row_major_args.get("sinks")
-    sinks = None if sinks is None else decode(sinks, point.dtypes["sinks"])
+    sinks = None if sinks is None else to_float32(sinks, point.dtypes["sinks"])
     scale = row_major_args["sm_scale"] * row_major_args["kv_scale"]
     output = q.new_zeros(*q.shape[:-1], 512)
     lse = q.new_full(q.shape[:-1], empty_lse)
@@ -123,11 +124,10 @@ def flash_mla_with_kvcache_reference(
 def fp8_paged_mqa_logits_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each request's weighted relu logits over the keys of its pages."""
-    q = decode(row_major_args["q"][:, 0], point.dtypes["q"])
-    weights = decode(row_major_args["weights"], "float32")
+    q = to_float32(row_major_args["q"][:, 0], point.dtypes["q"])
+    weights = to_float32(row_major_args["weights"], "float32")
     return _paged_mqa_logits(
         q,
         row_major_args["kv_cache"],
@@ -140,12 +140,11 @@ def fp8_paged_mqa_logits_reference(
 def fp8_paged_mqa_logits_verify_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """fp8_paged_mqa_logits of each query row, its request's block table row repeated to it."""
-    q = decode(row_major_args["q"], point.dtypes["q"])
+    q = to_float32(row_major_args["q"], point.dtypes["q"])
     batch, next_n = q.shape[:2]
-    weights = decode(row_major_args["weights"], "float32")
+    weights = to_float32(row_major_args["weights"], "float32")
     logits = _paged_mqa_logits(
         q.flatten(0, 1),
         row_major_args["kv_cache"],
@@ -182,14 +181,14 @@ def _paged_mqa_logits(q: Tensor, pool: Tensor, table: Tensor, weights: Tensor, c
 def mla_decode_fwd_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """Each head of a request's query attends over the pool rows its kv_indices name."""
     import torch
 
     args, dtypes = row_major_args, point.dtypes
-    q = decode(args["q"], dtypes["q"]).float() * decode(args["q_scale"], dtypes["q_scale"]).reshape(())
-    kv_scale = decode(args["kv_scale"], dtypes["kv_scale"]).reshape(())
+    q_scale = to_float32(args["q_scale"], dtypes["q_scale"]).reshape(())
+    q = to_float32(args["q"], dtypes["q"]) * q_scale
+    kv_scale = to_float32(args["kv_scale"], dtypes["kv_scale"]).reshape(())
     pool = args["kv_buffer"].flatten(0, 2)
     offsets = args["kv_indptr"].long()
     lengths = offsets.diff()
@@ -205,7 +204,7 @@ def mla_decode_fwd_reference(
     n_requests = max(1, _CHUNK_ELEMENTS // (positions.numel() * q.shape[-1]))
     for start in range(0, q.shape[0], n_requests):
         requests = slice(start, start + n_requests)
-        keys = decode(pool[rows[requests]], dtypes["kv_buffer"]).float() * kv_scale
+        keys = to_float32(pool[rows[requests]], dtypes["kv_buffer"]) * kv_scale
         seen = visible[requests][:, None]
         logits = torch.einsum("rhd,rkd->rhk", q[requests], keys) * args["sm_scale"]
         logits = logits.masked_fill(~seen, -torch.inf)
@@ -220,7 +219,6 @@ def mla_decode_fwd_reference(
 def mla_decode_fwd_cprr_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """Query i of a request of G global tokens attends over the rows of its shard here whose global
     position, local row j * cp_world_size + cp_rank, is at most G - query_length + i."""
@@ -228,8 +226,9 @@ def mla_decode_fwd_cprr_reference(
 
     args, dtypes = row_major_args, point.dtypes
     world, rank = point.attrs["cp_world_size"], args["cp_rank"]
-    q = decode(args["q"], dtypes["q"]) * decode(args["q_scale"], dtypes["q_scale"]).reshape(())
-    kv_scale = decode(args["kv_scale"], dtypes["kv_scale"]).reshape(())
+    q_scale = to_float32(args["q_scale"], dtypes["q_scale"]).reshape(())
+    q = to_float32(args["q"], dtypes["q"]) * q_scale
+    kv_scale = to_float32(args["kv_scale"], dtypes["kv_scale"]).reshape(())
     query_length = q.shape[1]
     pool = args["kv_buffer"].flatten(0, 2)
     offsets = args["kv_indptr"].long()
@@ -252,7 +251,7 @@ def mla_decode_fwd_cprr_reference(
     n_requests = max(1, _CHUNK_ELEMENTS // (positions.numel() * q.shape[-1]))
     for start in range(0, q.shape[0], n_requests):
         requests = slice(start, start + n_requests)
-        keys = decode(pool[rows[requests]], dtypes["kv_buffer"]) * kv_scale
+        keys = to_float32(pool[rows[requests]], dtypes["kv_buffer"]) * kv_scale
         seen = visible[requests][:, :, None]
         logits = torch.einsum("rqhd,rkd->rqhk", q[requests], keys) * args["sm_scale"]
         logits = logits.masked_fill(~seen, -torch.inf)

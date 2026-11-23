@@ -13,6 +13,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from aklr.core.contract.semantics import to_float32
+
 if TYPE_CHECKING:
     from torch import Tensor
 
@@ -25,7 +27,6 @@ _MXFP4_BLOCK = 32
 def _fp32(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Callable[..., Tensor]:
     """Tensor argument ``name`` (its ``index`` only, if given) in fp32."""
 
@@ -33,7 +34,7 @@ def _fp32(
         tensor = row_major_args[name]
         if index is not None:
             tensor = tensor[index]
-        return decode(tensor, point.dtypes[name]).float()
+        return to_float32(tensor, point.dtypes[name])
 
     return get
 
@@ -96,11 +97,10 @@ def _silu_and_mul(gate_up: Tensor) -> Tensor:
 def minimax_m2_fp8_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each token's routed experts this rank holds, both linears of each an fp8 one
     (_fp8_linear), weighed by the renormalized scores and summed."""
-    f = _fp32(point, row_major_args, decode)
+    f = _fp32(point, row_major_args)
     x = f("hidden_states")
     ids, weights = _routed(point, x, f("router_weight"), f("correction_bias"))
 
@@ -114,11 +114,10 @@ def minimax_m2_fp8_moe_reference(
 def minimax_m2_mxfp4_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each token's routed experts this rank holds, their MXFP4 weights dequantized per 32
     values, weighed by the renormalized scores and summed."""
-    f = _fp32(point, row_major_args, decode)
+    f = _fp32(point, row_major_args)
     x = f("hidden_states")
     ids, weights = _routed(point, x, f("router_weight"), f("correction_bias"))
 

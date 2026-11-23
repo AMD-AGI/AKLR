@@ -11,10 +11,10 @@ error is left to the bound."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from aklr.core.contract.semantics import rounded_to_bfloat16
+from aklr.core.contract.semantics import rounded_to_bfloat16, to_float32, torch_dtypes
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -24,6 +24,7 @@ __all__ = [
     "qwen2_moe_fp8_router_experts_reference",
     "qwen2_moe_mxfp4_moe_reference",
     "qwen2_moe_router_reference",
+    "qwen2_moe_router_id_scores",
 ]
 
 _BLOCK = 128  # the FP8 scheme's block: 128 x 128 of a weight, 1 x 128 of an input
@@ -33,13 +34,11 @@ _MXFP4_BLOCK = 32  # an MXFP4 weight's block: 1 x 32
 def _router_logits(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    """hidden_states router_weight^T, exact (float64), rounded to bf16, in the decoded
-    dtype."""
-    x = decode(row_major_args["hidden_states"], point.dtypes["hidden_states"])
-    w = decode(row_major_args["router_weight"], point.dtypes["router_weight"])
-    return rounded_to_bfloat16(x.double() @ w.double().T).to(x.dtype)
+    """hidden_states router_weight^T, rounded to bf16, in float32."""
+    x = to_float32(row_major_args["hidden_states"], point.dtypes["hidden_states"])
+    w = to_float32(row_major_args["router_weight"], point.dtypes["router_weight"])
+    return rounded_to_bfloat16(x @ w.T)
 
 
 def _routed(logits: Tensor, topk: int) -> tuple[Tensor, Tensor]:
@@ -75,7 +74,6 @@ def _dequantized(weight: Tensor, scale: Tensor) -> Tensor:
 def _experts(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
     weights: Tensor,
     ids: Tensor,
     shared_slot: int,
@@ -88,7 +86,7 @@ def _experts(
 
     def f(name: str, e: int | None = None) -> Tensor:
         tensor = row_major_args[name]
-        return decode(tensor if e is None else tensor[e], point.dtypes[name])
+        return to_float32(tensor if e is None else tensor[e], point.dtypes[name])
 
     x = f("hidden_states")
     shared_weight = (x @ f("shared_gate_weight")[0]).sigmoid()
@@ -109,37 +107,46 @@ def _experts(
 def qwen2_moe_router_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """(topk_weights, topk_ids) of the bf16 logits (_router_logits, _routed)."""
-    logits = _router_logits(point, row_major_args, decode)
+    logits = _router_logits(point, row_major_args)
     weights, ids = _routed(logits, point.axes["topk"])
-    return weights, ids.double()
+    return weights, ids.to(torch_dtypes(point.dtypes["topk_ids"])[0])
+
+
+def qwen2_moe_router_id_scores(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+) -> dict[str, Tensor]:
+    """topk_ids' scores (``compare_outputs``): the bf16 logits. A kernel sums the projection in
+    another order than the reference's, so a logit at a rounding midpoint lands on the next
+    bf16 value, and two experts one value apart come in the other order."""
+    import torch
+
+    return {"topk_ids": _router_logits(point, row_major_args).to(torch.bfloat16)}
 
 
 def qwen2_moe_fp8_experts_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """The routed experts topk_ids at topk_weights and the gated shared one (_experts)."""
-    weights = decode(row_major_args["topk_weights"], point.dtypes["topk_weights"])
+    weights = to_float32(row_major_args["topk_weights"], point.dtypes["topk_weights"])
     ids = row_major_args["topk_ids"].long()
     shared_slot = point.axes["n_experts"] - 1
-    return _experts(point, row_major_args, decode, weights, ids, shared_slot)
+    return _experts(point, row_major_args, weights, ids, shared_slot)
 
 
 def qwen2_moe_fp8_router_experts_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """The router's experts (qwen2_moe_router_reference) and the gated shared one
     (_experts)."""
-    logits = _router_logits(point, row_major_args, decode)
+    logits = _router_logits(point, row_major_args)
     weights, ids = _routed(logits, point.attrs["topk"])
     shared_slot = point.axes["n_routed"]
-    return _experts(point, row_major_args, decode, weights, ids, shared_slot)
+    return _experts(point, row_major_args, weights, ids, shared_slot)
 
 
 def _silu_mlp(x: Tensor, gate_up: Tensor, down: Tensor) -> Tensor:
@@ -153,7 +160,6 @@ def _silu_mlp(x: Tensor, gate_up: Tensor, down: Tensor) -> Tensor:
 def qwen2_moe_mxfp4_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """The router's experts (_router_logits, _routed) weighed and summed, each on its MXFP4
     weights dequantized per 32 values and the unquantized input, plus the BF16 shared expert
@@ -163,13 +169,13 @@ def qwen2_moe_mxfp4_moe_reference(
 
     def f(name: str, e: int | None = None) -> Tensor:
         tensor = row_major_args[name]
-        return decode(tensor if e is None else tensor[e], point.dtypes[name])
+        return to_float32(tensor if e is None else tensor[e], point.dtypes[name])
 
     def mxfp4(name: str, e: int) -> Tensor:
         return f(name, e) * f(f"{name}_scale", e).repeat_interleave(_MXFP4_BLOCK, dim=-1)
 
     x = f("hidden_states")
-    weights, ids = _routed(_router_logits(point, row_major_args, decode), point.attrs["topk"])
+    weights, ids = _routed(_router_logits(point, row_major_args), point.attrs["topk"])
     out = torch.zeros_like(x)
     for e in ids.unique().tolist():
         tokens, slots = (ids == e).nonzero(as_tuple=True)
