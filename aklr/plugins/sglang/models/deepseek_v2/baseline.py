@@ -36,20 +36,28 @@ def _route(
     topk_group,
     renormalize,
     routed_scaling_factor,
+    *,
+    preserve_fp32_bias=False,
 ):
-    """The router's bf16 logits (MoEGate on HIP: tgemm.mm), then aiter's grouped top-k on them
-    with the bias in their dtype: (weights, ids)."""
+    """MoEGate's rounded logits, then AITER routing in the bias path's native dtype."""
     import torch
     from aiter import biased_grouped_topk
     from aiter.tuned_gemm import tgemm
 
     logits = tgemm.mm(hidden_states, router_weight, None, otype=hidden_states.dtype)
+    if preserve_fp32_bias and correction_bias.dtype == torch.float32:
+        # The verified daily keeps FP32 bias and upcasts the already-rounded
+        # logits before AITER. Casting the bias instead changes expert choices.
+        logits = logits.to(torch.float32)
+        bias = correction_bias
+    else:
+        bias = _in_dtype(correction_bias, logits.dtype)
     shape, device = (hidden_states.shape[0], topk), hidden_states.device
     weights = torch.empty(shape, dtype=torch.float32, device=device)
     ids = torch.empty(shape, dtype=torch.int32, device=device)
     biased_grouped_topk(
         logits,
-        _in_dtype(correction_bias, logits.dtype),
+        bias,
         weights,
         ids,
         num_expert_group,
@@ -147,6 +155,7 @@ def deepseek_v2_fp8_moe_baseline(
         topk_group,
         renormalize,
         routed_scaling_factor,
+        preserve_fp32_bias=True,
     )
     ids, weights = fused_append_shared_experts(ids, weights, 1, 1.0, router_weight.shape[0])
     return fused_moe(
