@@ -162,7 +162,7 @@ Admit only in `run`, one campaign at a time, while all of these hold:
    Deduplicate and sort by path then regime.
 3. Skip what the script cannot see, recording the reason and strategy:
    - a competing PR;
-   - a contract with no AKLR baseline that is not a plain GEMM (forge_task has no starting kernel for it);
+   - a schema that is not a plain GEMM (forge_task has a starting kernel for a plain GEMM only);
    - a missing environment;
    - a non-GEMM schema spanning both small and large M (the owner splits it).
 
