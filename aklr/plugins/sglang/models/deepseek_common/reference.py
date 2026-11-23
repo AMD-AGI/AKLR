@@ -91,7 +91,6 @@ def _group_codes(x: Tensor) -> tuple[Tensor, Tensor]:
 def mla_qkv_a_norm_fp8_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     """(q_latent, q_fp8, q_scale, kv_latent, k_rope): each token's hidden state in fp8 codes
     per 128-wide group, times w_qkv_a and the two groups' scales; its q and KV parts
@@ -104,7 +103,7 @@ def mla_qkv_a_norm_fp8_reference(
     args = row_major_args
 
     def get(name: str) -> Tensor:
-        return decode(args[name], point.dtypes[name])
+        return to_float32(args[name], point.dtypes[name])
 
     q_rank, kv_rank = point.axes["q_lora_rank"], point.axes["kv_lora_rank"]
     hidden = get("hidden_states")
