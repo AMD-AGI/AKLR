@@ -106,17 +106,11 @@ class OpContract(FrozenModel):
         tensors = self.tensors()
         for name in self.mutable_tensors:
             spec = tensors[name]
-            is_floating = not DTYPE_TRAITS[spec.dtype.any_of[0]].is_integral
-            if is_floating and (
-                len(spec.error_bounds) != 1
-                or any(
-                    isinstance(getattr(spec.error_bounds[0][1], f), str)
-                    for f in type(spec.error_bounds[0][1]).expr_fields
-                )
+            if len(spec.error_bounds) != 1 or any(
+                isinstance(getattr(spec.error_bounds[0][1], f), str)
+                for f in type(spec.error_bounds[0][1]).expr_fields
             ):
-                raise ValueError(
-                    f"{name}: a schema's floating mutable tensor has one bound, its expressions decided"
-                )
+                raise ValueError(f"{name}: a schema's mutable tensor has one bound, its expressions decided")
         return self
 
     @model_validator(mode="after")
@@ -270,17 +264,12 @@ class OpContract(FrozenModel):
             if (name in self.outputs) == bool(spec.distribution):
                 raise ValueError(f"{name}: an input needs distribution, an output none")
             if name in self.outputs or spec.mutable:
-                integrality = {DTYPE_TRAITS[d].is_integral for d in self.dtypes_of(name)}
-                if len(integrality) > 1:
-                    raise ValueError(f"{name}: a mutable tensor is floating or integer, not both")
-                if bool(spec.error_bounds) == (True in integrality):
-                    raise ValueError(
-                        f"{name}: a floating mutable tensor needs error_bounds, an integer one none"
-                    )
+                if not spec.error_bounds:
+                    raise ValueError(f"{name}: a mutable tensor needs error_bounds")
                 if name in self.outputs:
                     continue
             elif spec.error_bounds:
-                raise ValueError(f"{name}: only a mutable input has error_bounds")
+                raise ValueError(f"{name}: only a mutable tensor has error_bounds")
             dtypes_read = {f"{name}.dtype"}
             for predicate, distribution in spec.distribution:
                 # so a schema's present input has one item: ``narrow`` decides it

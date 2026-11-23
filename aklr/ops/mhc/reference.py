@@ -58,24 +58,23 @@ class MhcPreReference(OpReference):
     def reference(self, *, residual, **call):
         """Rms-scaled projection of the residual streams, then sigmoid and Sinkhorn mixes."""
         post_mix, comb_mix, layer_input = _pre(residual.float(), **call)
-        return {"post_mix": post_mix, "comb_mix": comb_mix, "layer_input": layer_input}
+        return {"post_mix": post_mix, "comb_mix": comb_mix, "layer_input": layer_input.to(residual.dtype)}
 
 
 class MhcPostReference(OpReference):
     def reference(self, *, x, residual, post_mix, comb_mix, **_):
         """Out[t, j] = x[t] * post_mix[t, j] + sum_i comb_mix[t, i, j] * residual[t, i]."""
-        return {"out": _post(x, residual, post_mix, comb_mix)}
+        return {"out": _post(x, residual, post_mix, comb_mix).to(residual.dtype)}
 
 
 class MhcFusedPostPreReference(OpReference):
     def reference(self, *, x, residual, post_mix, comb_mix, **call):
         """Post, then the next pre on its result; with norm_weight, an rms norm of layer_input."""
-        next_residual = _post(x, residual, post_mix, comb_mix)
-        rounded = next_residual.to(residual.dtype).to(next_residual.dtype)
-        next_post_mix, next_comb_mix, layer_input = _pre(rounded, **call)
+        next_residual = _post(x, residual, post_mix, comb_mix).to(residual.dtype)
+        next_post_mix, next_comb_mix, layer_input = _pre(next_residual.float(), **call)
         return {
             "next_post_mix": next_post_mix,
             "next_comb_mix": next_comb_mix,
-            "layer_input": layer_input,
+            "layer_input": layer_input.to(residual.dtype),
             "next_residual": next_residual,
         }

@@ -40,7 +40,7 @@ flowchart TD
 Following `harness/skills/port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
 
 1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`, and its `reference` and `baseline` (instances of the classes below).
-2. `reference.py`: one `OpReference` class per contract, whose `reference(self, *, <names>, **_)` takes the kernel's call by keyword and returns the mutable tensors by name, in the op's dtypes where torch has them, else float32 (for now float32); integer outputs in their declared dtype. Rules: "Reference and baseline" in `aklr/ops/README.md`.
+2. `reference.py`: one `OpReference` class per contract, whose `reference(self, *, <names>, **_)` takes the kernel's call by keyword and returns the mutable tensors by name, each in its declared dtype, computed in the op's dtypes where torch has them, else float32. Rules: "Reference and baseline" in `aklr/ops/README.md`.
 3. `api.py`: an `@api(<CONTRACT>)` stub (the body may only be `...`).
 4. `baseline.py`: one `OpBaseline` class per contract (every contract has exactly one), the engine's own call for the op. Its `baseline(self, *, <names>)` takes the kernel's call by keyword, imports AITER or SGLang inside the method, and returns the outputs by name; for an unsupported call it raises `NotImplementedError` (bench reports `baseline_failed`).
 5. `__init__.py`: exports the api.

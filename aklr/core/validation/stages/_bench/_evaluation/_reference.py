@@ -11,7 +11,6 @@ from aklr.core.contract import semantics
 from aklr.core.contract.spec import FrozenModel
 from aklr.core.validation.stages._bench._evaluation._comparison import (
     find_nondeterminism,
-    is_reference_comparable,
 )
 from aklr.core.validation.stages._bench._evaluation._request import Step, TrialRequest
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
@@ -56,7 +55,7 @@ class WorkloadEvaluation:
 
     def evaluate(self) -> ReferenceWorkloadResult:
         request, devices = self.request, self.devices
-        contract, point = request.contract, request.point
+        contract = request.contract
         ranks = range(len(devices))
         rank_at = [f"rank {r}: " if contract.ranks is not None else "" for r in ranks]
 
@@ -87,7 +86,6 @@ class WorkloadEvaluation:
                 return self._result(None, is_complete=False)
             n_present = min(n_present, n_rank_present)
 
-        mutable_dtypes = {r: point.dtypes[r] for r in contract.mutable_tensors}
         criteria = semantics.comparison_criteria(request.schema_json)
         reference = contract.reference
         worst = None
@@ -107,13 +105,6 @@ class WorkloadEvaluation:
                 else:
                     reference_outputs = reference.reference(calls, rank)
                 compared = functools.partial(reference.check, expected=reference_outputs, criteria=criteria)
-                if not is_reference_comparable(mutable_dtypes, reference_outputs, compared):
-                    detail = f"{rank_at[rank]}the reference rounded to the output dtypes is not finite or fails compare"
-                    if first.input_set == "workload":
-                        self._fail(first, FindingCode.SCHEMA_INVALID, detail)
-                    else:
-                        self._fail(first, FindingCode.PLATFORM_FAILURE, f"internal: {detail}")
-                    continue
                 for step in (first, *rest):
                     actual_mutable = {
                         o: self.outputs[rank][step.output_key(o)] for o in contract.mutable_tensors

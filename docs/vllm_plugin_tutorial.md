@@ -58,7 +58,7 @@ As in step 1. A of the ops tutorial. For this op:
   - attrs: `n_valid_rows`, the bank rows written so far (0 to 8), all of which the mix reads; `write_bank`, whether the prefix also becomes bank row `n_valid_rows`; and `has_addend` and `has_norm`. Each combination vLLM calls is a scenario of its own;
   - layout: `row_major` only;
   - output: `out`, of shape `[n_tokens, hidden_size]`: the mix, normalized and scaled by `norm_weight` when there is one. `prefix` and `bank` are mutable inputs, which the op updates in place as vLLM's kernel does; their error bound is exact.
-- `reference.py`: `KimiK3AttnResReference`, the contract's computation in float32. Its only rounding is the prefix's: `prefix + addend` rounded to the prefix's dtype, as vLLM's kernel stores it back. It returns `out`, `prefix` and `bank` as the call leaves them.
+- `reference.py`: `KimiK3AttnResReference`, the contract's computation in float32. It rounds `prefix + addend` to the prefix's dtype, as vLLM's kernel stores it back, and its outputs to that dtype. It returns `out`, `prefix` and `bank` as the call leaves them.
 - `baseline.py`: `KimiK3AttnResBaseline`, what vLLM runs today: its Triton kernel, one launch per call, with the launch configuration of its `attn_res`, from the copy in `_triton.py`.
 - `api.py`: the entry function `@api(KIMI_K3_ATTN_RES)`, whose body is `...`.
 

@@ -15,6 +15,7 @@ from aklr.core.contract.semantics import (
     FiniteDistribution,
     IntRangeDistribution,
     PermutationDistribution,
+    ToleranceBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -208,6 +209,7 @@ DSA_TOPK_TRANSFORM = OpContract(
             description="Selected slots; -1 after a short row's entries.",
             shape=("n_tokens", "topk"),
             dtype=_INT32,
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),

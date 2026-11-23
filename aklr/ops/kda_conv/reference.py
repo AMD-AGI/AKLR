@@ -14,7 +14,7 @@ __all__ = ["KimiK3KdaConvReference"]
 class KimiK3KdaConvReference(OpReference):
     def reference(self, *, x, weight, conv_state, state_indices, has_initial_state, cu_seqlens, **_):
         """q, k, v and conv_state as the call leaves them."""
-        x = x.float().flatten(1)  # (n_tokens, dim)
+        dtype, x = x.dtype, x.float().flatten(1)  # (n_tokens, dim)
         weight = weight.float()  # (dim, width)
         conv_state = conv_state.float().clone()  # (n_slots, state_len, dim)
         state_len = conv_state.shape[1]
@@ -30,5 +30,6 @@ class KimiK3KdaConvReference(OpReference):
             z = (taps * weight).sum(dim=-1)
             y[start:end] = z * torch.sigmoid(z)
             conv_state[slot] = window[-state_len:]
+        y, conv_state = y.to(dtype), conv_state.to(dtype)
         proj = y.shape[1] // 3
         return {"q": y[:, :proj], "k": y[:, proj : 2 * proj], "v": y[:, 2 * proj :], "conv_state": conv_state}

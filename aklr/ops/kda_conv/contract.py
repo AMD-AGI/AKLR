@@ -44,7 +44,7 @@ _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _SAME_AS_X = DTypeSpec(same_as_tensor="x")
 _FINITE = FiniteDistribution()
 # a bf16 rounding of a float32 sum of four products and the silu: about 2**-8 relative, and small outputs absolute
-_OUT_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-7)
+_OUT_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-7 + 2**-7)
 
 KIMI_K3_KDA_CONV = OpContract(
     contract_id="kimi_k3_kda_conv@1.0",

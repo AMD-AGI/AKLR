@@ -12,6 +12,7 @@ from aklr.core.contract.semantics import (
     FiniteDistribution,
     IntRangeDistribution,
     PermutationDistribution,
+    ToleranceBound,
     TopkStaticPlanDistribution,
     tolerance,
 )
@@ -111,6 +112,7 @@ BIASED_GROUPED_TOPK = OpContract(
             description="Chosen experts, by descending biased score.",
             shape=("n_tokens", "topk"),
             dtype=DTypeSpec(any_of=(DType.INT32,)),
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
@@ -186,6 +188,7 @@ TOPK_TRANSFORM_PAGED = OpContract(
             ),
             shape=("n_tokens", "topk"),
             dtype=_INT32,
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),

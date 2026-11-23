@@ -5,9 +5,9 @@
 from the math and independent of the kernels and of sglang's.
 
 GDN rounding points: the convolution's SiLU to BF16; in prefill, the L2-normalized Q and K
-to BF16 too; beta and the core output to BF16; the gated RMS-normalized output to BF16. The
-grouped FP8 values are returned before their E4M3FN rounding. The gated attention decode
-reference's rounding points are in its docstring."""
+to BF16 too; beta and the core output to BF16; the gated RMS-normalized output to BF16; the
+grouped FP8 values to E4M3FN. The gated attention decode reference's rounding points are in its
+docstring."""
 
 import itertools
 
@@ -207,30 +207,27 @@ def _floats(call):
     return {k: v.float() if torch.is_tensor(v) and v.is_floating_point() else v for k, v in call.items()}
 
 
+def _gdn_outputs(call, normalized, conv_state, delta_state, values, scales):
+    """The outputs, then both final state pools, each in its dtype."""
+    return {
+        "normalized": normalized.to(torch.bfloat16),
+        "values": values.to(torch.float8_e4m3fn),
+        "scales": scales,
+        "conv_state": conv_state.to(call["conv_state"].dtype),
+        "delta_state": delta_state.to(call["delta_state"].dtype),
+    }
+
+
 class Qwen3NextGdnPrefillGroupFp8QuantReference(OpReference):
     def reference(self, **call):
         """The recurrence (_prefill) in float32; the outputs, then both final state pools."""
-        normalized, conv_state, delta_state, values, scales = _prefill(**_floats(call))
-        return {
-            "normalized": normalized,
-            "values": values,
-            "scales": scales,
-            "conv_state": conv_state,
-            "delta_state": delta_state,
-        }
+        return _gdn_outputs(call, *_prefill(**_floats(call)))
 
 
 class Qwen3NextGdnDecodeGroupFp8QuantReference(OpReference):
     def reference(self, **call):
         """The decode (_decode) in float32; the outputs, then both final state pools."""
-        normalized, conv_state, delta_state, values, scales = _decode(**_floats(call))
-        return {
-            "normalized": normalized,
-            "values": values,
-            "scales": scales,
-            "conv_state": conv_state,
-            "delta_state": delta_state,
-        }
+        return _gdn_outputs(call, *_decode(**_floats(call)))
 
 
 def _rounded(x, dtype):
@@ -269,12 +266,13 @@ class Qwen3NextGatedAttentionDecodeGroupFp8QuantReference(OpReference):
         scale,
         **_,
     ):
-        """The contract's decode in float32; the grouped FP8 values (before their E4M3FN
-        rounding) and scales, then both pools as the call leaves them.
+        """The contract's decode in float32; the grouped FP8 values and scales, then both pools
+        as the call leaves them.
 
         Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
         keeps between its kernels), the keys and values to E4M3FN in the pools, the attention
-        output and the gated output to BF16. Rows write their slots before any row attends.
+        output and the gated output to BF16, the values to E4M3FN. Rows write their slots
+        before any row attends.
         max_context bounds how many slots a row attends and does not change the result.
         """
         qkv_dim, (kv_heads, head_dim) = projected_qkv.shape[1], key_cache.shape[1:]
@@ -296,6 +294,7 @@ class Qwen3NextGatedAttentionDecodeGroupFp8QuantReference(OpReference):
         keys = _gemma_norm_rope(keys, k_weight, eps, cos, sin)
 
         # .float() may return its input itself: the pools are written in copies
+        pool_dtype = key_cache.dtype
         key_cache = key_cache.float().clone()
         value_cache = value_cache.float().clone()
         key_cache[cache_locations] = _rounded(keys, torch.float8_e4m3fn)
@@ -315,4 +314,9 @@ class Qwen3NextGatedAttentionDecodeGroupFp8QuantReference(OpReference):
         groups = gated.reshape(rows, -1, 128)
         scales = groups.abs().amax(-1).clamp_min(1e-10) / 448.0
         quantized = (groups / scales[..., None]).clamp(-448.0, 448.0).reshape(rows, heads, head_dim)
-        return {"values": quantized, "scales": scales, "key_cache": key_cache, "value_cache": value_cache}
+        return {
+            "values": quantized.to(torch.float8_e4m3fn),
+            "scales": scales,
+            "key_cache": key_cache.to(pool_dtype),
+            "value_cache": value_cache.to(pool_dtype),
+        }

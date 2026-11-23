@@ -94,9 +94,7 @@ class TestCompareOutputs:
         case = OpCase.of(contract_id)
         args = case.inputs()
         reference = case.reference_outputs(args)
-        actual = {
-            o: reference[o].to(semantics.torch_dtypes(case.point.dtypes[o])[0]) for o in case.contract.outputs
-        }
+        actual = {o: reference[o] for o in case.contract.outputs}
         corrupted = list(actual)[-1]
         flat = actual[corrupted].view(-1)
         flat[0] += 1e3 * (1 + flat.abs().max()) if flat.is_floating_point() else 1
@@ -120,14 +118,18 @@ def _schema(dtype: str, error_bound: dict | None = None) -> dict:
 
 
 class TestErrorBounds:
-    """The integral path and the elementwise bounds."""
+    """The elementwise bounds, integers included."""
 
     def test_integral_off_by_one_fails(self) -> None:
-        """An integer output must be exact: B = 0."""
+        """An integer output under a zero tolerance must be exact."""
         y = torch.arange(16, dtype=torch.int32)
         actual = y.clone()
         actual[0] += 1
-        result = _compare(_schema("int32"), {"out": actual}, {"out": y})["out"]
+        result = _compare(
+            _schema("int32", {"kind": "tolerance", "absolute_tolerance": 0, "relative_tolerance": 0}),
+            {"out": actual},
+            {"out": y},
+        )["out"]
         assert result.peak_bound_multiple == math.inf
         assert not result.is_passed
 
@@ -136,7 +138,11 @@ class TestErrorBounds:
         y = torch.full((16,), 2**30 + 1, dtype=torch.int32)
         actual = y.clone()
         actual[0] -= 1
-        result = _compare(_schema("int32"), {"out": actual}, {"out": y})["out"]
+        result = _compare(
+            _schema("int32", {"kind": "tolerance", "absolute_tolerance": 0, "relative_tolerance": 0}),
+            {"out": actual},
+            {"out": y},
+        )["out"]
         assert result.violation_fraction == 1 / 16
         assert not result.is_passed
 

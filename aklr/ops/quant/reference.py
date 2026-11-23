@@ -27,7 +27,7 @@ class PerGroupQuantFp8Reference(OpReference):
         values = (grouped * reciprocal.unsqueeze(-1)).clamp(-448.0, 448.0)
         # FP8 rounding is the operation itself, rather than an implementation's
         # numerical error against an unquantized real-valued output.
-        quantized = values.to(torch.float8_e4m3fn).float().reshape(rows, columns)
+        quantized = values.to(torch.float8_e4m3fn).reshape(rows, columns)
         return {"quantized": quantized, "scales": scales.t().contiguous()}
 
 
@@ -46,5 +46,5 @@ class PerGroupQuantMxfp8Reference(OpReference):
         exponent = (raw >> 23) + ((raw & 0x7FFFFF) != 0).to(torch.int32)
         scale = (exponent << 23).contiguous().view(torch.float32)
         values = (grouped / scale.unsqueeze(-1)).clamp(-448.0, 448.0)
-        quantized = values.to(torch.float8_e4m3fn).float().reshape(rows, columns)
+        quantized = values.to(torch.float8_e4m3fn).reshape(rows, columns)
         return {"quantized": quantized, "scales": exponent.to(torch.uint8)}

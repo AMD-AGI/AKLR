@@ -121,10 +121,9 @@ class _Op:
         names = ("x", "weight", "conv_state", "state_indices", "has_initial_state", "cu_seqlens")
         call = {**dict(zip(names, args, strict=True)), "storage": storage}
         self.calls.append(call)
-        x, conv_state = call["x"], call["conv_state"]
         out = KimiK3KdaConvReference().reference(**call)
-        conv_state.copy_(out["conv_state"])
-        return out["q"].to(x.dtype), out["k"].to(x.dtype), out["v"].to(x.dtype)
+        call["conv_state"].copy_(out["conv_state"])
+        return out["q"], out["k"], out["v"]
 
 
 def _aiters_result(call):

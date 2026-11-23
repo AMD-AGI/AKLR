@@ -63,7 +63,7 @@ class MlaKcRopeCacheReference(OpReference):
         """Each head's position-free query part absorbed through w_kc, then its RoPE part
         rotated by the token's position; each token's KV latent and rotated RoPE key in its KV
         pool row. A row whose slot is 0 is padding: q_cat 0, no row written.
-        Rounding points: the position-free query part's fp8 codes (_absorbed)."""
+        Rounding points: the position-free query part's fp8 codes (_absorbed), and the outputs'."""
         nope, rope = w_kc.shape[-1], kv_cache.shape[-1] - kv_latent.shape[-1]
         q = q.float()
         positions = positions.long()
@@ -79,14 +79,16 @@ class MlaKcRopeCacheReference(OpReference):
         written = slots != 0
         q_cat = torch.where(written[:, None, None], q_cat, 0.0)
         rows = torch.cat((kv_latent.float(), _rotated(qkv_latent.float()[:, -rope:], cos, sin)), -1)
+        dtype = kv_cache.dtype
         # a copy: .float() may return the very tensor it was given
         kv_cache = kv_cache.float().clone()
         kv_cache[slots[written]] = rows[written]
-        return {"q_cat": q_cat, "kv_cache": kv_cache}
+        return {"q_cat": q_cat.to(dtype), "kv_cache": kv_cache.to(dtype)}
 
 
 class MlaVcReference(OpReference):
     def reference(self, *, attn_output, w_vc, w_scale, **_):
         """Each head's attention output absorbed through w_vc, the heads side by side.
-        Rounding points: the attention output's fp8 codes (_absorbed)."""
-        return {"attn_bmm_output": _absorbed(attn_output.float(), w_vc.float(), w_scale.float()).flatten(1)}
+        Rounding points: the attention output's fp8 codes (_absorbed), and the output's."""
+        output = _absorbed(attn_output.float(), w_vc.float(), w_scale.float()).flatten(1)
+        return {"attn_bmm_output": output.to(torch.bfloat16)}

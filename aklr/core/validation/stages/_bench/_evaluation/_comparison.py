@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from aklr.core.contract import semantics
@@ -11,21 +11,7 @@ from aklr.core.contract import semantics
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = [
-    "find_nondeterminism", "is_reference_comparable",
-]  # fmt: skip
-
-
-def is_reference_comparable(
-    output_dtypes: Mapping[str, str],
-    reference_outputs: Mapping[str, Tensor],
-    compared: Callable[[Mapping[str, Tensor]], Mapping[str, semantics.CompareResult]],
-) -> bool:
-    rounded = {o: reference_outputs[o].to(semantics.torch_dtypes(d)[0]) for o, d in output_dtypes.items()}
-    is_finite_where_reference_is = all(
-        (rounded[o].float().isfinite() | ~reference_outputs[o].isfinite()).all() for o in output_dtypes
-    )
-    return is_finite_where_reference_is and all(r.is_passed for r in compared(rounded).values())
+__all__ = ["find_nondeterminism"]
 
 
 def find_nondeterminism(

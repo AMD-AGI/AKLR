@@ -4,7 +4,7 @@
 """Dynamic group quantization with explicit scale storage order."""
 
 from aklr.core.contract.op import OpContract
-from aklr.core.contract.semantics import DType, FiniteDistribution, tolerance
+from aklr.core.contract.semantics import DType, FiniteDistribution, ToleranceBound, tolerance
 from aklr.core.contract.spec import (
     DTypeSpec,
     LayoutVariant,
@@ -80,6 +80,7 @@ PER_GROUP_QUANT_MXFP8 = OpContract(
             description="E8M0 exponent bytes at [row, group]; scale is 2**(byte - 127).",
             shape=("n_tokens", "n_groups"),
             dtype=DTypeSpec(any_of=(DType.UINT8,)),
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The attention residual from its math, in float32; the only rounding is p's, to its dtype."""
+"""The attention residual from its math, in float32; the roundings are p's and the outputs', to the prefix's
+dtype."""
 
 import torch
 
@@ -50,4 +51,5 @@ class KimiK3AttnResReference(OpReference):
             out[tokens] = mix
         if write_bank:
             bank[:, n_valid_rows] = p
-        return {"out": out, "prefix": p, "bank": bank}
+        dtype = prefix.dtype
+        return {"out": out.to(dtype), "prefix": p.to(dtype), "bank": bank.to(dtype)}

@@ -126,4 +126,4 @@ class FusedMoeReference(OpReference):
             out[routed] = quantize(gated) @ mxfp4_weight(w2[expert], w2_scale[expert]).mT
         if not doweight_stage1:
             out = out * weights.unsqueeze(-1)
-        return {"out": out.sum(dim=1)}
+        return {"out": out.sum(dim=1).to(hidden_states.dtype)}

@@ -198,13 +198,13 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
             description="Gated normalized BF16 values.",
             shape=("n_tokens", "n_v_heads", "value_dim"),
             dtype=_BF16,
-            error_bounds=ToleranceBound(absolute_tolerance=0.005, relative_tolerance=0.02),
+            error_bounds=ToleranceBound(absolute_tolerance=0.005, relative_tolerance=0.02 + 2**-7),
         ),
         "values": TensorSpec(
             description="Grouped E4M3FN values.",
             shape=("n_tokens", "value_width"),
             dtype=_FP8,
-            error_bounds=ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125),
+            error_bounds=ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125 + 2**-3),
         ),
         "scales": TensorSpec(
             description="One FP32 scale per token and value head.",
@@ -341,7 +341,7 @@ _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 # The FP8 pools' bytes that the kernels' 32-bit offsets address: larger pools stay on sglang.
 _POOL_BYTES = 2**31
 # A cache slot a correct kernel writes may round its BF16 key one FP8 step away
-_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=0.125)
+_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=0.125 + 2**-3)
 _ATTENTION_TEXT = (
     "Qwen3.5 full-attention decode on one rank, between qkv_proj and o_proj, one token "
     "per row. projected_qkv holds each query head's query then its output gate, then "
@@ -589,7 +589,7 @@ _PREFILL_ATTENTION_ATTRS = {
 }
 # Over thousands of rows a key's BF16 norm and RoPE, one ulp from the reference's, can round two
 # FP8 steps away; a wrong slot or an unrotated key is still far past this bound.
-_PREFILL_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-8, relative_tolerance=0.25)
+_PREFILL_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-8, relative_tolerance=0.25 + 2**-3)
 _PREFILL_ATTENTION_INPUTS = {
     **{
         n: _FP8_ATTENTION.inputs[n]

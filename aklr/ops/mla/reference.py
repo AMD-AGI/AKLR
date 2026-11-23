@@ -39,7 +39,7 @@ class FlashMlaWithKvcacheReference(OpReference):
         **_,
     ):
         """Each head of a query attends over the KV rows its row reads."""
-        q = q.float()
+        dtype, q = q.dtype, q.float()
         batch, query_length = q.shape[:2]
         if kv_cache_format == "dsv4_fp8":
             pools = []
@@ -127,7 +127,7 @@ class FlashMlaWithKvcacheReference(OpReference):
             weights = weights.masked_fill(empty[..., None], 0)
             output[rows] = weights @ (keys[:, None, :, :512] * kv_scale)
             lse[rows] = row_lse.masked_fill(empty, empty_lse)
-        return {"output": output, "lse": lse}
+        return {"output": output.to(dtype), "lse": lse}
 
 
 class Fp8PagedMqaLogitsReference(OpReference):
@@ -202,7 +202,7 @@ class MlaDecodeFwdReference(OpReference):
             weights = logits.softmax(dim=-1).masked_fill(empty[..., None], 0)
             o[requests] = weights @ keys[..., :512]
             lse[requests] = logits.logsumexp(dim=-1).masked_fill(empty, -torch.inf)
-        return {"o": o, "lse": lse}
+        return {"o": o.to(torch.bfloat16), "lse": lse}
 
 
 class MlaDecodeFwdCprrReference(OpReference):
@@ -254,4 +254,4 @@ class MlaDecodeFwdCprrReference(OpReference):
             weights = logits.softmax(dim=-1).masked_fill(empty[..., None], 0)
             o[requests] = torch.einsum("rqhk,rkd->rqhd", weights, keys[..., :512])
             lse[requests] = logits.logsumexp(dim=-1).masked_fill(empty, -torch.inf)
-        return {"o": o, "lse": lse}
+        return {"o": o.to(torch.bfloat16), "lse": lse}

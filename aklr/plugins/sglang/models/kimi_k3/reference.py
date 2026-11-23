@@ -59,7 +59,7 @@ class KimiK3LatentMoeReference(OpReference):
             latent.index_add_(
                 0, tokens, weights[tokens, slots, None] * (mxfp8(h) @ mxfp4_weight(w2[e], w2_scale[e]).T)
             )
-        return {"latent": latent, "shared": shared}
+        return {"latent": latent.to(hidden_states.dtype), "shared": shared.to(hidden_states.dtype)}
 
 
 class KimiK3MlaVcOutputGateReference(OpReference):
@@ -69,14 +69,14 @@ class KimiK3MlaVcOutputGateReference(OpReference):
         values = rounded_to_bfloat16(torch.einsum("thk,hvk->thv", latent.float(), vc_weight.float())).flatten(
             1
         )
-        return {"output": values * rounded_to_bfloat16(torch.sigmoid(gate.float()))}
+        return {"output": (values * rounded_to_bfloat16(torch.sigmoid(gate.float()))).to(latent.dtype)}
 
 
 class KimiK3MlaPrefillGateReference(OpReference):
     def reference(self, *, q, k, v, gate, qo_indptr, sm_scale, **_):
         """Rounding points: the attention output and the sigmoid each round to bf16 before
         their product."""
-        q, k, v = q.float(), k.float(), v.float()
+        dtype, q, k, v = q.dtype, q.float(), k.float(), v.float()
         attention = torch.empty_like(v)
         bounds = qo_indptr.long().tolist()
         for start, end in zip(bounds[:-1], bounds[1:]):
@@ -84,7 +84,5 @@ class KimiK3MlaPrefillGateReference(OpReference):
             causal = torch.ones(end - start, end - start, dtype=torch.bool, device=q.device).tril()
             weights = torch.softmax(scores.masked_fill(~causal, float("-inf")), dim=-1)
             attention[start:end] = torch.einsum("hqk,khd->qhd", weights, v[start:end])
-        return {
-            "output": rounded_to_bfloat16(attention).flatten(1)
-            * rounded_to_bfloat16(torch.sigmoid(gate.float()))
-        }
+        output = rounded_to_bfloat16(attention).flatten(1) * rounded_to_bfloat16(torch.sigmoid(gate.float()))
+        return {"output": output.to(dtype)}

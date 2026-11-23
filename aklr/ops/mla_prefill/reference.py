@@ -65,7 +65,7 @@ class SparsePrefillMxfp8Reference(OpReference):
             joined = torch.cat((logits, sink), dim=-1)
             probabilities = torch.softmax(joined, dim=-1)[..., :-1]
             result[start:stop] = torch.bmm(probabilities, values)
-        return {"output": result}
+        return {"output": result.to(torch.bfloat16)}
 
 
 _QUERY_ROWS = 128  # queries a step: [heads, 128, keys] float32 logits stay under 1 GiB at 131072 keys
@@ -83,7 +83,7 @@ def _operands(q, k, v, qkv_fp8):
 class MlaPrefillVarlenReference(OpReference):
     def reference(self, *, q, k, v, cu_seqlens_q, sm_scale, qkv_fp8, cu_seqlens_k=None, **_):
         """Each head's causal attention per sequence, queries aligned at the end of its keys."""
-        q, k, v = _operands(q, k, v, qkv_fp8)
+        dtype, (q, k, v) = q.dtype, _operands(q, k, v, qkv_fp8)
         starts_q = cu_seqlens_q.tolist()
         starts_k = starts_q if cu_seqlens_k is None else cu_seqlens_k.tolist()
         output = q.new_zeros(q.shape[0], q.shape[1], v.shape[-1])
@@ -97,14 +97,14 @@ class MlaPrefillVarlenReference(OpReference):
                 last = torch.arange(r0, r1, device=q.device)[:, None] + (n_k - n_q)
                 logits = logits.masked_fill(torch.arange(n_k, device=q.device)[None] > last, -torch.inf)
                 output[q0 + r0 : q0 + r1] = torch.einsum("hqk,khd->qhd", logits.softmax(dim=-1), values)
-        return {"output": output}
+        return {"output": output.to(dtype)}
 
 
 class MlaPrefillVarlenLseReference(OpReference):
     def reference(self, *, q, k, v, cu_seqlens_q, sm_scale, qkv_fp8, causal, cu_seqlens_k=None, **_):
         """Each head's attention per sequence, causal (queries aligned at the end of its keys) or over every key of the
         sequence: the output and the natural log-sum-exp of the logits read, [query row, head]."""
-        q, k, v = _operands(q, k, v, qkv_fp8)
+        dtype, (q, k, v) = q.dtype, _operands(q, k, v, qkv_fp8)
         starts_q = cu_seqlens_q.tolist()
         starts_k = starts_q if cu_seqlens_k is None else cu_seqlens_k.tolist()
         output = q.new_zeros(q.shape[0], q.shape[1], v.shape[-1])
@@ -121,4 +121,4 @@ class MlaPrefillVarlenLseReference(OpReference):
                     logits = logits.masked_fill(torch.arange(n_k, device=q.device)[None] > last, -torch.inf)
                 output[q0 + r0 : q0 + r1] = torch.einsum("hqk,khd->qhd", logits.softmax(dim=-1), values)
                 lse[q0 + r0 : q0 + r1] = logits.logsumexp(dim=-1).transpose(0, 1)
-        return {"output": output, "lse": lse}
+        return {"output": output.to(dtype), "lse": lse}

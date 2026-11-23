@@ -13,5 +13,6 @@ __all__ = ["MlaVAbsorbReference"]
 
 class MlaVAbsorbReference(OpReference):
     def reference(self, *, attn_output, w_vc, **_):
-        """Per token and head, attn_output . w_vc^T; no rounding point."""
-        return {"output": torch.einsum("thk,hvk->thv", attn_output.float(), w_vc.float())}
+        """Per token and head, attn_output . w_vc^T; no rounding point but the output's."""
+        output = torch.einsum("thk,hvk->thv", attn_output.float(), w_vc.float())
+        return {"output": output.to(torch.bfloat16)}

@@ -10,13 +10,16 @@ class AddRmsNormReference(OpReference):
     def reference(self, *, x, residual, weight, epsilon, **_):
         """normalized and residual_out from the sum x + residual."""
         total = x.float() + residual.float()
-        return {"normalized": _normalized(total, weight.float(), epsilon), "residual_out": total}
+        return {
+            "normalized": _normalized(total, weight.float(), epsilon).to(x.dtype),
+            "residual_out": total.to(x.dtype),
+        }
 
 
 class RmsNormReference(OpReference):
     def reference(self, *, x, weight, epsilon, **_):
         """x times the reciprocal rms of its row, times weight."""
-        return {"normalized": _normalized(x.float(), weight.float(), epsilon)}
+        return {"normalized": _normalized(x.float(), weight.float(), epsilon).to(x.dtype)}
 
 
 def _normalized(x, weight, epsilon):

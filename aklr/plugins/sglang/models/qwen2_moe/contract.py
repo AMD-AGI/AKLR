@@ -204,6 +204,7 @@ QWEN2_MOE_ROUTER = OpContract(
             description="The chosen experts, by descending logit.",
             shape=("n_tokens", "topk"),
             dtype=_INT32,
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),

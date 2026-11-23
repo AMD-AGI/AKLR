@@ -58,7 +58,7 @@ def attn_res(prefix, delta, blocks, norm_weight, qk_weight, output_norm_weight, 
   - attr：`n_valid_rows` 是 bank 里已经写了几行（0 到 8），mix 要把这些行全部读进来；`write_bank` 表示是否同时把 prefix 写成 bank 的第 `n_valid_rows` 行；另有 `has_addend` 和 `has_norm`。vLLM 实际用到的每种组合各算一个场景；
   - 布局：只有 `row_major`；
   - 输出：`out`，形状 `[n_tokens, hidden_size]`。有 `norm_weight` 时，是归一化后再乘以 `norm_weight` 的 mix，没有时就是 mix 本身。`prefix` 和 `bank` 是可变输入，算子像 vLLM 的 kernel 一样原地更新它们，误差界为零，要求逐位一致。
-- `reference.py`：`KimiK3AttnResReference`，在 float32 下按 contract 计算。唯一的舍入在 prefix 上：`prefix + addend` 舍入为 prefix 的 dtype，和 vLLM 的 kernel 写回时一样。它返回调用结束时的 `out`、`prefix` 和 `bank`。
+- `reference.py`：`KimiK3AttnResReference`，在 float32 下按 contract 计算。它把 `prefix + addend` 舍入为 prefix 的 dtype，和 vLLM 的 kernel 写回时一样，输出也舍入为这个 dtype。它返回调用结束时的 `out`、`prefix` 和 `bank`。
 - `baseline.py`：`KimiK3AttnResBaseline`，即 vLLM 目前的做法：用 `_triton.py` 里的副本，按 vLLM `attn_res` 的启动配置，每次调用启动一次这个 Triton kernel。
 - `api.py`：算子的入口函数 `@api(KIMI_K3_ATTN_RES)`，函数体为 `...`。
 

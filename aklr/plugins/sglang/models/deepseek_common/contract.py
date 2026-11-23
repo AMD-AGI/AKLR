@@ -39,16 +39,18 @@ _NORM_WEIGHT = LogUniformDistribution(log2_lo="-1", log2_hi="0.58")
 _FLOAT32_LARGEST = DTYPE_TRAITS["float32"].largest_finite_value
 # A normalized latent is rounded to bf16 twice, as sglang rounds it: the qkv latent (a bf16
 # tensor) before the norm, then the norm's output, each up to 2**-8 of the value; B = 2**-12 +
-# 3 * 2**-8 * |y| leaves one more 2**-8 for the projection's fp32 sums, and the absolute part
-# covers them where an output is near 0. A CPU model of sglang's and these kernels' arithmetic
-# (an IEEE fp32 MFMA chain, or one keeping 14 bits below each MFMA's largest product, split-K or
-# not, hidden 6144 and 16384, 1 to 256 tokens) peaks at 0.65 of B. A missing or swapped norm
-# weight, the two latents normalized together or by the other's rms, a dropped K group or a
-# wrong token row each fail.
-_NORMALIZED = ToleranceBound(absolute_tolerance=2**-12, relative_tolerance=2**-7)
-# The RoPE key is the projection rounded once to bf16: B = 2**-6 + 2 * 2**-8 * |y|, the
-# absolute part for the fp32 sums where a key cancels to near 0 (the same model peaks at 0.49).
-_PROJECTED = ToleranceBound(absolute_tolerance=2**-6, relative_tolerance=2**-8)
+# 4 * 2**-8 * |y| against the reference's bf16 leaves one more 2**-8 for the projection's fp32
+# sums and one for the reference's own rounding, and the absolute part covers them where an
+# output is near 0. A CPU model of sglang's and these kernels' arithmetic (an IEEE fp32 MFMA
+# chain, or one keeping 14 bits below each MFMA's largest product, split-K or not, hidden 6144
+# and 16384, 1 to 256 tokens) peaks at 0.65 of B. A missing or swapped norm weight, the two
+# latents normalized together or by the other's rms, a dropped K group or a wrong token row each
+# fail.
+_NORMALIZED = ToleranceBound(absolute_tolerance=2**-12, relative_tolerance=2**-7 + 2**-7)
+# The RoPE key is the projection rounded once to bf16, as the reference's is: B = 2**-6 +
+# 3 * 2**-8 * |y|, the absolute part for the fp32 sums where a key cancels to near 0 (the same
+# model peaks at 0.49).
+_PROJECTED = ToleranceBound(absolute_tolerance=2**-6, relative_tolerance=2**-8 + 2**-7)
 
 MLA_QKV_A_NORM = OpContract(
     contract_id="mla_qkv_a_norm@1.0",

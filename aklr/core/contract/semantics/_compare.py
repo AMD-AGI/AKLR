@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple
 
 from pydantic import Field, TypeAdapter
 
-from ._dtypes import DTYPE_TRAITS, DType
+from ._dtypes import DType
 from ._frozen_model import FrozenModel
 
 if TYPE_CHECKING:
@@ -102,17 +102,13 @@ def mutable_tensor_declarations(schema: Mapping[str, Any]) -> dict[str, Any]:
 
 def comparison_criteria(schema: Mapping[str, Any]) -> dict[str, Any]:
     """What ``compare_outputs`` judges by, from a schema json: its ``compare`` settings and each
-    mutable tensor's dtype and error bound (none for an integral one), in
-    ``mutable_tensor_declarations`` order."""
+    mutable tensor's error bound, in ``mutable_tensor_declarations`` order."""
     compare = schema["compare"]
     return {
         "element_order": compare["element_order"],
         "max_violation_fraction": compare["max_violation_fraction"],
         "outputs": {
-            name: {
-                "dtype": declaration["dtype"]["any_of"][0],
-                "error_bound": declaration["error_bounds"][0][1] if declaration["error_bounds"] else None,
-            }
+            name: {"error_bound": declaration["error_bounds"][0][1]}
             for name, declaration in mutable_tensor_declarations(schema).items()
         },
     }
@@ -123,48 +119,17 @@ def compare_outputs(
     actual_outputs: Mapping[str, Tensor],
     reference_outputs: Mapping[str, Tensor],
 ) -> dict[str, CompareResult]:
-    """Each output of ``criteria`` (``comparison_criteria``) against its reference, on the
-    tensors' device, under its error bound (an integer one must be exact); keyed in that order."""
+    """Each output of ``criteria`` (``comparison_criteria``) against the reference's, both in the
+    output's dtype, on the tensors' device, under its error bound; keyed in that order."""
     element_order = ElementOrder(criteria["element_order"])
-    max_violation_fraction = criteria["max_violation_fraction"]
     results = {}
     for name, output in criteria["outputs"].items():
-        out_dtype = output["dtype"]
-        actual, reference_out = element_order.arrange(actual_outputs[name], reference_outputs[name])
-        if DTYPE_TRAITS[out_dtype].is_integral:
-            # integral unit_roundoff is 0: B = 0, i.e. exact
-            assert DTYPE_TRAITS[out_dtype].unit_roundoff == 0
-            results[name] = _exact_compare(
-                actual,
-                reference_out.to(actual.dtype),
-                max_violation_fraction,
-            )
-            continue
-        a = actual.float()
-        rounded = reference_out.to(actual.dtype).float()
+        actual, expected = element_order.arrange(actual_outputs[name], reference_outputs[name])
         error_bound = _ERROR_BOUND_ADAPTER.validate_python(output["error_bound"])
         results[name] = error_bound.compare(
-            a,
-            rounded,
-            reference_out,
-            max_violation_fraction=max_violation_fraction,
-            out_unit_roundoff=DTYPE_TRAITS[out_dtype].unit_roundoff,
+            actual, expected, max_violation_fraction=criteria["max_violation_fraction"]
         )
     return results
-
-
-def _exact_compare(actual: Tensor, rounded: Tensor, max_violation_fraction: float) -> CompareResult:
-    """An integral output against its reference in the same dtype, element by element as
-    integers (float32 holds an int exactly only up to 2**24)."""
-    differs = actual != rounded
-    violation_fraction = _fraction(differs)
-    return CompareResult.of_measures(
-        actual.float(),
-        rounded.float(),
-        is_bound_exceeded=violation_fraction > max_violation_fraction,
-        violation_fraction=violation_fraction,
-        peak_bound_multiple=math.inf if bool(differs.any()) else 0.0,
-    )
 
 
 class DeterminismLevel(str, Enum):
@@ -185,54 +150,37 @@ def runs_agree(determinism: str, outputs: Sequence[Tensor]) -> bool:
 
 
 class ErrorBound(FrozenModel):
-    """One ``error_bounds`` item of a floating output: how it is compared with y, the
-    reference."""
+    """One ``error_bounds`` item of a mutable tensor: how it is compared with the reference."""
 
     kind: str
     expr_fields: ClassVar[tuple[str, ...]] = ()  # expression fields, in order
 
     @abstractmethod
-    def compare(
-        self,
-        a: Tensor,
-        rounded: Tensor,
-        reference_out: Tensor,
-        *,
-        max_violation_fraction: float,
-        out_unit_roundoff: float,
-    ) -> CompareResult:
-        """Output ``a`` against y (``reference_out``) and y rounded to the output dtype
-        (``rounded``), all three in float32."""
+    def compare(self, actual: Tensor, expected: Tensor, *, max_violation_fraction: float) -> CompareResult:
+        """Output ``actual`` against ``expected``, the reference's, both in the output's dtype."""
 
 
 class ElementwiseBound(ErrorBound):
     """B, the largest |actual - y| allowed per element: at most
-    ``max_violation_fraction`` of the finite elements exceed it."""
+    ``max_violation_fraction`` of the elements where y is finite exceed it."""
 
     @abstractmethod
-    def allowed_error(self, reference_out: Tensor, out_unit_roundoff: float) -> Tensor:
+    def allowed_error(self, expected: Tensor) -> Tensor:
         """B at each element of the one output compared."""
 
-    def compare(
-        self,
-        a,
-        rounded,
-        reference_out,
-        *,
-        max_violation_fraction,
-        out_unit_roundoff,
-    ):
-        is_finite = rounded.isfinite()
-        error = (a - reference_out)[is_finite]
-        limit = self.allowed_error(reference_out, out_unit_roundoff)[is_finite]
+    def compare(self, actual, expected, *, max_violation_fraction):
+        # integers as integers: float32 holds an int exactly only up to 2**24
+        a, y = (t.float() if t.is_floating_point() else t.long() for t in (actual, expected))
+        is_finite = y.isfinite()
+        error = (a - y)[is_finite].abs()
+        limit = self.allowed_error(y)[is_finite]
         violation_fraction = peak_bound_multiple = 0.0
         if error.numel():
-            violation_fraction = _fraction(error.abs() > limit)
-            multiples = (error.abs() / limit).masked_fill(error == 0, 0.0)
-            peak_bound_multiple = multiples.max().item()
+            violation_fraction = _fraction(error > limit)
+            peak_bound_multiple = (error / limit).masked_fill(error == 0, 0.0).max().item()
         return CompareResult.of_measures(
-            a,
-            rounded,
+            a.float(),
+            y.float(),
             is_bound_exceeded=violation_fraction > max_violation_fraction,
             violation_fraction=violation_fraction,
             peak_bound_multiple=peak_bound_multiple,
@@ -240,42 +188,33 @@ class ElementwiseBound(ErrorBound):
 
 
 class ToleranceBound(ElementwiseBound):
-    """B = absolute_tolerance + (relative_tolerance + out_unit_roundoff) * |y|."""
+    """B = absolute_tolerance + relative_tolerance * |y|; both 0: equal."""
 
     kind: Literal["tolerance"] = "tolerance"
     absolute_tolerance: Annotated[float, Field(ge=0.0)]
     relative_tolerance: Annotated[float, Field(ge=0.0)]
 
-    def allowed_error(self, reference_out, out_unit_roundoff):
-        relative = self.relative_tolerance + out_unit_roundoff
-        return self.absolute_tolerance + relative * reference_out.abs()
+    def allowed_error(self, expected):
+        return self.absolute_tolerance + self.relative_tolerance * expected.abs()
 
 
 class SqnrBound(ErrorBound):
-    """The whole output passes when 20*log10(||y_r|| / ||actual - y_r||) >= min_sqnr_db, y_r
-    the reference rounded to the output dtype (equal tensors: inf); no per-element B, so
-    ``violation_fraction`` is 0 or 1 and ``peak_bound_multiple`` is the noise norm over the
-    allowed one."""
+    """The whole output passes when 20*log10(||y|| / ||actual - y||) >= min_sqnr_db (equal
+    tensors: inf); no per-element B, so ``violation_fraction`` is 0 or 1 and
+    ``peak_bound_multiple`` is the noise norm over the allowed one."""
 
     kind: Literal["sqnr"] = "sqnr"
     min_sqnr_db: float
 
-    def compare(
-        self,
-        a,
-        rounded,
-        reference_out,
-        *,
-        max_violation_fraction,
-        out_unit_roundoff,
-    ):
+    def compare(self, actual, expected, *, max_violation_fraction):
         import torch
 
-        kept = rounded.isfinite() & a.isfinite()  # a non-finite one is a mismatch
+        a, y = actual.float(), expected.float()
+        kept = y.isfinite() & a.isfinite()  # a non-finite one is a mismatch
         # both over one peak first: the difference of two large values can pass float32's range
-        peak, _ = _scaled(torch.cat((a[kept], rounded[kept])))
-        noise = peak * _norm((a[kept] / peak) - (rounded[kept] / peak))
-        allowed = _norm(rounded[kept]) * 10 ** (-self.min_sqnr_db / 20)
+        peak, _ = _scaled(torch.cat((a[kept], y[kept])))
+        noise = peak * _norm((a[kept] / peak) - (y[kept] / peak))
+        allowed = _norm(y[kept]) * 10 ** (-self.min_sqnr_db / 20)
         if not noise:
             peak_bound_multiple = 0.0
         else:
@@ -284,7 +223,7 @@ class SqnrBound(ErrorBound):
         is_bound_exceeded = peak_bound_multiple > 1
         return CompareResult.of_measures(
             a,
-            rounded,
+            y,
             is_bound_exceeded=is_bound_exceeded,
             violation_fraction=float(is_bound_exceeded),
             peak_bound_multiple=peak_bound_multiple,

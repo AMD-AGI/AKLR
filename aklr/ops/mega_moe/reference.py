@@ -33,4 +33,5 @@ class MegaMoeReference(DistOpReference):
             gated = (F.silu(gate) * up).to(hidden_states.dtype).float()
             w2 = mxfp4_weight(owner_call["w2"][local], owner_call["w2_scale"][local]).to(x.device)
             out[routed] = mxfp8(gated) @ w2.mT
-        return {"out": (out * call["topk_weights"].float().unsqueeze(-1)).sum(dim=1)}
+        out = (out * call["topk_weights"].float().unsqueeze(-1)).sum(dim=1)
+        return {"out": out.to(hidden_states.dtype)}

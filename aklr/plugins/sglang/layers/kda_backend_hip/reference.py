@@ -6,8 +6,8 @@ kernels and of sglang's.
 
 Rounding points: each convolution output, the SiLU of the sum of the four taps' products, to BF16,
 which the rings keep as the raw values and keys. The norms, gates, betas and the recurrence, serial
-from the slot's state over the chain, run in float32; the outputs and the rings' gates and betas
-round to their dtypes in compare."""
+from the slot's state over the chain, run in float32; the output, the windows and the rings round
+to their dtypes."""
 
 import torch
 import torch.nn.functional as F
@@ -78,14 +78,15 @@ class KdaChainVerifyRingReference(OpReference):
         if len(set(live)) != len(live) or len(set(lines)) != len(lines):
             raise ValueError("slots or window lines repeat")
 
-        # .float() may return its input: the mutable tensors are written in copies
-        written = {
-            "conv_window": conv_window.float().clone(),
-            "ring_v": ring_v.float().clone(),
-            "ring_k": ring_k.float().clone(),
-            "ring_g": ring_g.float().clone(),
-            "ring_beta": ring_beta.float().clone(),
+        mutable = {
+            "conv_window": conv_window,
+            "ring_v": ring_v,
+            "ring_k": ring_k,
+            "ring_g": ring_g,
+            "ring_beta": ring_beta,
         }
+        # .float() may return its input: the mutable tensors are written in copies
+        written = {n: t.float().clone() for n, t in mutable.items()}
         x, weight, conv_state, state = (
             mixed_qkv.float(),
             conv_weight.float(),
@@ -114,4 +115,7 @@ class KdaChainVerifyRingReference(OpReference):
                 update = (v[t] - (s * k[t][:, None, :]).sum(-1)) * beta[r * steps + t][:, None]
                 s = s + update[..., None] * k[t][:, None, :]
                 output[r * steps + t] = (s * q[t][:, None, :]).sum(-1)
-        return {"output": output, **written}
+        return {
+            "output": output.to(torch.bfloat16),
+            **{n: t.to(mutable[n].dtype) for n, t in written.items()},
+        }

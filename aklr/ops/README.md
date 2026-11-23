@@ -105,12 +105,12 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
   whose `kind` is the layout's `kind`, e.g. `E8M0Scales.model_validate(layout).storage_shape(shape)`.
 - A scalar input has `"shape": null`, `dtype`, `values` (an enumeration) or `interval`, an optional `default`, and
   `description`. A kernel must be correct for every value in the declared range.
-- A mutable tensor's `error_bounds` (in `contract.py`, not in the schema file; narrowing to the scenario
-  picks one) is `tolerance` (`atol` and `rtol` per element, as torch's `assert_close`) or `sqnr` (whole-output
-  SQNR against the reference rounded to the output dtype); each is an `ErrorBound` kind in `semantics/_compare.py`.
-  The common bounds are there too (`tolerance(*dtypes)`, `GEMM_BF16_SNR`, `MOE_MXFP4_SNR`, ...): a contract uses
-  them, and writes its own numbers only where its op needs other ones. An integer one has none: it must equal the
-  reference, unless the reference's `check` says otherwise.
+- Every mutable tensor has `error_bounds` (in `contract.py`, not in the schema file; narrowing to the scenario
+  picks one), and is compared with the reference, both in its dtype, under it: `tolerance` (`atol` and `rtol` per
+  element, as torch's `assert_close`; both 0 for an exact one, such as an integer id) or `sqnr` (whole-output SQNR);
+  each is an `ErrorBound` kind in `semantics/_compare.py`. The common bounds are there too (`tolerance(*dtypes)`,
+  `GEMM_BF16_SNR`, `MOE_MXFP4_SNR`, ...): a contract uses them, and writes its own numbers only where its op needs
+  other ones.
 - `compare.element_order` is `fixed` (element by element) or `any_in_full_rows` (integer outputs only: a row
   holding no padding may list its entries in any order); each is an `ElementOrder` member.
 - The reference and the baseline: [Reference and baseline](#reference-and-baseline).
@@ -132,8 +132,8 @@ instance is the contract's `reference`:
 - Rounds only where every correct kernel rounds (a router's logits to bf16, an fp8 linear's input), and lists those
   roundings in its docstring. No sum is computed exactly: engines sum in float32, each in its own order, and the
   difference is left to `compare`.
-- Returns each float output as computed (validation rounds it to the output dtype to compare), each integer output
-  (an id, a slot) in its declared dtype.
+- Returns each tensor in its declared dtype, rounded there by the reference itself; validation compares it as
+  returned.
 - Is written from the math, independent of the kernels and the baseline. It runs on the inputs' device (the GPU in
   validation), reads each size from a tensor's shape, and never writes a tensor of the call.
 - `check(outputs, expected, criteria)` compares the kernel's outputs with `expected` under the error bounds

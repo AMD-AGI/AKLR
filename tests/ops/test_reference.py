@@ -7,9 +7,6 @@ import pytest
 import torch
 
 from aklr.core.contract import semantics
-from aklr.core.validation.stages._bench._evaluation._comparison import (
-    is_reference_comparable,
-)
 from tests.op_case import OpCase
 from tests.ops import cases as ops_cases
 
@@ -24,31 +21,20 @@ def _backend_points():
 
 
 class TestReference:
-    """The reference's outputs are as declared, admitted by the contract's compare."""
+    """The reference's outputs are as declared."""
 
     def test_outputs_are_declared(self, op_case: OpCase) -> None:
-        """On the CPU, ``reference_outputs`` holds every result finite, in float32, or in its
-        declared dtype for an integral output; what its check reads besides comes after them."""
+        """On the CPU, ``reference_outputs`` holds every result finite, in its declared dtype;
+        what its check reads besides comes after them."""
         mutable_tensors = list(op_case.contract.mutable_tensors)
         reference = op_case.reference_outputs(op_case.inputs())
         assert list(reference)[: len(mutable_tensors)] == mutable_tensors
         for name in mutable_tensors:
             tensor = reference[name]
-            dtype = op_case.point.dtypes[name]
-            is_integral = semantics.DTYPE_TRAITS[dtype].is_integral
             assert tensor.device.type == "cpu", name
-            assert tensor.dtype == (semantics.torch_dtypes(dtype)[0] if is_integral else torch.float32), name
-            assert tensor.isfinite().all(), name
+            assert tensor.dtype == semantics.torch_dtypes(op_case.point.dtypes[name])[0], name
+            assert tensor.float().isfinite().all(), name
             assert tuple(tensor.shape) == op_case.contract.dtype_storage_shape_of(name, op_case.point), name
-
-    def test_rounded_reference_passes_compare(self, op_case: OpCase) -> None:
-        """The reference rounded to each output's dtype passes ``op_case.compare``."""
-        args = op_case.inputs()
-        assert is_reference_comparable(
-            {o: op_case.point.dtypes[o] for o in op_case.contract.mutable_tensors},
-            op_case.reference_outputs(args),
-            lambda rounded: op_case.compare(rounded, args),
-        )
 
     @pytest.mark.gpu
     @pytest.mark.parametrize("op_case", OpCase.params(_backend_points()))
@@ -91,6 +77,7 @@ def test_int8_gemm_sums_its_products_exactly() -> None:
         "a_scale": torch.tensor([[0.7]]),
         "b_scale": torch.tensor([[0.9]]),
         "trans_b": True,
+        "out_dtype": torch.bfloat16,
     }
     assert GemmA8w8Reference().reference(**args)["out"].tolist() == [[0.0]]
 

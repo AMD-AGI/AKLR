@@ -37,7 +37,7 @@ class PagedAttentionDecodeReference(OpReference):
             logits = torch.einsum("rhd,rthd->rht", q[rows], k) * scale
             logits = logits.masked_fill(~visible[rows, None], -torch.inf)
             out[rows] = torch.einsum("rht,rthd->rhd", logits.softmax(dim=-1), v)
-        return {"out": out}
+        return {"out": out.to(query.dtype)}
 
 
 class UnifiedAttentionReference(OpReference):
@@ -46,7 +46,7 @@ class UnifiedAttentionReference(OpReference):
     ):
         """Each query row attends causally over its request's context, in a window when
         window_size[0] >= 0."""
-        q = q.float()
+        dtype, q = q.dtype, q.float()
         block_size, n_kv_heads = k.shape[1], k.shape[2]
         keys, values = k.float().flatten(0, 1), v.float().flatten(0, 1)
         group = q.shape[1] // n_kv_heads
@@ -78,4 +78,4 @@ class UnifiedAttentionReference(OpReference):
             logits = logits.masked_fill(~real[chunk, :, None, None, None], 0.0)
             mixed = torch.einsum("rlkgt,rtkd->rlkgd", logits.softmax(dim=-1), chunk_values)
             out[index[chunk][real[chunk]]] = mixed.flatten(2, 3)[real[chunk]]
-        return {"out": out}
+        return {"out": out.to(dtype)}

@@ -292,7 +292,7 @@ class OpCase:
             if semantics.DTYPE_TRAITS[spec["dtype"]["any_of"][0]].is_integral
         }
         assert {o: results[o].detail for o in integral if not results[o].is_passed} == {}
-        reference = self.reference_outputs(args)
+        reference = {o: t.float() for o, t in self.reference_outputs(args).items()}
         for o in output_specs.keys() - integral:
             bound = output_specs[o]["error_bounds"][0][1]
             # shortcut: 20 dB uncalibrated (MI300X skips), set from the gfx950 SQNRs once measured

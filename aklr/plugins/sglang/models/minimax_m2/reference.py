@@ -85,7 +85,9 @@ class MinimaxM2Fp8MoeReference(OpReference):
             gate_up = _fp8_linear(rows, w1[e].float(), w1_scale[e].float())
             return _fp8_linear(_silu_and_mul(gate_up), w2[e].float(), w2_scale[e].float())
 
-        return {"out": _held_experts(x, ids, weights, mlp, expert_offset, w1.shape[0])}
+        return {
+            "out": _held_experts(x, ids, weights, mlp, expert_offset, w1.shape[0]).to(hidden_states.dtype)
+        }
 
 
 class MinimaxM2Mxfp4MoeReference(OpReference):
@@ -112,4 +114,6 @@ class MinimaxM2Mxfp4MoeReference(OpReference):
             gate_up = rows @ mxfp4_weight(w1[e], w1_scale[e]).T
             return _silu_and_mul(gate_up) @ mxfp4_weight(w2[e], w2_scale[e]).T
 
-        return {"out": _held_experts(x, ids, weights, mlp, expert_offset, w1.shape[0])}
+        return {
+            "out": _held_experts(x, ids, weights, mlp, expert_offset, w1.shape[0]).to(hidden_states.dtype)
+        }

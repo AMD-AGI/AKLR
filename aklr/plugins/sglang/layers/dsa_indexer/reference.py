@@ -9,7 +9,7 @@ rounds it, the roundings every correct kernel makes:
 - RoPE's turned pairs, to bf16;
 - the Hadamard transform (times 128^-0.5), to bf16;
 - a head weight times n_heads^-0.5, to bf16;
-- the fp8 values at their power-of-two scale, which compare rounds.
+- the fp8 values at their power-of-two scale, to fp8.
 
 A kernel that sums a projection in another order still rounds a few values to the next bf16,
 and wherever a row's amax then crosses a power of two times 448, its fp8 scale is twice or half
@@ -105,8 +105,8 @@ def _keys(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, cos, sin):
 
 
 def _stored_cache(index_k_cache, out_cache_loc, keys, scales):
-    """index_k_cache after the call, its bytes as fp8 values in float32: each token's fp8
-    values (keys / scale, unrounded) and the bytes of its fp32 scale at its slot."""
+    """index_k_cache after the call: each token's fp8 values (keys / scale) and the bytes of its
+    fp32 scale at its slot."""
     pages = index_k_cache.float().reshape(-1, _PAGE_BYTES).clone()
     slots = out_cache_loc.long()
     page, key = slots // PAGE_SIZE, slots % PAGE_SIZE
@@ -119,7 +119,7 @@ def _stored_cache(index_k_cache, out_cache_loc, keys, scales):
     scale_bytes = scales[:, None].view(torch.uint8).view(torch.float8_e4m3fn).float()
     scale_columns = (PAGE_SIZE * HEAD_DIM + key * 4)[:, None] + torch.arange(4, device=slots.device)[None, :]
     pages[page[:, None], scale_columns] = scale_bytes
-    return pages.reshape(index_k_cache.shape)
+    return pages.reshape(index_k_cache.shape).to(torch.float8_e4m3fn)
 
 
 class DsaIndexerPrepareReference(OpReference):
@@ -152,7 +152,7 @@ class DsaIndexerPrepareReference(OpReference):
         q_scales = _scales(q)
         gate = _bf16(_project(x.float(), weights_proj.float()) * n_heads**-0.5)
         return {
-            "q_fp8": q / q_scales[..., None],
+            "q_fp8": (q / q_scales[..., None]).to(torch.float8_e4m3fn),
             "head_weights": gate * q_scales * HEAD_DIM**-0.5,
             "index_k_cache": _stored_cache(index_k_cache, out_cache_loc, keys, key_scales),
         }

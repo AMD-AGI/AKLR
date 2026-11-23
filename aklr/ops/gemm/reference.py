@@ -27,7 +27,7 @@ def _out(product, bias):
 class GemmReference(OpReference):
     def reference(self, *, a, b, trans_b, bias=None, **_):
         """``a @ b.T + bias``."""
-        return {"out": _out(a.float() @ _weight(b, trans_b).mT, bias)}
+        return {"out": _out(a.float() @ _weight(b, trans_b).mT, bias).to(a.dtype)}
 
 
 def _int8_product(a, b):
@@ -39,7 +39,7 @@ def _int8_product(a, b):
 
 
 class GemmA8w8Reference(OpReference):
-    def reference(self, *, a, b, a_scale, b_scale, trans_b, bias=None, **_):
+    def reference(self, *, a, b, a_scale, b_scale, trans_b, out_dtype, bias=None, **_):
         """Per-row scales; a squeezed ``(rows,)`` scale reads as ``(rows, 1)``. int8 operands sum
         exactly in int32, then take the scales."""
         a_scale = a_scale.float().reshape(-1, 1)
@@ -50,11 +50,11 @@ class GemmA8w8Reference(OpReference):
             product = _int8_product(a, b) * a_scale * b_scale
         else:
             product = (a * a_scale) @ (b * b_scale.mT).mT
-        return {"out": _out(product, bias)}
+        return {"out": _out(product, bias).to(out_dtype)}
 
 
 class GemmA8w8BlockwiseScaledReference(OpReference):
-    def reference(self, *, a, b, a_scale, b_scale, trans_b, scale_major_mode, bias=None, **_):
+    def reference(self, *, a, b, a_scale, b_scale, trans_b, scale_major_mode, out_dtype, bias=None, **_):
         """A scale per ``(1, 128)`` of ``a`` and ``(128, 128)`` of ``b``; tails partial."""
         a, b = a.float(), _weight(b, trans_b)
         (n, k), block = b.shape, 128
@@ -64,7 +64,7 @@ class GemmA8w8BlockwiseScaledReference(OpReference):
         a_scale = a_scale.repeat_interleave(block, dim=1)
         b_scale = b_scale.float().repeat_interleave(block, dim=0).repeat_interleave(block, dim=1)
         out = (a * a_scale[:, :k]) @ (b * b_scale[:n, :k]).mT
-        return {"out": _out(out, bias)}
+        return {"out": _out(out, bias).to(out_dtype)}
 
 
 def _mxfp4(x, scale):
@@ -73,12 +73,14 @@ def _mxfp4(x, scale):
 
 
 class GemmA4w4Mxfp4Reference(OpReference):
-    def reference(self, *, a, b, a_scale, b_scale, alpha, bias=None, **_):
+    def reference(self, *, a, b, a_scale, b_scale, alpha, out_dtype, bias=None, **_):
         """``alpha * (a @ b.T) + bias``, one e8m0 scale per 32 fp4 values along ``k``."""
-        return {"out": _out(alpha * (_mxfp4(a, a_scale) @ _mxfp4(b, b_scale).mT), bias)}
+        out = _out(alpha * (_mxfp4(a, a_scale) @ _mxfp4(b, b_scale).mT), bias)
+        return {"out": out.to(out_dtype)}
 
 
 class BmmReference(OpReference):
     def reference(self, *, a, b, trans_b, bias=None, **_):
         """``bias`` is ``(batch, n)``, broadcast over ``m``."""
-        return {"out": _out(a.float() @ _weight(b, trans_b).mT, None if bias is None else bias.unsqueeze(-2))}
+        out = _out(a.float() @ _weight(b, trans_b).mT, None if bias is None else bias.unsqueeze(-2))
+        return {"out": out.to(a.dtype)}

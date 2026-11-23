@@ -58,4 +58,4 @@ class Qwen3MoeFp8MoeReference(OpReference):
             gate, up = (x_fp8[tokens] @ gate_up.T).chunk(2, dim=-1)
             expert = _fp8_input(torch.nn.functional.silu(gate) * up) @ down.T
             out.index_add_(0, tokens, weights[tokens, slots, None] * expert)
-        return {"out": out}
+        return {"out": out.to(hidden_states.dtype)}

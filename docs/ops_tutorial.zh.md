@@ -40,7 +40,7 @@ flowchart TD
 参考仓库里的 `harness/skills/port-generated-kernels/references/new-op.md` 依次实现以下文件：
 
 1. `contract.py`：定义 `OpContract` 和 `CONTRACTS`（registry 会自动发现）；`op_type` 取目录名 `<op>`；按数学含义命名；多输出时不能有叫 `out` 的；每个输出给出 `error_bounds`，contract 给出 `determinism`，以及它的 `reference` 和 `baseline`（下面两个类的实例）。
-2. `reference.py`：每个 contract 一个 `OpReference` 类，它的 `reference(self, *, <参数名>, **_)` 按关键字接收 kernel 的调用参数，按名字返回 mutable 张量；torch 有算子的 dtype 就用它算，没有就用 float32（目前都是 float32）；整数输出用声明的 dtype。规则见 `aklr/ops/README.md` 的 "Reference and baseline"。
+2. `reference.py`：每个 contract 一个 `OpReference` 类，它的 `reference(self, *, <参数名>, **_)` 按关键字接收 kernel 的调用参数，按名字返回 mutable 张量，每个都是 contract 声明的 dtype；torch 有算子的 dtype 就用它算，没有就用 float32。规则见 `aklr/ops/README.md` 的 "Reference and baseline"。
 3. `api.py`：`@api(<CONTRACT>)` 存根（函数体只能是 `...`）。
 4. `baseline.py`：每个 contract 一个 `OpBaseline` 类（每个 contract 必须有且只有一个），就是推理引擎对这个算子的实际调用；它的 `baseline(self, *, <参数名>)` 按关键字接收 kernel 的调用参数，在方法内部 import AITER 或 SGLang，按名字返回输出；不支持的调用抛 `NotImplementedError`（bench 报 `baseline_failed`）。
 5. `__init__.py`：导出 api。

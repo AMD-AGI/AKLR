@@ -78,7 +78,7 @@ class DeepseekV2Mxfp4MoeReference(OpReference):
         def mlp(rows, e):
             return _mlp(rows, mxfp4_weight(w1[e], w1_scale[e]), mxfp4_weight(w2[e], w2_scale[e]))
 
-        return {"out": _experts(x, ids, weights, mlp)}
+        return {"out": _experts(x, ids, weights, mlp).to(hidden_states.dtype)}
 
 
 def _first_largest(values, k):
@@ -157,4 +157,4 @@ class DeepseekV2Fp8MoeReference(OpReference):
             gate, up = _fp8_linear(rows, w1[e].float(), w1_scale[e].float()).chunk(2, dim=-1)
             return _fp8_linear(torch.nn.functional.silu(gate) * up, w2[e].float(), w2_scale[e].float())
 
-        return {"out": _experts(x, ids, weights, mlp)}
+        return {"out": _experts(x, ids, weights, mlp).to(hidden_states.dtype)}

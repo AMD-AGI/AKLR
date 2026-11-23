@@ -118,6 +118,7 @@ DEEPSEEK_V4_ROUTER = OpContract(
             ),
             shape=("n_tokens", "n_slots"),
             dtype=DTypeSpec(any_of=(DType.INT32,)),
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),

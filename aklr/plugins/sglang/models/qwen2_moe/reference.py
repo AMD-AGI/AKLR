@@ -74,7 +74,7 @@ def _experts(hidden_states, shared_gate_weight, w1, w1_scale, w2, w2_scale, weig
         gate, up = (x_fp8[tokens] @ gate_up.T).chunk(2, dim=-1)
         expert = _fp8_input(torch.nn.functional.silu(gate) * up) @ down.T
         out.index_add_(0, tokens, weights[tokens, slots, None] * expert)
-    return out
+    return out.to(hidden_states.dtype)
 
 
 class Qwen2MoeRouterReference(OpReference):
@@ -187,4 +187,5 @@ class Qwen2MoeMxfp4MoeReference(OpReference):
             routed = _silu_mlp(x[tokens], mxfp4_weight(w1[e], w1_scale[e]), mxfp4_weight(w2[e], w2_scale[e]))
             out.index_add_(0, tokens, weights[tokens, slots, None] * routed)
         shared_weight = (x @ shared_gate_weight.float()[0]).sigmoid()
-        return {"out": out + shared_weight[:, None] * _silu_mlp(x, shared_w1.float(), shared_w2.float())}
+        out = out + shared_weight[:, None] * _silu_mlp(x, shared_w1.float(), shared_w2.float())
+        return {"out": out.to(hidden_states.dtype)}

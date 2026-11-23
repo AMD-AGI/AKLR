@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The aggregation from its math, in float32; the only rounding is p's, to its dtype."""
+"""The aggregation from its math, in float32; the roundings are p's and the outputs', to the prefix's dtype."""
 
 import torch
 
@@ -20,7 +20,7 @@ class AttnResReference(OpReference):
         normalized, bank = _aggregate(
             prefix.float(), bank, score_weight, norm_weight, score_eps, norm_eps, n_valid_rows, write_bank
         )
-        return {"normalized": normalized, "bank": bank}
+        return {"normalized": normalized.to(prefix.dtype), "bank": bank.to(prefix.dtype)}
 
 
 class AddAttnResReference(OpReference):
@@ -39,11 +39,15 @@ class AddAttnResReference(OpReference):
         **_,
     ):
         """normalized, prefix_out, then bank, over prefix + addend rounded to the prefix's dtype."""
-        prefix_out = (prefix.float() + addend.float()).to(prefix.dtype).float()
+        prefix_out = (prefix.float() + addend.float()).to(prefix.dtype)
         normalized, bank = _aggregate(
-            prefix_out, bank, score_weight, norm_weight, score_eps, norm_eps, n_valid_rows, write_bank
+            prefix_out.float(), bank, score_weight, norm_weight, score_eps, norm_eps, n_valid_rows, write_bank
         )
-        return {"normalized": normalized, "prefix_out": prefix_out, "bank": bank}
+        return {
+            "normalized": normalized.to(prefix.dtype),
+            "prefix_out": prefix_out,
+            "bank": bank.to(prefix.dtype),
+        }
 
 
 def _aggregate(prefix, bank, score_weight, norm_weight, score_eps, norm_eps, valid, write_bank):

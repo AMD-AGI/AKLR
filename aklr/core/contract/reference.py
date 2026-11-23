@@ -23,14 +23,15 @@ class OpReference(ABC):
     @abstractmethod
     def reference(self, **call: Any) -> Mapping[str, Tensor]:
         """The expected outputs and written mutable inputs, by name, of the kernel's call ``call``,
-        preferably in the op's own precision where torch has it, else float32. Writes no tensor of
-        ``call``."""
+        each in the dtype the contract declares, computed preferably in the op's own precision
+        where torch has it, else float32; the op's check may read more entries. Writes no tensor
+        of ``call``."""
 
     def check(
         self, outputs: Mapping[str, Tensor], expected: Mapping[str, Tensor], criteria: Mapping[str, Any]
     ) -> dict[str, CompareResult]:
         """Each of ``outputs`` against ``expected``, by name, under ``criteria``
-        (``comparison_criteria``): the compare settings and each output's dtype and error bound."""
+        (``comparison_criteria``): the compare settings and each output's error bound."""
         return compare_outputs(criteria, outputs, expected)
 
 
