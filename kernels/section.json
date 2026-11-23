@@ -1,0 +1,22 @@
+{
+ "schema": 1,
+ "id": "kernels",
+ "title": {
+  "en": "Kernels",
+  "zh": "Kernel"
+ },
+ "path": "index.html",
+ "updated_at": "2026-11-23T05:12:45Z",
+ "last_run": {
+  "run_id": "45116005680",
+  "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45116005680",
+  "commit": "685a1bb8f24555e939a365f436ddc18dd9e9e48e",
+  "ref": "refs/heads/main",
+  "event": "push"
+ },
+ "status_counts": {
+  "ok": 33,
+  "partial": 21,
+  "not-measured": 8
+ }
+}
