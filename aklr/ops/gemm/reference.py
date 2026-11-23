@@ -25,9 +25,9 @@ def _out(product, bias):
 
 
 class GemmReference(OpReference):
-    def reference(self, *, a, b, trans_b, bias=None, **_):
+    def reference(self, *, a, b, trans_b, out_dtype, bias=None, **_):
         """``a @ b.T + bias``."""
-        return {"out": _out(a.float() @ _weight(b, trans_b).mT, bias).to(a.dtype)}
+        return {"out": _out(a.float() @ _weight(b, trans_b).mT, bias).to(out_dtype)}
 
 
 def _int8_product(a, b):

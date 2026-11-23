@@ -82,6 +82,16 @@ def test_int8_gemm_sums_its_products_exactly() -> None:
     assert GemmA8w8Reference().reference(**args)["out"].tolist() == [[0.0]]
 
 
+def test_gemm_reference_returns_out_in_out_dtype() -> None:
+    """A bf16 gemm into a float32 out (Kimi-K3's router) is float32, not a's dtype."""
+    from aklr.ops.gemm.reference import GemmReference
+
+    a = torch.ones(2, 128, dtype=torch.bfloat16)
+    b = torch.ones(3, 128, dtype=torch.bfloat16)
+    out = GemmReference().reference(a=a, b=b, trans_b=True, out_dtype=torch.float32)["out"]
+    assert out.dtype == torch.float32
+
+
 def test_biased_grouped_topk_ranks_tied_experts_lower_first() -> None:
     """Equal biased scores: the lower expert ranks first, whatever torch.topk's algorithm does."""
     from aklr.ops.topk.reference import BiasedGroupedTopkReference
