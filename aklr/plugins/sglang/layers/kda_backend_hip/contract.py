@@ -29,10 +29,11 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.layers.kda_backend_hip.baseline import KdaChainVerifyRingBaseline
+from aklr.plugins.sglang.layers.kda_backend_hip.reference import HEAD_DIM, KdaChainVerifyRingReference
 
-__all__ = ["CONTRACTS", "HEAD_DIM", "KDA_CHAIN_VERIFY_RING"]
+__all__ = ["CONTRACTS", "KDA_CHAIN_VERIFY_RING"]
 
-HEAD_DIM = 128  # key and value head width
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _FP32 = DTypeSpec(any_of=(DType.FLOAT32,))
 _INT32 = DTypeSpec(any_of=(DType.INT32,))
@@ -221,6 +222,8 @@ KDA_CHAIN_VERIFY_RING = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=KdaChainVerifyRingReference(),
+    baseline=KdaChainVerifyRingBaseline(),
 )
 
 CONTRACTS = (KDA_CHAIN_VERIFY_RING,)

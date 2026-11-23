@@ -21,9 +21,9 @@ def is_reference_comparable(
     reference_outputs: Mapping[str, Tensor],
     compared: Callable[[Mapping[str, Tensor]], Mapping[str, semantics.CompareResult]],
 ) -> bool:
-    rounded = {o: r.to(semantics.torch_dtypes(output_dtypes[o])[0]) for o, r in reference_outputs.items()}
+    rounded = {o: reference_outputs[o].to(semantics.torch_dtypes(d)[0]) for o, d in output_dtypes.items()}
     is_finite_where_reference_is = all(
-        (rounded[o].float().isfinite() | ~r.isfinite()).all() for o, r in reference_outputs.items()
+        (rounded[o].float().isfinite() | ~reference_outputs[o].isfinite()).all() for o in output_dtypes
     )
     return is_finite_where_reference_is and all(r.is_passed for r in compared(rounded).values())
 

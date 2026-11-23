@@ -6,7 +6,7 @@ import torch
 
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.builder import HipBuilder
-from aklr.ops.mla_prefill.reference import sparse_prefill_mxfp8_reference
+from aklr.ops.mla_prefill.reference import SparsePrefillMxfp8Reference
 from tests.op_case import OpCase
 
 
@@ -18,9 +18,9 @@ def test_csr_reference_preserves_operand_device(empty):
         axes = {**case.point.axes, "prefix_nnz": 0, "extend_nnz": 0}
         case = OpCase(case.point.model_copy(update={"axes": axes}))
     inputs = case.inputs()
-    expected = sparse_prefill_mxfp8_reference(case.point, inputs)
+    expected = SparsePrefillMxfp8Reference().reference(**inputs)["output"]
     device_inputs = {key: value.cuda() if torch.is_tensor(value) else value for key, value in inputs.items()}
-    actual = sparse_prefill_mxfp8_reference(case.point, device_inputs)
+    actual = SparsePrefillMxfp8Reference().reference(**device_inputs)["output"]
     assert actual.device.type == "cuda"
     torch.testing.assert_close(actual.cpu(), expected)
 

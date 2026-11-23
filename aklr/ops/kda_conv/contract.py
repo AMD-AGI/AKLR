@@ -30,6 +30,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.ops.kda_conv.baseline import KimiK3KdaConvBaseline
+from aklr.ops.kda_conv.reference import KimiK3KdaConvReference
 
 __all__ = ["CONTRACTS", "KIMI_K3_KDA_CONV"]
 
@@ -143,6 +145,8 @@ KIMI_K3_KDA_CONV = OpContract(
             ),
         }
     ),
+    reference=KimiK3KdaConvReference(),
+    baseline=KimiK3KdaConvBaseline(),
 )
 
 CONTRACTS = (KIMI_K3_KDA_CONV,)

@@ -15,7 +15,7 @@ import torch
 
 from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.kda_conv.reference import kimi_k3_kda_conv_reference
+from aklr.ops.kda_conv.reference import KimiK3KdaConvReference
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
@@ -122,10 +122,9 @@ class _Op:
         call = {**dict(zip(names, args, strict=True)), "storage": storage}
         self.calls.append(call)
         x, conv_state = call["x"], call["conv_state"]
-        point = SimpleNamespace(dtypes={"x": "bfloat16", "weight": "float32", "conv_state": "bfloat16"})
-        q, k, v, state = kimi_k3_kda_conv_reference(point, call)
-        conv_state.copy_(state)
-        return q.to(x.dtype), k.to(x.dtype), v.to(x.dtype)
+        out = KimiK3KdaConvReference().reference(**call)
+        conv_state.copy_(out["conv_state"])
+        return out["q"].to(x.dtype), out["k"].to(x.dtype), out["v"].to(x.dtype)
 
 
 def _aiters_result(call):

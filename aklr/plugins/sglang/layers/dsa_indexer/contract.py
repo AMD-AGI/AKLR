@@ -27,27 +27,25 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.layers.dsa_indexer.baseline import (
+    DsaIndexerKeyPrepareBaseline,
+    DsaIndexerPrepareBaseline,
+)
+from aklr.plugins.sglang.layers.dsa_indexer.reference import (
+    FP8_MAX,
+    HEAD_DIM,
+    PAGE_SIZE,
+    ROPE_DIM,
+    SCALE_FLOOR,
+    DsaIndexerKeyPrepareReference,
+    DsaIndexerPrepareReference,
+)
 
 __all__ = [
     "CONTRACTS",
     "DSA_INDEXER_KEY_PREPARE",
     "DSA_INDEXER_PREPARE",
-    "FP8_MAX",
-    "HEAD_DIM",
-    "PAGE_SIZE",
-    "ROPE_DIM",
-    "SCALE_FLOOR",
 ]
-
-# An indexer head and key: the Hadamard transform's length and the cache's 128 bytes a key
-HEAD_DIM = 128
-# The RoPE part: a head's and a key's first 64 values, in interleaved pairs (2i, 2i + 1)
-ROPE_DIM = 64
-# Keys per index-K page: aiter's preshuffled layout of 16 x 16 tiles
-PAGE_SIZE = 64
-# A key's or head's fp8 scale: 2 ** ceil(log2(max(amax, SCALE_FLOOR) / FP8_MAX))
-SCALE_FLOOR = 1e-4
-FP8_MAX = 448.0
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -242,6 +240,8 @@ DSA_INDEXER_PREPARE = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=_COMPARE,
+    reference=DsaIndexerPrepareReference(),
+    baseline=DsaIndexerPrepareBaseline(),
 )
 
 DSA_INDEXER_KEY_PREPARE = OpContract(
@@ -267,6 +267,8 @@ DSA_INDEXER_KEY_PREPARE = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=_COMPARE,
+    reference=DsaIndexerKeyPrepareReference(),
+    baseline=DsaIndexerKeyPrepareBaseline(),
 )
 
 CONTRACTS = (DSA_INDEXER_PREPARE, DSA_INDEXER_KEY_PREPARE)

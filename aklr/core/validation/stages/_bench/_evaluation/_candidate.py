@@ -147,6 +147,7 @@ def run_candidate(
 
     schema = requests[0].schema
     batch_findings: tuple[Finding, ...] = ()
+    is_set_up = False
     stopped: dict[str, Finding] = {}
     rounds: dict[str, tuple[_measure.RoundTimes, ...]] = {}
     dispatcher = None
@@ -169,7 +170,6 @@ def run_candidate(
             raise StepFailed(FindingCode.NO_MATCHING_DEVICE, detail)
         with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "compile tripwire: "):
             tripwire = _CompileTripwire.resolve()
-        group = None
         if rank is not None:
             import torch.distributed as dist
 
@@ -181,10 +181,9 @@ def run_candidate(
                     world_size=requests[0].n_ranks,
                     device_id=None if device == "cpu" else torch.device(device),
                 )
-                group = dist.group.WORLD
-                if (group_init := requests[0].contract.group_init()) is not None:
-                    group_init()
-        run = CandidateRun(device, tripwire, _measure.bind_clock(group), rank or 0)
+                requests[0].contract.baseline.setup()
+                is_set_up = True
+        run = CandidateRun(device, tripwire, _measure.bind_clock(requests[0].contract.baseline), rank or 0)
         flush_l2_cache()
         run.clock.synchronize()
         for request in requests:
@@ -241,6 +240,8 @@ def run_candidate(
         output_keys[axes_text] = tuple(filled)
     if device != "cpu" and not batch_findings:
         torch.cuda.synchronize()  # the lent tensors are filled before the result says so
+    if is_set_up and not batch_findings:  # a rank's finding leaves its peers waiting on it
+        requests[0].contract.baseline.teardown()
     workload_results = [
         CandidateWorkloadResult(
             axes_text=r.axes_text,
@@ -320,9 +321,8 @@ class CandidateRun:
         self.rank = rank
 
     def run_baseline(self, request: TrialRequest) -> None:
-        baseline = request.contract.baseline()
-        if baseline is None or not request.thresholds:
-            return  # the new case is its own baseline, or an untimed bench: nothing to run
+        if not request.thresholds:
+            return  # an untimed bench: nothing to run
         row_major_args = None
         if request.has_workload_set:
             workload_step = next(s for s in request.steps if s.input_set == "workload")
@@ -330,7 +330,7 @@ class CandidateRun:
                 row_major_args = request.compose_inputs(workload_step, self.device, self.rank)
         if row_major_args is None:
             row_major_args = request.compose_inputs(None, self.device, self.rank)
-        baseline(**request.assemble_call(row_major_args, self.device))
+        request.contract.baseline.baseline(**request.assemble_call(row_major_args, self.device))
 
     def make_warmed_dispatcher(
         self, kernel_schema: OpContract, requests: Sequence[TrialRequest]
@@ -418,14 +418,9 @@ class CandidateRun:
                 raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)
         where = f"{request.schema_path}:{request.axes_text}"
         try:
-            baseline = contract.baseline()
-            if baseline is not None:
-                fns["baseline"] = lambda: baseline(**call)
-            elif "incumbent" in fns:  # no defined baseline: the incumbent is it
-                fns["baseline"] = fns.pop("incumbent")
+            fns["baseline"] = lambda: contract.baseline.baseline(**call)
             rounds = ()
-            # no baseline (the new case is its own) or no threshold (an untimed bench): untimed
-            if "baseline" in fns and request.thresholds:
+            if request.thresholds:  # none: an untimed bench
                 root_hash = semantics.workload_hash(request.schema_json["name"], request.workload_json)
                 seed = semantics.derive_seed(root_hash, "timing")
                 rounds = self.clock.time_rounds(

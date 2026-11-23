@@ -31,8 +31,7 @@ class ReferenceWorkloadResult(FrozenModel):
 
 class WorkloadEvaluation:
     """One workload's outputs, as the candidate left them in the lent tensors, against the
-    float32 reference, on their device; a group's, each
-    rank's on its own."""
+    reference, on their device; a group's, each rank's on its own."""
 
     request: TrialRequest
     outputs: Sequence[Mapping[str, torch.Tensor]]
@@ -56,8 +55,6 @@ class WorkloadEvaluation:
         self._failures = []
 
     def evaluate(self) -> ReferenceWorkloadResult:
-        import torch
-
         request, devices = self.request, self.devices
         contract, point = request.contract, request.point
         ranks = range(len(devices))
@@ -91,6 +88,8 @@ class WorkloadEvaluation:
             n_present = min(n_present, n_rank_present)
 
         mutable_dtypes = {r: point.dtypes[r] for r in contract.mutable_tensors}
+        criteria = semantics.comparison_criteria(request.schema_json)
+        reference = contract.reference
         worst = None
         passed_mutable: list[dict[str, dict[str, torch.Tensor]]] = [{} for _ in ranks]
         steps_by_inputs: dict[str, list[Step]] = {}
@@ -101,33 +100,14 @@ class WorkloadEvaluation:
             *rest,
         ) in steps_by_inputs.values():
             group_args = composed.get(first.input_set) or compose(first)
-            if request.has_error_bound("dot_product"):
-                magnitudes = [
-                    args
-                    | {
-                        n: semantics.absolute_value(v, point.dtypes[n])
-                        for n, v in args.items()
-                        if torch.is_tensor(v)
-                    }
-                    for args in group_args
-                ]
+            calls = [request.reference_call(args, devices[r]) for r, args in enumerate(group_args)]
             for rank in ranks:
-                compare_kwargs = {
-                    "reference_outputs": contract.reference_outputs(point, group_args, rank),
-                    "id_scores": contract.id_scores(point, group_args, rank),
-                }
-                if request.has_error_bound("dot_product"):
-                    compare_kwargs["magnitude_outputs"] = contract.reference_outputs(point, magnitudes, rank)
-                if request.has_error_bound("baseline_relative"):  # no ranks: OpContract._check_ranks
-                    baseline = contract.baseline()
-                    if baseline is None:
-                        raise ValueError(
-                            f"{contract.contract_id}: a baseline_relative bound needs a baseline"
-                        )
-                    call = request.assemble_call(group_args[rank], devices[rank])
-                    compare_kwargs["baseline_outputs"] = contract.call_mutable_tensors(baseline(**call), call)
-                compared = functools.partial(semantics.compare_outputs, request.schema_json, **compare_kwargs)
-                if not is_reference_comparable(mutable_dtypes, compare_kwargs["reference_outputs"], compared):
+                if contract.ranks is None:
+                    reference_outputs = reference.reference(**calls[rank])
+                else:
+                    reference_outputs = reference.reference(calls, rank)
+                compared = functools.partial(reference.check, expected=reference_outputs, criteria=criteria)
+                if not is_reference_comparable(mutable_dtypes, reference_outputs, compared):
                     detail = f"{rank_at[rank]}the reference rounded to the output dtypes is not finite or fails compare"
                     if first.input_set == "workload":
                         self._fail(first, FindingCode.SCHEMA_INVALID, detail)

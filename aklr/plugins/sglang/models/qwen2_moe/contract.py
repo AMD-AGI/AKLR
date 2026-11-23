@@ -36,6 +36,18 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.models.qwen2_moe.baseline import (
+    Qwen2MoeFp8ExpertsBaseline,
+    Qwen2MoeFp8RouterExpertsBaseline,
+    Qwen2MoeMxfp4MoeBaseline,
+    Qwen2MoeRouterBaseline,
+)
+from aklr.plugins.sglang.models.qwen2_moe.reference import (
+    Qwen2MoeFp8ExpertsReference,
+    Qwen2MoeFp8RouterExpertsReference,
+    Qwen2MoeMxfp4MoeReference,
+    Qwen2MoeRouterReference,
+)
 
 __all__ = [
     "CONTRACTS",
@@ -187,7 +199,7 @@ QWEN2_MOE_ROUTER = OpContract(
             error_bounds=ToleranceBound(absolute_tolerance=1e-6, relative_tolerance=2**-4),
         ),
         # exact, but two experts whose logits are adjacent bf16 values may swap, for the
-        # same rounding (qwen2_moe_router_id_scores)
+        # same rounding (Qwen2MoeRouterReference.check)
         "topk_ids": TensorSpec(
             description="The chosen experts, by descending logit.",
             shape=("n_tokens", "topk"),
@@ -196,6 +208,8 @@ QWEN2_MOE_ROUTER = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=_COMPARE,
+    reference=Qwen2MoeRouterReference(),
+    baseline=Qwen2MoeRouterBaseline(),
 )
 
 QWEN2_MOE_FP8_EXPERTS = OpContract(
@@ -235,6 +249,8 @@ QWEN2_MOE_FP8_EXPERTS = OpContract(
     outputs={"out": _moe_output(25.0)},
     layout_variants=_EXPERT_LAYOUTS,
     compare=_COMPARE,
+    reference=Qwen2MoeFp8ExpertsReference(),
+    baseline=Qwen2MoeFp8ExpertsBaseline(),
 )
 
 QWEN2_MOE_FP8_ROUTER_EXPERTS = OpContract(
@@ -262,6 +278,8 @@ QWEN2_MOE_FP8_ROUTER_EXPERTS = OpContract(
     outputs={"out": _moe_output(25.0)},
     layout_variants=_EXPERT_LAYOUTS,
     compare=_COMPARE,
+    reference=Qwen2MoeFp8RouterExpertsReference(),
+    baseline=Qwen2MoeFp8RouterExpertsBaseline(),
 )
 
 _MXFP4 = DTypeSpec(any_of=(DType.FLOAT4_E2M1,))
@@ -391,6 +409,8 @@ QWEN2_MOE_MXFP4_MOE = OpContract(
     outputs={"out": _moe_output(_MXFP4_MIN_SQNR_DB)},
     layout_variants=_MXFP4_LAYOUTS,
     compare=_COMPARE,
+    reference=Qwen2MoeMxfp4MoeReference(),
+    baseline=Qwen2MoeMxfp4MoeBaseline(),
 )
 
 CONTRACTS = (QWEN2_MOE_ROUTER, QWEN2_MOE_FP8_EXPERTS, QWEN2_MOE_FP8_ROUTER_EXPERTS, QWEN2_MOE_MXFP4_MOE)

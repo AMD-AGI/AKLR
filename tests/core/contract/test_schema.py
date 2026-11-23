@@ -303,7 +303,9 @@ class TestMutableInput:
         }
 
         def compare() -> dict[str, semantics.CompareResult]:
-            return semantics.compare_outputs(case.request.schema_json, actual, reference)
+            return semantics.compare_outputs(
+                semantics.comparison_criteria(case.request.schema_json), actual, reference
+            )
 
         assert all(r.is_passed for r in compare().values())
         flat = actual["delta_state"].view(-1)

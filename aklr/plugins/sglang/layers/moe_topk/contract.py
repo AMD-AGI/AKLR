@@ -20,6 +20,8 @@ from aklr.core.contract.spec import (
     attr,
     axis,
 )
+from aklr.plugins.sglang.layers.moe_topk.baseline import DeepseekV4RouterBaseline
+from aklr.plugins.sglang.layers.moe_topk.reference import DeepseekV4RouterReference
 
 __all__ = ["CONTRACTS", "DEEPSEEK_V4_ROUTER"]
 
@@ -119,6 +121,8 @@ DEEPSEEK_V4_ROUTER = OpContract(
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=DeepseekV4RouterReference(),
+    baseline=DeepseekV4RouterBaseline(),
 )
 
 CONTRACTS = (DEEPSEEK_V4_ROUTER,)

@@ -27,6 +27,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.models.deepseek_common.baseline import MlaQkvANormBaseline
+from aklr.plugins.sglang.models.deepseek_common.reference import MlaQkvANormReference
 
 __all__ = ["CONTRACTS", "MLA_QKV_A_NORM"]
 
@@ -127,6 +129,8 @@ MLA_QKV_A_NORM = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=MlaQkvANormReference(),
+    baseline=MlaQkvANormBaseline(),
 )
 
 

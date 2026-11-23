@@ -2,9 +2,8 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """Print, as JSON, the keyword arguments AKLR calls a schema's entry with (``params``), the outputs among them in
-the order the contract returns them (``outputs``), and its contract's baseline function as ``[module, name]``, or
-null when the contract has none. argv: the AKLR checkout, then the
-schema file."""
+the order the contract returns them (``outputs``), and its contract's baseline class as ``[module, name]``. argv:
+the AKLR checkout, then the schema file."""
 
 import json
 import sys
@@ -22,13 +21,13 @@ schema = contract.narrow(
     workloads=raw["workloads"],
     kernel=raw["kernel"],
 )
-baseline = contract.baseline()
+baseline = type(contract.baseline)
 print(
     json.dumps(
         {
             "params": list(schema.kernel_call_keys),
             "outputs": list(contract.outputs),
-            "baseline": baseline and [baseline.__module__, baseline.__name__],
+            "baseline": [baseline.__module__, baseline.__name__],
         }
     )
 )

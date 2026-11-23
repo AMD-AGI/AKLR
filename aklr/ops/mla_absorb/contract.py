@@ -27,11 +27,10 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.ops.mla_absorb.baseline import MlaKcRopeCacheBaseline, MlaVcBaseline
+from aklr.ops.mla_absorb.reference import MlaKcRopeCacheReference, MlaVcReference
 
-__all__ = ["CONTRACTS", "FP8_GROUP", "MLA_KC_ROPE_CACHE", "MLA_VC"]
-
-# the fp8 weights' scale group along k
-FP8_GROUP = 128
+__all__ = ["CONTRACTS", "MLA_KC_ROPE_CACHE", "MLA_VC"]
 
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
@@ -199,6 +198,8 @@ MLA_KC_ROPE_CACHE = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=MlaKcRopeCacheReference(),
+    baseline=MlaKcRopeCacheBaseline(),
 )
 
 
@@ -264,6 +265,8 @@ MLA_VC = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=MlaVcReference(),
+    baseline=MlaVcBaseline(),
 )
 
 CONTRACTS = (MLA_KC_ROPE_CACHE, MLA_VC)

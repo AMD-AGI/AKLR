@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
-    BaselineRelativeBound,
     BoundedCuSeqlensDistribution,
     CuSeqlensDistribution,
     Deepseekv4Fp8KvCacheDistribution,
@@ -18,6 +18,7 @@ from aklr.core.contract.semantics import (
     LogUniformDistribution,
     SqnrBound,
     ToleranceBound,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     AttrSpec,
@@ -31,6 +32,20 @@ from aklr.core.contract.spec import (
     TensorSpec,
     attr,
     axis,
+)
+from aklr.ops.mla.baseline import (
+    FlashMlaWithKvcacheBaseline,
+    Fp8PagedMqaLogitsBaseline,
+    Fp8PagedMqaLogitsVerifyBaseline,
+    MlaDecodeFwdBaseline,
+    MlaDecodeFwdCprrBaseline,
+)
+from aklr.ops.mla.reference import (
+    FlashMlaWithKvcacheReference,
+    Fp8PagedMqaLogitsReference,
+    Fp8PagedMqaLogitsVerifyReference,
+    MlaDecodeFwdCprrReference,
+    MlaDecodeFwdReference,
 )
 
 __all__ = [
@@ -308,7 +323,7 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
             description="Softmax-weighted sum of the read values; 0 for no row read.",
             shape=("batch", "query_length", "n_heads", 512),
             dtype=DTypeSpec(same_as_tensor="q"),
-            error_bounds=ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2),
+            error_bounds=tolerance(DType.BFLOAT16),
         ),
         "lse": TensorSpec(
             description=(
@@ -334,6 +349,8 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
         }
     ),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=FlashMlaWithKvcacheReference(),
+    baseline=FlashMlaWithKvcacheBaseline(),
 )
 
 FP8_PAGED_MQA_LOGITS = OpContract(
@@ -422,6 +439,8 @@ FP8_PAGED_MQA_LOGITS = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=Fp8PagedMqaLogitsReference(),
+    baseline=Fp8PagedMqaLogitsBaseline(),
 )
 
 # the pool, its attrs and the logits' width are fp8_paged_mqa_logits'
@@ -489,6 +508,8 @@ FP8_PAGED_MQA_LOGITS_VERIFY = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=Fp8PagedMqaLogitsVerifyReference(),
+    baseline=Fp8PagedMqaLogitsVerifyBaseline(),
 )
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -576,7 +597,7 @@ MLA_DECODE_FWD = OpContract(
             shape=("batch", "n_heads", 512),
             dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
             # aiter rounds the softmax weights to fp8 before it sums the values
-            error_bounds=BaselineRelativeBound(),
+            error_bounds=ATTENTION_FP8_SNR,
         ),
         "lse": TensorSpec(
             description="Natural log-sum-exp of the scaled logits.",
@@ -587,6 +608,8 @@ MLA_DECODE_FWD = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=MlaDecodeFwdReference(),
+    baseline=MlaDecodeFwdBaseline(),
 )
 
 # Bench draws every request the same shard of ceil_div(n_indices, batch) rows here and the
@@ -697,7 +720,7 @@ MLA_DECODE_FWD_CPRR = OpContract(
             shape=("batch", "query_length", "n_heads", 512),
             dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
             # aiter rounds the softmax weights to fp8 before it sums the values
-            error_bounds=BaselineRelativeBound(),
+            error_bounds=ATTENTION_FP8_SNR,
         ),
         "lse": TensorSpec(
             description="Natural log-sum-exp of the scaled logits a query reads.",
@@ -708,6 +731,8 @@ MLA_DECODE_FWD_CPRR = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=MlaDecodeFwdCprrReference(),
+    baseline=MlaDecodeFwdCprrBaseline(),
 )
 
 CONTRACTS = (

@@ -7,18 +7,19 @@ else the grouped split-K kernel at the splits get_num_kv_splits picks, with the 
 buffers (allocated once per device, as the backend holds them, the uneven-batch flag
 get_num_kv_splits writes among them) and the split cap of a context of at least 8192 tokens."""
 
-from __future__ import annotations
-
 import functools
 
-__all__ = ["kimi_k3_mla_decode_baseline"]
+import torch
+
+from aklr.core.contract.baseline import OpBaseline
+
+__all__ = ["KimiK3MlaDecodeBaseline"]
 
 
 @functools.cache
 def _decode_buffers(device, n_heads, rows):
     """The backend's decode buffers: Lean's persistent partials and locks, split-K's logits, the
     uneven-batch flag."""
-    import torch
     from sglang.kernels.ops.attention import decode_attention
     from sglang.srt.layers.attention.triton_backend import _mla_decode_kv_splits_cap
 
@@ -41,48 +42,48 @@ def _decode_buffers(device, n_heads, rows):
     return cores, max_splits, logits, lse, lean, zeros(1, dtype=torch.int32)
 
 
-def kimi_k3_mla_decode_baseline(q, kv_cache, kv_indptr, kv_indices, sm_scale=192**-0.5, output=None):
-    """decode_attention_fwd with forward_decode's arguments for a decode CUDA graph."""
-    import torch
-    import triton
-    from sglang.kernels.ops.attention import decode_attention
-    from sglang.kernels.ops.attention.metadata import get_num_kv_splits_triton
+class KimiK3MlaDecodeBaseline(OpBaseline):
+    def baseline(self, *, q, kv_cache, kv_indptr, kv_indices, sm_scale=192**-0.5, output=None):
+        """decode_attention_fwd with forward_decode's arguments for a decode CUDA graph."""
+        import triton
+        from sglang.kernels.ops.attention import decode_attention
+        from sglang.kernels.ops.attention.metadata import get_num_kv_splits_triton
 
-    rows, n_heads = q.shape[0], q.shape[1]
-    if output is None:
-        output = q.new_empty((rows, n_heads, 512))
-    cores, max_splits, logits, lse, lean, uneven_batch = _decode_buffers(q.device, n_heads, rows)
-    # init_forward_metadata_replay_cuda_graph's splits, once per forward in sglang
-    splits = torch.empty(rows, dtype=torch.int32, device=q.device)
-    get_num_kv_splits_triton[(1,)](
-        splits,
-        torch.diff(kv_indptr),
-        rows,
-        1,
-        n_heads,
-        1,
-        max_splits,
-        cores,
-        MAX_NUM_SEQ=max(256, triton.next_power_of_2(rows)),
-        uneven_batch_ptr=uneven_batch,
-    )
-    decode_attention.decode_attention_fwd(
-        q,
-        kv_cache,
-        kv_cache[..., :512],
-        output,
-        kv_indptr,
-        kv_indices,
-        logits,
-        lse,
-        splits,
-        max_splits,
-        sm_scale,
-        1.0,
-        1.0,
-        has_mla=True,
-        enable_lean=decode_attention.lean_capture_policy(n_heads, n_heads, rows, True),
-        uneven_batch=uneven_batch,
-        **lean,
-    )
-    return output
+        rows, n_heads = q.shape[0], q.shape[1]
+        if output is None:
+            output = q.new_empty((rows, n_heads, 512))
+        cores, max_splits, logits, lse, lean, uneven_batch = _decode_buffers(q.device, n_heads, rows)
+        # init_forward_metadata_replay_cuda_graph's splits, once per forward in sglang
+        splits = torch.empty(rows, dtype=torch.int32, device=q.device)
+        get_num_kv_splits_triton[(1,)](
+            splits,
+            torch.diff(kv_indptr),
+            rows,
+            1,
+            n_heads,
+            1,
+            max_splits,
+            cores,
+            MAX_NUM_SEQ=max(256, triton.next_power_of_2(rows)),
+            uneven_batch_ptr=uneven_batch,
+        )
+        decode_attention.decode_attention_fwd(
+            q,
+            kv_cache,
+            kv_cache[..., :512],
+            output,
+            kv_indptr,
+            kv_indices,
+            logits,
+            lse,
+            splits,
+            max_splits,
+            sm_scale,
+            1.0,
+            1.0,
+            has_mla=True,
+            enable_lean=decode_attention.lean_capture_policy(n_heads, n_heads, rows, True),
+            uneven_batch=uneven_batch,
+            **lean,
+        )
+        return {"output": output}

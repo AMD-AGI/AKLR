@@ -97,8 +97,7 @@ def test_the_driver_builds_validates_calls_with_this_checkouts_aklr(real_run):
     """
     run, schema = real_run
     driver = _import_driver(run)
-    budget, bind_clock, is_tracer_fault = driver._aklr_timer()
-    assert budget > 0 and callable(bind_clock) and callable(is_tracer_fault)
+    assert callable(driver._aklr_clock().profile)
     calls = driver._calls("cpu")
     assert set(calls) == {workload.case_id for workload in schema.workloads}
     registry, *_ = driver._aklr()
@@ -125,7 +124,6 @@ def test_the_driver_reads_aklrs_own_report_of_a_wrong_workload(real_run):
             schema_path="candidate.json",
             axes=workload.axes,
             kernel_content_hash="",
-            baseline=None,
             is_timed=False,
             worst_violation_fraction=0.5 if workload is wrong else 0.0,
             timings=(),
@@ -365,36 +363,6 @@ def test_an_edit_to_any_of_the_kernels_files_is_validated_anew(aklr_root: Path, 
 def test_driver_is_importable_without_a_gpu(run):
     """KernelForge hashes the driver before it ever runs; importing must not need ROCm or AKLR."""
     assert _import_driver(run).SCHEMA_JSON == run.schema_json
-
-
-def test_a_reading_the_profiler_dropped_is_taken_again_once(run):
-    """A trace that lost replays says nothing about the kernel; a second loss, or any other error, still fails."""
-    driver = _import_driver(run)
-    dropped = RuntimeError("rocprofiler-sdk recorded 9 of 10 graph replays")
-
-    def bench_failing(*failures):
-        queue = list(failures)
-
-        def bench(call, rep):
-            if queue:
-                raise queue.pop(0)
-            return 0.01
-
-        return bench
-
-    def is_fault(text):
-        return "graph replays" in text
-
-    assert driver.graph_reading(bench_failing(dropped), None, 20.0, is_fault) == 0.01
-    with pytest.raises(RuntimeError, match="9 of 10"):
-        driver.graph_reading(bench_failing(dropped, dropped), None, 20.0, is_fault)
-    with pytest.raises(RuntimeError, match="HIP error"):
-        driver.graph_reading(
-            bench_failing(RuntimeError("HIP error: illegal address")),
-            None,
-            20.0,
-            is_fault,
-        )
 
 
 def test_stress_passes_one_answer_and_names_the_workload_that_differs(real_run, monkeypatch, capsys):

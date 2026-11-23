@@ -29,6 +29,8 @@ from aklr.core.contract.spec import (
     attr,
     axis,
 )
+from aklr.plugins.vllm.models.kimi_k3.attn_res.baseline import KimiK3AttnResBaseline
+from aklr.plugins.vllm.models.kimi_k3.attn_res.reference import KimiK3AttnResReference
 
 __all__ = ["CONTRACTS", "KIMI_K3_ATTN_RES"]
 
@@ -165,6 +167,8 @@ KIMI_K3_ATTN_RES = OpContract(
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=KimiK3AttnResReference(),
+    baseline=KimiK3AttnResBaseline(),
 )
 
 CONTRACTS = (KIMI_K3_ATTN_RES,)

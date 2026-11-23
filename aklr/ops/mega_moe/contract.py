@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    MOE_MXFP8_SNR,
     DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
     LogUniformDistribution,
-    SqnrBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -23,6 +23,8 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 from aklr.ops.fused_moe.contract import FUSED_MOE
+from aklr.ops.mega_moe.baseline import MegaMoeBaseline
+from aklr.ops.mega_moe.reference import MegaMoeReference
 
 __all__ = ["CONTRACTS", "MEGA_MOE"]
 
@@ -137,7 +139,7 @@ MEGA_MOE = OpContract(
             description="Routing-weighted sum of the chosen experts' outputs.",
             shape=("n_tokens", "model_dim"),
             dtype=DTypeSpec(same_as_tensor="hidden_states"),
-            error_bounds=SqnrBound(min_sqnr_db=20.0),
+            error_bounds=MOE_MXFP8_SNR,
         )
     },
     # how sglang's MegaMoE adapter holds the experts (aiter shuffle_weight_a16w4 and
@@ -148,6 +150,8 @@ MEGA_MOE = OpContract(
     # Bounded, not bitwise: the combine adds the top-k outputs in arrival order.
     compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
     ranks="ep_size",
+    reference=MegaMoeReference(),
+    baseline=MegaMoeBaseline(),
 )
 
 CONTRACTS = (MEGA_MOE,)

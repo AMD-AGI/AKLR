@@ -105,6 +105,10 @@ class TestCompareOutputs:
         assert results[corrupted].is_bound_exceeded
 
 
+def _compare(schema: dict, *args, **kwargs) -> dict[str, semantics.CompareResult]:
+    return semantics.compare_outputs(semantics.comparison_criteria(schema), *args, **kwargs)
+
+
 def _schema(dtype: str, error_bound: dict | None = None) -> dict:
     """A one-output schema, ``max_violation_fraction`` 0."""
     out = {"dtype": {"any_of": [dtype]}, "error_bounds": [[None, error_bound]]}
@@ -116,14 +120,14 @@ def _schema(dtype: str, error_bound: dict | None = None) -> dict:
 
 
 class TestErrorBounds:
-    """The integral path and the two ``bias`` overrides."""
+    """The integral path and the elementwise bounds."""
 
     def test_integral_off_by_one_fails(self) -> None:
         """An integer output must be exact: B = 0."""
         y = torch.arange(16, dtype=torch.int32)
         actual = y.clone()
         actual[0] += 1
-        result = semantics.compare_outputs(_schema("int32"), {"out": actual}, {"out": y})["out"]
+        result = _compare(_schema("int32"), {"out": actual}, {"out": y})["out"]
         assert result.peak_bound_multiple == math.inf
         assert not result.is_passed
 
@@ -132,50 +136,8 @@ class TestErrorBounds:
         y = torch.full((16,), 2**30 + 1, dtype=torch.int32)
         actual = y.clone()
         actual[0] -= 1
-        result = semantics.compare_outputs(_schema("int32"), {"out": actual}, {"out": y})["out"]
+        result = _compare(_schema("int32"), {"out": actual}, {"out": y})["out"]
         assert result.violation_fraction == 1 / 16
-        assert not result.is_passed
-
-    @staticmethod
-    def _ids_of_scores(base: float, steps: int, actual_ids: list[int]) -> semantics.CompareResult:
-        """Candidate 0 scored bf16 ``base``, candidate 1 ``steps`` bf16 values from it; the
-        reference picks [0, 1]."""
-        score = torch.tensor([base], dtype=torch.bfloat16)
-        other = (score.view(torch.int16) + steps).view(torch.bfloat16)
-        scores = torch.cat((score, other, torch.tensor([-8.0, -9.0], dtype=torch.bfloat16)))[None]
-        y = torch.tensor([[0, 1]], dtype=torch.int32)
-        actual = torch.tensor([actual_ids], dtype=torch.int32)
-        return semantics.compare_outputs(
-            _schema("int32"), {"out": actual}, {"out": y}, id_scores={"out": scores}
-        )["out"]
-
-    @pytest.mark.parametrize("base", [2.0, -2.0])
-    def test_integral_swap_of_adjacent_scores_passes(self, base: float) -> None:
-        """Two ids whose scores are adjacent bf16 values may come in either order."""
-        result = self._ids_of_scores(base, 1, [1, 0])
-        assert result.violation_fraction == 0
-        assert result.is_passed
-
-    @pytest.mark.parametrize("base", [2.0, -2.0])
-    def test_integral_swap_two_values_apart_fails(self, base: float) -> None:
-        """Two ids whose scores are two bf16 values apart must come in the reference's order."""
-        result = self._ids_of_scores(base, 2, [1, 0])
-        assert result.violation_fraction == 1
-        assert not result.is_passed
-
-    def test_integral_equal_score_ids_are_no_bias(self) -> None:
-        """Every row choosing the higher of two equal-score ids: no error to be biased."""
-        scores = torch.tensor([[3.0, 2.0, 2.0]], dtype=torch.bfloat16).expand(64, 3)
-        y = torch.tensor([[0, 1]], dtype=torch.int32).expand(64, 2)
-        actual = torch.tensor([[0, 2]], dtype=torch.int32).expand(64, 2)
-        result = semantics.compare_outputs(
-            _schema("int32"), {"out": actual}, {"out": y}, id_scores={"out": scores}
-        )["out"]
-        assert result.is_passed
-
-    def test_integral_repeated_id_fails(self) -> None:
-        """An equal score does not let an id come twice in a row."""
-        result = self._ids_of_scores(2.0, 0, [0, 0])
         assert not result.is_passed
 
     def test_violations_at_the_allowed_fraction_pass(self) -> None:
@@ -186,32 +148,9 @@ class TestErrorBounds:
         actual[:2] = 1.0
         schema = _schema("float32", {"kind": "tolerance", "absolute_tolerance": 0.5, "relative_tolerance": 0})
         schema["compare"]["max_violation_fraction"] = 1e-3
-        result = semantics.compare_outputs(schema, {"out": actual}, {"out": y})["out"]
+        result = _compare(schema, {"out": actual}, {"out": y})["out"]
         assert result.violation_fraction == 1e-3
         assert not result.is_bound_exceeded
-
-    @pytest.mark.parametrize(
-        "error_bound",
-        [
-            {"kind": "tolerance", "absolute_tolerance": 1e-2, "relative_tolerance": 0},
-            {"kind": "baseline_relative"},
-        ],
-        ids=["tolerance", "baseline_relative"],
-    )
-    def test_biased_within_bound_passes(self, error_bound: dict) -> None:
-        """Every element off by the same 2**-8, within B, passes though fully biased
-        (z ~ 1 > 5 / sqrt(1024))."""
-        y = torch.randn(8, 128, generator=torch.manual_seed(0))
-        actual = (y + 2**-8).float()
-        result = semantics.compare_outputs(
-            _schema("float32", error_bound),
-            {"out": actual},
-            {"out": y},
-            baseline_outputs={"out": actual},
-        )["out"]
-        assert result.bias_z_score > 0.9
-        assert result.violation_fraction == 0
-        assert result.is_passed
 
 
 _SQNR_SCHEMA = {
@@ -252,10 +191,9 @@ class TestSqnrBound:
         }
         y = torch.randn(64, 128, generator=torch.manual_seed(0))
         actual = y if noise_db is None else y + y.norm() / y.numel() ** 0.5 * 10 ** (-noise_db / 20)
-        result = semantics.compare_outputs(schema, {"out": actual.bfloat16()}, {"out": y})["out"]
+        result = _compare(schema, {"out": actual.bfloat16()}, {"out": y})["out"]
         assert result.is_passed is is_passed
         assert result.violation_fraction == float(not is_passed)
-        assert result.bias_z_score == 0.0
 
     def test_noise_past_float32_keeps_its_sqnr(self) -> None:
         """4096 values of 2**127, one turned to -2**127: the difference 2**128 is past float32's
@@ -263,7 +201,7 @@ class TestSqnrBound:
         y = torch.full((4096,), 2.0**127)
         actual = y.bfloat16()
         actual[0] = -(2.0**127)
-        assert semantics.compare_outputs(_SQNR_SCHEMA, {"out": actual}, {"out": y})["out"].is_passed
+        assert _compare(_SQNR_SCHEMA, {"out": actual}, {"out": y})["out"].is_passed
 
     def test_large_values_keep_their_sqnr(self) -> None:
         """Values near 2**100, whose squares are past float32's range: an offset of 2**-10 of
@@ -272,10 +210,7 @@ class TestSqnrBound:
         peak = y.abs().max()
         for offset, is_passed in ((peak * 2.0**-10, True), (peak, False)):
             actual = (y + offset).bfloat16()
-            assert (
-                semantics.compare_outputs(_SQNR_SCHEMA, {"out": actual}, {"out": y})["out"].is_passed
-                is is_passed
-            )
+            assert _compare(_SQNR_SCHEMA, {"out": actual}, {"out": y})["out"].is_passed is is_passed
 
     @pytest.mark.parametrize(
         ("reference", "fault", "n_nonfinite"),
@@ -290,7 +225,7 @@ class TestSqnrBound:
         y = torch.full((8, 8), reference)
         actual = y.bfloat16()
         actual[0, 0] = fault
-        result = semantics.compare_outputs(_SQNR_SCHEMA, {"out": actual}, {"out": y})
+        result = _compare(_SQNR_SCHEMA, {"out": actual}, {"out": y})
         assert not result["out"].is_passed
         assert result["out"].n_nonfinite_mismatches == n_nonfinite
 
@@ -306,23 +241,6 @@ class TestRoundedToBfloat16:
         x = torch.cat((bits.int().view(torch.float32), edges))
         expected = x.bfloat16().float()
         torch.testing.assert_close(semantics.rounded_to_bfloat16(x), expected, rtol=0, atol=0, equal_nan=True)
-
-
-class TestFloat32Decoding:
-    """``to_float32`` and its inverse ``from_float32``."""
-
-    @pytest.mark.parametrize("dtype", ["bfloat16", "float8_e4m3fn", "float4_e2m1", "float8_e8m0"])
-    def test_from_float32_inverts_to_float32(self, dtype: str) -> None:
-        """Every code of a dtype decodes and encodes back to its value."""
-        shape = (4, 64)
-        stored = (
-            semantics.FiniteDistribution().sample(shape, dtype, torch.Generator().manual_seed(0))
-            if dtype != "float8_e8m0"
-            else torch.randint(100, 150, shape, dtype=torch.uint8).view(torch.float8_e8m0fnu)
-        )
-        values = semantics.to_float32(stored, dtype)
-        assert values.dtype == torch.float32
-        assert torch.equal(semantics.to_float32(semantics.from_float32(values, dtype), dtype), values)
 
 
 class TestScaleLayouts:

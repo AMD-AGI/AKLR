@@ -27,6 +27,14 @@ from aklr.core.contract.spec import (
     attr,
     axis,
 )
+from aklr.plugins.sglang.layers.attn_residual.baseline import (
+    AddAttnResBaseline,
+    AttnResBaseline,
+)
+from aklr.plugins.sglang.layers.attn_residual.reference import (
+    AddAttnResReference,
+    AttnResReference,
+)
 
 __all__ = ["ADD_ATTN_RES", "ATTN_RES", "CONTRACTS"]
 
@@ -138,6 +146,8 @@ ATTN_RES = OpContract(
     },
     outputs={"normalized": _NORMALIZED},
     layout_variants=_LAYOUTS,
+    reference=AttnResReference(),
+    baseline=AttnResBaseline(),
 )
 
 ADD_ATTN_RES = OpContract(
@@ -174,6 +184,8 @@ ADD_ATTN_RES = OpContract(
         ),
     },
     layout_variants=_LAYOUTS,
+    reference=AddAttnResReference(),
+    baseline=AddAttnResBaseline(),
 )
 
 CONTRACTS = (ADD_ATTN_RES, ATTN_RES)

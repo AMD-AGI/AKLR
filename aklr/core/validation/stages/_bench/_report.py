@@ -58,10 +58,7 @@ class WorkloadRecord(FrozenModel):
     schema_path: str
     axes: dict[str, int]
     kernel_content_hash: str
-    # what users run today: a served base kernel's path, else the defined baseline
-    # that bound (dotted name); None: neither
-    baseline: str | None
-    # a baseline was timed; not: no defined baseline and no other kernel to beat
+    # a baseline was timed; not: an untimed bench (--no-timing)
     is_timed: bool
     worst_violation_fraction: float | None
     timings: tuple[TimingRecord, ...]

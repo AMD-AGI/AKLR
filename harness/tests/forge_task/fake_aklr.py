@@ -33,8 +33,9 @@ class _Narrowed:
         return json.dumps(self.raw, indent=2) + "\\n"
 
 
-def gemm_scaled_baseline(**params):
-    return params["out"]
+class GemmScaledBaseline:
+    def baseline(self, **params):
+        return {"out": params["out"]}
 
 
 class _Contract:
@@ -43,10 +44,7 @@ class _Contract:
         inputs = [name for name in raw["inputs"] if name not in ("a", "b")]
         self.api_params = [_Param(name) for name in ("a", "b", *inputs, "trans_b", "bias", "out_dtype", "out")]
         self.outputs = {"out": None}
-
-    def baseline(self):
-        has_baseline = "a_scale" in self.raw["inputs"] or self.raw["op_type"] == "mla"
-        return gemm_scaled_baseline if has_baseline else None
+        self.baseline = GemmScaledBaseline()
 
     def point_from_json(self, raw, axes):
         return axes

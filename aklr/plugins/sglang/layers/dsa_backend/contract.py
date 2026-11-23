@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
     CausalTopkDistribution,
     CuSeqlensDistribution,
@@ -14,7 +15,6 @@ from aklr.core.contract.semantics import (
     FiniteDistribution,
     IntRangeDistribution,
     PermutationDistribution,
-    SqnrBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -26,13 +26,22 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.layers.dsa_backend.baseline import (
+    DsaSparseMlaDecodeBaseline,
+    DsaSparseMlaPrefillBaseline,
+    DsaTopkTransformBaseline,
+)
+from aklr.plugins.sglang.layers.dsa_backend.reference import (
+    ROPE_DIM,
+    DsaSparseMlaReference,
+    DsaTopkTransformReference,
+)
 
 __all__ = [
     "CONTRACTS",
     "DSA_SPARSE_MLA_DECODE",
     "DSA_SPARSE_MLA_PREFILL",
     "DSA_TOPK_TRANSFORM",
-    "ROPE_DIM",
 ]
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -43,9 +52,6 @@ _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 _POOL_BYTES = 2**31 - 2
 # The DSA models' context, 2^20 tokens, and room for the draft tokens sglang's tables add past it
 _CONTEXT_LIMIT = 2**20 + 4096
-# The RoPE part of a query head and of a KV row: the DSA models' (sglang's kernel takes a
-# power of 2)
-ROPE_DIM = 64
 # GLM-5's softmax scale, 1 / sqrt(nope_dim + rope_dim): the default bench's inputs take
 _SM_SCALE = 0.0625
 
@@ -114,10 +120,12 @@ DSA_SPARSE_MLA_DECODE = OpContract(
             dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
             # sglang's own kernel, which rounds the softmax weights to fp8, comes to about
             # 33 dB on these inputs
-            error_bounds=SqnrBound(min_sqnr_db=20.0),
+            error_bounds=ATTENTION_FP8_SNR,
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=DsaSparseMlaReference(),
+    baseline=DsaSparseMlaDecodeBaseline(),
 )
 
 DSA_SPARSE_MLA_PREFILL = OpContract(
@@ -147,6 +155,8 @@ DSA_SPARSE_MLA_PREFILL = OpContract(
     },
     outputs=DSA_SPARSE_MLA_DECODE.outputs,
     layout_variants=DSA_SPARSE_MLA_DECODE.layout_variants,
+    reference=DsaSparseMlaReference(),
+    baseline=DsaSparseMlaPrefillBaseline(),
 )
 
 DSA_TOPK_TRANSFORM = OpContract(
@@ -206,6 +216,8 @@ DSA_TOPK_TRANSFORM = OpContract(
         determinism=DeterminismLevel.BOUNDED,
         element_order=ElementOrder.ANY_IN_FULL_ROWS,
     ),
+    reference=DsaTopkTransformReference(),
+    baseline=DsaTopkTransformBaseline(),
 )
 
 CONTRACTS = (DSA_SPARSE_MLA_DECODE, DSA_SPARSE_MLA_PREFILL, DSA_TOPK_TRANSFORM)

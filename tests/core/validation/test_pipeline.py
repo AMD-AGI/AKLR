@@ -18,7 +18,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import axes_text
 from aklr.core.validation import (
@@ -130,7 +129,6 @@ def _workload(
         schema_path=_SCHEMA,
         axes=axes,
         kernel_content_hash="",
-        baseline="aiter.baseline",
         is_timed=True,
         worst_violation_fraction=fraction,
         timings=(() if speedup is None else (_timing("graph", "baseline", "entry", speedup),)),
@@ -596,7 +594,7 @@ class TestTimeRounds:
         qualifies early runs on while whether dispatch serves it at ``min_speedup`` is open."""
         jitter = itertools.cycle([1.0, 1.01, 0.99, 1.02, 0.98])
         fns = {"candidate": lambda: 1.0, "baseline": lambda: baseline_ms}
-        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep, group: fn() * next(jitter))
+        clock = Clock(synchronize=lambda: None, profile=lambda fn: fn() * next(jitter))
         rounds = clock.time_rounds(fns, seed=0, thresholds={"baseline": threshold}, min_speedup=min_speedup)
         assert len(rounds) == n_rounds
 
@@ -604,9 +602,31 @@ class TestTimeRounds:
         """Only unusable times end the timing early; a threshold naming a participant that
         was not timed is the bench's own error."""
         fns = {"candidate": lambda: 1.0, "baseline": lambda: 2.0}
-        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep, group: fn())
+        clock = Clock(synchronize=lambda: None, profile=lambda fn: fn())
         with pytest.raises(ValueError, match="without incumbent times"):
             clock.time_rounds(fns, seed=0, thresholds={"incumbent": "retain"}, min_speedup=0)
+
+    def test_a_reading_the_profiler_dropped_is_taken_again_once(self) -> None:
+        """A trace that lost replays says nothing about the kernel: it is read again once; a second
+        loss, any other error, or a group's rank (its peers would wait on it alone) still fails."""
+        dropped = RuntimeError("rocprofiler-sdk recorded 9 of 10 graph replays")
+
+        def clock(*failures, is_group=False):
+            queue = list(failures)
+
+            def profile(call):
+                if queue:
+                    raise queue.pop(0)
+                return 0.01
+
+            return Clock(synchronize=lambda: None, profile=profile, is_group=is_group)
+
+        assert clock(dropped).graph_reading(None) == 0.01
+        for failing in (clock(dropped, dropped), clock(dropped, is_group=True)):
+            with pytest.raises(RuntimeError, match="9 of 10"):
+                failing.graph_reading(None)
+        with pytest.raises(RuntimeError, match="HIP error"):
+            clock(RuntimeError("HIP error: illegal address")).graph_reading(None)
 
 
 class TestSpeedupMeasures:
@@ -709,7 +729,7 @@ class TestSpeedupMeasures:
         ]
 
     def test_untimed_correct_workload_without_baseline_qualifies(self) -> None:
-        record = _workload({"m": 1}, None, 0.0).model_copy(update={"is_timed": False, "baseline": None})
+        record = _workload({"m": 1}, None, 0.0).model_copy(update={"is_timed": False})
         assert TestPipeline._bench([], record).is_passed
 
     @pytest.mark.parametrize("qualifying_ratio", [0.99, 1.5])
@@ -781,14 +801,9 @@ class TestSpeedupMeasures:
         assert report.measurements(_SCHEMA, schema) is None
 
 
-def _custom_baseline(a, b, trans_b=True, bias=None, out_dtype=None, out=None):
-    return a @ b.T
-
-
 class TestBaseline:
-    """What a workload is compared with: a base kernel dispatch serves (it beats the
-    defined baseline), else the defined baseline, else nothing (the new case is its
-    own)."""
+    """What a workload is compared with: the baseline, and the base kernel dispatch serves
+    (it beats the baseline) unless that is this very kernel."""
 
     _A, _B, *_ = (axes_text(w["axes"]) for w in json.loads(Path(_SCHEMA).read_text())["workloads"])
 
@@ -847,7 +862,7 @@ class TestBaseline:
         self, monkeypatch: pytest.MonkeyPatch, contract_id: str | None
     ) -> None:
         """A base schema that is JSON but not this contract's schema text (its contract
-        was removed or rewritten here): no incumbent, timed against the defined baseline."""
+        was removed or rewritten here): no incumbent, timed against the baseline."""
         base = json.loads(self._base_text({self._A: 1.2}))
         if contract_id:
             base["contract_id"] = contract_id
@@ -857,83 +872,26 @@ class TestBaseline:
         monkeypatch.setattr(ValidationScope, "text_at_base", lambda self, path: json.dumps(base))
         assert all(r.incumbent is None for r in self._requests(scope).values())
 
-    def test_record_names_a_timed_defined_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A timed defined baseline is named; a served base kernel stays the baseline;
-        a workload stopped before timing has none to export."""
-        scope = self._base_scope(monkeypatch, {self._A: 1.2})
-        requests = self._requests(scope)
-        crash = Finding.unlocated(FindingCode.CANDIDATE_CRASH, "")
-        timed = RoundTimes(mode="graph", round_index=0, order=("baseline",), milliseconds={"baseline": 1.0})
-        candidate = CandidateResult(
-            findings=(),
-            workload_results=tuple(
-                CandidateWorkloadResult(
-                    axes_text=r.axes_text,
-                    findings=() if r.axes_text == self._B else (crash,),
-                    rounds=(timed,) if r.axes_text == self._B else (),
-                    output_keys=(),
-                )
-                for r in requests.values()
-            ),
-        )
-        _, records = BenchStage(["cpu"])._judged_findings(scope, tuple(requests.values()), [], candidate, ())
-        baselines = {axes_text(r.axes): r.baseline for r in records}
-        assert baselines.pop(self._A) == _SCHEMA
-        assert baselines.pop(self._B) == requests[self._B].baseline is not None
-        assert set(baselines.values()) == {None}
-
-    def test_baseline_py_function_is_the_defined_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The op's ``baseline.py`` function: the defined baseline, timed."""
-        monkeypatch.setattr(OpContract, "baseline", lambda contract: _custom_baseline)
-        requests = self._requests(ValidationScope(Path.cwd(), "", None, (), ()))
-        name = f"{_custom_baseline.__module__}.{_custom_baseline.__qualname__}"
-        assert {r.baseline for r in requests.values()} == {name}
-        assert all("baseline" in r.thresholds for r in requests.values())
-
     def test_incumbent_only_when_it_beats_the_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A at 1.2 is retained against the base kernel; B at 0.9 is compared with the
-        defined baseline alone."""
+        baseline alone; every workload times the baseline."""
         requests = self._requests(self._base_scope(monkeypatch, {self._A: 1.2, self._B: 0.9}))
-        contract = ContractRegistry.default().get(requests[self._A].contract.contract_id)
         assert requests[self._A].thresholds["incumbent"] == "retain"
-        assert requests[self._A].baseline == _SCHEMA
         assert requests[self._B].incumbent is None
-        baseline = contract.baseline()
-        assert requests[self._B].baseline == f"{baseline.__module__}.{baseline.__qualname__}"
+        assert all("baseline" in r.thresholds for r in requests.values())
 
-    def test_no_defined_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """No defined baseline: a base kernel at 1.0 is the baseline (retain); with
-        none, nothing is timed and the speedup is 1.0."""
-        monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
-        requests = self._requests(self._base_scope(monkeypatch, {self._A: 1.0}))
-        assert requests[self._A].thresholds == {"baseline": "retain"}
-        assert requests[self._A].baseline == _SCHEMA
-        assert requests[self._B].thresholds == {}
-        assert requests[self._B].baseline is None
-        assert compare_performance((), {}) == ((), None)
-        record = _workload({"m": 1}, None).model_copy(update={"baseline": None, "is_timed": False})
-        assert record.speedup == 1.0
-
-    @pytest.mark.parametrize("has_defined_baseline", [True, False])
-    def test_served_kernel_itself_is_the_baseline(
-        self, monkeypatch: pytest.MonkeyPatch, has_defined_baseline: bool
+    def test_served_kernel_itself_is_never_timed_against_itself(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """This very kernel, served at base, is the exported baseline yet never timed
-        against itself: A at 1.2 always; B at 0.9 only without a defined baseline."""
-        if not has_defined_baseline:
-            monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
+        """This very kernel, served at base, is no incumbent: timed against the baseline alone."""
         scope = self._base_scope(monkeypatch, {self._A: 1.2, self._B: 0.9}, same_kernel=True)
-        requests = self._requests(scope)
-        a, b = requests[self._A], requests[self._B]
-        assert a.baseline == _SCHEMA and a.incumbent is None
+        a = self._requests(scope)[self._A]
+        assert a.incumbent is None
         assert "incumbent" not in a.thresholds
-        assert ("baseline" in a.thresholds) is has_defined_baseline
-        # min_speedup 0 without a defined baseline: dispatch serves B at 0.9 too
-        assert (b.baseline == _SCHEMA) is not has_defined_baseline
+        assert "baseline" in a.thresholds
         crash = Finding.unlocated(FindingCode.CANDIDATE_CRASH, "")
         _, (record,) = BenchStage(["cpu"])._judged_findings(scope, (a,), [crash], None, None)
-        assert record.baseline == _SCHEMA
-        assert record.is_timed is has_defined_baseline
+        assert record.is_timed
 
     def test_author_only_edit_is_this_kernel(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A base file of this very kernel but another ``author`` is this kernel: kept
@@ -950,55 +908,6 @@ class TestBaseline:
         a, b = requests[self._A], requests[self._B]
         assert a.thresholds == b.thresholds == {"baseline": "retain"}
         assert a.incumbent is None and b.incumbent is None
-        assert a.baseline == _SCHEMA
-
-    def test_write_baselines(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Each run replaces the export: the base kernel's schema for its workloads,
-        the defined baseline in main's Solution shape for the rest, nothing for a
-        workload with no baseline."""
-        scope = self._base_scope(monkeypatch, {self._A: 1.2})
-        schema = ContractRegistry.default().parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
-        baseline = ContractRegistry.default().get(schema.contract_id).baseline()
-        defined = f"{baseline.__module__}.{baseline.__qualname__}"
-        out = tmp_path / "baseline"
-        directory = out / schema.op_type / schema.name
-        solution = directory / f"{schema.name}__baseline.json"
-
-        def write(baselines: dict[str, str | None]) -> list[str]:
-            records = tuple(
-                _workload(w.axes, 1.1).model_copy(update={"baseline": baselines.get(axes_text(w.axes))})
-                for w in schema.workloads
-            )
-            PipelineReport(
-                head_sha="",
-                base_sha="base",
-                measurement_profile={},
-                platform=PlatformRecord(**_PLATFORM),
-                schema_paths=(_SCHEMA,),
-                bench_paths=(_SCHEMA,),
-                stages=(
-                    AuditReport(status="passed"),
-                    BenchReport.from_findings([], workload_records=records),
-                ),
-            ).write_baselines(scope, out)
-            return sorted(p.name for p in out.rglob("*.json"))
-
-        base_file = Path(_SCHEMA).name
-        assert write({self._A: _SCHEMA, self._B: defined}) == sorted([base_file, solution.name])
-        workloads_of = lambda p: [axes_text(w["axes"]) for w in json.loads(p.read_text())["workloads"]]
-        assert workloads_of(directory / base_file) == [self._A]
-        assert workloads_of(solution) == [self._B]
-        written = json.loads(solution.read_text())
-        assert written["author"] == "baseline"
-        assert written["spec"]["entry_point"] == "main.py::run"
-        assert f"def {baseline.__name__}" in written["sources"][0]["content"]
-        # B's base kernel now qualifies too: the defined baseline's file goes
-        assert write({self._A: _SCHEMA, self._B: _SCHEMA}) == [base_file]
-        # whatever baseline.py holds is exported as main.py
-        monkeypatch.setattr(OpContract, "baseline", lambda c: _custom_baseline)
-        assert write({self._A: None, self._B: "x._custom_baseline"}) == [solution.name]
-        assert "def _custom_baseline" in json.loads(solution.read_text())["sources"][0]["content"]
-        assert write({self._A: None, self._B: None}) == []
 
 
 @pytest.mark.parametrize("cache_key", ["none", "address", "version"])
@@ -1111,7 +1020,6 @@ def test_warm_up_covers_the_workload_scalars(monkeypatch: pytest.MonkeyPatch) ->
         schema.workloads[0],
         thresholds={},
         incumbent=None,
-        baseline=None,
     )
     assert request.has_workload_set
     seen = []
@@ -1244,7 +1152,9 @@ def test_an_untimed_bench_never_runs_the_baseline(monkeypatch: pytest.MonkeyPatc
     from tests.op_case import OpCase
 
     request = replace(OpCase.of("gemm@1.0").request, thresholds={})
-    monkeypatch.setattr(OpContract, "baseline", lambda self: lambda **call: pytest.fail("ran the baseline"))
+    monkeypatch.setattr(
+        type(request.contract.baseline), "baseline", lambda self, **call: pytest.fail("ran the baseline")
+    )
     CandidateRun("cpu", None, None).run_baseline(request)
 
 

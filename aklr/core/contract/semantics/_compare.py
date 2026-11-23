@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple
 
-from pydantic import Field, PositiveInt, TypeAdapter
+from pydantic import Field, TypeAdapter
 
 from ._dtypes import DTYPE_TRAITS, DType
 from ._frozen_model import FrozenModel
@@ -19,11 +19,10 @@ if TYPE_CHECKING:
 
 
 class CompareResult(NamedTuple):
-    is_passed: bool  # violations within the limit, non-finite values matched, unbiased
+    is_passed: bool  # violations within the limit, non-finite values matched
     is_bound_exceeded: bool  # violation_fraction over max_violation_fraction
     violation_fraction: float  # of the elements where the rounded reference is finite
     peak_bound_multiple: float  # max |error| / B
-    bias_z_score: float  # |mean(error)| / rms(error)
     n_nonfinite_mismatches: int
 
     @property
@@ -31,8 +30,7 @@ class CompareResult(NamedTuple):
         """The measures as one line, for a finding's detail."""
         return (
             f"violation_fraction {self.violation_fraction:.3g}, peak_bound_multiple "
-            f"{self.peak_bound_multiple:.3g}, bias_z_score {self.bias_z_score:.3g}, "
-            f"{self.n_nonfinite_mismatches} non-finite mismatches"
+            f"{self.peak_bound_multiple:.3g}, {self.n_nonfinite_mismatches} non-finite mismatches"
         )
 
     @classmethod
@@ -42,10 +40,8 @@ class CompareResult(NamedTuple):
         rounded: Tensor,
         *,
         is_bound_exceeded: bool,
-        is_unbiased: bool,
         violation_fraction: float,
         peak_bound_multiple: float,
-        bias_z_score: float,
     ) -> CompareResult:
         """A bound's measures of output ``a``, with its non-finite mismatches against
         ``rounded`` (both float32)."""
@@ -54,20 +50,12 @@ class CompareResult(NamedTuple):
         n_nonfinite_mismatches = int((~is_finite & ~is_same).sum())
         n_nonfinite_mismatches += int((is_finite & ~a.isfinite()).sum())
         return cls(
-            is_passed=n_nonfinite_mismatches == 0 and not is_bound_exceeded and is_unbiased,
+            is_passed=n_nonfinite_mismatches == 0 and not is_bound_exceeded,
             is_bound_exceeded=is_bound_exceeded,
             violation_fraction=violation_fraction,
             peak_bound_multiple=peak_bound_multiple,
-            bias_z_score=bias_z_score,
             n_nonfinite_mismatches=n_nonfinite_mismatches,
         )
-
-
-def _baseline_error(baseline_out: Tensor | None, y: Tensor) -> tuple[Tensor, Tensor]:
-    if baseline_out is None:
-        raise ValueError("a baseline_relative bound needs baseline_out")
-    baseline = baseline_out.float()
-    return baseline - y, y.isfinite() & baseline.isfinite()
 
 
 def _scaled(x: Tensor) -> tuple[float, Tensor]:
@@ -77,16 +65,6 @@ def _scaled(x: Tensor) -> tuple[float, Tensor]:
     if peak == 0 or not math.isfinite(peak):
         return 1.0, x
     return peak, x / peak
-
-
-def _mean(x: Tensor) -> float:
-    peak, unit = _scaled(x)
-    return peak * unit.mean().item()
-
-
-def _rms(x: Tensor) -> float:
-    peak, unit = _scaled(x)
-    return peak * unit.square().mean().sqrt().item()
 
 
 def _norm(x: Tensor) -> float:
@@ -122,27 +100,36 @@ def mutable_tensor_declarations(schema: Mapping[str, Any]) -> dict[str, Any]:
     return {**schema["outputs"], **mutable}
 
 
+def comparison_criteria(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """What ``compare_outputs`` judges by, from a schema json: its ``compare`` settings and each
+    mutable tensor's dtype and error bound (none for an integral one), in
+    ``mutable_tensor_declarations`` order."""
+    compare = schema["compare"]
+    return {
+        "element_order": compare["element_order"],
+        "max_violation_fraction": compare["max_violation_fraction"],
+        "outputs": {
+            name: {
+                "dtype": declaration["dtype"]["any_of"][0],
+                "error_bound": declaration["error_bounds"][0][1] if declaration["error_bounds"] else None,
+            }
+            for name, declaration in mutable_tensor_declarations(schema).items()
+        },
+    }
+
+
 def compare_outputs(
-    schema: Mapping[str, Any],
+    criteria: Mapping[str, Any],
     actual_outputs: Mapping[str, Tensor],
     reference_outputs: Mapping[str, Tensor],
-    *,
-    magnitude_outputs: Mapping[str, Tensor] | None = None,
-    baseline_outputs: Mapping[str, Tensor] | None = None,
-    id_scores: Mapping[str, Tensor] | None = None,
 ) -> dict[str, CompareResult]:
-    """Each mutable tensor of the schema json (``mutable_tensor_declarations``) against its
-    reference, on the tensors' device, under its one ``error_bounds`` item (an integer one
-    must be exact, but where ``id_scores`` gives it scores: ``_same_score``); keyed in that order."""
-    compare = schema["compare"]
-    element_order = ElementOrder(compare["element_order"])
-    magnitude_outputs = magnitude_outputs or {}
-    baseline_outputs = baseline_outputs or {}
-    id_scores = id_scores or {}
+    """Each output of ``criteria`` (``comparison_criteria``) against its reference, on the
+    tensors' device, under its error bound (an integer one must be exact); keyed in that order."""
+    element_order = ElementOrder(criteria["element_order"])
+    max_violation_fraction = criteria["max_violation_fraction"]
     results = {}
-    for name, declaration in mutable_tensor_declarations(schema).items():
-        out_dtype = declaration["dtype"]["any_of"][0]
-        baseline_out = baseline_outputs.get(name)
+    for name, output in criteria["outputs"].items():
+        out_dtype = output["dtype"]
         actual, reference_out = element_order.arrange(actual_outputs[name], reference_outputs[name])
         if DTYPE_TRAITS[out_dtype].is_integral:
             # integral unit_roundoff is 0: B = 0, i.e. exact
@@ -150,75 +137,33 @@ def compare_outputs(
             results[name] = _exact_compare(
                 actual,
                 reference_out.to(actual.dtype),
-                compare["max_violation_fraction"],
-                id_scores.get(name),
+                max_violation_fraction,
             )
             continue
         a = actual.float()
         rounded = reference_out.to(actual.dtype).float()
-        error_bound = _ERROR_BOUND_ADAPTER.validate_python(declaration["error_bounds"][0][1])
+        error_bound = _ERROR_BOUND_ADAPTER.validate_python(output["error_bound"])
         results[name] = error_bound.compare(
             a,
             rounded,
             reference_out,
-            max_violation_fraction=compare["max_violation_fraction"],
+            max_violation_fraction=max_violation_fraction,
             out_unit_roundoff=DTYPE_TRAITS[out_dtype].unit_roundoff,
-            magnitude_out=magnitude_outputs.get(name),
-            baseline_out=baseline_out,
         )
     return results
 
 
-def _same_score(actual: Tensor, rounded: Tensor, scores: Tensor) -> Tensor:
-    """Where an id output's ``actual`` may stand for ``rounded``: ``scores`` holds each
-    candidate's score in its float dtype, the ids indexing its last dim. An id in range, in a
-    row without a repeated id, whose score equals the reference id's or is the next value of
-    that dtype above or below it."""
-    import torch
-
-    n = scores.shape[-1]
-    a, y = actual.long(), rounded.long()  # gather's index dtype
-    in_range = (a >= 0) & (a < n)
-    a = a.clamp(0, n - 1)
-    # sign and magnitude to one integer line, +0 and -0 one value: adjacent values differ by 1
-    bits = scores.view({2: torch.int16, 4: torch.int32}[scores.element_size()]).long()
-    magnitude = bits & (2 ** (8 * scores.element_size() - 1) - 1)
-    order = torch.where(bits < 0, -magnitude, magnitude)
-    within = (order.gather(-1, a) - order.gather(-1, y)).abs() <= 1
-    ordered = a.sort(-1).values
-    distinct = (ordered[..., 1:] != ordered[..., :-1]).all(-1, keepdim=True)
-    return in_range & distinct & within
-
-
-def _exact_compare(
-    actual: Tensor,
-    rounded: Tensor,
-    max_violation_fraction: float,
-    id_scores: Tensor | None = None,
-) -> CompareResult:
+def _exact_compare(actual: Tensor, rounded: Tensor, max_violation_fraction: float) -> CompareResult:
     """An integral output against its reference in the same dtype, element by element as
-    integers (float32 holds an int exactly only up to 2**24), an element that differs where
-    ``id_scores`` scores the two alike (``_same_score``) counted equal; the bias test on the
-    errors."""
-    import torch
-
+    integers (float32 holds an int exactly only up to 2**24)."""
     differs = actual != rounded
-    if id_scores is not None and bool(differs.any()):
-        differs = differs & ~_same_score(actual, rounded, id_scores)
     violation_fraction = _fraction(differs)
-    a, y = actual.float(), rounded.float()
-    errors = torch.where(differs, (a - y).masked_fill(a == y, 1.0), 0.0)
-    is_unbiased, bias_z_score = OutputRoundingBound().bias(
-        errors, torch.ones_like(differs), violation_fraction, y, None
-    )
     return CompareResult.of_measures(
-        a,
-        y,
+        actual.float(),
+        rounded.float(),
         is_bound_exceeded=violation_fraction > max_violation_fraction,
-        is_unbiased=is_unbiased,
         violation_fraction=violation_fraction,
         peak_bound_multiple=math.inf if bool(differs.any()) else 0.0,
-        bias_z_score=bias_z_score,
     )
 
 
@@ -255,8 +200,6 @@ class ErrorBound(FrozenModel):
         *,
         max_violation_fraction: float,
         out_unit_roundoff: float,
-        magnitude_out: Tensor | None,
-        baseline_out: Tensor | None,
     ) -> CompareResult:
         """Output ``a`` against y (``reference_out``) and y rounded to the output dtype
         (``rounded``), all three in float32."""
@@ -264,17 +207,10 @@ class ErrorBound(FrozenModel):
 
 class ElementwiseBound(ErrorBound):
     """B, the largest |actual - y| allowed per element: at most
-    ``max_violation_fraction`` of the finite elements exceed it, and the error is
-    unbiased. Collapses into ErrorBound once SqnrBound (FIXME(main-kernels)) goes."""
+    ``max_violation_fraction`` of the finite elements exceed it."""
 
     @abstractmethod
-    def allowed_error(
-        self,
-        reference_out: Tensor,
-        out_unit_roundoff: float,
-        magnitude_out: Tensor | None,
-        baseline_out: Tensor | None,
-    ) -> Tensor:
+    def allowed_error(self, reference_out: Tensor, out_unit_roundoff: float) -> Tensor:
         """B at each element of the one output compared."""
 
     def compare(
@@ -285,121 +221,22 @@ class ElementwiseBound(ErrorBound):
         *,
         max_violation_fraction,
         out_unit_roundoff,
-        magnitude_out,
-        baseline_out,
     ):
         is_finite = rounded.isfinite()
-        errors = a - reference_out
-        error = errors[is_finite]
-        limit = self.allowed_error(reference_out, out_unit_roundoff, magnitude_out, baseline_out)[is_finite]
+        error = (a - reference_out)[is_finite]
+        limit = self.allowed_error(reference_out, out_unit_roundoff)[is_finite]
         violation_fraction = peak_bound_multiple = 0.0
         if error.numel():
             violation_fraction = _fraction(error.abs() > limit)
             multiples = (error.abs() / limit).masked_fill(error == 0, 0.0)
             peak_bound_multiple = multiples.max().item()
-        is_unbiased, bias_z_score = self.bias(
-            errors, is_finite, violation_fraction, reference_out, baseline_out
-        )
         return CompareResult.of_measures(
             a,
             rounded,
             is_bound_exceeded=violation_fraction > max_violation_fraction,
-            is_unbiased=is_unbiased,
             violation_fraction=violation_fraction,
             peak_bound_multiple=peak_bound_multiple,
-            bias_z_score=bias_z_score,
         )
-
-    def bias(
-        self,
-        errors: Tensor,
-        is_compared: Tensor,
-        violation_fraction: float,
-        reference_out: Tensor,
-        baseline_out: Tensor | None,
-    ) -> tuple[bool, float]:
-        """Whether the compared errors are unbiased, |mean| / rms <= 5 / sqrt(n), and
-        that bias_z_score."""
-        error = errors[is_compared]
-        n = error.numel()
-        rms = _rms(error) if n else 0.0
-        bias_z_score = abs(_mean(error)) / rms if rms > 0 else 0.0
-        return n == 0 or bias_z_score <= 5 / math.sqrt(n), bias_z_score
-
-
-# The multiples and slack of the error bounds, the same for every output.
-_SQRT_LENGTH_MULTIPLE = 6.0
-_CONSTANT_MULTIPLE = 2.0
-_SLACK = 2.0
-_OUTPUT_ROUNDING_MULTIPLE = 2.0
-_MAX_ERROR_MULTIPLE = 2.0
-
-
-class DotProductBound(ElementwiseBound):
-    """B = _SLACK * (_SQRT_LENGTH_MULTIPLE * sqrt(n_eff) + _CONSTANT_MULTIPLE) * u_acc *
-    M + out_unit_roundoff * |y|."""
-
-    kind: Literal["dot_product"] = "dot_product"
-    length: str | int  # the reduction length, on point.symbols(); an int in a schema
-    accumulate_dtype: DType
-    max_split_k: PositiveInt = 1
-    expr_fields = ("length",)
-
-    def allowed_error(self, reference_out, out_unit_roundoff, magnitude_out, baseline_out):
-        if magnitude_out is None:
-            raise ValueError("a dot_product bound needs magnitude_out")
-        effective_length = max(
-            -(-self.length // s) + (s - 1).bit_length() for s in range(1, self.max_split_k + 1)
-        )
-        multiple = _SQRT_LENGTH_MULTIPLE * math.sqrt(effective_length) + _CONSTANT_MULTIPLE
-        accumulated = _SLACK * multiple * DTYPE_TRAITS[self.accumulate_dtype].unit_roundoff
-        return accumulated * magnitude_out + out_unit_roundoff * reference_out.abs()
-
-
-class OutputRoundingBound(ElementwiseBound):
-    """B = _OUTPUT_ROUNDING_MULTIPLE * out_unit_roundoff * |y|."""
-
-    kind: Literal["output_rounding"] = "output_rounding"
-
-    def allowed_error(self, reference_out, out_unit_roundoff, magnitude_out, baseline_out):
-        return _OUTPUT_ROUNDING_MULTIPLE * out_unit_roundoff * reference_out.abs()
-
-
-class BaselineRelativeBound(ElementwiseBound):
-    """B = _MAX_ERROR_MULTIPLE * max(|e_b|, r) + out_unit_roundoff * |y|, relative to a
-    baseline kernel's error e_b = baseline - y and its per-row rms r."""
-
-    kind: Literal["baseline_relative"] = "baseline_relative"
-
-    def allowed_error(self, reference_out, out_unit_roundoff, magnitude_out, baseline_out):
-        import torch
-
-        baseline_error, is_compared = _baseline_error(baseline_out, reference_out)
-        # each row's rms, its errors scaled by their peak so that no square overflows
-        compared = torch.where(is_compared, baseline_error, 0)
-        peak = compared.abs().amax(-1, keepdim=True)
-        peak = torch.where((peak > 0) & peak.isfinite(), peak, 1.0)
-        squares = (compared / peak).square()
-        rms = peak[..., 0] * (squares.sum(-1) / is_compared.sum(-1)).sqrt()  # NaN: no element compared
-        relative = _MAX_ERROR_MULTIPLE * torch.maximum(baseline_error.abs(), rms[..., None])
-        rounding = out_unit_roundoff * reference_out.abs()
-        is_relative = is_compared & rms.isfinite()[..., None]
-        return torch.where(is_relative, relative + rounding, _OUTPUT_ROUNDING_MULTIPLE * rounding)
-
-    def bias(self, errors, is_compared, violation_fraction, reference_out, baseline_out):
-        """Also unbiased when the mean error is within _MAX_ERROR_MULTIPLE of the
-        baseline's, on the elements both compare."""
-        baseline_error, is_baseline_compared = _baseline_error(baseline_out, reference_out)
-        is_compared = is_compared & is_baseline_compared
-        is_unbiased, bias_z_score = super().bias(
-            errors, is_compared, violation_fraction, reference_out, baseline_out
-        )
-        if not is_unbiased:
-            error = errors[is_compared]
-            rms = _rms(error)
-            baseline_bias = abs(_mean(baseline_error[is_compared]))
-            is_unbiased = abs(_mean(error)) <= (_MAX_ERROR_MULTIPLE * baseline_bias + 5 * rms / error.numel())
-        return is_unbiased, bias_z_score
 
 
 class ToleranceBound(ElementwiseBound):
@@ -409,24 +246,16 @@ class ToleranceBound(ElementwiseBound):
     absolute_tolerance: Annotated[float, Field(ge=0.0)]
     relative_tolerance: Annotated[float, Field(ge=0.0)]
 
-    def allowed_error(self, reference_out, out_unit_roundoff, magnitude_out, baseline_out):
+    def allowed_error(self, reference_out, out_unit_roundoff):
         relative = self.relative_tolerance + out_unit_roundoff
         return self.absolute_tolerance + relative * reference_out.abs()
 
-    def bias(self, errors, is_compared, violation_fraction, reference_out, baseline_out):
-        """No bias test once no element exceeds B (main's compare has none)."""
-        is_unbiased, bias_z_score = super().bias(
-            errors, is_compared, violation_fraction, reference_out, baseline_out
-        )
-        return is_unbiased or violation_fraction == 0, bias_z_score
-
 
 class SqnrBound(ErrorBound):
-    """FIXME(main-kernels): main's SQNRCompare. The whole output passes when
-    20*log10(||y_r|| / ||actual - y_r||) >= min_sqnr_db, y_r the reference rounded to
-    the output dtype (equal tensors: inf); no per-element B and no bias test, so
-    ``violation_fraction`` is 0 or 1 and ``peak_bound_multiple`` is the noise norm over
-    the allowed one. bias_z_score is 0: main's SQNRCompare has no bias test."""
+    """The whole output passes when 20*log10(||y_r|| / ||actual - y_r||) >= min_sqnr_db, y_r
+    the reference rounded to the output dtype (equal tensors: inf); no per-element B, so
+    ``violation_fraction`` is 0 or 1 and ``peak_bound_multiple`` is the noise norm over the
+    allowed one."""
 
     kind: Literal["sqnr"] = "sqnr"
     min_sqnr_db: float
@@ -439,8 +268,6 @@ class SqnrBound(ErrorBound):
         *,
         max_violation_fraction,
         out_unit_roundoff,
-        magnitude_out,
-        baseline_out,
     ):
         import torch
 
@@ -459,18 +286,42 @@ class SqnrBound(ErrorBound):
             a,
             rounded,
             is_bound_exceeded=is_bound_exceeded,
-            is_unbiased=True,
             violation_fraction=float(is_bound_exceeded),
             peak_bound_multiple=peak_bound_multiple,
-            bias_z_score=0.0,
         )
 
 
-ErrorBoundUnion = Annotated[
-    DotProductBound | OutputRoundingBound | BaselineRelativeBound | ToleranceBound | SqnrBound,
-    Field(discriminator="kind"),
-]
+ErrorBoundUnion = Annotated[ToleranceBound | SqnrBound, Field(discriminator="kind")]
 _ERROR_BOUND_ADAPTER = TypeAdapter(ErrorBoundUnion)
+
+# The common bounds, Primus-Turbo's (tests/pytorch): an output that needs others writes its own.
+# get_tolerances (test_utils.py): atol = rtol, by the output's dtype
+_TOLERANCES = {
+    DType.FLOAT32: 1e-4,
+    DType.BFLOAT16: 1e-2,
+    DType.FLOAT16: 1e-2,
+    DType.FLOAT8_E4M3FN: 1e-1,
+    DType.FLOAT8_E5M2: 1e-1,
+}
+# the SNR floors of its op tests: test_grouped_gemm, test_gemm_fp8, test_gemm_fp4, test_attention,
+# test_fused_mega_moe_fp8 and test_grouped_mlp_fp4
+GEMM_BF16_SNR = SqnrBound(min_sqnr_db=45.0)
+GEMM_FP16_SNR = SqnrBound(min_sqnr_db=50.0)
+GEMM_FP8_E4M3_SNR = SqnrBound(min_sqnr_db=25.0)
+GEMM_FP8_E5M2_SNR = SqnrBound(min_sqnr_db=20.0)
+GEMM_FP4_SNR = SqnrBound(min_sqnr_db=10.0)
+ATTENTION_FP8_SNR = SqnrBound(min_sqnr_db=20.0)
+MOE_MXFP8_SNR = SqnrBound(min_sqnr_db=20.0)
+MOE_MXFP4_SNR = SqnrBound(min_sqnr_db=10.0)
+
+
+def tolerance(*dtypes: DType) -> ToleranceBound:
+    """The common atol and rtol of an output of any of ``dtypes``, which must share them."""
+    values = {_TOLERANCES[DType(d)] for d in dtypes}
+    if len(values) != 1:
+        raise ValueError(f"{dtypes} have no common tolerance")
+    (value,) = values
+    return ToleranceBound(absolute_tolerance=value, relative_tolerance=value)
 
 
 class ElementOrder(str, Enum):

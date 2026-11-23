@@ -234,7 +234,6 @@ class OpCase:
             schema.workloads[0],
             thresholds={},
             incumbent=None,
-            baseline=None,
         )
 
     def inputs(self, input_set: str = "numeric/0") -> dict[str, Any]:
@@ -253,41 +252,26 @@ class OpCase:
         return self.request.assemble_call(row_major_args, device)
 
     def reference_outputs(self, row_major_args: Mapping[str, Any]) -> dict[str, Any]:
-        """The op's reference of ``row_major_args``, by name in ``contract.mutable_tensors``: one
-        rank's call."""
+        """The op's reference of ``row_major_args``, by name: one rank's call."""
         # shortcut: one rank's inputs only, so no group of more; draw every rank's (rank= of
         # row_major_inputs) when a ranks contract gets a Small Point
         if (n_ranks := self.contract.ranks_at(self.point)) > 1:
             raise NotImplementedError(f"{self.contract.contract_id}: a group of {n_ranks} ranks")
-        return self.contract.reference_outputs(self.point, [row_major_args], 0)
+        call = self.request.reference_call(row_major_args, "cpu")
+        if self.contract.ranks is None:
+            return dict(self.contract.reference.reference(**call))
+        return dict(self.contract.reference.reference([call], 0))
 
     def compare(
         self,
         actual_outputs: Mapping[str, Any],
         row_major_args: Mapping[str, Any],
-        *,
-        baseline_outputs: Mapping[str, Any] | None = None,
     ) -> dict[str, CompareResult]:
-        """``compare_outputs`` of ``actual_outputs`` against the reference of ``row_major_args``, on the CPU."""
-        compare_kwargs = {"reference_outputs": self.reference_outputs(row_major_args)}
-        if self.request.has_error_bound("dot_product"):
-            magnitudes = {
-                n: semantics.absolute_value(v, self.point.dtypes[n])
-                for n, v in row_major_args.items()
-                if torch.is_tensor(v)
-            }
-            compare_kwargs["magnitude_outputs"] = self.reference_outputs({**row_major_args, **magnitudes})
-        if baseline_outputs is not None:
-            compare_kwargs["baseline_outputs"] = baseline_outputs
-        compare_kwargs = {
-            kind: {o: t.cpu() for o, t in tensors.items()} for kind, tensors in compare_kwargs.items()
-        }
-        id_scores = self.contract.id_scores(self.point, [row_major_args], 0)
-        return semantics.compare_outputs(
-            self.request.schema_json,
+        """The reference's check of ``actual_outputs`` against its outputs of ``row_major_args``, on the CPU."""
+        return self.contract.reference.check(
             {o: t.cpu() for o, t in actual_outputs.items()},
-            **compare_kwargs,
-            id_scores={o: s.cpu() for o, s in id_scores.items()},
+            {o: t.cpu() for o, t in self.reference_outputs(row_major_args).items()},
+            semantics.comparison_criteria(self.request.schema_json),
         )
 
     def check_backend_matches_reference(self) -> None:
@@ -296,8 +280,11 @@ class OpCase:
         declares one. Other bounds are the kernels', per element; the backend is held to 20 dB."""
         args = self.inputs()
         call = self.call(args, "cuda")
-        outputs = self.contract.call_mutable_tensors(self.contract.baseline()(**call), call)
-        results = self.compare(outputs, args, baseline_outputs=outputs)
+        outputs = {
+            **self.contract.baseline.baseline(**call),
+            **{n: call[n] for n in self.contract.mutable_inputs},
+        }
+        results = self.compare(outputs, args)
         output_specs = semantics.mutable_tensor_declarations(self.request.schema_json)
         integral = {
             o

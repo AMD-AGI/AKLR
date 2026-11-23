@@ -12,8 +12,8 @@ from aklr.core.contract.semantics import (
     FiniteDistribution,
     IntRangeDistribution,
     PermutationDistribution,
-    ToleranceBound,
     TopkStaticPlanDistribution,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -24,6 +24,14 @@ from aklr.core.contract.spec import (
     TensorSpec,
     attr,
     axis,
+)
+from aklr.ops.topk.baseline import (
+    BiasedGroupedTopkBaseline,
+    TopkTransformPagedBaseline,
+)
+from aklr.ops.topk.reference import (
+    BiasedGroupedTopkReference,
+    TopkTransformPagedReference,
 )
 
 __all__ = ["BIASED_GROUPED_TOPK", "CONTRACTS", "TOPK_TRANSFORM_PAGED"]
@@ -97,7 +105,7 @@ BIASED_GROUPED_TOPK = OpContract(
             description=("Unbiased sigmoid scores of the chosen experts, renormalized and scaled."),
             shape=("n_tokens", "topk"),
             dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
-            error_bounds=ToleranceBound(absolute_tolerance=1e-4, relative_tolerance=1e-4),
+            error_bounds=tolerance(DType.FLOAT32),
         ),
         "topk_ids": TensorSpec(
             description="Chosen experts, by descending biased score.",
@@ -106,6 +114,8 @@ BIASED_GROUPED_TOPK = OpContract(
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=BiasedGroupedTopkReference(),
+    baseline=BiasedGroupedTopkBaseline(),
 )
 
 TOPK_TRANSFORM_PAGED = OpContract(
@@ -184,6 +194,8 @@ TOPK_TRANSFORM_PAGED = OpContract(
         determinism=DeterminismLevel.BOUNDED,
         element_order=ElementOrder.ANY_IN_FULL_ROWS,
     ),
+    reference=TopkTransformPagedReference(),
+    baseline=TopkTransformPagedBaseline(),
 )
 
 CONTRACTS = (BIASED_GROUPED_TOPK, TOPK_TRANSFORM_PAGED)
