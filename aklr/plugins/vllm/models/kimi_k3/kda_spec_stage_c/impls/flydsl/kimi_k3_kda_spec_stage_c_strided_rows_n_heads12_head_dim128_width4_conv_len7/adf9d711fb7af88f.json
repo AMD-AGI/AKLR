@@ -200,7 +200,7 @@
         "hi": "n_slots - 1",
         "distinct": true
       },
-      "description": "Each row's slot, window by window (vLLM's [n_seqs, window] rows of its block table), a padding row's unread; the positive ones distinct (vLLM's padding windows name its null block 0, or -1)."
+      "description": "Each row's slot, window by window (vLLM's [n_seqs, window] rows of its block table), a padding row's unread. The positive slots are distinct; 0 and -1 may repeat: every slot of a padding window (vLLM's graph padding) is its null block 0, or -1."
     },
     "num_accepted_tokens": {
       "shape": [

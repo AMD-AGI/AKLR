@@ -16,13 +16,21 @@ from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.contract import KIMI_K3_K
 __all__ = ["kimi_k3_kda_spec_stage_c"]
 
 _LOGGER = logging.getLogger(__name__)
-# AKLR_VLLM_KDA_STAGE_C=0 hands every call straight back to vLLM
-_ENABLED = os.environ.get("AKLR_VLLM_KDA_STAGE_C", "1") != "0"
 _SEEN: set[str] = set()
 # the op's answer for a step's shape (None: it serves), by (device, rows, sequences, window): asked before the
-# in-projection runs, with a stand-in for its rows, so that a declined step runs it once (vLLM's own path runs it)
+# in-projection runs, with a stand-in for its rows, so that a declined step runs it once (vLLM's own path runs it);
+# only an answer of the shape is kept, not one that may come from the step's tensors (OUT_OF_CONTRACT: the fast key
+# reads their addresses, as the slot table's alignment) or from a capture (NOT_WARMED)
 _SERVES: dict[tuple, FallbackReason | None] = {}
+_UNKEPT = frozenset({FallbackReason.OUT_OF_CONTRACT, FallbackReason.NOT_WARMED})
 _CONV_TAPS = 4  # Kimi-K3's short_conv_kernel_size: the contract's width
+
+
+def _enabled() -> bool:
+    """AKLR_VLLM_KDA_STAGE_C=1 routes a pure verify step's KDA stage to the op; unset or any other value hands every
+    call straight back to vLLM. Off by default: over chained steps the op and vLLM's served aiter chain are not yet
+    shown to agree."""
+    return os.environ.get("AKLR_VLLM_KDA_STAGE_C") == "1"
 
 
 def _once(reason: str) -> None:
@@ -198,8 +206,8 @@ def _proj_width(attn) -> int:
 
 
 def _serve_reason(attn, n_tokens, n_seqs, window, slots, accepted) -> FallbackReason | None:
-    """None if the op serves this step's shape, else its reason: asked once a shape, on a stand-in for the
-    in-projection's rows."""
+    """None if the op serves this step's shape, else its reason: asked on a stand-in for the in-projection's rows,
+    once a shape unless the reason may come from this step's tensors."""
     device = attn.A_log.device
     key = (device, n_tokens, n_seqs, window)
     if key in _SERVES:
@@ -210,7 +218,7 @@ def _serve_reason(attn, n_tokens, n_seqs, window, slots, accepted) -> FallbackRe
     reason = kimi_k3_kda_spec_stage_c.fallback_reason(
         *_op_args(attn, stand_in, slots, accepted), **_op_kwargs(attn), out=out
     )
-    if reason is not FallbackReason.NOT_WARMED:  # a capture's answer before any eager call: asked again later
+    if reason not in _UNKEPT:
         _SERVES[key] = reason
     return reason
 
@@ -223,10 +231,11 @@ def _serve_reason(attn, n_tokens, n_seqs, window, slots, accepted) -> FallbackRe
 def _run_self_attn(self, positions, hidden_states):
     """A KDA layer's attention in a pure speculative verify step: vLLM's in-projection, then the op in place of the
     copy of f_a, the f_b GEMM and aiter's fused convolution, recurrence and gated norm, then vLLM's o_proj (its GEMM
-    and all-reduce). Every other call (MLA layers, prefills, mixed and plain decode steps, ragged windows, a layer or
-    cache outside the contract, a shape the op does not serve) goes back to vLLM before anything runs; one the op
-    declines after the in-projection (it said it would serve) goes back too, and vLLM runs the in-projection again."""
-    if not _ENABLED or not isinstance(self.self_attn, _kda_class()):
+    and all-reduce). Every other call (the route switched off, MLA layers, prefills, mixed and plain decode steps,
+    ragged windows, a layer or cache outside the contract, a shape the op does not serve) goes back to vLLM before
+    anything runs; one the op declines after the in-projection (it said it would serve) goes back too, and vLLM runs
+    the in-projection again."""
+    if not _enabled() or not isinstance(self.self_attn, _kda_class()):
         return FallbackReason.OUT_OF_CONTRACT
     attn = self.self_attn
     n_tokens = _rows(hidden_states)

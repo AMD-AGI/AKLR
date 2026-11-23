@@ -3,14 +3,17 @@
 
 """Kimi-K3's KDA layer after in_proj in a speculative verify step (kimi_k3_kda_spec_stage_c): the reference against
 vLLM's ops transcribed one by one (CPU, float32), its padding windows, rows and untouched slots, what the route at
-the decoder layer's self-attention takes and hands over, which calls stay with vLLM and when, the committed FlyDSL
-schema and its kernel module."""
+the decoder layer's self-attention takes and hands over, which calls stay with vLLM and when, the baseline's scale
+and staged convolution weight, the committed FlyDSL schema and its kernel module (on gfx950: its padding windows and
+rows against the reference)."""
 
+import gc
 import importlib.util
 import inspect
 import json
 import sys
-from types import SimpleNamespace
+import weakref
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
@@ -20,7 +23,9 @@ from aklr.core.contract.locate import committed_schema_paths, op_dir
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c import api
+from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.baseline import kimi_k3_kda_spec_stage_c_baseline
 from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.reference import kimi_k3_kda_spec_stage_c_reference
+from tests.op_case import OpCase
 
 HEADS, DIM, TAPS, WINDOW = 2, 128, 4, 5
 HD = HEADS * DIM
@@ -28,6 +33,7 @@ CONV_LEN = TAPS - 2 + WINDOW
 SLOTS = 32
 PREFIX = "model.layers.1.self_attn"
 CONTRACT_ID = "kimi_k3_kda_spec_stage_c@1.0"
+SWITCH = "AKLR_VLLM_KDA_STAGE_C"
 SCHEMA_NAME = "kimi_k3_kda_spec_stage_c_strided_rows_n_heads12_head_dim128_width4_conv_len7"
 SCHEMA_SEQS = tuple(range(1, 33))
 # a speculative step as vLLM's GDN metadata names it: each window's slots (its block table row) and accepted count
@@ -197,15 +203,21 @@ def logical_dtypes(args):
     }
 
 
-def reference_call(attn, slots, accepted, n_tokens=None):
-    """The reference on the op's operands as the route hands them over (views of vLLM's tensors)."""
+def stage_args(attn, slots=WINDOW_SLOTS, accepted=ACCEPTED, pad_slot=31):
+    """The op's keyword arguments as the route hands them over (views of vLLM's tensors); each padding row past the
+    windows names ``pad_slot`` (unread)."""
     flat = torch.tensor(slots, dtype=torch.int32).view(-1)
-    if n_tokens is not None and n_tokens > flat.numel():  # a padding row's slot is unread
-        flat = torch.cat((flat, torch.full((n_tokens - flat.numel(),), 31, dtype=torch.int32)))
+    n_pad = attn.proj.shape[0] - flat.numel()
+    flat = torch.cat((flat, torch.full((n_pad,), pad_slot, dtype=torch.int32)))
     names = ("qkv out_gate f_a raw_beta f_b_weight conv_weight conv_state a_log g_bias norm_weight state_cache "
              "state_indices num_accepted_tokens").split()  # fmt: skip
     args = dict(zip(names, api._op_args(attn, attn.proj, flat, torch.tensor(accepted, dtype=torch.int32))))
-    args.update(scale=DIM**-0.5, lower_bound=attn.gate_lower_bound, eps=attn.o_norm.eps)
+    return args | {"scale": DIM**-0.5, "lower_bound": attn.gate_lower_bound, "eps": attn.o_norm.eps}
+
+
+def reference_call(attn, slots, accepted, pad_slot=31):
+    """The reference on the op's operands as the route hands them over (views of vLLM's tensors)."""
+    args = stage_args(attn, slots, accepted, pad_slot)
     n_seqs = len(accepted)
     axes = {"n_heads": HEADS, "head_dim": DIM, "width": TAPS, "conv_len": CONV_LEN, "n_seqs": n_seqs,
             "n_tokens": attn.proj.shape[0], "n_slots": SLOTS}  # fmt: skip
@@ -229,14 +241,14 @@ def test_the_reference_is_vllms_ops_in_their_order():
         assert torch.equal(conv[slot], attn.kv_cache[0][slot].float())
 
 
-def test_padding_windows_and_rows_are_zero_and_write_nothing():
-    """A window whose start slot is <= 0 (vLLM's padding: its null block 0, or -1) gives zero rows and writes no
-    slot, its convolution slot's included; rows past the windows are zero."""
-    slots = (*WINDOW_SLOTS[:2], (0, 0, 0, 0, 0))
+@pytest.mark.parametrize("sentinel", [0, -1], ids=["null_block", "pad_slot_id"])
+def test_padding_windows_and_rows_are_zero_and_write_nothing(sentinel):
+    """A window whose start slot is <= 0 (vLLM's graph padding: every slot its null block 0, or -1, repeated) gives
+    zero rows and writes no slot, its convolution slot's included; rows past the windows are zero."""
+    slots = (*WINDOW_SLOTS[:2], (sentinel,) * WINDOW)
     accepted = (*ACCEPTED[:2], 1)
-    n_tokens = len(accepted) * WINDOW + 2
-    attn = FakeKDA(n_tokens)
-    out, conv, state = reference_call(attn, slots, accepted, n_tokens)
+    attn = FakeKDA(len(accepted) * WINDOW + 2)
+    out, conv, state = reference_call(attn, slots, accepted, pad_slot=sentinel)
     assert not out[2 * WINDOW :].any()
     want_out, _, _ = vllm_chain(attn, slots[:2], accepted[:2])
     assert torch.equal(out[: 2 * WINDOW].bfloat16(), want_out)
@@ -262,13 +274,19 @@ def test_a_window_reads_its_convolution_history_from_its_accepted_token():
 
 class _Op:
     """The op as the route sees it: the reference writing out and the caches as a kernel does, its calls recorded,
-    and the dispatch's answer for a shape."""
+    and the dispatch's answer for a shape (with ``key_of``, OUT_OF_CONTRACT where that fast key declines the call)."""
 
     def __init__(self, answer=None, result=None):
         self.calls, self.asked, self.answer, self.result = [], [], answer, result
+        self.key_of = None
 
     def fallback_reason(self, *args, **kwargs):
         self.asked.append((args, kwargs))
+        if self.key_of is not None:
+            bound = API.bind(*args, **kwargs)
+            bound.apply_defaults()
+            if self.key_of(dict(bound.arguments)) is None:
+                return FallbackReason.OUT_OF_CONTRACT
         return self.answer
 
     def __call__(self, *args, **kwargs):
@@ -288,10 +306,11 @@ class _Op:
 
 @pytest.fixture
 def step(monkeypatch):
-    """A KDA layer of a 3-sequence verify step in vLLM, the route's view of vLLM patched in, and the op."""
+    """A KDA layer of a 3-sequence verify step in vLLM, the route switched on and its view of vLLM patched in, and
+    the op."""
     monkeypatch.setattr(api, "_SEEN", set())
     monkeypatch.setattr(api, "_SERVES", {})
-    monkeypatch.setattr(api, "_ENABLED", True)
+    monkeypatch.setenv(SWITCH, "1")
     monkeypatch.setattr(api, "_kda_class", lambda: FakeKDA)
     monkeypatch.setattr(api, "_breakable_graphs", lambda: False)
     op = _Op()
@@ -306,6 +325,19 @@ def step(monkeypatch):
 def test_the_route_takes_vllms_parameters():
     # KimiDecoderLayer._run_self_attn of vLLM 0.34.0 and 0.32.1rc1.dev276
     assert list(inspect.signature(api._run_self_attn).parameters) == ["self", "positions", "hidden_states"]
+
+
+@pytest.mark.parametrize("value", [None, "0", "", "true"], ids=["unset", "zero", "empty", "true"])
+def test_the_route_stays_off_unless_switched_on(step, monkeypatch, value):
+    """Off until a deployment opts in with AKLR_VLLM_KDA_STAGE_C=1, read at each call: over chained steps the op and
+    vLLM's served aiter chain are not yet shown to agree. Unset, or any other value, hands every call back to vLLM
+    before anything runs."""
+    if value is None:
+        monkeypatch.delenv(SWITCH)
+    else:
+        monkeypatch.setenv(SWITCH, value)
+    assert api._run_self_attn(step.layer, None, step.hidden) is FallbackReason.OUT_OF_CONTRACT
+    assert step.attn.in_proj_calls == [] and step.op.calls == [] and step.op.asked == []
 
 
 def test_a_verify_step_runs_in_proj_the_op_and_o_proj(step):
@@ -408,7 +440,6 @@ def _layer(change):
 @pytest.mark.parametrize(
     "change",
     [
-        lambda step: setattr(api, "_ENABLED", False),
         lambda step: setattr(step.layer, "self_attn", SimpleNamespace()),  # an MLA layer
         lambda step: setattr(api, "_forward_metadata", lambda: {}),
         _set(num_prefills=1),
@@ -428,7 +459,6 @@ def _layer(change):
         _layer(lambda a: setattr(a.conv1d, "bias", torch.zeros(3 * HD))),
     ],
     ids=[
-        "disabled",
         "not_kda",
         "no_metadata",
         "prefills",
@@ -463,6 +493,23 @@ def test_a_shape_the_op_does_not_serve_goes_back_before_the_in_projection(step):
     assert stand_in.shape == (15, 3 * HEADS, DIM) and stand_in.stride(0) == _proj_width()
 
 
+def test_a_decline_from_the_steps_own_tensors_is_asked_again(step):
+    """OUT_OF_CONTRACT can come from a step's tensors, not its shape: a dense slot table starting one int32 into its
+    allocation misses the 16-byte alignment aklr's fast key asks of every operand. That step goes back to vLLM; a
+    later step of the same shape on an aligned table is served."""
+    contract = ContractRegistry.default().get(CONTRACT_ID)
+    step.op.key_of = FastKeyFnGenerator(FastKeyCodec.from_contract(contract), None).generate()
+    table = torch.zeros(len(ACCEPTED) * WINDOW + 1, dtype=torch.int32)
+    table[1:] = torch.tensor(WINDOW_SLOTS).flatten()
+    step.m.spec_state_indices_tensor = table[1:].view(len(ACCEPTED), WINDOW)
+    assert step.m.spec_state_indices_tensor.is_contiguous()
+    assert api._run_self_attn(step.layer, None, step.hidden) is FallbackReason.OUT_OF_CONTRACT
+    assert step.attn.in_proj_calls == [] and step.op.calls == []
+    step.m.spec_state_indices_tensor = torch.tensor(WINDOW_SLOTS, dtype=torch.int32)
+    api._run_self_attn(step.layer, None, step.hidden)
+    assert len(step.op.asked) == 2 and len(step.op.calls) == 1
+
+
 def test_a_capture_before_any_eager_call_is_asked_again(step):
     step.op.answer = FallbackReason.NOT_WARMED
     assert api._run_self_attn(step.layer, None, step.hidden) is FallbackReason.NOT_WARMED
@@ -490,6 +537,103 @@ def test_eager_block_table_slots_are_copied_and_a_capture_declines(step, monkeyp
     monkeypatch.setattr(api, "_capturing", lambda device: True)
     assert api._run_self_attn(step.layer, None, step.hidden) is FallbackReason.OUT_OF_CONTRACT
     assert len(step.op.calls) == 1
+
+
+# ---------- the baseline ----------
+
+
+def _vllm_gemm(layer, x, weight, bias):
+    """vLLM's unquantized GEMM as dispatch_unquantized_gemm returns it: bf16 out."""
+    return (x.float() @ weight.float().T).to(x.dtype)
+
+
+@pytest.fixture
+def vllm_calls(monkeypatch):
+    """The two vLLM functions the baseline calls, as stand-ins: the unquantized GEMM dispatch, and aiter's fused
+    kernel through rocm_aiter_ops, whose keyword arguments are recorded (the list returned)."""
+    calls = []
+
+    def module(name, **attrs):
+        stand_in = ModuleType(name)
+        stand_in.__dict__.update(attrs)
+        monkeypatch.setitem(sys.modules, name, stand_in)
+
+    module("vllm")
+    module(
+        "vllm._aiter_ops",
+        rocm_aiter_ops=SimpleNamespace(kda_fused_recurrent_spec_decode=lambda **kw: calls.append(kw)),
+    )
+    module("vllm.model_executor")
+    module("vllm.model_executor.layers")
+    module("vllm.model_executor.layers.utils", dispatch_unquantized_gemm=lambda: _vllm_gemm)
+    return calls
+
+
+def _width_major(conv_weight):
+    """vLLM's decode_conv1d_weight of a (3 * heads * dim, width) convolution weight: (3, width, heads * dim)."""
+    return conv_weight.view(3, -1, conv_weight.shape[1]).transpose(1, 2)
+
+
+def test_the_baseline_takes_the_float32_scale_the_workloads_record(vllm_calls):
+    """The workloads record scale as the float32 aiter's kernel receives, 0.0883883461356163 (head_dim ** -0.5 is
+    0.08838834764831845 as a double): the baseline serves it; a scale that is another float32 is a call vLLM does not
+    make."""
+    _, path = _schema_path()
+    (scale,) = {w["scalars"]["scale"] for w in json.loads(path.read_text())["workloads"]}
+    assert scale != DIM**-0.5
+    args = stage_args(FakeKDA(len(ACCEPTED) * WINDOW)) | {"storage": "strided_rows"}
+    kimi_k3_kda_spec_stage_c_baseline(**args | {"scale": scale})
+    assert len(vllm_calls) == 1
+    with pytest.raises(NotImplementedError, match="head_dim"):
+        kimi_k3_kda_spec_stage_c_baseline(**args | {"scale": 0.0883883})
+
+
+def test_the_baseline_restages_a_convolution_weight_reloaded_in_place(vllm_calls):
+    """Validation reloads a weight through .data.copy_, which keeps its address and its version: the next call
+    outside a graph capture hands aiter the width-major copy of the new values (what vLLM's
+    process_weights_after_loading stages), not of the old."""
+    args = stage_args(FakeKDA(len(ACCEPTED) * WINDOW)) | {"storage": "strided_rows"}
+    weight = args["conv_weight"]
+    kimi_k3_kda_spec_stage_c_baseline(**args)
+    assert torch.equal(vllm_calls[0]["conv_weight"], _width_major(weight))
+    weight.data.copy_(torch.randn(weight.shape, generator=torch.Generator().manual_seed(7)))
+    kimi_k3_kda_spec_stage_c_baseline(**args)
+    staged = vllm_calls[1]["conv_weight"]
+    assert staged.is_contiguous() and torch.equal(staged, _width_major(weight))
+
+
+def test_the_staged_convolution_weight_goes_with_its_weight(vllm_calls):
+    """The width-major copy belongs to the weight tensor it was made from and is freed with it: an allocation that
+    reuses the weight's address never finds it."""
+    args = stage_args(FakeKDA(len(ACCEPTED) * WINDOW)) | {"storage": "strided_rows"}
+    kimi_k3_kda_spec_stage_c_baseline(**args)
+    staged = weakref.ref(vllm_calls.pop()["conv_weight"])
+    assert staged() is not None
+    del args
+    gc.collect()
+    assert staged() is None
+
+
+@pytest.mark.gpu  # a CUDA graph capture
+def test_a_capture_reads_the_weight_the_last_eager_call_staged(vllm_calls):
+    """The timed calls are CUDA graph replays: a capture hands aiter the copy the eager call before it staged and
+    records no copy of its own (as vLLM's graphs read the weight staged at load time); the next eager call stages
+    the weight's values again."""
+    args = stage_args(FakeKDA(len(ACCEPTED) * WINDOW)) | {"storage": "strided_rows"}
+    args = {n: v.cuda() if torch.is_tensor(v) else v for n, v in args.items()}
+    weight = args["conv_weight"]
+    kimi_k3_kda_spec_stage_c_baseline(**args)
+    staged = vllm_calls[-1]["conv_weight"]
+    eager = staged.clone()
+    weight.data.copy_(torch.randn_like(weight))
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        kimi_k3_kda_spec_stage_c_baseline(**args)
+    graph.replay()
+    torch.cuda.synchronize()
+    assert vllm_calls[-1]["conv_weight"] is staged and torch.equal(staged, eager)
+    kimi_k3_kda_spec_stage_c_baseline(**args)
+    assert vllm_calls[-1]["conv_weight"] is staged and torch.equal(staged, _width_major(weight))
 
 
 # ---------- the committed schema and its kernel ----------
@@ -562,3 +706,33 @@ def test_the_kernel_module_serves_the_contract(kernel_module):
     for b in (8, 2, 1):
         rows_per_lane, waves = kernel_module._SHAPES[b]
         assert 8 * rows_per_lane * waves * b == DIM and callable(kernel_module._build(12, b, WINDOW))
+
+
+@pytest.mark.gfx950
+@pytest.mark.parametrize("sentinel", [0, -1], ids=["null_block", "pad_slot_id"])
+def test_the_kernel_meets_the_reference_on_padding_windows_and_rows(kernel_module, sentinel):
+    """The committed kernel at the small Point (two heads, two windows of three tokens and a padding row, vLLM's
+    layout), its second window padding as vLLM's graphs pad it (every slot the sentinel, one accepted token) and the
+    padding row's slot the sentinel too: out and both caches pass the contract's compare against the reference, the
+    padding window's rows and the padding row are zero, and no slot but the live window's changes, slot 0 included."""
+    case = OpCase.of(CONTRACT_ID)
+    axes = case.point.axes
+    window = axes["conv_len"] - axes["width"] + 2
+    args = {n: v.cuda() if torch.is_tensor(v) else v for n, v in case.inputs().items()}
+    args["state_indices"][window:] = sentinel
+    args["num_accepted_tokens"][1] = 1
+    call = case.call(args, "cuda")
+    before = {n: call[n].clone() for n in case.contract.mutable_inputs}
+    out = torch.empty(
+        (axes["n_tokens"], axes["n_heads"], axes["head_dim"]), dtype=torch.bfloat16, device="cuda"
+    )
+    kernel_module.run(**{k: call[k] for k in case.contract.kernel_call_keys} | {"out": out})
+    torch.cuda.synchronize()
+    outputs = case.contract.call_mutable_tensors(out, call)
+    results = case.compare(outputs, args)
+    assert {o: r for o, r in results.items() if not r.is_passed} == {}
+    assert not out[window:].any()
+    live = set(args["state_indices"][:window].tolist())
+    for name, cache in before.items():
+        for slot in sorted(set(range(cache.shape[0])) - live):
+            assert torch.equal(outputs[name][slot], cache[slot]), (name, slot)

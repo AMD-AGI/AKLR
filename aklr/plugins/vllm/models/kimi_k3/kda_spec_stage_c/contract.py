@@ -201,12 +201,15 @@ KIMI_K3_KDA_SPEC_STAGE_C = OpContract(
         "state_indices": TensorSpec(
             description=(
                 "Each row's slot, window by window (vLLM's [n_seqs, window] rows of its block table), a padding "
-                "row's unread; the positive ones distinct (vLLM's padding windows name its null block 0, or -1)."
+                "row's unread. The positive slots are distinct; 0 and -1 may repeat: every slot of a padding window "
+                "(vLLM's graph padding) is its null block 0, or -1."
             ),
             shape=("n_tokens",),
             dtype=_INT32,
-            # drawn positive, so that every timed window steps its states: the padding windows are the reference's
-            # and the tests'
+            # drawn positive and distinct, every window live, so that every timed window steps its states: no core
+            # distribution keeps the positive values distinct while 0 and -1 repeat, and a plugin cannot add one
+            # (bench draws from the schema's json). The padding windows are the reference's and the tests' (on
+            # gfx950, the kernel's)
             distribution=IntRangeDistribution(lo=1, hi="n_slots - 1", distinct=True),
         ),
         "num_accepted_tokens": TensorSpec(
