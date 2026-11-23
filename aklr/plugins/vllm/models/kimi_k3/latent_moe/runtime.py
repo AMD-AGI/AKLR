@@ -17,16 +17,22 @@
 ###############################################################################
 
 """What the latent-MoE tail kernel keeps per rank between calls: an uncached buffer every rank of the group has
-mapped (``peer_table``, the ranks' base addresses), a device scratch, one launch counter per workgroup and the health
-words.
+mapped (``peer_table``, the ranks' base addresses) with the group's FAILED word at its end, a device scratch, one
+launch counter per workgroup and the health words.
 
 Every launch of the kernel reads its workgroup's counter as its mailbox tag and bumps it as it ends, so every rank's
 counters advance together as long as every rank launches the kernel the same number of times: the route declines
 alike on every rank, and nothing here is ever zeroed between calls.
 
-A rank whose in-kernel wait gives up (``WAIT_SECONDS``) records the wait in its health words and sets FAILED, which
-is sticky: its later waits end at once, so no rank hangs. ``after_step`` stops every rank at the same step once any
-of them failed.
+A rank whose in-kernel wait gives up (``WAIT_SECONDS``) records the wait in its health words, sets its FAILED word,
+and sets the group's (``GROUP_FAILED``) in every rank's buffer before it stores anything more; a wait that ends
+because the group's word is set (they all do, soon: so no rank hangs) sets it on every rank the same way. Both are
+sticky. So whatever data any rank reads from a wait that gave up, its own group word was set first: a rank's group
+word, read after its step's launches, says whether its step saw one.
+
+``after_step`` (the vLLM plugin's step watch) queues a copy of this rank's group word to pinned memory once a step,
+on a stream of its own after the step's launches: no collective, nothing waits. Its check runs before the step's
+output leaves the worker (as vLLM's output thread reads it) and raises once the word is set.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ import ctypes
 import logging
 import os
 import zlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import torch
@@ -44,6 +50,7 @@ import torch.distributed as dist
 __all__ = [
     "FAILED",
     "GRID",
+    "GROUP_FAILED",
     "HEALTH_WORDS",
     "PEER_BYTES",
     "RECORD_WORDS",
@@ -64,6 +71,9 @@ PEER_BYTES = 16 << 20  # a rank's peer buffer, where the kernel lays out its mai
 SCRATCH_BYTES = 2 << 20  # a rank's device scratch (hand-offs between its workgroups)
 RECORD_WORDS = 8  # a health record: given up, region, byte offset, tag, seen tag, workgroup, clock, 0
 FAILED = 0  # the health word set once a wait of this rank gave up
+# the byte offset in every rank's peer buffer of the group's FAILED word, past the kernel's mailbox regions: set on
+# every rank by any rank's wait that gives up or ends because it is set
+GROUP_FAILED = PEER_BYTES - 64
 HEALTH_WORDS = (GRID + 1) * RECORD_WORDS  # FAILED's record, then one a workgroup
 WAIT_SECONDS = 10  # an in-kernel wait gives up after this long
 
@@ -111,6 +121,7 @@ class _Hip:
             for fn, args in (
                 ("hipExtMallocWithFlags", [ctypes.POINTER(void_p), ctypes.c_size_t, uint]),
                 ("hipMemset", [void_p, ctypes.c_int, ctypes.c_size_t]),
+                ("hipMemcpyAsync", [void_p, void_p, ctypes.c_size_t, ctypes.c_int, void_p]),
                 ("hipDeviceSynchronize", []),
                 ("hipIpcGetMemHandle", [ctypes.POINTER(cls.Handle), void_p]),
                 ("hipIpcOpenMemHandle", [ctypes.POINTER(void_p), cls.Handle, uint]),
@@ -129,6 +140,10 @@ class _Hip:
         if err:
             raise RuntimeError(f"{what}: {cls.lib().hipGetErrorString(err).decode(errors='replace')}")
 
+    @staticmethod
+    def compute_units(device: torch.device) -> int:
+        return torch.cuda.get_device_properties(device).multi_processor_count
+
     @classmethod
     def alloc_uncached(cls, nbytes: int) -> int:
         """Zeroed uncached device memory on the current device, whole pages (IPC handles of uncached memory need
@@ -139,6 +154,20 @@ class _Hip:
         cls.check(lib.hipMemset(ptr, 0, nbytes), "hipMemset")
         cls.check(lib.hipDeviceSynchronize(), "hipDeviceSynchronize")
         return int(ptr.value)
+
+    @classmethod
+    def zero(cls, ptr: int, nbytes: int) -> None:
+        """Zero device memory, the device idle after."""
+        cls.check(cls.lib().hipMemset(ctypes.c_void_p(ptr), 0, nbytes), "hipMemset")
+        cls.check(cls.lib().hipDeviceSynchronize(), "hipDeviceSynchronize")
+
+    @classmethod
+    def copy_word(cls, host: torch.Tensor, address: int, stream: int) -> None:
+        """The int32 at device ``address`` into ``host`` (one pinned int32), queued on ``stream``."""
+        lib, d2h = cls.lib(), 2  # hipMemcpyDeviceToHost
+        err = lib.hipMemcpyAsync(ctypes.c_void_p(host.data_ptr()), ctypes.c_void_p(address), 4, d2h,
+                                 ctypes.c_void_p(stream))  # fmt: skip
+        cls.check(err, "hipMemcpyAsync")
 
     @classmethod
     def handle(cls, ptr: int) -> bytes:
@@ -178,9 +207,9 @@ class TailGroup:
     """One rank's state of the kernel's group; built by ``setup``, collectively."""
 
     def __init__(self, cpu_group: Any, rank: int, world: int, device: torch.device, local: int, opened: list[int],
-                 addresses: Sequence[int]) -> None:  # fmt: skip
+                 addresses: Sequence[int], hip: Any = _Hip) -> None:  # fmt: skip
         self.cpu_group, self.rank, self.world, self.device = cpu_group, rank, world, device
-        self._local, self._opened = local, opened
+        self._local, self._opened, self._hip = local, opened, hip
         self.peer_table = torch.tensor(list(addresses), dtype=torch.int64, device=device)
         self.scratch = torch.zeros(SCRATCH_BYTES, dtype=torch.uint8, device=device)
         self.counters = torch.zeros(GRID, dtype=torch.int32, device=device)
@@ -188,7 +217,7 @@ class TailGroup:
         # the kernel builds this group launches: its wait timeout (tests shorten it) and which are compiled
         self.wait_seconds = WAIT_SECONDS
         self.warmed: set[Any] = set()
-        self._failstop = _FailStop(self.health, rank, world, cpu_group)
+        self._failstop = _FailStop(hip, local + GROUP_FAILED, device)
 
     def barrier(self) -> None:
         """Every rank of the group here (the CPU group)."""
@@ -197,6 +226,12 @@ class TailGroup:
     def failed(self) -> bool:
         """Whether a wait of this rank gave up (a device read: it waits for the stream)."""
         return bool(self.health[FAILED].item())
+
+    def clear_failed(self) -> None:
+        """This rank's health words and its group FAILED word cleared: a tool's, between its cases, with no launch in
+        flight on any rank (the device idle after)."""
+        self.health.zero_()
+        self._hip.zero(self._local + GROUP_FAILED, 4)
 
     def given_up_waits(self, regions: Sequence[str]) -> list[str]:
         """Each workgroup's recorded wait that gave up; ``regions`` names the ids a record may hold."""
@@ -208,54 +243,89 @@ class TailGroup:
             if flag
         ]
 
-    def after_step(self) -> None:
-        self._failstop.after_step()
+    def after_step(self) -> Callable[[], None] | None:
+        """This step's check (see ``after_step``); every rank calls it at the same point."""
+        return self._failstop.after_step()
 
     def close(self) -> None:
         """Unmap the peers and free this rank's buffer: only once no rank's kernel can still touch it."""
         opened, self._opened = self._opened, []
         for base in opened:
-            _Hip.close(base)
+            self._hip.close(base)
         if self._local:
-            _Hip.free(self._local)
+            self._hip.free(self._local)
             self._local = 0
         _GROUPS.pop(self.device, None)
 
 
-def setup(cpu_group: Any, rank: int, world: int, device: torch.device) -> TailGroup | None:
+def setup(cpu_group: Any, rank: int, world: int, device: torch.device, hip: Any = _Hip) -> TailGroup | None:
     """This rank's group state, made collectively: every rank of ``cpu_group`` (a CPU process group of the ``world``
     ranks, ``rank`` this one's) must call it at the same point. None on every rank when any rank cannot take part
-    (a GPU with fewer CUs than workgroups, a failed mapping); an earlier group of the device is kept."""
+    (a GPU with fewer CUs than workgroups, a failed allocation, export or mapping); an earlier group of the device is
+    kept. ``hip`` makes the HIP calls (``_Hip``'s).
+
+    The ranks agree after each step that can fail on one rank alone, before any of them goes on to the next
+    collective: a rank that skipped one the others entered would leave them waiting in it for ever."""
     device = torch.device(device)
     if device in _GROUPS:
         return _GROUPS[device]
-    ok = torch.cuda.get_device_properties(device).multi_processor_count >= GRID
-    if not tp_agree(ok, cpu_group):
-        _LOGGER.warning("latent-MoE tail: a rank's GPU has fewer than %d CUs; the kernel is off", GRID)
-        return None
-    local, opened, addresses, failure = 0, [], [], None
+    failure = None
     try:
-        local = _Hip.alloc_uncached(PEER_BYTES)
-        handles = _all_gather_objects(_Hip.handle(local), cpu_group) if world > 1 else [None]
-        for peer, handle in enumerate(handles):
+        if hip.compute_units(device) < GRID:
+            failure = RuntimeError(f"a GPU of fewer than {GRID} CUs")
+    except Exception as e:  # every rank must still reach the agreement
+        failure = e
+    if not _agreed(failure, cpu_group, "the GPU check"):
+        return None
+    local = handle = None
+    try:
+        local = hip.alloc_uncached(PEER_BYTES)
+        handle = hip.handle(local) if world > 1 else None
+    except Exception as e:
+        failure = e
+    if not _agreed(failure, cpu_group, "allocating or exporting the peer buffer"):
+        _release(hip, [], local)
+        return None
+    handles = _all_gather_objects(handle, cpu_group) if world > 1 else [None]
+    opened, group = [], None
+    try:
+        addresses = []
+        for peer, peer_handle in enumerate(handles):
             if peer == rank:
                 addresses.append(local)
             else:
-                opened.append(_Hip.open(handle))
+                opened.append(hip.open(peer_handle))
                 addresses.append(opened[-1])
-    except RuntimeError as e:  # every rank must still reach the agreement
+        group = TailGroup(cpu_group, rank, world, device, local, opened, addresses, hip)
+    except Exception as e:
         failure = e
-    if not tp_agree(failure is None, cpu_group):
-        for base in opened:
-            _Hip.close(base)
-        if local:
-            _Hip.free(local)
-        _LOGGER.warning("latent-MoE tail: the peer memory handshake failed on %s rank (%r); the kernel is off",
-                        "this" if failure else "another", failure)  # fmt: skip
+    if not _agreed(failure, cpu_group, "mapping the peers' buffers"):
+        _release(hip, opened, local)
         return None
-    group = _GROUPS[device] = TailGroup(cpu_group, rank, world, device, local, opened, addresses)
+    _GROUPS[device] = group
     _register_after_step()
     return group
+
+
+def _release(hip: Any, opened: list[int], local: int | None) -> None:
+    """Unmap ``opened`` and free ``local`` after the ranks agreed to give up: a failure here is only logged, as no
+    rank waits on this one any more."""
+    try:
+        for base in opened:
+            hip.close(base)
+        if local:
+            hip.free(local)
+    except Exception as e:
+        _LOGGER.warning("latent-MoE tail: releasing the peer memory failed (%r)", e)
+
+
+def _agreed(failure: BaseException | None, cpu_group: Any, what: str) -> bool:
+    """Whether no rank's ``failure`` is set (every rank calls it at the same point); the warning where one is."""
+    if tp_agree(failure is None, cpu_group):
+        return True
+    _LOGGER.warning("latent-MoE tail: %s failed on %s rank (%r); the kernel is off",
+                    what, "this" if failure else "another", failure)  # fmt: skip
+    return False
 
 
 def group_of(device: torch.device) -> TailGroup:
@@ -266,10 +336,22 @@ def group_of(device: torch.device) -> TailGroup:
     return group
 
 
-def after_step() -> None:
-    """The fail-stop watch of every group of this process; once a step, on every rank (the vLLM plugin's step hook)."""
-    for group in list(_GROUPS.values()):
-        group.after_step()
+def after_step() -> Callable[[], None] | None:
+    """The fail-stop watch of every group of this process, the vLLM plugin's step watch: once a step, on every rank,
+    after the step's launches. Its check, run before the step's output leaves the worker, raises once the group's
+    FAILED word was set in that step or before; None inside a graph capture (no host call there) or without a
+    group."""
+    checks = [
+        check for check in (group.after_step() for group in list(_GROUPS.values())) if check is not None
+    ]
+    if not checks:
+        return None
+
+    def check() -> None:
+        for one in checks:
+            one()
+
+    return check
 
 
 def _register_after_step() -> None:
@@ -280,39 +362,46 @@ def _register_after_step() -> None:
 
 
 class _FailStop:
-    """Stops every rank at the same step once any of them gave up an in-kernel wait (its FAILED word). Each step
-    queues a copy of this rank's word to the host and keeps the newest that has landed, without blocking; every
-    CHECK_EVERY steps the ranks agree on theirs over the CPU group and all raise together (a rank raising alone would
-    leave the others in their next collective for ever)."""
+    """A step's verdict: this rank's group FAILED word as the step's launches left it, copied to a pinned slot on a
+    stream of its own once the step's launches are done (the step's next kernels do not wait for the copy, nor does
+    the host: no collective, no device read). Its check waits for that copy alone, in vLLM's output thread, and
+    raises where the word is set. A slot is reused RING steps on, long after vLLM has read the step's output. The
+    word is sticky, so a copy never reads it clearer than the step left it."""
 
-    CHECK_EVERY = 16
+    RING = 64
 
-    def __init__(self, health: torch.Tensor, rank: int, world: int, cpu_group: Any) -> None:
-        self.failed = health[FAILED : FAILED + 1]
-        self.rank, self.world, self.cpu_group = rank, world, cpu_group
-        self.host = torch.zeros(1, dtype=torch.int32, pin_memory=True)
-        self.copied: torch.cuda.Event | None = None
-        self.seen = False
+    def __init__(self, hip: Any, word: int, device: torch.device) -> None:
+        self.hip, self.word = hip, word
+        cuda = device.type == "cuda"
+        self.host = torch.zeros(self.RING, dtype=torch.int32, pin_memory=cuda)
+        self.stream = torch.cuda.Stream(device) if cuda else None
+        # each slot's events: the step's launches done (on the step's stream), its copy landed
+        self.ready = [torch.cuda.Event() for _ in range(self.RING)] if cuda else None
+        self.copied = [torch.cuda.Event(blocking=True) for _ in range(self.RING)] if cuda else None
         self.steps = 0
 
-    def after_step(self) -> None:
+    def after_step(self) -> Callable[[], None] | None:
         if torch.cuda.is_current_stream_capturing():
-            return
-        if self.copied is None or self.copied.query():
-            if self.copied is not None:
-                self.seen |= bool(self.host[0])
-            self.host.copy_(self.failed, non_blocking=True)
-            self.copied = torch.cuda.Event()
-            self.copied.record()
+            return None
+        slot = self.steps % self.RING
         self.steps += 1
-        if self.steps % self.CHECK_EVERY:
-            return
-        votes = torch.zeros(self.world, dtype=torch.int32)
-        votes[self.rank] = int(self.seen)
-        dist.all_reduce(votes, group=self.cpu_group)
-        if votes.any():
-            ranks = [r for r, v in enumerate(votes.tolist()) if v]
-            raise RuntimeError(
-                f"Kimi-K3 latent-MoE tail: TP ranks {ranks} gave up an in-kernel wait; stopping "
-                "(AKLR_VLLM_MOE_TAIL=0 runs vLLM's tail)"
-            )
+        host, copied = self.host[slot : slot + 1], None
+        if self.stream is None:
+            self.hip.copy_word(host, self.word, None)
+        else:
+            self.ready[slot].record(torch.cuda.current_stream(self.stream.device))
+            self.stream.wait_event(self.ready[slot])
+            self.hip.copy_word(host, self.word, self.stream.cuda_stream)
+            copied = self.copied[slot]
+            copied.record(self.stream)
+
+        def check() -> None:
+            if copied is not None:
+                copied.synchronize()
+            if host.item():
+                raise RuntimeError(
+                    "Kimi-K3 latent-MoE tail: a TP rank gave up an in-kernel wait in this step or before (each rank's "
+                    "TailGroup.given_up_waits lists its own); stopping (AKLR_VLLM_MOE_TAIL=0 runs vLLM's tail)"
+                )
+
+        return check

@@ -6,8 +6,10 @@
 The op's kernel waits inside itself on every other rank of the TP group, so a rank that serves a call while another
 declines it leaves the first spinning until its wait gives up. Every decision here therefore reads only what is the
 same on every rank: the step's rows, the layer's shapes, dtypes and layouts, vLLM's config, the environment, whether
-a graph is being captured, and verdicts the ranks agree on over the TP group (the peer memory's setup, the first-call
-check against vLLM's tail)."""
+a graph is being captured, and verdicts the ranks agree on over the TP group (the dispatcher's, the peer memory's
+setup, the first-call check against vLLM's tail). What the dispatcher reads that a rank has alone, its operands'
+addresses, is made alike first: an operand off the dispatcher's alignment goes over as an aligned copy, and the shared
+partial, which the op writes in place, as a copy where it shares bytes with another operand."""
 
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import logging
 import os
 
 import torch
+import torch.distributed as dist
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.vllm.hook import _original, vllm_route
@@ -27,12 +30,18 @@ _LOGGER = logging.getLogger(__name__)
 # AKLR_VLLM_MOE_TAIL=0 hands every call straight back to vLLM; AKLR_VLLM_MOE_TAIL_CHECK=0 skips the first-call check
 _ENABLED = os.environ.get("AKLR_VLLM_MOE_TAIL", "1") != "0"
 _CHECK = os.environ.get("AKLR_VLLM_MOE_TAIL_CHECK", "1") != "0"
-TP, HIDDEN, LATENT, MAX_ROWS = 8, 7168, 3584, 128
+TP, HIDDEN, LATENT = 8, 7168, 3584
+# the committed kernel's rows at most (its MAX_ROWS and scratch layout): the op's own are the contract's n_tokens
+MAX_ROWS = 128
 _SEEN: set[str] = set()
 # the group state by device, None where the ranks agreed it cannot be set up
 _GROUPS: dict[torch.device, runtime.TailGroup | None] = {}
 # the first-call check's agreed verdict by (device, row bucket)
 _CHECKED: dict[tuple[torch.device, int], bool] = {}
+# the dispatcher's agreed verdict by (device, rows, eps, capturing): None where it serves the call, else the reason
+_VERDICTS: dict[tuple, FallbackReason | None] = {}
+# the dispatcher declines an operand whose address is not a multiple of this (its fast key's MIN_PTR_ALIGN_BYTES)
+_ALIGN = 16
 
 
 @api(KIMI_K3_LATENT_MOE_TAIL)
@@ -62,6 +71,13 @@ def _tp() -> tuple[int, int]:
     return get_tensor_model_parallel_world_size(), get_tensor_model_parallel_rank()
 
 
+def _stages() -> int:
+    """vLLM's pipeline stages."""
+    from vllm.distributed import get_pp_group
+
+    return get_pp_group().world_size
+
+
 def _up_shard(runner, rank: int) -> torch.Tensor:
     """This rank's rows of the up-projection, as _shard_up_proj_tail takes them."""
     weight = runner.routed_output_transform.up_proj.weight
@@ -89,7 +105,9 @@ def _out_of_contract(runner, fused_output, shared_output, trunc_size) -> list[st
         ("a padded hidden dim", trunc_size is not None),
         ("the routed output comes reduced", bool(getattr(runner, "_fused_output_is_reduced", False))),
         (f"TP {world}", world != TP),
-        (f"{n} rows", not 1 <= n <= MAX_ROWS),
+        # only the last stage's output leaves its workers, through the fail-stop's check (runtime.after_step)
+        ("pipeline parallel", _stages() != 1),
+        ("no rows", n < 1),
         ("fused_output", not dense_bf16(fused_output, (n, LATENT))),
         ("shared_output", not dense_bf16(shared_output, (n, HIDDEN))),
         ("up_proj shard", not dense_bf16(up, (HIDDEN // TP, LATENT))),
@@ -136,37 +154,86 @@ def _shard_up_proj_tail(self, fused_output, shared_output, trunc_size):
               f"{fused_output.stride()} {fused_output.dtype}, shared_output {tuple(shared_output.shape)}/"
               f"{shared_output.stride()} {shared_output.dtype}")  # fmt: skip
         return FallbackReason.OUT_OF_CONTRACT
-    device = fused_output.device
+    device, n = fused_output.device, fused_output.shape[0]
+    if n > MAX_ROWS:
+        _once(f"{n} rows: the kernel takes {MAX_ROWS} at most")
+        return FallbackReason.NO_WORKLOAD
     norm = self.routed_output_transform.norm
-    args = (fused_output, shared_output, _up_shard(self, _tp()[1]), norm.weight)
+    args = _alike(fused_output, shared_output, _up_shard(self, _tp()[1]), norm.weight)
     kwargs = {"tp_size": TP, "eps": float(norm.variance_epsilon)}
-    reason = kimi_k3_latent_moe_tail.fallback_reason(*args, **kwargs)
-    if reason is not None:
-        _once(f"{reason.value}: {fused_output.shape[0]} rows")
-        return reason
     capturing = torch.cuda.is_current_stream_capturing()
     if device not in _GROUPS and capturing:
         _once("first reached inside a graph capture: the peer memory is set up outside one")
         return FallbackReason.NOT_WARMED
+    from vllm.distributed import get_tp_group
+
+    reason = _agreed(args, kwargs, (device, n, kwargs["eps"], capturing), get_tp_group().cpu_group)
+    if reason is not None:
+        _once(f"{reason.value}: {n} rows")
+        return reason
     group = _group(device)
     if group is None:
         return FallbackReason.OUT_OF_CONTRACT
-    key = (device, fused_output.shape[0].bit_length())
+    key = (device, n.bit_length())
     if _CHECK and not capturing and key not in _CHECKED:
         return _checked_call(self, group, key, args, kwargs, fused_output, shared_output, trunc_size)
     if not _CHECKED.get(key, True):
         return FallbackReason.INACCURATE
-    return kimi_k3_latent_moe_tail(*args, **kwargs)
+    return _served(args, kwargs)
+
+
+def _alike(routed, shared, up_weight, norm_weight) -> tuple[torch.Tensor, ...]:
+    """The operands at addresses the dispatcher takes on every rank: each on its alignment, else a copy (aligned, as
+    every allocation); the shared partial, which the op writes, apart from the others, else a copy (vLLM reads its
+    shared output no more)."""
+    routed, shared, up_weight, norm_weight = (
+        t if t.data_ptr() % _ALIGN == 0 else t.clone() for t in (routed, shared, up_weight, norm_weight)
+    )
+    if any(_overlap(shared, t) for t in (routed, up_weight, norm_weight)):
+        shared = shared.clone()
+    return routed, shared, up_weight, norm_weight
+
+
+def _overlap(a: torch.Tensor, b: torch.Tensor) -> bool:
+    return a.data_ptr() < b.data_ptr() + b.nbytes and b.data_ptr() < a.data_ptr() + a.nbytes
+
+
+def _agreed(args, kwargs, key, cpu_group) -> FallbackReason | None:
+    """The dispatcher's verdict on the call, the same on every rank of ``cpu_group``: None where every rank's serves
+    it, else the reason of the first rank (in rank order) whose declines it. Agreed at a key's first call, which every
+    rank reaches at the same point, and kept for the key's later calls (their operands as alike, ``_alike``), but
+    for NOT_WARMED: a Point warms at its first eager call."""
+    if key in _VERDICTS:
+        return _VERDICTS[key]
+    local = kimi_k3_latent_moe_tail.fallback_reason(*args, **kwargs)
+    reasons = [None if local is None else local.value]
+    if cpu_group is not None:
+        reasons = [None] * dist.get_world_size(cpu_group)
+        dist.all_gather_object(reasons, None if local is None else local.value, group=cpu_group)
+    verdict = next((FallbackReason(r) for r in reasons if r is not None), None)
+    if verdict is not FallbackReason.NOT_WARMED:
+        _VERDICTS[key] = verdict
+    return verdict
+
+
+def _served(args, kwargs) -> torch.Tensor:
+    """The op's out on a call every rank's dispatcher agreed to serve: this rank declining it now would leave the
+    others waiting in the kernel, so it raises instead."""
+    out = kimi_k3_latent_moe_tail(*args, **kwargs)
+    if isinstance(out, FallbackReason):
+        raise RuntimeError(
+            f"aklr latent-MoE tail: this rank's dispatcher declines ({out.value}) a call every TP rank's agreed to "
+            "serve; the other ranks have launched it (AKLR_VLLM_MOE_TAIL=0 runs vLLM's tail)"
+        )
+    return out
 
 
 def _checked_call(runner, group, key, args, kwargs, fused_output, shared_output, trunc_size):
     """The op's out, checked against vLLM's tail on the same operands; the ranks agree on the verdict, and where any
     rank's differs the bucket stays with vLLM (this call returns vLLM's out)."""
-    ours = kimi_k3_latent_moe_tail(*args, **kwargs)
-    if isinstance(ours, FallbackReason):
-        return ours
-    # stream-ordered after the kernel has read shared_output, which vLLM's tail writes
-    theirs = _original(_shard_up_proj_tail)(runner, fused_output, shared_output, trunc_size)
+    given = shared_output.clone()  # both tails write it in place
+    ours = _served(args, kwargs)
+    theirs = _original(_shard_up_proj_tail)(runner, fused_output, given, trunc_size)
     agreed = runtime.tp_agree(_agrees(ours, theirs), group.cpu_group)
     _CHECKED[key] = agreed
     if not agreed:

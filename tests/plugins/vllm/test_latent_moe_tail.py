@@ -4,16 +4,21 @@
 """Kimi-K3's latent-MoE tail on vLLM to AKLR's kimi_k3_latent_moe_tail, on the CPU: the reference against vLLM's ops
 composed one by one; the committed kernel's layout run for eight ranks (every hand-off written once and read where it
 was written, the MFMA lanes, the result against the reference and the same on every rank); what the route takes,
-declines and checks, and that its decisions read nothing a rank has alone; the committed schema."""
+declines and checks, and that its decisions read nothing a rank has alone; the group's set-up and fail-stop on ranks
+of a gloo group, with HIP's calls failing where a test says; the committed schema."""
 
 import ast
+import datetime
 import json
+import multiprocessing
 import sys
+import time
 import types
 from types import SimpleNamespace
 
 import pytest
 import torch
+import torch.distributed as dist
 
 from aklr.core.contract.fastkey import FastKeyCodec, FastKeyFnGenerator
 from aklr.core.contract.locate import committed_schema_paths, op_dir, schema_relative_path, schema_uuid
@@ -58,6 +63,7 @@ def point(n, hidden=HIDDEN, latent=LATENT, tp=TP):
 
 
 def reference(group_args, rank=0):
+    """(out, shared as the call leaves it) of ``rank``'s call."""
     n, latent = group_args[0]["routed"].shape
     hidden = group_args[0]["shared"].shape[1]
     return kimi_k3_latent_moe_tail_reference(point(n, hidden, latent, len(group_args)), group_args, rank)
@@ -68,7 +74,8 @@ def reference(group_args, rank=0):
 
 def test_the_reference_is_vllms_ops_one_by_one():
     """vLLM's all-reduce (a float32 sum, bf16 out), aiter's RMSNorm (bf16(x * rstd * w)), the addmm into a rank's own
-    columns (float32 beta-add, bf16 out), the all-reduce of the shared outputs; each rank with its own norm weight."""
+    columns of its shared partial in place (float32 beta-add, bf16 out), the all-reduce of the shared outputs; each
+    rank with its own norm weight. A rank's call leaves its shared partial as vLLM's addmm does."""
     group = draw(5, hidden=256, latent=128)
     latent = bf16(sum(a["routed"].float() for a in group))
     rstd = torch.rsqrt(latent.square().mean(-1, keepdim=True) + 1e-5)
@@ -80,18 +87,26 @@ def test_the_reference_is_vllms_ops_one_by_one():
         outputs.append(s)
     want = sum(outputs)
     for rank in (0, 5):
-        assert torch.equal(reference(group, rank), want)
+        out, shared = reference(group, rank)
+        assert torch.equal(out, want) and torch.equal(shared, outputs[rank])
+    assert torch.equal(group[5]["shared"], draw(5, hidden=256, latent=128)[5]["shared"])  # written on a copy
+
+
+def test_the_contract_states_vllms_write_into_the_shared_partial():
+    """vLLM's tail adds the up-projection into its shared output in place; the op says so, so that vLLM's tail is
+    its baseline as vLLM calls it."""
+    assert KIMI_K3_LATENT_MOE_TAIL.mutable_inputs == ("shared",)
 
 
 def test_a_rank_outside_the_sum_changes_the_out():
     """Every rank's routed and shared partials count: no rank's slice is left out."""
     group = draw(3, hidden=256, latent=128)
-    base = reference(group)
+    base = reference(group)[0]
     for r in range(TP):
         for name in ("routed", "shared"):
             changed = [dict(a) for a in group]
             changed[r][name] = torch.zeros_like(group[r][name])
-            assert not torch.equal(reference(changed), base), (r, name)
+            assert not torch.equal(reference(changed)[0], base), (r, name)
 
 
 # ---------------------------------------------------------------- the committed kernel's layout, for eight ranks
@@ -181,7 +196,7 @@ def _poll_flags(memory, first):
 def run_layout(L, group):
     """The committed kernel's launch on every rank, its arithmetic in float32 (the MFMAs' sums in another order):
     every hand-off through the layout's offsets, in the protocol the row count picks (tagged pairs, or from
-    L.FLAG_ROWS rows data then flag). Returns each rank's out."""
+    L.FLAG_ROWS rows data then flag). Returns each rank's out and its shared partial as the launch leaves it."""
     n = group[0]["routed"].shape[0]
     flagged = n >= L.FLAG_ROWS
     a = torch.arange
@@ -272,7 +287,7 @@ def run_layout(L, group):
     t_item, q_item = t_item[live], q_item[live]
     item_lane, item_group = L.item_lane(t_item, q_item)
     item_set = item_group % sets  # the set whose workgroups hold the item's accumulators
-    outs = []
+    outs, shared_after = [], []
     for r, args in enumerate(group):
         w_index = L.weight_element(
             ups[:, None, None, None], waves[None, :, None, None], lane, steps[None, None, :, None]
@@ -338,6 +353,13 @@ def run_layout(L, group):
                 )
             else:
                 quads[p].write(L.yag(t_item[None, :], L.HS * r + local), bf16(shared + y), region["yag"])
+        # in place: this rank's own columns of its shared partial, read there, bf16(own partial + y), an item a store
+        element = L.own_element(t_item[None, :], r, local)[..., None] + a(4)
+        own_columns = a(n)[:, None] * L.HIDDEN + L.HS * r + a(L.HS)
+        assert torch.equal(element.reshape(-1).sort().values, own_columns.reshape(-1))
+        after = args["shared"].float().reshape(-1).clone()
+        after[element.reshape(-1)] = bf16(after[element] + y).reshape(-1)
+        shared_after.append(after.view(n, L.HIDDEN))
         if flagged:  # each set's workgroup j, once its payload is out: thread i the flag of the set's group i
             for gs in owned:
                 for p in range(TP):
@@ -367,23 +389,27 @@ def run_layout(L, group):
         else:
             live = quads[r].writes[: (L.SRED - L.LRED) // 16].view(TP, L.MAX_ROWS, -1)[:, :n]
         assert (live == 1).all()
-    return outs
+    return outs, shared_after
 
 
 @pytest.mark.parametrize("n", [1, 10, 17, 23, 24, 40, 72, 128])
 def test_the_kernels_layout_computes_the_op_on_every_rank(layout, n):
     """Run through the committed kernel's own offsets: each hand-off written once and read where it was written, the
     MFMA operands and accumulators where the lanes hold them; the out within the contract's bound of the reference
-    (rounding a rank's own columns once, where vLLM rounds them twice) and the same bits on every rank."""
+    (rounding a rank's own columns once, where vLLM rounds them twice) and the same bits on every rank; each rank's
+    own columns of its shared partial written once, in place, within the contract's bound of the reference's."""
     group = draw(n, seed=n)
-    outs = run_layout(layout, group)
+    outs, shared = run_layout(layout, group)
     for out in outs[1:]:
         assert torch.equal(out, outs[0])
-    got = bf16(outs[0])
-    want = reference(group)
-    bound = KIMI_K3_LATENT_MOE_TAIL.outputs["out"].error_bounds[0][1]
-    allowed = bound.allowed_error(want.double(), 2.0**-8, None, None)
-    assert ((got.double() - want.double()).abs() <= allowed).all()
+
+    def within(got, want, spec):
+        allowed = spec.error_bounds[0][1].allowed_error(want.double(), 2.0**-8, None, None)
+        return bool(((got.double() - want.double()).abs() <= allowed).all())
+
+    assert within(bf16(outs[0]), reference(group)[0], KIMI_K3_LATENT_MOE_TAIL.outputs["out"])
+    for r in (0, 3, 7):
+        assert within(bf16(shared[r]), reference(group, r)[1], KIMI_K3_LATENT_MOE_TAIL.inputs["shared"])
 
 
 def test_the_up_sets_split_the_token_groups(layout):
@@ -406,13 +432,15 @@ def test_the_up_sets_split_the_token_groups(layout):
 
 def test_the_layout_fits_the_runtimes_buffers(layout):
     """Every peer region in order, 16-byte aligned, inside the peer buffer: the tagged ones, the flag protocol's
-    payloads and its flags apart, so neither protocol ever polls a word the other wrote."""
+    payloads and its flags apart, so neither protocol ever polls a word the other wrote; the group's FAILED word
+    past them all."""
     bounds = sorted(regions(layout).items(), key=lambda kv: kv[1])
     peer = [b for name, b in bounds if name != "nbuf"]
     assert peer[0][0] == 0 and all(prev[1] == nxt[0] for prev, nxt in zip(peer, peer[1:]))
     assert all(start % 16 == 0 for start, _ in peer) and peer[-1][1] == layout.PEER_END
     assert layout.GRID == runtime.GRID
-    assert layout.PEER_END <= runtime.PEER_BYTES and layout.SCRATCH_END <= runtime.SCRATCH_BYTES
+    assert layout.PEER_END <= runtime.GROUP_FAILED and runtime.GROUP_FAILED + 4 <= runtime.PEER_BYTES
+    assert runtime.GROUP_FAILED % 16 == 0 and layout.SCRATCH_END <= runtime.SCRATCH_BYTES
     assert layout.LDS_WORDS * 4 <= 160 * 1024
 
 
@@ -436,10 +464,13 @@ class _Op:
 
 @pytest.fixture
 def vllm_tp(monkeypatch):
-    """vLLM's TP group as the route reads it: TP 8, this rank's index settable; and the setups it was asked for."""
-    tp = SimpleNamespace(rank_in_group=0, world_size=TP, cpu_group=None, setups=[])
+    """vLLM's TP group as the route reads it: TP 8, this rank's index settable; and the setups it was asked for.
+    No graph is being captured (what the route asks torch.cuda)."""
+    monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: False)
+    tp = SimpleNamespace(rank_in_group=0, world_size=TP, cpu_group=None, setups=[], stages=1)
     distributed = types.ModuleType("vllm.distributed")
     distributed.get_tp_group = lambda: tp
+    distributed.get_pp_group = lambda: SimpleNamespace(world_size=tp.stages)
     distributed.get_tensor_model_parallel_rank = lambda: tp.rank_in_group
     distributed.get_tensor_model_parallel_world_size = lambda: tp.world_size
     monkeypatch.setitem(sys.modules, "vllm", types.ModuleType("vllm"))
@@ -458,6 +489,7 @@ def _fresh_route(monkeypatch):
     monkeypatch.setattr(api, "_SEEN", set())
     monkeypatch.setattr(api, "_GROUPS", {})
     monkeypatch.setattr(api, "_CHECKED", {})
+    monkeypatch.setattr(api, "_VERDICTS", {})
     monkeypatch.setattr(api, "_ENABLED", True)
     monkeypatch.setattr(api, "_CHECK", False)
 
@@ -509,8 +541,6 @@ def _changed(case):
         run.routed_output_transform.norm = None
     elif case == "rows_0":
         fused, shared = outputs(0)
-    elif case == "rows_129":
-        fused, shared = outputs(129)
     elif case == "fp16":
         fused = fused.half()
     elif case == "strided":
@@ -524,13 +554,36 @@ def _changed(case):
 
 @pytest.mark.parametrize(
     "case",
-    ["padded", "reduced", "no_norm", "rows_0", "rows_129", "fp16", "strided", "shared_width", "norm_fp32"],
+    ["padded", "reduced", "no_norm", "rows_0", "fp16", "strided", "shared_width", "norm_fp32"],
 )
 def test_what_no_contract_states_goes_back_to_vllm_untouched(vllm_tp, op, case):
     """Declined before the dispatcher is asked, the group set up or the op run."""
     run, fused, shared, trunc = _changed(case)
     assert api._shard_up_proj_tail(run, fused, shared, trunc) is FallbackReason.OUT_OF_CONTRACT
     assert op.asked == [] and op.calls == [] and vllm_tp.setups == []
+
+
+def test_the_contract_states_the_ops_rows():
+    """The tail has no row limit of its own: vLLM runs it on every step, a prefill chunk's thousands of tokens too.
+    128 rows is the committed kernel's limit, in its workloads and the route's guard (below)."""
+    rows = KIMI_K3_LATENT_MOE_TAIL.axes["n_tokens"]
+    assert rows.lo == 1 and rows.hi >= 8192
+
+
+@pytest.mark.parametrize("n", [129, 1000])
+def test_rows_past_the_kernels_go_back_to_vllm_before_the_dispatcher(vllm_tp, op, n):
+    """Rows the contract states that the kernel, 128 rows at most, has no workload for."""
+    assert api._shard_up_proj_tail(runner(), *outputs(n), None) is FallbackReason.NO_WORKLOAD
+    assert op.asked == [] and op.calls == [] and vllm_tp.setups == []
+
+
+def test_pipeline_stages_go_back_to_vllm(vllm_tp, op):
+    """Only the last stage's step output leaves its workers, so a wait that gave up in an earlier stage would reach
+    the scheduler unchecked (``runtime.after_step``): under pipeline parallelism vLLM keeps its tail."""
+    vllm_tp.stages = 2
+    run, fused, shared, trunc = _changed(None)
+    assert api._shard_up_proj_tail(run, fused, shared, trunc) is FallbackReason.OUT_OF_CONTRACT
+    assert op.asked == [] and vllm_tp.setups == []
 
 
 def test_another_tp_size_goes_back_to_vllm(vllm_tp, op):
@@ -547,7 +600,6 @@ def test_a_call_the_dispatcher_declines_goes_back_before_the_setup(vllm_tp, op):
     assert len(op.asked) == 1 and op.calls == [] and vllm_tp.setups == []
 
 
-@pytest.mark.gpu  # the route asks torch.cuda whether a graph is being captured
 def test_a_supported_call_hands_vllms_operands_over(vllm_tp, op):
     """vLLM's own tensors, no copy: the routed and shared partials, this rank's up rows, the norm's weight and eps;
     the group set up once, over vLLM's TP group."""
@@ -564,7 +616,6 @@ def test_a_supported_call_hands_vllms_operands_over(vllm_tp, op):
     assert vllm_tp.setups == [(0, TP, fused.device)]
 
 
-@pytest.mark.gpu  # the route asks torch.cuda whether a graph is being captured
 @pytest.mark.parametrize("rank", [0, 3, 7])
 def test_a_replicated_up_projection_hands_this_ranks_rows_over(vllm_tp, op, rank):
     vllm_tp.rank_in_group = rank
@@ -576,7 +627,6 @@ def test_a_replicated_up_projection_hands_this_ranks_rows_over(vllm_tp, op, rank
     assert up.data_ptr() == run.routed_output_transform.up_proj.weight[rank * shard].data_ptr()
 
 
-@pytest.mark.gpu  # the route asks torch.cuda whether a graph is being captured
 def test_every_rank_decides_alike(vllm_tp, op):
     """Ranks with their own tensors (values, up rows) take the same decision at every call, and set the group up at
     the same call: nothing a rank has alone reaches a decision."""
@@ -592,7 +642,7 @@ def test_every_rank_decides_alike(vllm_tp, op):
             seen.append((result if isinstance(result, FallbackReason) else "served", len(vllm_tp.setups)))
         decisions.append(seen)
     assert all(d == decisions[0] for d in decisions)
-    assert decisions[0][0] == (FallbackReason.OUT_OF_CONTRACT, 0) and decisions[0][1] == ("served", 1)
+    assert decisions[0][0] == (FallbackReason.NO_WORKLOAD, 0) and decisions[0][1] == ("served", 1)
 
 
 def test_before_the_setup_a_capture_goes_back_to_vllm(vllm_tp, op, monkeypatch):
@@ -602,9 +652,8 @@ def test_before_the_setup_a_capture_goes_back_to_vllm(vllm_tp, op, monkeypatch):
     assert op.calls == [] and vllm_tp.setups == []
 
 
-@pytest.mark.gpu  # the route asks torch.cuda whether a graph is being captured
 def test_a_group_the_ranks_could_not_set_up_keeps_every_call_with_vllm(vllm_tp, op, monkeypatch):
-    monkeypatch.setattr(runtime, "setup", lambda *args: vllm_tp.setups.append(args))
+    monkeypatch.setattr(runtime, "setup", lambda *args, **kwargs: vllm_tp.setups.append(args))
     for n in (10, 40):
         assert api._shard_up_proj_tail(runner(), *outputs(n), None) is FallbackReason.OUT_OF_CONTRACT
     assert op.calls == [] and len(vllm_tp.setups) == 1
@@ -624,7 +673,6 @@ def vllms_tail(monkeypatch):
     return tail
 
 
-@pytest.mark.gpu  # the route asks torch.cuda whether a graph is being captured
 def test_the_first_eager_call_of_a_bucket_is_checked_against_vllms_tail(vllm_tp, op, vllms_tail, monkeypatch):
     agreements = []
     monkeypatch.setattr(runtime, "tp_agree", lambda ok, group: agreements.append(ok) or ok)
@@ -635,7 +683,6 @@ def test_the_first_eager_call_of_a_bucket_is_checked_against_vllms_tail(vllm_tp,
     assert vllms_tail.calls == [10, 16] and agreements == [True, True] and len(op.calls) == 4
 
 
-@pytest.mark.gpu  # the route asks torch.cuda whether a graph is being captured
 def test_a_bucket_any_rank_finds_different_stays_with_vllm(vllm_tp, op, vllms_tail, monkeypatch):
     """vLLM's out for the checked call; the bucket's later calls go back to vLLM unserved, other buckets are checked
     on their own."""
@@ -650,7 +697,27 @@ def test_a_bucket_any_rank_finds_different_stays_with_vllm(vllm_tp, op, vllms_ta
     assert torch.equal(out, torch.ones(40, HIDDEN)) and api._CHECKED[(out.device, 6)] is False
 
 
-@pytest.mark.gpu  # the route asks torch.cuda whether a graph is being captured
+def test_the_first_call_check_gives_vllms_tail_the_given_shared_partial(vllm_tp, vllms_tail, monkeypatch):
+    """The op writes its shared partial in place, as vLLM's tail does: the check runs vLLM's tail on the values the
+    op was given, not on what the op left."""
+    seen = []
+    tail = api._original(api._shard_up_proj_tail)
+    monkeypatch.setattr(
+        api, "_original", lambda route: lambda *args: seen.append(args[2].clone()) or tail(*args)
+    )
+
+    class InPlace(_Op):
+        def __call__(self, *args, **kwargs):
+            args[1].add_(1.0)
+            return super().__call__(*args, **kwargs)
+
+    monkeypatch.setattr(api, "kimi_k3_latent_moe_tail", InPlace())
+    fused, shared = outputs(10)
+    given = shared.clone()
+    api._shard_up_proj_tail(runner(), fused, shared, None)
+    assert torch.equal(seen[0], given) and vllms_tail.calls == [10]
+
+
 def test_the_handed_over_operands_are_a_point_of_the_contract(vllm_tp, op):
     """The contract's own key reads the route's call as a Point of the committed schema's (no device check on the
     CPU)."""
@@ -669,8 +736,336 @@ def test_the_plugins_step_hook_runs_the_registered_watches(monkeypatch):
     assert seen == ["step", "watch"]
 
 
+class AsyncOutput:
+    """vLLM's async model runner output: its step's sampled tokens, read by get_output once they have landed."""
+
+    def __init__(self, step):
+        self.step = step
+
+    def get_output(self):
+        return self.step
+
+
+def watch_failing_at(step, seen):
+    """A step watch whose check of step ``step`` and later raises; ``seen`` the checks run, by step."""
+    steps = iter(range(100))
+
+    def watch():
+        this = next(steps)
+
+        def check():
+            seen.append(this)
+            if this >= step:
+                raise RuntimeError(f"a rank failed by step {this}")
+
+        return check
+
+    return watch
+
+
+def test_a_steps_output_leaves_the_worker_through_its_own_steps_check(monkeypatch):
+    """vLLM's forward (execute_model) and its sampling (sample_tokens) apart: each step's async output runs that
+    step's check as it is read, however many steps later it is read; a failed check keeps it from the scheduler."""
+    seen = []
+    monkeypatch.setattr(plugin, "AFTER_STEP", [watch_failing_at(1, seen)])
+    outputs = []
+    for step in range(3):
+        assert plugin._execute(lambda: None) is None
+        outputs.append(plugin._sample(lambda step=step: AsyncOutput(step)))
+    assert seen == []  # nothing waits before an output is read
+    assert outputs[0].get_output() == 0
+    for step in (2, 1):
+        with pytest.raises(RuntimeError, match=f"by step {step}"):
+            outputs[step].get_output()
+    assert seen == [0, 2, 1]
+
+
+def test_an_output_the_step_returns_whole_is_checked_before_it_leaves(monkeypatch):
+    """A step whose execute_model returns its output itself (vLLM's synchronous model runner output)."""
+    seen = []
+    monkeypatch.setattr(plugin, "AFTER_STEP", [watch_failing_at(1, seen)])
+    assert plugin._execute(lambda: "tokens 0") == "tokens 0"
+    with pytest.raises(RuntimeError, match="by step 1"):
+        plugin._execute(lambda: "tokens 1")
+    assert seen == [0, 1]
+
+
+def test_a_step_without_checks_hands_its_output_over_untouched(monkeypatch):
+    monkeypatch.setattr(plugin, "AFTER_STEP", [lambda: None])
+    output = AsyncOutput(0)
+    assert plugin._execute(lambda: None) is None
+    assert plugin._sample(lambda: output) is output and output.get_output() == 0
+
+
 def test_one_rank_agrees_with_itself():
     assert runtime.tp_agree(True, None) and not runtime.tp_agree(False, None)
+
+
+# ---------------------------------------------------------------- the group's set-up and fail-stop, on gloo ranks
+
+
+def on_ranks(fn, world, tmp_path, *args):
+    """``fn(rank, world, *args)`` on ``world`` spawned processes in one gloo group, torch.cuda stubbed out (the CPU
+    alone); each rank's result, in rank order. A rank not done within a minute (left in a collective no other rank
+    matched) fails the test."""
+    store = (tmp_path / "store").as_uri()
+    with multiprocessing.get_context("spawn").Pool(world) as pool:
+        jobs = [pool.apply_async(rank_main, (fn, rank, world, store, args)) for rank in range(world)]
+        return [job.get(timeout=60) for job in jobs]
+
+
+def rank_main(fn, rank, world, store, args):
+    torch.cuda.is_available = lambda: False
+    torch.cuda.is_current_stream_capturing = lambda: False
+    torch.set_num_threads(1)
+    timeout = datetime.timedelta(seconds=20)
+    dist.init_process_group("gloo", init_method=store, rank=rank, world_size=world, timeout=timeout)
+    try:
+        return fn(rank, world, *args)
+    finally:
+        dist.destroy_process_group()
+
+
+class FakeHip:
+    """HIP's calls as the runtime makes them, on no device: a GPU of the kernel's CUs, a buffer at an address naming
+    its rank, a peer's mapped one page a rank past its owner's address; the call named ``failing`` raises on this
+    rank (``open`` at its second peer); what is left allocated and mapped. ``words``, one int32 a rank shared by
+    every rank's process, stand for the group's FAILED word in each rank's buffer; ``copies`` counts the copies of
+    this rank's word to the host."""
+
+    def __init__(self, rank, failing=None, words=None):
+        self.rank, self.failing, self.opens, self.words, self.copies = rank, failing, 0, words, 0
+        self.allocated, self.mapped = [], []
+
+    def _fails(self, name):
+        if name == self.failing and (name != "open" or self.opens == 2):
+            raise RuntimeError(f"{name}: injected on rank {self.rank}")
+
+    def compute_units(self, device):
+        return runtime.GRID
+
+    def alloc_uncached(self, nbytes):
+        self._fails("alloc_uncached")
+        self.allocated.append(buffer_of(self.rank))
+        return self.allocated[-1]
+
+    def handle(self, ptr):
+        self._fails("handle")
+        return ptr.to_bytes(64, "little")
+
+    def open(self, handle):
+        self.opens += 1
+        self._fails("open")
+        self.mapped.append(int.from_bytes(handle, "little") + 4096 * (self.rank + 1))
+        return self.mapped[-1]
+
+    def close(self, ptr):
+        self.mapped.remove(ptr)
+
+    def free(self, ptr):
+        self.allocated.remove(ptr)
+
+    def copy_word(self, host, address, stream):
+        assert address == buffer_of(self.rank) + runtime.GROUP_FAILED  # this rank's own word
+        self.copies += 1
+        host.copy_(self.words[self.rank : self.rank + 1])
+
+
+def buffer_of(rank):
+    return (rank + 1) << 32
+
+
+def shared_words(tmp_path, world):
+    """The file every rank's process maps as the group's FAILED words, all clear."""
+    path = tmp_path / "words"
+    path.write_bytes(bytes(4 * world))
+    return str(path)
+
+
+def fake_hip_on(rank, world, words):
+    return FakeHip(rank, words=torch.from_file(words, shared=True, size=world, dtype=torch.int32))
+
+
+def set_up_on_rank(rank, world, failing):
+    """(peer table or None, left allocated, left mapped) of ``runtime.setup`` on this rank, HIP's call
+    ``failing[rank]`` failing."""
+    hip = FakeHip(rank, failing.get(rank))
+    group = runtime.setup(dist.group.WORLD, rank, world, torch.device("cpu"), hip=hip)
+    return None if group is None else group.peer_table.tolist(), hip.allocated, hip.mapped
+
+
+@pytest.mark.parametrize("call", ["alloc_uncached", "handle", "open"])
+def test_a_rank_whose_peer_memory_fails_turns_the_kernel_off_on_every_rank(tmp_path, call):
+    """Allocating, exporting or mapping failing on one rank: every rank gives the kernel up at the same point, none
+    left in a collective the others skipped, and nothing stays allocated or mapped."""
+    assert on_ranks(set_up_on_rank, 4, tmp_path, {2: call}) == [(None, [], [])] * 4
+
+
+def test_every_rank_maps_every_peers_buffer(tmp_path):
+    """The peer table holds this rank's buffer at its own index and each peer's as this rank mapped it."""
+    for rank, (table, allocated, mapped) in enumerate(on_ranks(set_up_on_rank, 4, tmp_path, {})):
+        assert allocated == [buffer_of(rank)]
+        assert table == [buffer_of(p) + (0 if p == rank else 4096 * (rank + 1)) for p in range(4)]
+        assert mapped == table[:rank] + table[rank + 1 :]
+
+
+def steps_on_rank(rank, world, words, failing_rank, failing_step, captured):
+    """What each of six steps' output does on this rank as the worker reads it (its tokens, or the error that keeps
+    it from the scheduler), and how many times the step watch copied the flag word to the host. Each step: vLLM's
+    forward (execute_model) then its sampling (sample_tokens), through the plugin's hooks; the steps in ``captured``
+    inside a graph capture. The forward stands for the tail's launches: rank ``failing_rank``'s wait gives up in step
+    ``failing_step``, half a second late, setting the group's word on every rank as the kernel does before it stores
+    anything more, and no rank's launches end before every rank's got that far (the kernel's exchange: a barrier)."""
+    hip = fake_hip_on(rank, world, words)
+    runtime.setup(dist.group.WORLD, rank, world, torch.device("cpu"), hip=hip)
+    outputs = []
+    for step in range(6):
+        torch.cuda.is_current_stream_capturing = lambda step=step: step in captured
+
+        def forward(step=step):
+            if rank == failing_rank and step == failing_step:
+                time.sleep(0.5)
+                hip.words.fill_(1)
+            dist.barrier()
+
+        plugin._execute(forward)
+        outputs.append(plugin._sample(lambda step=step: AsyncOutput(step)))
+    read = []
+    for output in outputs:
+        try:
+            read.append(output.get_output())
+        except RuntimeError as e:
+            read.append(str(e))
+    return read, hip.copies
+
+
+@pytest.mark.parametrize(
+    "failing_rank, failing_step, captured",
+    [(None, None, ()), (2, 3, ()), (0, 0, ()), (3, 2, (2,)), (1, 4, (1,))],
+    ids=["none", "late_rank_2_step_3", "rank_0_step_0", "in_a_capture", "after_a_capture"],
+)
+def test_every_rank_stops_at_the_step_any_rank_failed_in(tmp_path, failing_rank, failing_step, captured):
+    """No step's output leaves a worker once any rank's wait gave up in it or before, on every rank alike, whether
+    that rank was late or not: a step's check reads that step's word, not a later step's. A step inside a graph
+    capture makes no host call and is not checked, and a wait that gave up in it stops the next step."""
+    reads = on_ranks(
+        steps_on_rank, 4, tmp_path, shared_words(tmp_path, 4), failing_rank, failing_step, captured
+    )
+    stop = 6 if failing_rank is None else failing_step + (failing_step in captured)
+    for read, copies in reads:
+        assert read[:stop] == list(range(stop))
+        assert all("gave up an in-kernel wait" in r for r in read[stop:])
+        assert copies == 6 - len(captured)
+    assert all(read == reads[0] for read in reads)
+
+
+def unpaired_steps_on_rank(rank, world, words):
+    """Rank 0 runs five steps, every other rank one, no rank waiting on another in its forward: their outputs."""
+    runtime.setup(dist.group.WORLD, rank, world, torch.device("cpu"), hip=fake_hip_on(rank, world, words))
+    read = []
+    for step in range(5 if rank == 0 else 1):
+        plugin._execute(lambda: None)
+        read.append(plugin._sample(lambda step=step: AsyncOutput(step)).get_output())
+    return read
+
+
+def test_a_steps_watch_waits_on_no_other_rank(tmp_path):
+    """The step watch is no collective: a rank runs its steps whatever the others do (the kernel's own waits are the
+    only ones between ranks)."""
+    reads = on_ranks(unpaired_steps_on_rank, 4, tmp_path, shared_words(tmp_path, 4))
+    assert reads == [[0, 1, 2, 3, 4], [0], [0], [0]]
+
+
+def call_of(args, kwargs):
+    return (
+        dict(zip(("routed", "shared", "up_weight", "norm_weight"), args))
+        | kwargs
+        | {"out_dtype": None, "out": None}
+    )
+
+
+class KeyedOp(_Op):
+    """The op as its dispatcher answers on one rank: the contract's own fast key reads each call (an operand off the
+    dispatcher's 16-byte alignment, say, is declined), or ``reason`` where this rank's dispatcher declines anyway;
+    each launch checks that its dispatcher serves it."""
+
+    def __init__(self, reason=None):
+        super().__init__(reason)
+        self.key = FastKeyFnGenerator(FastKeyCodec.from_contract(KIMI_K3_LATENT_MOE_TAIL), None).generate()
+
+    def fallback_reason(self, *args, **kwargs):
+        if self.reason is not None:
+            return self.reason
+        return None if self.key(call_of(args, kwargs)) is not None else FallbackReason.OUT_OF_CONTRACT
+
+    def __call__(self, *args, **kwargs):
+        assert self.fallback_reason(*args, **kwargs) is None, "launched a call its dispatcher declines"
+        return super().__call__(*args, **kwargs)
+
+
+def off_alignment(t):
+    """``t``'s values in a contiguous view one element past an allocation's start."""
+    view = torch.empty(t.numel() + 1, dtype=t.dtype)[1:].view(t.shape)
+    return view.copy_(t)
+
+
+def sharing_bytes(fused, shared):
+    """``shared`` in an allocation of its own, ``fused`` over its first bytes (they hold ``fused``'s values): the
+    routed and shared partials as views of one buffer."""
+    buffer = shared.clone().view(-1)
+    buffer[: fused.numel()] = fused.view(-1)
+    return buffer[: fused.numel()].view(fused.shape), buffer.view(shared.shape)
+
+
+def route_on_rank(rank, world, misaligned, aliased, declining):
+    """The route's decisions on this rank, its TP group the gloo group, at three calls (10, 10, 40 rows); whether
+    each launch got this rank's routed values; the set-ups. On the ranks in ``misaligned`` vLLM's routed partial is a
+    view off the dispatcher's alignment, in ``aliased`` it shares bytes with the shared partial (which the op writes),
+    in ``declining`` this rank's dispatcher has no schema."""
+    tp = SimpleNamespace(rank_in_group=rank, world_size=world, cpu_group=dist.group.WORLD)
+    distributed = types.ModuleType("vllm.distributed")
+    distributed.get_tp_group = lambda: tp
+    distributed.get_tensor_model_parallel_rank = lambda: rank
+    distributed.get_tensor_model_parallel_world_size = lambda: world
+    distributed.get_pp_group = lambda: SimpleNamespace(world_size=1)
+    sys.modules["vllm"], sys.modules["vllm.distributed"] = types.ModuleType("vllm"), distributed
+    setups = []
+    runtime.setup = lambda *args, **kwargs: setups.append(args) or SimpleNamespace(cpu_group=tp.cpu_group)
+    op = api.kimi_k3_latent_moe_tail = KeyedOp(FallbackReason.NO_SCHEMA if rank in declining else None)
+    api._CHECK = False
+    run, decisions, given = runner(rank=rank), [], []
+    for n in (10, 10, 40):
+        fused, shared = outputs(n, seed=rank)
+        if rank in aliased:
+            fused, shared = sharing_bytes(fused, shared)
+        result = api._shard_up_proj_tail(
+            run, off_alignment(fused) if rank in misaligned else fused, shared, None
+        )
+        decisions.append(result.value if isinstance(result, FallbackReason) else "served")
+        given.append(fused)
+    got = [torch.equal(args[0], fused) for (args, _), fused in zip(op.calls, given)]
+    return decisions, got, len(setups)
+
+
+@pytest.mark.parametrize(
+    "misaligned, aliased, declining, decision",
+    [
+        ({3}, set(), set(), "served"),
+        (set(), {4}, set(), "served"),
+        (set(), set(), {5}, "no_schema"),
+        ({1, 6}, {2}, {6}, "no_schema"),
+    ],
+    ids=["one_rank_off_alignment", "one_rank_aliased", "one_rank_without_the_schema", "all"],
+)
+def test_the_ranks_serve_or_decline_a_call_together(tmp_path, misaligned, aliased, declining, decision):
+    """What only one rank's tensors or dispatcher say never splits the group: a rank whose operand sits off the
+    dispatcher's alignment launches with an aligned copy of its values, one whose shared partial shares bytes with
+    another operand with a copy of the shared partial (vLLM reads it no more), and where one rank's dispatcher
+    declines, every rank goes back to vLLM with its reason, before any rank sets the peer memory up or launches."""
+    served = decision == "served"
+    for decisions, got, setups in on_ranks(route_on_rank, TP, tmp_path, misaligned, aliased, declining):
+        assert decisions == [decision] * 3
+        assert got == ([True] * 3 if served else []) and setups == int(served)
 
 
 # ---------------------------------------------------------------- the committed schema

@@ -7,7 +7,8 @@ _shard_up_proj_tail``, ``models/kimi_k3/amd/latent_moe_runner.py``).
 Each rank holds its partial of the routed experts' latent output (its experts' columns) and of the shared experts'
 output (its intermediate columns). vLLM all-reduces the latent, normalizes it (the latent RMSNorm), adds this rank's
 up-projection shard into its own columns of the shared output (one addmm in place), and all-reduces the shared output:
-every rank ends with the layer's MoE output."""
+every rank ends with the layer's MoE output. The shared partial is written in place, as vLLM's addmm writes it (vLLM
+reads it no more), so that vLLM's tail as vLLM calls it is the op."""
 
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ __all__ = ["CONTRACTS", "KIMI_K3_LATENT_MOE_TAIL"]
 
 _SAME_AS_ROUTED = DTypeSpec(same_as_tensor="routed")
 _FINITE = FiniteDistribution()
+_ONE_ROUNDING = ToleranceBound(absolute_tolerance=2.0**-5, relative_tolerance=2.0**-8)
 
 KIMI_K3_LATENT_MOE_TAIL = OpContract(
     contract_id="kimi_k3_latent_moe_tail@1.0",
@@ -42,14 +44,13 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
         "Every rank r of the tensor-parallel group calls the op once, with its own routed, shared and up_weight. "
         "latent = bf16(sum over ranks of routed); n_r = bf16(latent * rsqrt(mean(latent**2) + eps) * norm_weight_r), "
         "the mean over the latent axis; rank r's hidden columns are r * hidden_shard .. (r + 1) * hidden_shard - 1, "
-        "and its shared output becomes s_r = shared_r with those columns bf16(shared_r + n_r @ up_weight_r.T); out = "
-        "the sum over ranks of s_r, the same on every rank (vLLM's all-reduce, RMSNorm, addmm and all-reduce). The "
-        "sums over ranks are in float32 before their bf16 rounding."
+        "and its shared partial becomes s_r = shared_r with those columns bf16(shared_r + n_r @ up_weight_r.T), in "
+        "place; out = the sum over ranks of s_r, the same on every rank (vLLM's all-reduce, RMSNorm, addmm in place "
+        "and all-reduce). The sums over ranks are in float32 before their bf16 rounding."
     ),
     op_type="latent_moe",
     axes={
-        # a decode step's rows, the same on every rank
-        "n_tokens": axis("Rows of the step, the same on every rank.", 1, 128, is_var=True),
+        "n_tokens": axis("Rows of the step, the same on every rank.", 1, 65536, is_var=True),
         "hidden_size": axis("Width of the model's hidden rows.", 256, 16384, multiple_of=256),
         "latent_size": axis("Width of the routed experts' latent rows.", 128, 8192, multiple_of=128),
         "hidden_shard": derived_axis("Hidden columns a rank up-projects.", "hidden_size // tp_size"),
@@ -68,10 +69,15 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
             distribution=_FINITE,
         ),
         "shared": TensorSpec(
-            description="This rank's partial of the shared experts' output (vLLM's shared_output).",
+            description="This rank's partial of the shared experts' output (vLLM's shared_output); its own columns "
+            "become s_r's, in place.",
             shape=("n_tokens", "hidden_size"),
             dtype=_SAME_AS_ROUTED,
             distribution=_FINITE,
+            mutable=True,
+            # one bf16 rounding of shared_r + n_r @ up_weight_r.T in its own columns, float32 sums in another order:
+            # one bf16 unit apart at a tie, below (2**-8 + u) |s_r|; the rest unchanged
+            error_bounds=_ONE_ROUNDING,
         ),
         "up_weight": TensorSpec(
             description="This rank's rows of the routed up-projection: hidden columns r * hidden_shard .. on.",
@@ -101,7 +107,7 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
             dtype=_SAME_AS_ROUTED,
             # vLLM rounds a rank's own columns twice (its addmm, then the all-reduce); a kernel may round once: half
             # a bf16 unit of shared_r + n_r @ up_weight_r.T apart, below 2**-5 for |values| < 16 (the draws: ~N(0, 2))
-            error_bounds=ToleranceBound(absolute_tolerance=2.0**-5, relative_tolerance=2.0**-8),
+            error_bounds=_ONE_ROUNDING,
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),

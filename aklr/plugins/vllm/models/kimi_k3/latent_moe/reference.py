@@ -4,7 +4,8 @@
 """The latent-MoE tail as vLLM composes it, in float32: the all-reduced latent rounded to bf16
 (the all-reduce's output), its RMSNorm rounded to bf16 (one rounding of latent * rstd * weight, as aiter's norm
 kernel rounds), each rank's own columns of its shared output rounded to bf16 after the addmm (its epilogue adds the
-shared partial in float32), then the all-reduce of the shared outputs, left unrounded."""
+shared partial in float32; the call's shared as it leaves it), then the all-reduce of the shared outputs, left
+unrounded."""
 
 from __future__ import annotations
 
@@ -30,9 +31,9 @@ def kimi_k3_latent_moe_tail_reference(
     point: Any,
     group_args: Sequence[Mapping[str, Any]],
     rank: int,
-) -> Tensor:
-    """``out`` of ``rank``'s call, which is every rank's: the ranks' args in rank order (each on its rank's device,
-    read on ``rank``'s), sums in rank order."""
+) -> tuple[Tensor, Tensor]:
+    """(``out``, ``shared`` as the call leaves it) of ``rank``'s call; ``out`` is every rank's. The ranks' args in
+    rank order (each on its rank's device, read on ``rank``'s), sums in rank order."""
     dtypes = point.dtypes
     eps = group_args[rank]["eps"]
     device = group_args[rank]["routed"].device
@@ -45,12 +46,13 @@ def kimi_k3_latent_moe_tail_reference(
         latent = latent + read(args, "routed")
     latent = _bf16(latent)
     rstd = (latent.square().mean(-1, keepdim=True) + eps).rsqrt()
-    out = None
+    out = mine = None
     for r, args in enumerate(group_args):
         shared = read(args, "shared").clone()
         up_weight = read(args, "up_weight")
         normed = _bf16(latent * rstd * read(args, "norm_weight"))
         own = slice(r * up_weight.shape[0], (r + 1) * up_weight.shape[0])
         shared[:, own] = _bf16(shared[:, own] + normed @ up_weight.T)
+        mine = shared if r == rank else mine
         out = shared if out is None else out + shared
-    return out
+    return out, mine
