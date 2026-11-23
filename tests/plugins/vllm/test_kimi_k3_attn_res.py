@@ -2,13 +2,23 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """Kimi-K3's attention residual on vLLM to AKLR's kimi_k3_attn_res and kimi_k3_attn_res_fp8: what the route takes
-and how it hands it over (CPU), and the baseline's copy of vLLM's Triton kernel against vLLM's own (GPU)."""
+and how it hands it over (CPU), the baseline's copy of vLLM's Triton kernel against vLLM's own (GPU), and the committed
+kernels: the scratch they hand their launches (CPU) and their softmax and mix at the edges of float32 (gfx950)."""
+
+import ast
+import json
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 import torch
 
+from aklr.core.contract.locate import committed_schema_paths, op_dir
+from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.vllm.models.kimi_k3.attn_res import api
+from aklr.plugins.vllm.models.kimi_k3.attn_res.contract import KIMI_K3_ATTN_RES
+from tests.op_case import OpCase
 
 TOKENS, HIDDEN, ROWS = 4, 256, 4
 
@@ -112,3 +122,122 @@ def test_the_baselines_kernel_is_vllms(n_tokens, n_rows, variant):
     expected = linear.attn_res(*theirs, n_rows, write, 1e-6, 1e-5)
     assert torch.equal(out, expected)
     assert torch.equal(ours[0], theirs[0]) and torch.equal(ours[2], theirs[2])
+
+
+# ---------------------------------------------------------------- the committed kernels
+
+
+def _kernel_schemas() -> list[Path]:
+    """Every committed kimi_k3_attn_res and kimi_k3_attn_res_fp8 schema holding a kernel."""
+    paths = committed_schema_paths(op_dir(KIMI_K3_ATTN_RES.op_package))
+    return [p for p in paths if json.loads(p.read_text())["kernel"]["sources"]]
+
+
+def _schema_id(path: Path) -> str:
+    """``fp8_rows1/<uuid>`` for ``impls/flydsl/kimi_k3_attn_res_fp8_rows1_hidden_size7168_n_bank_rows8/<uuid>.json``."""
+    name = path.parent.name.removeprefix("kimi_k3_attn_res").removesuffix("_hidden_size7168_n_bank_rows8")
+    return f"{name.lstrip('_') or 'rows8'}/{path.stem}"
+
+
+# the dispatch packet's id and queue: what a kernel would tag its launch with
+_LAUNCH_IDS = frozenset({"llvm.amdgcn.dispatch.id", "llvm.amdgcn.queue.ptr"})
+
+
+@pytest.mark.parametrize("path", _kernel_schemas(), ids=_schema_id)
+def test_a_committed_kernel_tells_its_writes_from_leftover_memory_without_a_launch_tag(path):
+    """The workgroups coordinate through scratch the call allocates: the counter a walk claims tokens from, the tags
+    under which column shares publish their partials. A tag taken from the launch (its dispatch id and queue) and
+    compared with the scratch as allocated can match words an earlier tensor left there, and then rows are skipped or
+    partials read unwritten; the call zeroes those words instead (aklr/ops/README.md: scratch is written before it is
+    read), so no kernel reads its launch's ids."""
+    for source in json.loads(path.read_text())["kernel"]["sources"]:
+        strings = {n.value for n in ast.walk(ast.parse(source["content"])) if isinstance(n, ast.Constant)}
+        assert not strings & _LAUNCH_IDS, source["path"]
+
+
+def _representative_points() -> list[tuple[Path, int]]:
+    """(schema, n_tokens): for each kernel, contract and norm (the softmax and the mix are one code over the other
+    attrs), the first schema with bank rows at its smallest workload, and at its smallest past 512 tokens (two
+    workgroups a CU on MI355X), past which the builds walk the tokens, claim them or split them into column shares."""
+    seen, points = set(), []
+    for path in _kernel_schemas():
+        data = json.loads(path.read_text())
+        key = (json.dumps(data["kernel"]["sources"]), data["contract_id"], data["attrs"]["has_norm"])
+        if data["attrs"]["n_valid_rows"] == 0 or key in seen:
+            continue
+        seen.add(key)
+        counts = sorted(w["axes"]["n_tokens"] for w in data["workloads"])
+        points += [(path, n) for n in sorted({counts[0], *[c for c in counts if c > 512][:1]})]
+    return points
+
+
+_POINTS = pytest.mark.parametrize(
+    ("path", "n_tokens"),
+    _representative_points(),
+    ids=lambda v: _schema_id(v) if isinstance(v, Path) else str(v),
+)
+
+
+def _fill_rows(args: dict, value: float) -> None:
+    """Every bank row and p ``value`` (the prefix, an addend of 0); a norm weight of 1."""
+    args["prefix"].fill_(value)
+    args["bank"].fill_(value)
+    if args.get("addend") is not None:
+        args["addend"].zero_()
+    if args.get("norm_weight") is not None:
+        args["norm_weight"].fill_(1.0)
+
+
+def _run_committed(builder_registry, path: Path, n_tokens: int, fill: Callable[[dict, bool], None]) -> None:
+    """The kernel committed at ``path``, at ``n_tokens`` on the inputs ``fill`` sets (told whether a norm weight is
+    passed): its outputs and mutable inputs are finite and pass the contract's compare against the reference."""
+    data = json.loads(path.read_text())
+    contract = ContractRegistry.default().for_schema_json(data)
+    case = OpCase(contract.point_from_json(data, {"n_tokens": n_tokens}))
+    args = case.inputs()
+    fill(args, case.point.attrs["has_norm"])
+    schema = contract.narrow(
+        case.point, workloads=[contract.workload_for(case.point, {})], kernel=data["kernel"]
+    )
+    runnable = builder_registry.build(schema)
+    call = dict(case.call(args, "cuda"))
+    for name in contract.outputs:
+        shape = contract.dtype_storage_shape_of(name, case.point)
+        call[name] = torch.empty(shape, dtype=getattr(torch, case.point.dtypes[name]), device="cuda")
+    runnable(**call)
+    torch.cuda.synchronize()
+    outputs = {n: call[n] for n in contract.mutable_tensors}
+    for name, tensor in outputs.items():
+        assert tensor.float().isfinite().all(), name
+    assert {o: r.detail for o, r in case.compare(outputs, args).items() if not r.is_passed} == {}
+
+
+@pytest.mark.gfx950
+@_POINTS
+def test_a_committed_kernel_masks_the_lanes_past_the_rows_with_minus_inf(builder_registry, path, n_tokens):
+    """Rows of 1 and a score weight of -1.125 * 2**115 (the norm's) times 1 (the projection's): every row scores
+    7168 * -1.125 * 2**115 * rsqrt(1 + eps), about -3.35e38. A lane past the rows scored with any finite value above
+    that, such as -3e38, would win the softmax's max and leave every row a weight of 0, and the out NaN."""
+
+    def fill(args, has_norm):
+        _fill_rows(args, 1.0)
+        args["score_norm_weight"].fill_(-1.125 * 2.0**115)
+        args["score_proj_weight"].fill_(1.0)
+
+    _run_committed(builder_registry, path, n_tokens, fill)
+
+
+@pytest.mark.gfx950
+@_POINTS
+def test_a_committed_kernel_mixes_rows_past_float32s_squares(builder_registry, path, n_tokens):
+    """Equal rows and score weights of 0: the softmax is uniform and the mix the rows. With a norm weight, rows of
+    2**57: their mean square 2**114 is a float32, Z**2 times it is not (Z, the sum of the unnormalized weights, is
+    the row count, 2 to 9). Without one, rows of 2**127: Z times them is not a float32 either. The weights are
+    normalized before the mix."""
+
+    def fill(args, has_norm):
+        _fill_rows(args, 2.0**57 if has_norm else 2.0**127)
+        args["score_norm_weight"].zero_()
+        args["score_proj_weight"].fill_(1.0)
+
+    _run_committed(builder_registry, path, n_tokens, fill)
