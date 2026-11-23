@@ -3,7 +3,7 @@
   "name": "mla_vc_n_heads16_kv_lora_rank512_v_head_dim256",
   "contract_id": "mla_vc@1.0",
   "description": "sglang's absorbed MLA value projection on one rank, kv_b_proj in fp8 at one scale per tensor, for a bf16 o_proj (rocm_absorb_v_bmm): each head's attention output, quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, times w_vc and w_scale; the heads side by side, o_proj's input.",
-  "op_type": "deepseek_common",
+  "op_type": "mla_absorb",
   "axes": {
     "n_tokens": {
       "type": "var",
@@ -81,10 +81,7 @@
     {
       "axes": {
         "n_tokens": 256
-      },
-      "accuracy": "passed",
-      "speedup": 1.333,
-      "microseconds": 4.33
+      }
     }
   ],
   "layout_variants": {

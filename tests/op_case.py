@@ -24,7 +24,6 @@ from aklr.core.contract.semantics import CompareResult
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
 from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
 from tests.ops import cases as ops_cases
-from tests.plugins.aiter import cases as aiter_cases
 from tests.plugins.sglang import cases as sglang_cases
 from tests.plugins.vllm import cases as vllm_cases
 
@@ -139,16 +138,12 @@ _SMALL_POINTS: tuple[PointSpec, ...] = tuple(
             *ops_cases.SMALL_POINTS,
             *sglang_cases.SMALL_POINTS,
             *vllm_cases.SMALL_POINTS,
-            *aiter_cases.SMALL_POINTS,
         ),
         key=lambda point: point.contract_id,
     )
 )
 _GFX950_CONTRACT_IDS = (
-    ops_cases.GFX950_CONTRACT_IDS
-    | sglang_cases.GFX950_CONTRACT_IDS
-    | vllm_cases.GFX950_CONTRACT_IDS
-    | aiter_cases.GFX950_CONTRACT_IDS
+    ops_cases.GFX950_CONTRACT_IDS | sglang_cases.GFX950_CONTRACT_IDS | vllm_cases.GFX950_CONTRACT_IDS
 )
 
 

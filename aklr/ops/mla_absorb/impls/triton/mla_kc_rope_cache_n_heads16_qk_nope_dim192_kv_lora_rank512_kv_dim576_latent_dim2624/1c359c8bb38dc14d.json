@@ -3,7 +3,7 @@
   "name": "mla_kc_rope_cache_n_heads16_qk_nope_dim192_kv_lora_rank512_kv_dim576_latent_dim2624",
   "contract_id": "mla_kc_rope_cache@1.0",
   "description": "sglang's absorbed MLA query and KV-cache write on one rank, kv_b_proj in fp8 at one scale per tensor (_fused_bmm_rope_cat_and_cache in forward_absorb_rocm_core): each head's position-free query part, quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, times w_kc and w_scale, then the head's RoPE part rotated, as q_cat; each token's KV latent and rotated RoPE key written to its KV pool row in the pool's fp8, unscaled. RoPE rotates GPT-J pairs (2i, 2i + 1) by the token's position's cos and sin. A row whose slot is 0 is padding: it writes nothing and its q_cat is 0.",
-  "op_type": "deepseek_common",
+  "op_type": "mla_absorb",
   "axes": {
     "n_tokens": {
       "type": "var",
@@ -197,10 +197,7 @@
         "n_tokens": 256,
         "n_slots": 257,
         "n_positions": 65536
-      },
-      "accuracy": "passed",
-      "speedup": 2.065,
-      "microseconds": 10.5
+      }
     }
   ],
   "layout_variants": {

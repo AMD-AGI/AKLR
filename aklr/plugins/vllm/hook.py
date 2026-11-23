@@ -7,10 +7,13 @@ Installation, native-callable lookup and the hook registry are plugin internals.
 
 vLLM compiles most models' forward with torch.compile, so Python there runs once, while
 tracing. A route therefore replaces no traced function: it replaces a function a vLLM function
-looks up when it runs, either an aiter function inside one of vLLM's opaque custom ops
-(``vllm::moe_forward``, ``vllm::rocm_unquantized_gemm``) or a function of a model vLLM runs
-uncompiled (``@ignore_torch_compile``). Those run at every eager call and at every CUDA graph
-capture, where the route's choice is recorded."""
+looks up when it runs, either a vLLM function inside one of vLLM's opaque custom ops
+(``vllm::moe_forward``, ``vllm::rocm_unquantized_gemm``'s ``wvSplitKrc``) or a function of a model
+vLLM runs uncompiled (``@ignore_torch_compile``). Those run at every eager call and at every CUDA
+graph capture, where the route's choice is recorded. A route never replaces an aiter function, nor
+a vLLM function that only calls one: aiter's ops reach AKLR through the aiter provider
+(``aklr.plugins.aiter.provider``). The exception is an op that fuses vLLM's own work into the same
+launch (Muse Spark's experts take the pre-expert RMSNorm ``_defer_norm`` leaves them)."""
 
 from __future__ import annotations
 

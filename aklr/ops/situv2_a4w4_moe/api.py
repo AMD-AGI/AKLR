@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import api
-from aklr.plugins.aiter.situv2_a4w4_moe.contract import SITUV2_A4W4_MOE
+from aklr.ops.situv2_a4w4_moe.contract import SITUV2_A4W4_MOE
 
 __all__ = ["situv2_a4w4_moe"]
 
