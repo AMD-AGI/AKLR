@@ -82,7 +82,7 @@ basis: source-semantics
 - S20 gemm/measurement.md:82 cache, residency, swizzle, placement levers can fail to transfer from isolated loops
 - S21 gemm/autotune.md:65 incumbent first; a challenger must beat it by more than the race's noise
 - S22 gemm/autotune.md:53 a static analysis is a cheap way to find suspect shapes; validate off the scoring set
-- S23 aklr/ops/README.md:187 compilation happens on a Point's first call; later calls may be inside a graph capture
+- S23 aklr/ops/README.md:323–324 compilation happens on a Point's first call; later calls may be inside a graph capture
 - S24 gemm/autotune.md:106 give a known shape family a static lead under a predicate
 - S25 gemm/autotune.md:109 hard-coding beats a race that scores the wrong point
 - S26 gemm/mainloop.md:91 the crossover depends on the shape and on the epilogue
@@ -92,4 +92,4 @@ basis: source-semantics
 - S30 flydsl/gemm.md:410 re-tune instead of copying rows
 - S31 gemm/measurement.md:178 ablate every component on the full table, including an all-off arm
 - S32 gemm/measurement.md:183 keep a change only if it beats BASE-to-BASE drift and its sign agrees
-- S33 aklr/ops/README.md:29 dispatch serves each Point with the best measured file
+- S33 aklr/ops/README.md:119 dispatch serves each Point with the best measured file

@@ -2,7 +2,7 @@
 
 A plugin replaces a function of an inference framework (for example, an MoE layer's forward) with an AKLR implementation. When AKLR has a faster op implementation, the AKLR implementation runs; otherwise the call falls back to the original path.
 
-To add an optimization, follow the [plugin tutorial](../../docs/plugin_tutorial.md). This page is the reference: the layout, the call flow, the rules for routes, validation, and enabling and upgrading.
+To add an optimization, follow the [SGLang plugin tutorial](../../docs/sglang_plugin_tutorial.md) or the [vLLM plugin tutorial](../../docs/vllm_plugin_tutorial.md). This page is the reference: the layout, the call flow, the rules for routes, validation, and enabling and upgrading.
 
 ## Architecture
 

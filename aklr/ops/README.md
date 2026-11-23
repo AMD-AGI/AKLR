@@ -3,6 +3,96 @@
 The entry point for agents writing kernels. Each section summarises rules that are written out once,
 in the file it names; when the two disagree, the named file wins.
 
+## What an op is
+
+An op is one computation an engine hands to AKLR, such as a 16-bit gemm (`gemm@1.0`). It has five
+parts: four in Python under `aklr/ops/<op>/`, and its kernels as JSON files.
+
+| Part | Where | What it is | Used by |
+|---|---|---|---|
+| contract | `contract.py`, an `OpContract` | the op's definition: its axes, attrs, inputs and outputs, their shapes, dtypes and layouts, each written tensor's error bound, and the op's reference and baseline | everything below |
+| reference | `reference.py`, an `OpReference` | the right answer, computed in torch from the math; its `check` tells whether a kernel's outputs are within their bounds | validation: is a kernel correct |
+| baseline | `baseline.py`, an `OpBaseline` | what the engine runs for the op today (aiter, sglang or vLLM), called as the engine calls it | validation: is a kernel faster |
+| api | `api.py`, an `@api(<contract>)` function | the function a plugin route or aiter's provider calls | runtime: runs a kernel, or returns a `FallbackReason` |
+| schema | `impls/<language>/<name>/<uuid>.json` | the contract narrowed to one scenario, one kernel's sources, and the workloads it serves with their measurements | validation checks and times it; dispatch serves it |
+
+- A **Point** (`PointSpec`) is one coordinate of the contract: a value for every axis, a dtype for every
+  tensor (`None`: absent), every attr, and the layout variant. Every call has one Point.
+- A **scenario** is a Point without its var axes, the ones that change from call to call (`m`, the
+  tokens); a schema serves one scenario. A **workload** is one value of the var axes (and the scalars)
+  in a schema: a Point its kernel serves.
+
+```
+an engine's call ─> plugin route or aiter provider ─> the api (api.py)
+                                                        dispatch reads the call's Point:
+                                                        ├─ a schema's workload, accuracy passed, speedup ≥ AKLR_MIN_SPEEDUP
+                                                        │    ─> that kernel's run(**call)
+                                                        └─ otherwise ─> a FallbackReason: the engine runs its own code
+
+python -m aklr validate <schema>
+  audit: the kernel's sources keep to the rules (SA0–SA5)
+  bench, per workload, on inputs drawn from the contract:
+    the kernel's outputs  against  reference.reference(...), judged by reference.check  ─> accuracy
+    the kernel's time     against  baseline.baseline(...),   both timed by baseline.profile ─> speedup
+```
+
+- The contract holds one reference and one baseline, as instances: `OpContract(...,
+  reference=GemmReference(), baseline=GemmBaseline())`. Neither holds the contract: the contract calls
+  them and passes in what they need.
+- The kernel, the reference and the baseline each get their own copy of the same inputs; they never
+  share a tensor.
+- **Correct**: every mutable tensor (the outputs, and the inputs the kernel may write) within its error
+  bound against the reference's, a tolerance or an SQNR ([Schema fields](#schema-fields)). A rule no bound
+  states (ids that may come in any order) is the op's own `check`
+  ([Reference and baseline](#reference-and-baseline)).
+- **Fast**: a workload's `speedup` is a lower bound of the baseline's time over the kernel's, both in a
+  CUDA graph (`harness/skills/read-validation/references/ruler.md`). A file needs one workload at the entry
+  threshold (`DEFAULT_MIN_SPEEDUP`, 1.05 by default) or more; dispatch serves only the workloads at
+  `AKLR_MIN_SPEEDUP` (1.05 by default) or more.
+
+`gemm@1.0`, shortened (`aklr/ops/gemm/`):
+
+```python
+# contract.py
+GEMM = OpContract(
+    contract_id="gemm@1.0",
+    description="16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+    op_type="gemm",
+    axes={"m": _M, "n": _N_A16W16, "k": _K},  # m is var; n and k are const in a scenario
+    attrs={"trans_b": _TRANS_B, "has_bias": _HAS_BIAS},
+    inputs={"a": TensorSpec(...), "b": ..., "bias": ...},
+    outputs=_out(...),  # out: its shape, dtype and error bound (GEMM_BF16_SNR, ...)
+    layout_variants=_UNSHUFFLED_VARIANTS,
+    reference=GemmReference(),
+    baseline=GemmBaseline(),
+)
+
+# reference.py
+class GemmReference(OpReference):
+    def reference(self, *, a, b, trans_b, out_dtype, bias=None, **_):
+        """``a @ b.T + bias``."""
+        return {"out": _out(a.float() @ _weight(b, trans_b).mT, bias).to(out_dtype)}
+
+# baseline.py
+class GemmBaseline(OpBaseline):
+    def baseline(self, *, a, b, trans_b=True, bias=None, out_dtype=None, out=None):
+        """aiter's tuned 16-bit gemm, b as (n, k) only."""
+        from aiter.tuned_gemm import gemm_a16w16
+
+        if not trans_b:
+            raise NotImplementedError("aiter's gemm_a16w16 takes b as (n, k) only")
+        return {"out": gemm_a16w16(a, b, bias=bias, otype=out_dtype)}
+
+# api.py
+@api(GEMM)
+def gemm(a, b, trans_b=True, bias=None, out_dtype=None, out=None): ...
+```
+
+A kernel of a schema is `run(*, a, b, trans_b, bias, out_dtype, out)`, writing `out`
+([The kernel section and ABI](#the-kernel-section-and-abi)).
+
+## Layout
+
 ```
 aklr/ops/
   __init__.py                  re-exports op apis
@@ -147,7 +237,7 @@ instance is the contract's `reference`:
 The baseline, a class in `baseline.py` subclassing `OpBaseline` (`aklr/core/contract/baseline.py`), whose instance
 is the contract's `baseline`; every contract has exactly one:
 
-- `baseline(self, *, <names>, **_)` is what the engine (sglang, vLLM, aiter) calls for the op at the Point: the same
+- `baseline(self, *, <names>)` is what the engine (sglang, vLLM, aiter) calls for the op at the Point: the same
   function, the same arguments, in the engine's precision. Nothing is reimplemented, and nothing is added that the
   engine does not do (a copy of the output, a re-layout of a weight).
 - Takes the kernel's call by keyword, imports the engine inside the method, returns the outputs by name (a mutable
@@ -224,7 +314,8 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
   `torch.rand*`, `torch.tensor` and `torch.as_tensor` are rejected in launch code (SA3).
 - Import nothing of `aklr` but `aklr.core.jit`, its api for kernels: a kernel is checked and timed against aklr's
   reference and baseline, and is served without them; a call the kernel does not run fast is one its schema does
-  not list (SA5).- A device function, a def whose single decorator is `@flyc.kernel`, `@flyc.jit`, `@triton.jit` or `@gluon.jit`,
+  not list (SA5).
+- A device function, a def whose single decorator is `@flyc.kernel`, `@flyc.jit`, `@triton.jit` or `@gluon.jit`,
   is compiled: its body skips the launch checks of SA2 and SA3, and every whole-file check still applies to
   it. With a second decorator (`@triton.autotune` or `@triton.heuristics` above
   `@triton.jit`) the def is host code whose body must pass SA2 and SA3; choose the config in a compile

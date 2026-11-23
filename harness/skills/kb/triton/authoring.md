@@ -114,7 +114,7 @@ implementations, not of the languages, and not of preshuffled MXFP4.
 - **`author`.** One line naming a person, team or agent; the uuid hashes it, so editing it renames the file and drops
   the measurements until CI writes them again (same section).
 
-A new scenario starts from `python -m aklr export` or the script of `docs/ops_tutorial.md` § 1. B; a second kernel for a
+A new scenario starts from `python -m aklr export` or the script of `docs/ops_tutorial.md` § 2; a second kernel for a
 committed scenario from a copy of one of its files (`aklr/ops/README.md` § Workflow). Run from the repository root, this
 writes the copy at its uuid path in the exact text the audit requires (S9), which passes the schema-text and path checks
 when the source meets the `content` rule above; passing the source audit also needs the entry ABI and SA0–SA5 (§4):
@@ -144,9 +144,9 @@ its package defines (aiter and SGLang implementations among them), reached throu
 and on main no AKLR plugin route calls those core apis directly. A plugin op replaces a whole SGLang function (an MoE
 layer's forward, a GatedDeltaNet layer, an attention step for one query token per sequence) through an `@sglang_route`, against SGLang's own path,
 and may take framework state as mutable inputs (`aklr/plugins/README.md` § Architecture, § Rules for routes;
-`docs/plugin_tutorial.md`).
+`docs/sglang_plugin_tutorial.md`).
 
-**No contract yet.** A kernel serves a contract: validate rejects a schema whose `contract_id` no op package registers (`unknown contract_id`, exit 1). For an op without one, add the op package first, in its own pull request (its files: `docs/ops_tutorial.md` § 1. A; for a plugin op, `docs/plugin_tutorial.md` steps 2–4). A layout variant that names an output is rejected (`names unknown tensors`), and so is an output of `float4_e2m1`, AKLR's only 4-bit dtype (S45): an output is row-major in the order of its declared shape (`per_group_quant_fp8@1.0` declares its scales `[n_groups, n_tokens]` to store them group-major), and MXFP4 codes leave packed in `uint8`, an integer output that must equal the reference ([numerics.md](numerics.md) §1). The nearest quantization op, `per_group_quant_mxfp8@1.0`, writes row-major e4m3 codes and uint8 e8m0 bytes (S45). A standalone SwiGLU + MXFP4 requantization would be such an op. In the committed DeepSeek-V2 schema `7e9c13e0f2d58a3b`, the one-token `_finish_gate_up` launch writes packed uint8 activations and e8m0 scales into call-local `aq` / `aqs` scratch, which `_down_reduce` reads through `_tiny_projection` (S11); its activations are row-major and its expert weights use shuffled offsets. Read any other MoE's scratch format from its own producer and consumer code.
+**No contract yet.** A kernel serves a contract: validate rejects a schema whose `contract_id` no op package registers (`unknown contract_id`, exit 1). For an op without one, add the op package first, in its own pull request (its files: `docs/ops_tutorial.md` § 6; for a plugin op, `docs/sglang_plugin_tutorial.md` steps 2–4). A layout variant that names an output is rejected (`names unknown tensors`), and so is an output of `float4_e2m1`, AKLR's only 4-bit dtype (S45): an output is row-major in the order of its declared shape (`per_group_quant_fp8@1.0` declares its scales `[n_groups, n_tokens]` to store them group-major), and MXFP4 codes leave packed in `uint8`, an integer output that must equal the reference ([numerics.md](numerics.md) §1). The nearest quantization op, `per_group_quant_mxfp8@1.0`, writes row-major e4m3 codes and uint8 e8m0 bytes (S45). A standalone SwiGLU + MXFP4 requantization would be such an op. In the committed DeepSeek-V2 schema `7e9c13e0f2d58a3b`, the one-token `_finish_gate_up` launch writes packed uint8 activations and e8m0 scales into call-local `aq` / `aqs` scratch, which `_down_reduce` reads through `_tiny_projection` (S11); its activations are row-major and its expert weights use shuffled offsets. Read any other MoE's scratch format from its own producer and consumer code.
 
 ## 4. `run`: what it receives, what it must not do
 
@@ -481,7 +481,7 @@ baseline. A `numeric_mismatch` planted at one Point of three (1024 tokens) was l
 `aklr_validation/report.md` (`demotions` in `report.json`, with its `post_timing_mismatch` and `regressed`), and the run
 printed `validation passed` and exited 0; a one-Point file that computes wrong failed as `no_qualifying_workload`, exit
 1, the cause in the demoted list *(field, E8)*. Fix each demoted Point or delete it from `workloads` (the file takes a
-new uuid, §3), then validate again (`docs/ops_tutorial.md` § 3).
+new uuid, §3), then validate again (`docs/ops_tutorial.md` § 4).
 
 What bites:
 

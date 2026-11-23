@@ -2,7 +2,7 @@
 
 ## Protected code
 
-Do not modify anything under `aklr/core/runtime/` or `aklr/core/schema/`.
+Do not modify anything under `aklr/core/runtime/`.
 
 If a task cannot be done without changing them, stop before editing and tell a code owner
 (`.github/CODEOWNERS`): which files, what change, and why there is no way around it. Edit only after

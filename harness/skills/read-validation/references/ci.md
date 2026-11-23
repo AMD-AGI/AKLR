@@ -9,10 +9,12 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
   workload on one GPU node (`.github/scripts/safe_gpu_job.py`). An external contributor's run waits
   for a maintainer's approval.
 - `python -m aklr validate --base <base>` with no schema paths, as CI runs it, picks:
-  - the changed schemas, when every changed path is a schema file or a document (`docs/`, `*.md`);
-  - **every committed schema** otherwise. A PR that also touches an op's Python, tests or any
-    other file benches all of them (one such run: 88 schemas, 559 Points, 39 minutes on 8 GPUs)
-    and fails on any finding, another kernel's included.
+  - **every committed schema** when the PR changes `aklr/core/` (but a `*.md` there) or
+    `stack.json` (`ValidationScope.path_kind`; one such run: 88 schemas, 559 Points, 39 minutes on
+    8 GPUs). Then another kernel's workload that fails is demoted, and another schema left with no
+    qualifying workload fails the run;
+  - the schema files the PR adds otherwise, whatever else it changes (an op's Python, tests, docs):
+    a changed kernel is a new file, its uuid hashing the kernel.
 - CI validates the merge of the PR head into its base, so main's newest kernels are in it.
 
 ## Where the result is

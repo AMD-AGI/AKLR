@@ -2,7 +2,7 @@
 
 A plugin replaces a vLLM function that no aiter op covers with an AKLR op: a function of the model's own, or one that runs a whole stretch of vLLM's computation, which the op fuses. This tutorial's example is `kimi_k3_attn_res`, which takes Kimi-K3's attention residual: `attn_res`, vLLM's own Triton kernel for the model, run before each layer's attention and MLP and once before the final norm.
 
-Before you start, read the [ops tutorial](ops_tutorial.md): a plugin's op is written the same way. The SGLang plugin is covered in the [SGLang plugin tutorial](plugin_tutorial.md), and the plugin's layout and rules are in [aklr/plugins/README.md](../aklr/plugins/README.md).
+Before you start, read the [ops tutorial](ops_tutorial.md): a plugin's op is written the same way. The SGLang plugin is covered in the [SGLang plugin tutorial](sglang_plugin_tutorial.md), and the plugin's layout and rules are in [aklr/plugins/README.md](../aklr/plugins/README.md).
 
 ## Why a plugin
 
@@ -51,7 +51,7 @@ Create `aklr/plugins/vllm/models/kimi_k3/attn_res/`: `kimi_k3/` is named after v
 
 ### 3. Write the op
 
-As in step 1. A of the ops tutorial. For this op:
+As in section 6 of the [ops tutorial](ops_tutorial.md). For this op:
 
 - `contract.py` defines `KIMI_K3_ATTN_RES` (`kimi_k3_attn_res@1.0`):
   - inputs: the running `prefix`; the pending layer output `addend`, present with `has_addend`; each token's `bank`; the score's two weights `score_norm_weight` and `score_proj_weight`; the layer norm's `norm_weight`, present with `has_norm`; and the scalars `score_eps` and `norm_eps`;
@@ -145,21 +145,19 @@ AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
 
 ### 6. Write the kernel and validate it
 
-Follow steps 1. B to 4 of the ops tutorial, with this op's scenario: Kimi-K3's attention residual at hidden size 7168, with a bank of 8 rows for its 93 layers in blocks of 12 (see [Kimi-K3's model structure](../aklr/benchmarks/models/kimi_k3/README.md#model-structure)). Of the 187 calls a forward makes, 170 fold the pending output in and apply the layer norm, at 1 to 8 bank rows; 7 also write the bank; 8 have no addend, the MLP's call on a block's first layer; one, before the final norm, has no layer norm; and the one before the first layer's attention has no bank row yet. Each combination of the attrs is a scenario of its own. The script differs in the contract, the Point and the workloads, where `score_eps` and `norm_eps` are scalars given with each workload (`_apply_attn_res` passes a `norm_eps` of 0.0 without a layer norm); the token counts are decode steps of 1 to 4 requests, 3 tokens each, and this op's committed kernels are written in FlyDSL:
+Follow sections 2 to 5 of the [ops tutorial](ops_tutorial.md), with this op's scenario: Kimi-K3's attention residual at hidden size 7168, with a bank of 8 rows for its 93 layers in blocks of 12 (see [Kimi-K3's model structure](../aklr/benchmarks/models/kimi_k3/README.md#model-structure)). Of the 187 calls a forward makes, 170 fold the pending output in and apply the layer norm, at 1 to 8 bank rows; 7 also write the bank; 8 have no addend, the MLP's call on a block's first layer; one, before the final norm, has no layer norm; and the one before the first layer's attention has no bank row yet. Each combination of the attrs is a scenario of its own. The script differs in the contract, the Point and the workloads, where `score_eps` and `norm_eps` are scalars given with each workload (`_apply_attn_res` passes a `norm_eps` of 0.0 without a layer norm); the token counts are decode steps of 1 to 4 requests, 3 tokens each, and this op's committed kernels are written in FlyDSL (`language` is `flydsl` in the script, and `requires` is `{"flydsl": ">=0.3.2"}`):
 
 ```python
 contract = ContractRegistry.default().get("kimi_k3_attn_res@1.0")
-base = PointSpec(
+point = PointSpec(
     contract_id="kimi_k3_attn_res@1.0",
     axes={"n_tokens": 1, "hidden_size": 7168, "n_bank_rows": 8},
     dtypes={"prefix": "bfloat16", "addend": "bfloat16", "bank": "bfloat16", "score_norm_weight": "bfloat16",
             "score_proj_weight": "bfloat16", "norm_weight": "bfloat16", "out": "bfloat16"},
     attrs={"n_valid_rows": 8, "write_bank": False, "has_addend": True, "has_norm": True},
     layout_variant_name="row_major")
-workloads = [contract.workload_for(base.model_copy(update={"axes": {**base.axes, "n_tokens": t}}),
+workloads = [contract.workload_for(point.model_copy(update={"axes": {**point.axes, "n_tokens": t}}),
                                    {"score_eps": 1e-5, "norm_eps": 1e-5}) for t in (3, 6, 9, 12)]
-kernel = {"language": "flydsl", "targets": [{"arch": "gfx950", "hardware": "MI355X"}],
-          "entry_point": "kernel.py::run", "sources": []}
 ```
 
 The schema is written beside the committed kernel of this scenario, in `aklr/plugins/vllm/models/kimi_k3/attn_res/impls/flydsl/kimi_k3_attn_res_hidden_size7168_n_bank_rows8/`; the other scenarios carry their attrs in the name, such as `kimi_k3_attn_res_rows3_write_hidden_size7168_n_bank_rows8`. The call without a bank row has no schema and stays on vLLM's kernel. Validate it and open the PR as in the ops tutorial.

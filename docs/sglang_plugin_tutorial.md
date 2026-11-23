@@ -1,8 +1,8 @@
 # Plugin tutorial: replacing an SGLang function
 
-When an optimization has to cover more than one op, a plugin replaces a whole SGLang function with an AKLR op. This tutorial's example is `deepseek_v2_mxfp4_moe`, which takes GLM-5's whole MoE layer: the layer whose experts the [ops tutorial](ops_tutorial.md) optimizes with `fused_moe`.
+When an optimization has to cover more than one op, a plugin replaces a whole SGLang function with an AKLR op. This tutorial's example is `deepseek_v2_mxfp4_moe`, which takes GLM-5's whole MoE layer; `fused_moe` in `aklr/ops` covers only that layer's experts.
 
-Before you start, read the ops tutorial: a plugin's op is written the same way. The plugin's layout and rules are in [aklr/plugins/README.md](../aklr/plugins/README.md).
+Before you start, read the [ops tutorial](ops_tutorial.md): a plugin's op is written the same way. The plugin's layout and rules are in [aklr/plugins/README.md](../aklr/plugins/README.md).
 
 ## Why a plugin
 
@@ -50,13 +50,13 @@ Create `aklr/plugins/sglang/models/deepseek_v2/`, named after SGLang's source fi
 
 ### 3. Write the op
 
-As in step 1. A of the ops tutorial. For this op:
+As in section 6 of the [ops tutorial](ops_tutorial.md). For this op:
 
 - `contract.py` defines `DEEPSEEK_V2_MXFP4_MOE` (`deepseek_v2_mxfp4_moe@1.0`):
   - inputs: what `forward_normal` reads, namely `hidden_states`; the router's `router_weight` and `correction_bias`; the experts' `w1`, `w1_scale`, `w2` and `w2_scale`, with the shared expert in the last slot (`n_experts = n_routed + 1`); and the scalar `routed_scaling_factor`;
   - attrs: the routing settings `topk`, `num_expert_group`, `topk_group`, `renormalize` and `scoring_func`;
   - output: `out`, the layer's output on this GPU, before the all-reduce.
-- `reference.py`: `DeepseekV2Mxfp4MoeReference`, the contract's computation in fp32.
+- `reference.py`: `DeepseekV2Mxfp4MoeReference`, the contract's computation in float32, returning `out` in the dtype the contract declares.
 - `baseline.py`: `DeepseekV2Mxfp4MoeBaseline`, what SGLang runs today for steps 1–9: the router GEMM, AITER's grouped top-k, SGLang's shared-expert append and AITER's `fused_moe`. A kernel has to beat this whole path, not `fused_moe` alone.
 - `api.py`: the entry function `@api(DEEPSEEK_V2_MXFP4_MOE)`, whose body is `...`.
 
@@ -115,11 +115,11 @@ The route needs no test of its own: `tests/plugins/sglang/test_hook.py` checks e
 
 ### 6. Write the kernel and validate it
 
-Follow steps 1. B to 4 of the ops tutorial, with this op's scenario: GLM-5's MXFP4 MoE layer at TP8. The script differs in the contract, the Point and the workloads, where `routed_scaling_factor` is a scalar given with each workload; this op's committed kernels are written in Triton:
+Follow sections 2 to 5 of the [ops tutorial](ops_tutorial.md), with this op's scenario: GLM-5's MXFP4 MoE layer at TP8. The script differs in the contract, the Point and the workloads, where `routed_scaling_factor` is a scalar given with each workload; this op's committed kernels are written in Triton (`language` is `triton` in the script):
 
 ```python
 contract = ContractRegistry.default().get("deepseek_v2_mxfp4_moe@1.0")
-base = PointSpec(
+point = PointSpec(
     contract_id="deepseek_v2_mxfp4_moe@1.0",
     axes={"n_tokens": 1, "model_dim": 6144, "n_routed": 256, "inter_dim": 256},
     dtypes={"hidden_states": "bfloat16", "router_weight": "bfloat16", "correction_bias": "float32",
@@ -127,10 +127,8 @@ base = PointSpec(
             "out": "bfloat16"},
     attrs={"topk": 8, "num_expert_group": 1, "topk_group": 1, "renormalize": True, "scoring_func": "sigmoid"},
     layout_variant_name="shuffled_16x16")
-workloads = [contract.workload_for(base.model_copy(update={"axes": {**base.axes, "n_tokens": t}}),
+workloads = [contract.workload_for(point.model_copy(update={"axes": {**point.axes, "n_tokens": t}}),
                                    {"routed_scaling_factor": 2.5}) for t in (32, 128, 256)]
-kernel = {"language": "triton", "targets": [{"arch": "gfx950", "hardware": "MI355X"}],
-          "entry_point": "kernel.py::run", "sources": []}
 ```
 
 The schema is written beside the committed kernels of this scenario, in `aklr/plugins/sglang/models/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim256/`. Validate it and open the PR as in the ops tutorial.

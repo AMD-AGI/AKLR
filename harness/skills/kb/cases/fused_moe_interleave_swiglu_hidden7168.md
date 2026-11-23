@@ -81,7 +81,7 @@ names and kernels.
   all-zero intermediate, and at limit 1000 most values from the bench's own inputs round to zero (estimated). The
   predecessors passed every listed Point with a worst violation fraction of 0 in four runs, all at limit 10, the
   only limit the workloads pass *(field, E1, E2, E3, E4, E9, E10)*; the SQNR itself is not recorded.
-- **Scratch cached per shape is shared by concurrent calls.** `aklr/ops/README.md:180–181` allows scratch allocated
+- **Scratch cached per shape is shared by concurrent calls.** `aklr/ops/README.md:312–313` allows scratch allocated
   once per shape in a compile function if every call rewrites it before reading it; that is safe only while one
   stream calls a Point at a time, since the buffer belongs to every call of that shape and two calls at once on two
   streams overwrite each other's intermediates. The earlier predecessors did this: two concurrent calls with

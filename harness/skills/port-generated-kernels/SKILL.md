@@ -14,7 +14,7 @@ Read the harness [rules](../../rules.md), [gates](../../gates.md), and current
 [gate configuration](../../gate-config.md). Read
 [references/workflow.md](references/workflow.md) before changing code,
 [references/porting-notes.md](references/porting-notes.md) while porting, and
-[references/new-op.md](references/new-op.md) when AKLR has no contract for the op.
+[docs/ops_tutorial.md](../../../docs/ops_tutorial.md) § 6 when AKLR has no contract for the op.
 `aklr/ops/README.md` is the authority on the schema format and the audit.
 
 ## Responsibilities
