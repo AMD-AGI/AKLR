@@ -102,7 +102,9 @@ def _out_of_contract(runner, fused_output, shared_output, trunc_size) -> list[st
         return tuple(t.shape) == shape and t.dtype == torch.bfloat16 and t.is_contiguous()
 
     checks = (
-        ("a padded hidden dim", trunc_size is not None),
+        # vLLM 0.34.0 hands a latent MoE with shared experts the shared experts' width (HIDDEN) whether or not it padded,
+        # and its tail keeps states[..., :trunc_size]: only a smaller size strips padded columns
+        ("a padded hidden dim", trunc_size not in (None, HIDDEN)),
         ("the routed output comes reduced", bool(getattr(runner, "_fused_output_is_reduced", False))),
         (f"TP {world}", world != TP),
         # only the last stage's output leaves its workers, through the fail-stop's check (runtime.after_step)

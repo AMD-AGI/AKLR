@@ -534,7 +534,7 @@ def test_the_route_takes_vllms_parameters():
 def _changed(case):
     run, (fused, shared), trunc = runner(), outputs(4), None
     if case == "padded":
-        trunc = HIDDEN
+        trunc = HIDDEN - 256
     elif case == "reduced":
         run = runner(reduced=True)
     elif case == "no_norm":
@@ -561,6 +561,15 @@ def test_what_no_contract_states_goes_back_to_vllm_untouched(vllm_tp, op, case):
     run, fused, shared, trunc = _changed(case)
     assert api._shard_up_proj_tail(run, fused, shared, trunc) is FallbackReason.OUT_OF_CONTRACT
     assert op.asked == [] and op.calls == [] and vllm_tp.setups == []
+
+
+@pytest.mark.parametrize("trunc", [None, HIDDEN])
+def test_an_unpadded_hidden_dim_reaches_the_dispatcher(vllm_tp, op, trunc):
+    """vLLM 0.34.0 passes the shared experts' width, HIDDEN, as the tail's trunc_size whenever the latent MoE has
+    shared experts, padded or not: keeping states[..., :HIDDEN] strips nothing, so the call is the op's to serve."""
+    op.reason = FallbackReason.NOT_QUALIFIED
+    assert api._shard_up_proj_tail(runner(), *outputs(8), trunc) is FallbackReason.NOT_QUALIFIED
+    assert len(op.asked) == 1 and op.calls == [] and vllm_tp.setups == []
 
 
 def test_the_contract_states_the_ops_rows():
