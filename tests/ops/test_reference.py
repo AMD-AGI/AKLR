@@ -97,3 +97,21 @@ def test_biased_grouped_topk_ranks_tied_experts_lower_first() -> None:
     }
     ids = BiasedGroupedTopkReference().reference(**args)["topk_ids"]
     assert ids.tolist() == [[31, 368, 571]]
+
+
+@pytest.mark.parametrize("contract_id", ["topk_transform_paged@1.0", "dsa_topk_transform@1.0"])
+def test_a_full_row_of_selected_slots_may_come_in_any_order(contract_id: str) -> None:
+    """A row holding no -1 may list its slots in any order; a row padded with -1 keeps its order,
+    and a full row with another slot is still wrong."""
+    case = OpCase.of(contract_id)
+    expected = torch.tensor([[3, 1, 2, 0], [5, 4, -1, -1]], dtype=torch.int32)
+
+    def passes(out: list[list[int]]) -> bool:
+        outputs = {"out_page_indices": torch.tensor(out, dtype=torch.int32)}
+        return (
+            case.contract.reference.check(outputs, {"out_page_indices": expected}, case.request.schema) == {}
+        )
+
+    assert passes([[0, 1, 2, 3], [5, 4, -1, -1]])
+    assert not passes([[3, 1, 2, 0], [4, 5, -1, -1]])
+    assert not passes([[3, 1, 2, 7], [5, 4, -1, -1]])

@@ -7,6 +7,7 @@ exactly, nothing rounded in between (the kernels' bf16 and fp8 steps are theirs)
 import torch
 
 from aklr.core.contract.reference import OpReference
+from aklr.ops.topk.reference import AnyOrderInFullRowsReference
 
 __all__ = [
     "ROPE_DIM",
@@ -44,7 +45,7 @@ class DsaSparseMlaReference(OpReference):
         return {"output": output.to(torch.bfloat16)}
 
 
-class DsaTopkTransformReference(OpReference):
+class DsaTopkTransformReference(AnyOrderInFullRowsReference):
     def reference(self, *, score, lengths, page_table_size_1, cu_seqlens_q, out_page_indices, **_):
         """Each row's top-k positions, or all of them in order for a short row, through its
         sequence's page table."""

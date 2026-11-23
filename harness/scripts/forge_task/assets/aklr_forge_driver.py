@@ -214,20 +214,20 @@ def _outcomes(report: dict) -> dict[str, dict]:
                     outcomes[case_id].setdefault("other", []).append(f"{finding['code']}: {detail}")
     for record in _stage(report, "bench").get("workload_records", []):
         outcome = outcomes[_case_id(record["axes"])]
-        outcome["violation"] = record.get("worst_violation_fraction")
+        outcome["compared"] = record.get("is_compared", False)
         for timing in record["timings"]:
             if timing["mode"] == "graph" and timing["versus"] == "baseline":
                 outcome["baseline_ms"] = statistics.median(timing["versus_milliseconds"])
     for outcome in outcomes.values():
         # An aborted run compares nothing; a workload AKLR did not compare is not shown correct.
-        if outcome.get("violation") is None and not outcome["incorrect"]:
+        if not outcome.get("compared") and not outcome["incorrect"]:
             outcome["incorrect"].append("not_compared")
     return outcomes
 
 
 def _run_correctness() -> int:
     """Report AKLR's findings per workload; KernelForge gates on ``allclose``, which holds only when AKLR passes
-    every workload. AKLR grades a fraction of elements outside its error bound, not an SNR.
+    every workload. AKLR passes or fails each output under its error bound and reports no SNR.
     """
     outcomes = _outcomes(_report())
     for case_id, outcome in outcomes.items():
@@ -472,35 +472,20 @@ def _stress_conditions() -> dict:
     return conditions
 
 
-def _compare_spec() -> tuple[str, str]:
-    compare = json.loads(_candidate_text()[0]).get("compare") or {}
-    return compare.get("determinism", "bitwise"), compare.get("element_order", "fixed")
+def _determinism() -> str:
+    return (json.loads(_candidate_text()[0]).get("compare") or {}).get("determinism", "bitwise")
 
 
-def _arranged(stressed, alone, element_order: str):
-    """``stressed`` and ``alone`` arranged as AKLR's compare arranges an output and its reference: under
-    ``any_in_full_rows``, a row whose elements are all set (none negative in the output alone) is sorted, as its order
-    is free; a row padded with negatives keeps its order."""
-    import torch
-
-    if element_order == "fixed":
-        return stressed, alone
-    if element_order != "any_in_full_rows":
-        raise ValueError(f"unknown element_order {element_order!r}")
-    is_full = (alone >= 0).all(dim=-1, keepdim=True)
-    return (
-        torch.where(is_full, stressed.sort(dim=-1).values, stressed),
-        torch.where(is_full, alone.sort(dim=-1).values, alone),
-    )
-
-
-def _agrees(stressed, alone, determinism: str, element_order: str = "fixed") -> bool:
+def _agrees(stressed, alone, determinism: str, is_row_order_free: bool = False) -> bool:
     """Whether an output under contention agrees with the output alone as the schema's determinism asks: bit for bit
-    under ``bitwise``; under ``bounded``, no value turned non-finite and every element within a few ulps. Both are
-    first arranged as the schema's ``element_order`` asks."""
+    under ``bitwise``; under ``bounded``, no value turned non-finite and every element within a few ulps. With
+    ``is_row_order_free``, a row of the output alone holding no negative may come in any order."""
     import torch
 
-    stressed, alone = _arranged(stressed, alone, element_order)
+    if is_row_order_free:
+        is_full = (alone >= 0).all(dim=-1, keepdim=True)
+        stressed = torch.where(is_full, stressed.sort(dim=-1).values, stressed)
+        alone = torch.where(is_full, alone.sort(dim=-1).values, alone)
     if determinism == "bitwise" or not alone.is_floating_point():
         return torch.equal(stressed.contiguous().view(torch.uint8), alone.contiguous().view(torch.uint8))
     unit = torch.finfo(alone.dtype).eps / 2
@@ -523,12 +508,16 @@ def _run_stress(device: str = "cuda") -> int:
     that does not finish is reported as hung and ends the check: the device is still running it."""
     candidate = _load_candidate()
     outputs = _output_names()
-    determinism, element_order = _compare_spec()
+    determinism = _determinism()
     conditions = _stress_conditions()
     failed = []
     for case_id, call in _calls(device).items():
         candidate.run(**call)
         alone = {name: call[name].clone() for name in outputs if name in call}
+        # bounded integer outputs alone (the top-k slot selections): a full row's order is the kernel's choice
+        is_row_order_free = determinism == "bounded" and not any(
+            t.is_floating_point() for t in alone.values()
+        )
         for label, launch in conditions.items():
             for _ in range(STRESS_TRIES):
                 try:
@@ -538,7 +527,7 @@ def _run_stress(device: str = "cuda") -> int:
                     print("stress: FAIL")
                     return 1
                 agree = (
-                    _agrees(r[name], alone[name], determinism, element_order)
+                    _agrees(r[name], alone[name], determinism, is_row_order_free)
                     for r in results
                     for name in alone
                 )

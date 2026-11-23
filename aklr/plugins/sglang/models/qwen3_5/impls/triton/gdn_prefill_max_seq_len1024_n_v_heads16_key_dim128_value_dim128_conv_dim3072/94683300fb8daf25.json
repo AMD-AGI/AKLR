@@ -307,8 +307,7 @@
     }
   },
   "compare": {
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "triton",

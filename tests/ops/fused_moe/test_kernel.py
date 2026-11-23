@@ -42,4 +42,4 @@ def test_minimax_tp8_kernel_matches_reference(rows, builder_registry):
     runnable(**call)
     torch.cuda.synchronize()
     compared = case.compare({"out": call["out"]}, args)
-    assert all(r.is_passed for r in compared.values()), compared
+    assert not compared, compared

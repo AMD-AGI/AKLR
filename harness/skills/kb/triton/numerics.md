@@ -29,7 +29,7 @@ compiled code [debugging.md](debugging.md) §3; ops [gemm.md](gemm.md), [moe.md]
 ## 1. Read the contract first
 
 Three places define "correct". The rules are stated in `aklr/ops/README.md` § Schema fields; the bound formulas are the
-`ErrorBound` classes of `aklr/core/contract/semantics/_compare.py`.
+`ErrorBound` classes of `aklr/core/contract/semantics/_error_bounds.py`.
 
 | Where | What it fixes |
 |---|---|
@@ -124,7 +124,7 @@ by `tolerance` (S63); its reference is the second form exactly, `fl32(max(amax, 
 `fl32(1 / scale)` and `fl32(x · r)`, as "Combining the scale and reciprocal into one division changes quantization ties"
 (S63), a code by one step, rarely on bf16 inputs *(field, E10)*. Reproduce it, as the excerpt does: the correctly
 rounded `amax / 448` was one ulp below that product for 71 of the 128 bf16 significands and above it for none in each of the 25 tested normal-scale binades: inside the
-bound, but all one way, which failed the bias test (§1) *(field, E10)*. A code one step off fails where the reference's
+bound, but all one way, which failed the bias test compare had then, since removed (§1) *(field, E10)*. A code one step off fails where the reference's
 code is 0 or subnormal: there the bound is under a step.
 
 **Saturation and clamping.**
@@ -460,7 +460,7 @@ What a new kernel should do:
 
 ## 10. Pitfalls
 
-A failed `compare` reports `violation_fraction`, `peak_bound_multiple` and non-finite mismatches (S1):
+A failed `tolerance` bound reports `violation_fraction`, `peak_bound_multiple` and non-finite mismatches, a failed `sqnr` bound the output's SQNR against `min_sqnr_db` and non-finite mismatches (S1):
 
 | The report | Look first at |
 |---|---|
@@ -493,7 +493,7 @@ AKLR paths are on `0e02a81` unless a line names another commit; kernels are cite
 - E22 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=7 rounds, the fused arm and the GEMM + standalone quantization kernel alternated AB/BA, a 1 GiB read before each call, event-timed, the median of the per-round ratios] fused over separate, plain Triton (`tl`) probes with the same quantization function: bf16 GEMM, N = K = 4096, a 128-column tile per group: M = 16 1.033, M = 512 0.989, M = 8192 0.987; outputs bit-identical (probe kernels, not AKLR schemas)
 - E23 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, a Gluon probe dividing each value by its own scale s = fl32(max(amax, fl32(1e-10)) · fl32(1/448)), default `denormal-fp-math-f32` (`ieee`); against fl32(fl64(x) / fl64(s)) on the host] the fourth form on 169.6M values (every bf16 |x| ≤ amax for amax in 31 binades, 100000 random fp32 groups of 128): 0 code mismatches for nonzero x; 420471 quotients one ulp off, all where |x| < 2^-100 or the quotient < 2^-126; x = −0 gave +0, code 0x00 against 0x80; `gl.div_rn` 0 mismatches (probe kernels, not AKLR schemas)
 - E24 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, 64 input sets from AKLR's input generator at 32 rows, the committed file and a copy without the attention's bf16 rounding before the gate] scales' relative L2 against a float64 reference without that rounding, the copy's over the committed file's: geometric mean 0.849, lower on 62 of 64 sets; both files passed the contract comparison on all 64 sets (Qwen3.5 gated attention decode `d9cbde237fd34de9`, schema at AMD-AGI/AKLR@3b315a7)
-- S1 aklr/core/contract/semantics/_compare.py:135 `runs_agree`: `bitwise`, every run's output byte-identical to the first's; `bounded`, nothing across runs. A compare's measures: `violation_fraction`, `peak_bound_multiple`, non-finite mismatches (:21-25), any element past its bound failing (:51); non-finite elements matched both ways (:46-47); the reference returns each tensor in its dtype (`OpReference.reference`, aklr/core/contract/reference.py); `ToleranceBound` B = atol + rtol·|y|, integers compared as integers (:155-178); `SqnrBound` (:181); the common bounds: `tolerance(*dtypes)` from Primus-Turbo's `get_tolerances` (:214-222, :235-241), the `*_SNR` floors (:223-232)
+- S1 aklr/core/validation/stages/_bench/_evaluation/_comparison.py:15 `find_nondeterminism`: `bitwise`, a second run's output byte-identical to the first's; `bounded`, no second run (aklr/core/validation/stages/_bench/_evaluation/_request.py:132-133). A failed bound's detail (aklr/core/contract/semantics/_error_bounds.py): `ToleranceBound`'s `violation_fraction`, `peak_bound_multiple` and non-finite mismatches, any element past its bound failing, as torch's `isclose` with `equal_nan` (:48-58), `SqnrBound`'s SQNR against `min_sqnr_db` (:75-86); non-finite elements matched both ways (:48, :75); the reference returns each tensor in its dtype (`OpReference.reference`, aklr/core/contract/reference.py); `ToleranceBound` B = atol + rtol·|y|, integers compared as integers (:33-58); `SqnrBound` (:61); the common bounds: `tolerance(*dtypes)` from Primus-Turbo's `get_tolerances` (:92-100, :103-109), the `*_SNR` floors (:112-121)
 - S2 aklr/core/validation/stages/_bench/_evaluation/_request.py:124 the steps; a `bitwise` schema gets one more `determinism` step on `numeric/0` (:132-133); `find_nondeterminism` (`_comparison.py:31`) fails it on any differing element
 - S3 aklr/plugins/sglang/models/qwen3_5/contract.py:121 `conv_state`: `ToleranceBound(absolute_tolerance=0, relative_tolerance=0)`; `values`: `ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125)` (:179); `scales`: relative tolerance 0.02 (:185); decode `delta_state`: `ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)` (:229); gated attention: aiter's fp8-cache decode emulated at 21.8-23.1 dB (values) and 26.7-34.1 dB (scales) at the schemas' Points, "The bounds sit some 6-7 dB under that", kernels wrong on purpose under 9 and 10 dB, "at most 16.4 and 16.8 dB on the small one" (:401-406); `SqnrBound(min_sqnr_db=15.0)` (:412), 20.0 for the scales (:418)
 - S4 aklr/plugins/sglang/models/deepseek_v2/contract.py:167 "the experts' MXFP4 activations alone come to about 12 dB", over `SqnrBound(min_sqnr_db=10.0)` (:168); MiniMax-M2: "about 13 dB on the bench's inputs", `_output(10.0)` (`aklr/plugins/sglang/models/minimax_m2/contract.py:280-281`); MiniMax-M2 fp8: "the fp8 activations come to about 36 dB on the bench's inputs", `_output(30.0)` (same file, :247-248)

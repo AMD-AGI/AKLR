@@ -60,7 +60,8 @@ class WorkloadRecord(FrozenModel):
     kernel_content_hash: str
     # a baseline was timed; not: an untimed bench (--no-timing)
     is_timed: bool
-    worst_violation_fraction: float | None
+    # the reference was compared with the kernel's outputs
+    is_compared: bool
     timings: tuple[TimingRecord, ...]
     # a batch finding (build, task crash or timeout) stands for its findings
     batch_stopped: bool
@@ -124,9 +125,7 @@ class BenchReport(StageReport):
         qualified = {
             r.schema_path
             for r in workloads
-            if r.worst_violation_fraction is not None
-            and (r.schema_path, axes_text(r.axes)) not in incorrect
-            and r.beats_baseline
+            if r.is_compared and (r.schema_path, axes_text(r.axes)) not in incorrect and r.beats_baseline
         }
         deciding: list[Finding] = []
         demoted: list[Finding] = []
@@ -183,7 +182,7 @@ class BenchReport(StageReport):
         for r, v in self.verdicts():
             is_failed = v is not None and not r.batch_stopped and _MEASURED_AS.get(v.code) == "failed"
             failed += is_failed
-            ok += not is_failed and r.worst_violation_fraction is not None
+            ok += not is_failed and r.is_compared
         return failed, ok
 
     def batch_line(self) -> str:
@@ -271,7 +270,7 @@ class BenchReport(StageReport):
             if record is None:
                 return None
             accuracy = "failed" if key in failed else "passed"
-            if accuracy == "passed" and (record.speedup is None or record.worst_violation_fraction is None):
+            if accuracy == "passed" and (record.speedup is None or not record.is_compared):
                 return None
             measured[key] = workload.model_copy(
                 update={"accuracy": accuracy, "speedup": record.speedup, "microseconds": record.microseconds}

@@ -6,9 +6,7 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     DType,
-    ElementOrder,
     FiniteDistribution,
     IntRangeDistribution,
     PermutationDistribution,
@@ -18,6 +16,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -192,11 +191,8 @@ TOPK_TRANSFORM_PAGED = OpContract(
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
-    # Ties and a full row's order are the kernel's choice.
-    compare=CompareSpec(
-        determinism=DeterminismLevel.BOUNDED,
-        element_order=ElementOrder.ANY_IN_FULL_ROWS,
-    ),
+    # Ties and a full row's order are the kernel's choice (the reference's check).
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     reference=TopkTransformPagedReference(),
     baseline=TopkTransformPagedBaseline(),
 )

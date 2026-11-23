@@ -11,7 +11,6 @@ from aklr.core.contract.semantics import (
     CuSeqlensDistribution,
     Deepseekv4Fp8KvCacheDistribution,
     Deepseekv4KvPages,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
@@ -23,6 +22,7 @@ from aklr.core.contract.semantics import (
 from aklr.core.contract.spec import (
     AttrSpec,
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,

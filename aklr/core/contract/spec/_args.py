@@ -15,14 +15,12 @@ from pydantic import BeforeValidator, Field, model_validator
 from aklr.core.contract import expr
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     Distribution,
     DType,
-    ElementOrder,
     ErrorBound,
 )
-from aklr.core.contract.semantics._compare import ErrorBoundUnion
 from aklr.core.contract.semantics._distributions import DistributionUnion
+from aklr.core.contract.semantics._error_bounds import ErrorBoundUnion
 from aklr.core.contract.semantics._frozen_model import FrozenModel
 from aklr.core.contract.spec._points import case_key
 
@@ -192,9 +190,16 @@ class ScalarSpec(FrozenModel):
 ArgSpec = Annotated[TensorSpec | ScalarSpec, Field(discriminator="kind")]
 
 
+class DeterminismLevel(str, Enum):
+    """How two runs of a kernel on the same inputs must agree: ``bitwise``, byte-identical
+    outputs; ``bounded``, each run within its error bounds on its own."""
+
+    BITWISE = "bitwise"
+    BOUNDED = "bounded"
+
+
 class CompareSpec(FrozenModel):
     determinism: DeterminismLevel = DeterminismLevel.BITWISE
-    element_order: ElementOrder = ElementOrder.FIXED
 
 
 def _fields_decided(distribution: Distribution, symbols: Mapping[str, Any]) -> Distribution:

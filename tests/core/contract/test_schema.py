@@ -288,7 +288,7 @@ class TestMutableInput:
             _with_tensor(optional, "delta_state", present_when="has_delta_state")
 
     def test_compare_checks_it(self) -> None:
-        """``compare_outputs`` checks a state as the call leaves it: one element off its
+        """``OpReference.check`` checks a state as the call leaves it: one element off its
         reference fails it."""
         case = OpCase.of("gdn_decode@1.0")
         args = case.inputs()
@@ -302,16 +302,14 @@ class TestMutableInput:
             r: t.to(semantics.torch_dtypes(case.point.dtypes[r])[0], copy=True) for r, t in reference.items()
         }
 
-        def compare() -> dict[str, semantics.CompareResult]:
-            return semantics.compare_outputs(
-                semantics.comparison_criteria(case.request.schema_json), actual, reference
-            )
+        def compare() -> dict[str, str]:
+            return case.contract.reference.check(actual, reference, case.request.schema)
 
-        assert all(r.is_passed for r in compare().values())
+        assert compare() == {}
         flat = actual["delta_state"].view(-1)
         flat[0] = 0.0 if flat[0].abs() > 1 else 100.0
         results = compare()
-        assert results["normalized"].is_passed and not results["delta_state"].is_passed
+        assert list(results) == ["delta_state"]
 
 
 def _with_tensor(contract: OpContract, name: str, **update: object) -> OpContract:

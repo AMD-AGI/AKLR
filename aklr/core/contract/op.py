@@ -27,9 +27,7 @@ from aklr.core.contract.locate import (
 from aklr.core.contract.reference import DistOpReference, OpReference
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     DType,
-    ElementOrder,
     sorted_key_json,
 )
 from aklr.core.contract.spec import (
@@ -293,21 +291,6 @@ class OpContract(FrozenModel):
                         raise ValueError(f"{name}: {distribution.kind} does not accept {dtype}")
                     if predicate is None or reads <= dtypes.keys():
                         break
-        return self
-
-    @model_validator(mode="after")
-    def _check_compare(self) -> OpContract:
-        # a mutable tensor's dtypes are all integer or none (_check_distributions_and_bounds)
-        integer_mutable = [o for o in self.mutable_tensors if DTYPE_TRAITS[self.dtypes_of(o)[0]].is_integral]
-        compare = self.compare
-        if compare.element_order != ElementOrder.FIXED and (
-            len(integer_mutable) < len(self.mutable_tensors)
-            or compare.determinism == DeterminismLevel.BITWISE
-        ):
-            raise ValueError(
-                f"compare: element_order {compare.element_order.value!r} needs integer "
-                "mutable tensors and bounded determinism"
-            )
         return self
 
     @model_validator(mode="after")

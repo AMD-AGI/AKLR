@@ -16,7 +16,6 @@ from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
     MOE_MXFP8_SNR,
     BoundedCuSeqlensDistribution,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     GateUpInterleavedScales,
@@ -27,6 +26,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,

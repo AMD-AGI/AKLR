@@ -270,8 +270,7 @@
     }
   },
   "compare": {
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

@@ -6,7 +6,6 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     MOE_MXFP8_SNR,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
@@ -14,6 +13,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariantsSpec,
     ScalarSpec,

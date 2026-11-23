@@ -125,7 +125,7 @@ def test_the_driver_reads_aklrs_own_report_of_a_wrong_workload(real_run):
             axes=workload.axes,
             kernel_content_hash="",
             is_timed=False,
-            worst_violation_fraction=0.5 if workload is wrong else 0.0,
+            is_compared=True,
             timings=(),
             batch_stopped=False,
         )
@@ -165,7 +165,7 @@ def test_bench_times_the_candidate_without_validating_it(run, aklr_root: Path, m
 
 
 def test_correctness_is_reported_as_allclose(run):
-    """AKLR grades a violation fraction, not an SNR; KernelForge reads allclose instead."""
+    """AKLR passes or fails each output and reports no SNR; KernelForge reads allclose instead."""
     stdout = _run_driver(run)
     assert "allclose: True" in stdout
     assert "SNR:" not in stdout
@@ -257,9 +257,7 @@ def test_finding_kinds_split_into_wrong_and_slow(run):
                     {"code": "not_faster", "axes": {"m": 8}},
                     {"code": "nondeterministic", "axes": {"m": 16}},
                 ],
-                "workload_records": [
-                    {"axes": {"m": m}, "worst_violation_fraction": 0.0, "timings": []} for m in (8, 16)
-                ],
+                "workload_records": [{"axes": {"m": m}, "is_compared": True, "timings": []} for m in (8, 16)],
             },
         ]
     }
@@ -278,7 +276,7 @@ def test_a_workload_aklr_did_not_compare_is_not_correct(run):
                 "stage_name": "bench",
                 "findings": [{"code": "platform_failure", "axes": {"m": m}} for m in (8, 16)],
                 "workload_records": [
-                    {"axes": {"m": m}, "worst_violation_fraction": None, "timings": []} for m in (8, 16)
+                    {"axes": {"m": m}, "is_compared": False, "timings": []} for m in (8, 16)
                 ],
             },
         ]
@@ -418,19 +416,19 @@ def test_stress_compares_as_the_schemas_determinism_asks(run):
     assert not driver._agrees(off, ones, "bounded")
 
 
-def test_stress_lets_full_rows_reorder_under_any_in_full_rows(run):
-    """Under any_in_full_rows a full row may come out in another order; a row padded with -1 keeps its order, and a
-    full row with another element is still wrong."""
+def test_stress_lets_a_full_row_of_integers_reorder_when_asked(run):
+    """With is_row_order_free a full row may come out in another order; a row padded with -1 keeps its order, and a
+    full row with another element is still wrong; without it, order counts."""
     torch = pytest.importorskip("torch")
     driver = _import_driver(run)
     alone = torch.tensor([[3, 1, 2, 0], [5, 4, -1, -1]], dtype=torch.int32)
     full_reordered = torch.tensor([[0, 1, 2, 3], [5, 4, -1, -1]], dtype=torch.int32)
-    assert driver._agrees(full_reordered, alone, "bitwise", "any_in_full_rows")
-    assert not driver._agrees(full_reordered, alone, "bitwise", "fixed")
+    assert driver._agrees(full_reordered, alone, "bounded", is_row_order_free=True)
+    assert not driver._agrees(full_reordered, alone, "bounded")
     short_reordered = torch.tensor([[3, 1, 2, 0], [4, 5, -1, -1]], dtype=torch.int32)
-    assert not driver._agrees(short_reordered, alone, "bitwise", "any_in_full_rows")
+    assert not driver._agrees(short_reordered, alone, "bounded", is_row_order_free=True)
     full_wrong = torch.tensor([[3, 1, 2, 7], [5, 4, -1, -1]], dtype=torch.int32)
-    assert not driver._agrees(full_wrong, alone, "bitwise", "any_in_full_rows")
+    assert not driver._agrees(full_wrong, alone, "bounded", is_row_order_free=True)
 
 
 def test_stress_reports_a_call_that_never_finishes_as_hung(real_run, monkeypatch, capsys):

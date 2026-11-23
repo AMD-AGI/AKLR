@@ -80,7 +80,7 @@ characters unescaped, a final newline. Anything else is rejected;
 | `outputs` | export | every output, narrowed to this scenario; always row-major |
 | `workloads` | export, author, CI | one item per Point served (see Workloads) |
 | `layout_variants` | export | this scenario's layout variant alone |
-| `compare` | export | `determinism`, `element_order` |
+| `compare` | export | `determinism` |
 | `kernel` | export (`language`, `targets`, `entry_point`, `"sources": []`), author (`sources`, `requires`, `author`) | the kernel section; empty `sources` in the repository make a definition: loaded and audited, never served or benched |
 
 Every key written by export alone is derived from the Python contract and checked against it (`export check`). Editing one directly only produces an error. A committed file and its
@@ -108,11 +108,9 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
 - Every mutable tensor has `error_bounds` (in `contract.py`, not in the schema file; narrowing to the scenario
   picks one), and is compared with the reference, both in its dtype, under it: `tolerance` (`atol` and `rtol` per
   element, as torch's `assert_close`; both 0 for an exact one, such as an integer id) or `sqnr` (whole-output SQNR);
-  each is an `ErrorBound` kind in `semantics/_compare.py`. The common bounds are there too (`tolerance(*dtypes)`,
+  each is an `ErrorBound` kind in `semantics/_error_bounds.py`. The common bounds are there too (`tolerance(*dtypes)`,
   `GEMM_BF16_SNR`, `MOE_MXFP4_SNR`, ...): a contract uses them, and writes its own numbers only where its op needs
   other ones.
-- `compare.element_order` is `fixed` (element by element) or `any_in_full_rows` (integer outputs only: a row
-  holding no padding may list its entries in any order); each is an `ElementOrder` member.
 - The reference and the baseline: [Reference and baseline](#reference-and-baseline).
 
 ## Reference and baseline
@@ -136,11 +134,13 @@ instance is the contract's `reference`:
   returned.
 - Is written from the math, independent of the kernels and the baseline. It runs on the inputs' device (the GPU in
   validation), reads each size from a tensor's shape, and never writes a tensor of the call.
-- `check(outputs, expected, criteria)` compares the kernel's outputs with `expected` under the error bounds
-  (`compare_outputs`). An op whose correct kernels can differ in a way no bound states overrides it:
+- `check(outputs, expected, schema)` compares the kernel's outputs with `expected` under the error bounds of
+  `schema`, the contract at one scenario, and returns the outputs past them, each with why.
+  An op whose correct kernels can differ in a way no bound states overrides it:
   `qwen2_moe_router`'s reference also returns its bf16 logits, and its `check` lets an id differ from the
   reference's where the two experts' logits are equal or one bf16 value apart, as two engines' sums can round a
-  logit to either; the DSA indexer's references also return the slots they write, and their `check` restates a
+  logit to either; `topk_transform_paged`'s and `dsa_topk_transform`'s let a row holding no -1 list its entries in
+  any order; the DSA indexer's references also return the slots they write, and their `check` restates a
   key stored at twice or half the reference's fp8 scale, its values half or twice, at the reference's scale. The
   bounds themselves never change in a `check`.
 

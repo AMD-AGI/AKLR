@@ -8,7 +8,6 @@ from aklr.core.contract.semantics import (
     ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
     CuSeqlensDistribution,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
@@ -18,6 +17,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,

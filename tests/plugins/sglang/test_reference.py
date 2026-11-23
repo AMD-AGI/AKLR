@@ -27,13 +27,13 @@ def test_router_ids_of_equal_logits_may_swap() -> None:
     swapped = ids.clone()
     for r in rows.tolist():
         swapped[r][ids[r] == 0], swapped[r][ids[r] == 1] = 1, 0
-    assert case.compare({**reference, "topk_ids": swapped}, args)["topk_ids"].is_passed
+    assert "topk_ids" not in case.compare({**reference, "topk_ids": swapped}, args)
 
     scores = reference["topk_id_scores"].float()
     assert scores[0, ids[0, 0]] - scores[0, ids[0, -1]] > 0.25  # more than two bf16 values below 16
     far = ids.clone()
     far[0, [0, -1]] = ids[0, [-1, 0]]
-    assert not case.compare({**reference, "topk_ids": far}, args)["topk_ids"].is_passed
+    assert "topk_ids" in case.compare({**reference, "topk_ids": far}, args)
 
 
 @pytest.mark.parametrize("contract_id", ["dsa_indexer_key_prepare@1.0", "dsa_indexer_prepare@1.0"])
@@ -61,7 +61,7 @@ def test_index_k_cache_key_at_twice_the_scale_stands_for_the_reference(contract_
         }
 
     def passes(outputs: dict) -> bool:
-        return case.compare(outputs, args)["index_k_cache"].is_passed
+        return "index_k_cache" not in case.compare(outputs, args)
 
     assert passes(stored_at(2.0, 0.5))
     assert not passes(stored_at(4.0, 0.25))

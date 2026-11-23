@@ -20,7 +20,6 @@ from aklr.core.contract.fastkey import CallArgs
 from aklr.core.contract.locate import op_dir
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
-from aklr.core.contract.semantics import CompareResult
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
 from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
 from tests.ops import cases as ops_cases
@@ -266,12 +265,12 @@ class OpCase:
         self,
         actual_outputs: Mapping[str, Any],
         row_major_args: Mapping[str, Any],
-    ) -> dict[str, CompareResult]:
+    ) -> dict[str, str]:
         """The reference's check of ``actual_outputs`` against its outputs of ``row_major_args``, on the CPU."""
         return self.contract.reference.check(
             {o: t.cpu() for o, t in actual_outputs.items()},
             {o: t.cpu() for o, t in self.reference_outputs(row_major_args).items()},
-            semantics.comparison_criteria(self.request.schema_json),
+            self.request.schema,
         )
 
     def check_backend_matches_reference(self) -> None:
@@ -285,18 +284,17 @@ class OpCase:
         outputs = {**baseline.baseline(**call), **{n: call[n] for n in self.contract.mutable_inputs}}
         baseline.teardown()
         results = self.compare(outputs, args)
-        output_specs = semantics.mutable_tensor_declarations(self.request.schema_json)
+        schema = self.request.schema
         integral = {
-            o
-            for o, spec in output_specs.items()
-            if semantics.DTYPE_TRAITS[spec["dtype"]["any_of"][0]].is_integral
+            o for o in schema.mutable_tensors if semantics.DTYPE_TRAITS[self.point.dtypes[o]].is_integral
         }
-        assert {o: results[o].detail for o in integral if not results[o].is_passed} == {}
+        assert {o: why for o, why in results.items() if o in integral} == {}
         reference = {o: t.float() for o, t in self.reference_outputs(args).items()}
-        for o in output_specs.keys() - integral:
-            bound = output_specs[o]["error_bounds"][0][1]
+        tensors = schema.tensors()
+        for o in set(schema.mutable_tensors) - integral:
+            bound = tensors[o].error_bounds[0][1]
             # shortcut: 20 dB uncalibrated (MI300X skips), set from the gfx950 SQNRs once measured
-            min_sqnr_db = bound["min_sqnr_db"] if bound["kind"] == "sqnr" else 20.0
+            min_sqnr_db = bound.min_sqnr_db if isinstance(bound, semantics.SqnrBound) else 20.0
             error = (outputs[o].cpu().float() - reference[o]).norm()
             assert error <= 10 ** (-min_sqnr_db / 20) * reference[o].norm(), (
                 o,

@@ -9,7 +9,6 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
     CuSeqlensDistribution,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
@@ -17,6 +16,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,

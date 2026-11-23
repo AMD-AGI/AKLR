@@ -503,7 +503,7 @@ class TestDispatcherRegistry:
         result = aklr.ops.gemm.gemm(**case.call(args, "cuda"))
         assert not isinstance(result, FallbackReason)
         comparisons = case.compare(case.contract.outputs_by_name(result), args)
-        assert {o: c.is_passed for o, c in comparisons.items()} == dict.fromkeys(case.contract.outputs, True)
+        assert comparisons == {}
 
 
 class TestVllmPlugin:

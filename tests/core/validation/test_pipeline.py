@@ -123,14 +123,14 @@ def _gate(entry: float, retain: float | None = None) -> FindingCode | None:
 def _workload(
     axes: dict[str, int],
     speedup: float | None,
-    fraction: float | None = None,
+    is_compared: bool = False,
 ) -> WorkloadRecord:
     return WorkloadRecord(
         schema_path=_SCHEMA,
         axes=axes,
         kernel_content_hash="",
         is_timed=True,
-        worst_violation_fraction=fraction,
+        is_compared=is_compared,
         timings=(() if speedup is None else (_timing("graph", "baseline", "entry", speedup),)),
         batch_stopped=False,
     )
@@ -193,14 +193,14 @@ class TestPipeline:
         """A passed bench report of two workloads."""
         return TestPipeline._bench(
             [],
-            _workload({"m": 1}, 1.2, 0.1),
-            _workload({"m": 2}, 1.5, 0.1),
+            _workload({"m": 1}, 1.2, True),
+            _workload({"m": 2}, 1.5, True),
         )
 
     @staticmethod
     def _demotion(code: FindingCode) -> tuple[str, int, int]:
         """A bench report of one workload and ``code`` on it: status, deciding, demoted."""
-        report = TestPipeline._bench([(code, {"m": 1}, "")], _workload({"m": 1}, 1.5, 0.0))
+        report = TestPipeline._bench([(code, {"m": 1}, "")], _workload({"m": 1}, 1.5, True))
         return report.status, len(report.findings), len(report.demotions)
 
     @staticmethod
@@ -231,7 +231,7 @@ class TestPipeline:
         )
         bench = BenchReport.from_findings(
             findings,
-            workload_records=tuple(_workload(w.axes, speedup, 0.0) for w in schema.workloads),
+            workload_records=tuple(_workload(w.axes, speedup, True) for w in schema.workloads),
         )
         PipelineReport(
             head_sha="",
@@ -476,7 +476,7 @@ class TestPipeline:
             pytest.param(
                 lambda _: TestPipeline._bench(
                     [(FindingCode.BASELINE_FAILED, {"m": 2}, "declined")],
-                    _workload({"m": 1}, 1.5, 0.1),
+                    _workload({"m": 1}, 1.5, True),
                     _workload({"m": 2}, None),
                 ).batch_line(),
                 f"failed {_LABEL}: 2 wl, speedup 1.50x, acc ok 1/2",
@@ -491,7 +491,7 @@ class TestPipeline:
                 id="line-demoted-only",
             ),
             pytest.param(
-                lambda _: TestPipeline._bench(_NEWLY_WRONG, _workload({"m": 1}, 1.5, 3.1)).batch_line(),
+                lambda _: TestPipeline._bench(_NEWLY_WRONG, _workload({"m": 1}, 1.5, True)).batch_line(),
                 f"failed {_LABEL}: 1 wl, speedup 1.50x, acc FAIL 1/1",
                 id="line-newly-wrong",
             ),
@@ -525,7 +525,7 @@ class TestPipeline:
             pytest.param(
                 lambda _: TestPipeline._bench(
                     [(FindingCode.NOT_FASTER, {"m": 2}, "")],
-                    _workload({"m": 1}, 1.2, 0.1),
+                    _workload({"m": 1}, 1.2, True),
                     _workload({"m": 2}, 2.0),
                 ).outcome_lines(),
                 [
@@ -695,8 +695,8 @@ class TestSpeedupMeasures:
     def test_one_correct_fast_workload_admits_kernel(self) -> None:
         report = TestPipeline._bench(
             [(FindingCode.POST_TIMING_MISMATCH, {"m": 1}, "stale weights")],
-            _workload({"m": 1}, 2.0, 1.0),
-            _workload({"m": 2}, 1.5, 0.0),
+            _workload({"m": 1}, 2.0, True),
+            _workload({"m": 2}, 1.5, True),
         )
         assert report.is_passed
         assert report.accuracy() == (1, 1)
@@ -709,8 +709,8 @@ class TestSpeedupMeasures:
     def test_same_workload_must_be_correct_and_fast(self, ratio: float, expected: bool) -> None:
         report = TestPipeline._bench(
             [(FindingCode.POST_TIMING_MISMATCH, {"m": 1}, "")],
-            _workload({"m": 1}, 3.0, 1.0),
-            _workload({"m": 2}, ratio, 0.0),
+            _workload({"m": 1}, 3.0, True),
+            _workload({"m": 2}, ratio, True),
         )
         assert report.is_passed is expected
         assert [f.code for f in report.findings] == ([] if expected else [FindingCode.NO_QUALIFYING_WORKLOAD])
@@ -719,8 +719,8 @@ class TestSpeedupMeasures:
         report = BenchReport.from_findings(
             [],
             workload_records=(
-                _workload({"m": 1}, 1.5, 0.0),
-                _workload({"m": 1}, 0.99, 0.0).model_copy(update={"schema_path": _TRITON_SCHEMA}),
+                _workload({"m": 1}, 1.5, True),
+                _workload({"m": 1}, 0.99, True).model_copy(update={"schema_path": _TRITON_SCHEMA}),
             ),
         )
         assert report.status == "failed"
@@ -729,14 +729,14 @@ class TestSpeedupMeasures:
         ]
 
     def test_untimed_correct_workload_without_baseline_qualifies(self) -> None:
-        record = _workload({"m": 1}, None, 0.0).model_copy(update={"is_timed": False})
+        record = _workload({"m": 1}, None, True).model_copy(update={"is_timed": False})
         assert TestPipeline._bench([], record).is_passed
 
     @pytest.mark.parametrize("qualifying_ratio", [0.99, 1.5])
     def test_admission_preserves_failed_workload_dispatch_exclusion(self, qualifying_ratio: float) -> None:
         schema = ContractRegistry.default().parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
         failed_axes = schema.workloads[0].axes
-        records = tuple(_workload(w.axes, qualifying_ratio, 0.0) for w in schema.workloads)
+        records = tuple(_workload(w.axes, qualifying_ratio, True) for w in schema.workloads)
         report = TestPipeline._bench([(FindingCode.POST_TIMING_MISMATCH, failed_axes, "")], *records)
         assert report.is_passed is (qualifying_ratio >= 1.05)
         measured = report.measurements(_SCHEMA, schema)
@@ -763,7 +763,7 @@ class TestSpeedupMeasures:
         schema = ContractRegistry.default().parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
         records = tuple(
             (
-                _workload(w.axes, 1.5, 0.0)
+                _workload(w.axes, 1.5, True)
                 if index == 0 and has_qualifying_workload
                 else _workload(w.axes, None).model_copy(update={"batch_stopped": True})
             )
@@ -792,7 +792,7 @@ class TestSpeedupMeasures:
     def test_platform_batch_failure_still_blocks_qualifying_kernel(self) -> None:
         report = TestPipeline._bench(
             [(FindingCode.PLATFORM_FAILURE, {"m": 2}, "reference worker died")],
-            _workload({"m": 1}, 1.5, 0.0),
+            _workload({"m": 1}, 1.5, True),
             _workload({"m": 2}, None).model_copy(update={"batch_stopped": True}),
         )
         assert report.status == "aborted"
@@ -1053,7 +1053,7 @@ def test_the_trial_evaluates_each_workload_its_baseline_did_not_decline(
         ),
     )
     reference = tuple(
-        ReferenceWorkloadResult(axes_text=a, findings=(), worst_violation_fraction=None, is_complete=True)
+        ReferenceWorkloadResult(axes_text=a, findings=(), is_compared=False, is_complete=True)
         for a in evaluated
     )
     value = TrialResult(candidate=candidate, reference=reference).model_dump(mode="json")
@@ -1161,7 +1161,7 @@ def test_an_untimed_bench_never_runs_the_baseline(monkeypatch: pytest.MonkeyPatc
 def test_an_untimed_bench_fails_on_any_incorrect_workload() -> None:
     """An untimed bench writes nothing back, so a mismatch cannot demote its workload: it fails."""
     findings = [Finding(code=FindingCode.NUMERIC_MISMATCH, schema_path=_SCHEMA, axes={"m": 1}, detail="")]
-    records = (_workload({"m": 1}, 1.5, 0.0), _workload({"m": 2}, 1.5, 0.0))
+    records = (_workload({"m": 1}, 1.5, True), _workload({"m": 2}, 1.5, True))
     assert BenchReport.from_findings(findings, workload_records=records).status == "passed"
     untimed = BenchReport.from_findings(findings, demote=False, workload_records=records)
     assert (untimed.status, len(untimed.findings), untimed.demotions) == ("failed", 1, ())
@@ -1220,3 +1220,18 @@ def test_importing_validation_loads_no_torch() -> None:
 
     code = "import sys, aklr.core.validation; sys.exit('torch' in sys.modules)"
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def test_two_runs_differ_only_by_their_bytes():
+    """Byte-identical runs agree, NaN with NaN; one element of four off is a quarter of the output."""
+    import torch
+
+    from aklr.core.validation.stages._bench._evaluation._comparison import find_nondeterminism
+
+    first = {"out": torch.tensor([1.0, float("nan"), 3.0, 4.0])}
+    assert find_nondeterminism(first, {"out": first["out"].clone()}) is None
+    second = first["out"].clone()
+    second[0] = 1.5
+    assert (
+        find_nondeterminism(first, {"out": second}) == "0.25 of an output's elements differ from numeric/0's"
+    )

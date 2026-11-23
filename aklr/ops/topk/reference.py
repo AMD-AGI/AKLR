@@ -5,7 +5,7 @@ import torch
 
 from aklr.core.contract.reference import OpReference
 
-__all__ = ["BiasedGroupedTopkReference", "TopkTransformPagedReference"]
+__all__ = ["AnyOrderInFullRowsReference", "BiasedGroupedTopkReference", "TopkTransformPagedReference"]
 
 
 class BiasedGroupedTopkReference(OpReference):
@@ -24,7 +24,20 @@ class BiasedGroupedTopkReference(OpReference):
         return {"topk_weights": weights * routed_scaling_factor, "topk_ids": chosen.to(topk_ids.dtype)}
 
 
-class TopkTransformPagedReference(OpReference):
+class AnyOrderInFullRowsReference(OpReference):
+    def check(self, outputs, expected, schema):
+        """``OpReference.check``, but a row of ``out_page_indices`` the reference fills (no -1) may
+        list its slots in any order: ties and a full row's order are the kernel's choice."""
+        out, reference = outputs["out_page_indices"], expected["out_page_indices"]
+        is_full = (reference >= 0).all(dim=-1, keepdim=True)
+        out = torch.where(is_full, out.sort(dim=-1).values, out)
+        reference = torch.where(is_full, reference.sort(dim=-1).values, reference)
+        return super().check(
+            {**outputs, "out_page_indices": out}, {**expected, "out_page_indices": reference}, schema
+        )
+
+
+class TopkTransformPagedReference(AnyOrderInFullRowsReference):
     def reference(self, *, scores, seq_lens, page_size, out_page_indices, page_tables=None, **_):
         """Each row's selected candidates, mapped through its page table when given."""
         topk = out_page_indices.shape[-1]

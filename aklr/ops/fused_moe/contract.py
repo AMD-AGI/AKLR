@@ -8,7 +8,6 @@ from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
     MOE_MXFP4_SNR,
     MOE_MXFP8_SNR,
-    DeterminismLevel,
     Distribution,
     DType,
     E8M0Scales,
@@ -22,6 +21,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,

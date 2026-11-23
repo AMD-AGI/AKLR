@@ -89,16 +89,14 @@ class Qwen2MoeRouterReference(OpReference):
             "topk_id_scores": logits.to(torch.bfloat16),
         }
 
-    def check(self, outputs, expected, criteria):
+    def check(self, outputs, expected, schema):
         """``OpReference.check``, but an id that differs from the reference's stands for it where
         the two experts' logits are equal or one bf16 value apart, in a row without a repeated id:
         a kernel sums in another order, so a logit at a rounding midpoint can round to the next
         value."""
         ids, reference_ids = outputs["topk_ids"], expected["topk_ids"]
         tied = _tied(ids, reference_ids, expected["topk_id_scores"])
-        return super().check(
-            {**outputs, "topk_ids": torch.where(tied, reference_ids, ids)}, expected, criteria
-        )
+        return super().check({**outputs, "topk_ids": torch.where(tied, reference_ids, ids)}, expected, schema)
 
 
 def _tied(ids, reference_ids, logits):

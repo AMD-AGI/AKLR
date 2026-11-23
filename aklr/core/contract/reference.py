@@ -11,10 +11,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from aklr.core.contract.semantics import CompareResult, compare_outputs
-
 if TYPE_CHECKING:
     from torch import Tensor
+
+    from aklr.core.contract.op import OpContract
 
 __all__ = ["DistOpReference", "OpReference"]
 
@@ -28,11 +28,19 @@ class OpReference(ABC):
         of ``call``."""
 
     def check(
-        self, outputs: Mapping[str, Tensor], expected: Mapping[str, Tensor], criteria: Mapping[str, Any]
-    ) -> dict[str, CompareResult]:
-        """Each of ``outputs`` against ``expected``, by name, under ``criteria``
-        (``comparison_criteria``): the compare settings and each output's error bound."""
-        return compare_outputs(criteria, outputs, expected)
+        self, outputs: Mapping[str, Tensor], expected: Mapping[str, Tensor], schema: OpContract
+    ) -> dict[str, str]:
+        """Each tensor of ``schema`` (the contract at one scenario) with an error bound, against
+        ``expected`` under that bound: the ones past it, each with why; none when every one is
+        within it. Both sides are in the declared dtypes, compared element by element on their
+        device."""
+        failures = {}
+        for name, spec in schema.tensors().items():
+            if spec.error_bounds:
+                is_passed, detail = spec.error_bounds[0][1].compare(outputs[name], expected[name])
+                if not is_passed:
+                    failures[name] = detail
+        return failures
 
 
 class DistOpReference(OpReference):

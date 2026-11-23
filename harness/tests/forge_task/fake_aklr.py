@@ -97,15 +97,14 @@ findings, demotions, records = [], [], []
 for index, workload in enumerate(candidate["workloads"]):
     if aborted:
         findings.append({{"code": "platform_failure", "axes": workload["axes"], "detail": "timing: rocprofiler-sdk"}})
-        records.append({{"axes": workload["axes"], "worst_violation_fraction": None, "timings": []}})
+        records.append({{"axes": workload["axes"], "is_compared": False, "timings": []}})
         continue
     if not passing:
         demotions.append({{"code": "numeric_mismatch", "axes": workload["axes"], "detail": "off"}})
     timing = {{"mode": "graph", "versus": "baseline", "ratio_lower_bound": 0.9,
                "candidate_milliseconds": [0.01 * (index + 1)] * 3, "versus_milliseconds": [0.009 * (index + 1)] * 3}}
     timings = [timing] if {timed_baseline} else []
-    violation = 0.0 if passing else 0.5
-    records.append({{"axes": workload["axes"], "worst_violation_fraction": violation, "timings": timings}})
+    records.append({{"axes": workload["axes"], "is_compared": True, "timings": timings}})
 if demotions and not aborted:
     findings.append({{"code": "no_qualifying_workload", "axes": None, "detail": "no workload passes"}})
 out.mkdir(parents=True, exist_ok=True)
@@ -177,7 +176,6 @@ def schema_payload(
         "workloads": [{"axes": {"m": int(case.split("=")[1])}} for case in CASES],
         "compare": {
             "determinism": "bitwise",
-            "element_order": "fixed",
         },
         "kernel": {
             "language": "flydsl",

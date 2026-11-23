@@ -257,12 +257,10 @@ thread (`T<n>:<register>`) holds each element, and `format_hardware_view(shape)`
 | `post_timing_mismatch` (`post_timing/i`) | wrong after the timed replays | state kept between calls ([pitfall](../pitfalls/state_kept_across_calls.md)) |
 
 A mismatch's detail reads (S35)
-`<step> (<input set>): <output>: violation_fraction …, peak_bound_multiple …, bias_z_score …, <n> non-finite mismatches`.
+`<step> (<input set>): <output>: violation_fraction …, peak_bound_multiple …, <n> non-finite mismatches` under a `tolerance` bound, `<output>: sqnr … dB (min … dB), <n> non-finite mismatches` under an `sqnr` one.
 Before the call it captures, bench fills each output with NaN, or 0xFF bytes for integer and sub-byte dtypes (S57):
 non-finite mismatches in a float output can indicate elements the kernel never wrote, or non-finite values it computed
-(8 unwritten rows of a f3970dec copy: exactly their 24576 elements) *(field, E3)*. A failure within the violation limit
-with no non-finite mismatch failed the bias test, a rounding that leans one way ([numerics.md](numerics.md) §1;
-`harness/skills/read-validation`).
+(8 unwritten rows of a f3970dec copy: exactly their 24576 elements) *(field, E3)*.
 
 **Buffer ops are not bounded by the tensor.** Triton gives a buffer descriptor `num_records` `0x7ffffffe`, 2^31 − 2
 bytes from the base, and a masked lane the out-of-range offset `0x80000000` (S22): 26 configurations of Gluon buffer ops
@@ -343,8 +341,8 @@ without `allow_flush_denorm` the 4 DSA 64-head kernels' code did not change; acc
 
    Import the kernel as a package over its directory, as AKLR does (`_load_candidate` there). `run` returns nothing:
    call `kernel.run(**call)`, take `outputs = {n: call[n] for n in contract.mutable_tensors}`, then
-   `contract.reference.check(outputs, expected, semantics.comparison_criteria(request.schema_json))` gives the
-   finding's measures (violation_fraction 0.8646 where validate printed 0.865) *(field, E1)*.
+   `contract.reference.check(outputs, expected, request.schema)` gives each failed output's detail, the finding's
+   measures (violation_fraction 0.8646 where validate printed 0.865) *(field, E1)*.
 2. Bisect a multi-launch op by stage: compare each stage's scratch output with the same stage computed in torch; the
    first one that disagrees beyond its rounding holds the bug.
 3. Dump a tile: a store under `if gl.program_id(0) == p:` into a debug tensor wrote only that program's tile, equal to
@@ -561,7 +559,7 @@ whose bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33)
 - S32 aklr/core/runtime/builder/builder.py:104 the package `<prefix><content_hash[:16]>` under `<kernel cache>/<language>/` (:106-108); `TritonBuilder` sets the language `triton` (:193-196), so the prefix is `_aklr_triton_`
 - S33 aklr/core/utils/testing.py:77 `flush_l2_cache` reads a 1 GiB buffer: "written lines would stay dirty for the next kernel" (:78)
 - S34 aklr/core/validation/command.py:25 `DEFAULT_REPORT_DIR = Path("aklr_validation")`, `--out` at :40
-- S35 aklr/core/validation/stages/_bench/_evaluation/_request.py:124 the steps `first_capture/0-2`, `numeric/0-3`, `determinism/0`, `post_timing/*` and their codes (:32-38); a finding's detail starts with the step label (_reference.py:149); a mismatch's measures (aklr/core/contract/semantics/_compare.py:29-34)
+- S35 aklr/core/validation/stages/_bench/_evaluation/_request.py:124 the steps `first_capture/0-2`, `numeric/0-3`, `determinism/0`, `post_timing/*` and their codes (:32-38); a finding's detail starts with the step label (_reference.py:149); a mismatch's measures (aklr/core/contract/semantics/_error_bounds.py:48-58 for a `tolerance` bound, :75-86 for an `sqnr` one)
 - S36 .github/workflows/ci.yaml:218 `TRITON_CACHE_DIR` under `$RUNNER_TEMP`, emptied at every job (:206); the baseline aiter installed with `AITER_USE_SYSTEM_TRITON=1`, "Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins" (:231-233); the job fails if the image's Triton changed (:232, :236); the `amd-aiter` version must contain `+g<commit[:7]>` (:245)
 - S37 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:85 a candidate task that dies is `candidate_crash` with its last line, such as "runner … exited with code -11"
 - S38 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/2ee56a6dbabc48a6.json#kernel.py:309 `if TILES > 1:` allocates `cache0`/`cache1`, the other branches `cache_shared` (:316-325); `TILES` at :285; 256 keys per tile (`key_offsets = gl.arange(0, 256, …)` at :308, the tile's indices at :337); the 64-head path reads `cache_shared` at :376; the host's split rule at :585

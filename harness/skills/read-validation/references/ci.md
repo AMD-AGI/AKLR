@@ -36,7 +36,7 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 - `stages[]` has `stage_name` (`audit`, `bench`), `status`, `findings[]` (`code`,
   `schema_path`, `axes`, `detail`); the bench stage adds `demotions[]` and `workload_records[]`.
 - A workload record: `schema_path`, `axes`, `kernel_content_hash`, `is_timed` (the contract's
-  baseline was timed; false under `--no-timing`), `worst_violation_fraction`, `timings[]`,
+  baseline was timed; false under `--no-timing`), `is_compared` (the reference was compared with its outputs), `timings[]`,
   `batch_stopped`.
 - A timing: `mode` (`graph`), `versus` (`baseline` or `incumbent`), `threshold` (`entry` or
   `retain`), `n_rounds`, `ratio_lower_bound` (the gate's, clamped), `log_ratio_mean` and `min_ratio`

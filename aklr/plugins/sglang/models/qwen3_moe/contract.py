@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     LecunNormalDistribution,
@@ -21,6 +20,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,

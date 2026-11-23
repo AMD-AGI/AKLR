@@ -151,7 +151,7 @@ def _restated_scale_steps(cache, expected, slots):
 
 
 class _IndexKCacheReference(OpReference):
-    def check(self, outputs, expected, criteria):
+    def check(self, outputs, expected, schema):
         """``OpReference.check``, but a key stored at twice or half the reference's scale, its fp8
         values half or twice, stands for the reference's key: a kernel that sums a projection in
         another order rounds a few values to the next bf16, and a key's amax can then cross a power
@@ -159,7 +159,7 @@ class _IndexKCacheReference(OpReference):
         cache = _restated_scale_steps(
             outputs["index_k_cache"], expected["index_k_cache"], expected["written_slots"]
         )
-        return super().check({**outputs, "index_k_cache": cache}, expected, criteria)
+        return super().check({**outputs, "index_k_cache": cache}, expected, schema)
 
 
 class DsaIndexerPrepareReference(_IndexKCacheReference):

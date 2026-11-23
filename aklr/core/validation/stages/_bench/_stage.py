@@ -329,14 +329,14 @@ class BenchStage(PipelineStage[BenchReport]):
         findings: list[Finding] = []
         records: list[WorkloadRecord] = []
         for request in batch:
-            found, timings, worst_violation_fraction = list(batch_findings), (), None
+            found, timings, is_compared = list(batch_findings), (), False
             if not batch_findings:
                 candidate_result = candidate_results[request.axes_text]
                 # absent: declined by the baseline, the candidate's finding alone
                 reference_result = reference_results.get(request.axes_text)
                 found = list(candidate_result.findings)
                 if reference_result is not None:
-                    worst_violation_fraction = reference_result.worst_violation_fraction
+                    is_compared = reference_result.is_compared
                     found[:0] = reference_result.findings
                     if not candidate_result.findings:
                         if not reference_result.is_complete:
@@ -355,7 +355,7 @@ class BenchStage(PipelineStage[BenchReport]):
                     batch_stopped=bool(batch_findings),
                     kernel_content_hash=request.schema.kernel.content_hash,
                     is_timed="baseline" in request.thresholds,
-                    worst_violation_fraction=worst_violation_fraction,
+                    is_compared=is_compared,
                     timings=timings,
                 )
             )

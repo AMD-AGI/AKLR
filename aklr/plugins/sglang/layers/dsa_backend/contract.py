@@ -9,9 +9,7 @@ from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
     CausalTopkDistribution,
     CuSeqlensDistribution,
-    DeterminismLevel,
     DType,
-    ElementOrder,
     FiniteDistribution,
     IntRangeDistribution,
     PermutationDistribution,
@@ -19,6 +17,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -213,11 +212,8 @@ DSA_TOPK_TRANSFORM = OpContract(
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
-    # Ties and a full row's order are the kernel's choice.
-    compare=CompareSpec(
-        determinism=DeterminismLevel.BOUNDED,
-        element_order=ElementOrder.ANY_IN_FULL_ROWS,
-    ),
+    # Ties and a full row's order are the kernel's choice (the reference's check).
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     reference=DsaTopkTransformReference(),
     baseline=DsaTopkTransformBaseline(),
 )

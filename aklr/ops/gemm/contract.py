@@ -11,7 +11,6 @@ from aklr.core.contract.semantics import (
     GEMM_FP8_E5M2_SNR,
     GEMM_FP16_SNR,
     ColumnMajor,
-    DeterminismLevel,
     Distribution,
     DType,
     E8M0Scales,
@@ -23,6 +22,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,

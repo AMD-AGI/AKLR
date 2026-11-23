@@ -58,8 +58,8 @@ below are of the earlier versions, but for E18 on `3f488296…`.
   (`aklr/ops/fused_moe/contract.py`, the `shuffled_16x16` variant). A token's 9 expert ids are distinct (the
   `topk_ids` contract); none of these names has an expert mask or `num_local_tokens`.
 - Compare: `determinism: bounded`, and one bound on the whole output: SQNR ≥ 13 dB
-  against the reference (float32 in validation) rounded to bf16, with no per-element bound and no bias test (`SqnrBound`,
-  `aklr/core/contract/semantics/_compare.py`). Atomic accumulation is allowed.
+  against the reference in bf16, with no per-element bound (`SqnrBound`,
+  `aklr/core/contract/semantics/_error_bounds.py`). Atomic accumulation is allowed.
 - The model: the commit that adds the 257-expert `5d5b47d0…` names it GLM-5.2's MXFP4 MoE (256 routed experts plus
   the fused shared one, top-9) at decode sizes. The four names fit that layer (hidden 6144, MoE intermediate 2048,
   `aklr/benchmarks/models/glm52/README.md`): inter 256 and 512 are 2048 split 8 and 4 ways, 65 and 33 experts are
