@@ -50,7 +50,8 @@ def vllm_route(
 ) -> Callable[[Callable], Callable]:
     """Declare that vLLM's ``caller`` reaches AKLR ops through this function where it calls
     ``callees`` (each as the dotted name ``caller`` looks up at run time), on the vLLM releases
-    ``versions`` it was tested on; on any other, vLLM runs its own code.
+    ``versions`` it was tested on (a build of no release by its whole version, ``_vllm_version``);
+    on any other, vLLM runs its own code.
 
     Routes in a ``group`` are selected together: if one is untested on the installed
     version, none is installed. The registry checks and installs the selected batch
@@ -71,8 +72,11 @@ def vllm_route(
 
 def _vllm_version() -> str:
     """The installed vLLM's release, without a local label (0.33.0rc1.dev910+g4fab5a074 is
-    0.33.0rc1.dev910)."""
-    return Version(version("vllm")).public
+    0.33.0rc1.dev910). A build of no release (a fork's, 0.0.0) keeps its label, which names the
+    commit it was built from: Kimi-K3.1-Pro's image is 0.0.0+mum.14d1ec2336, and a route tested
+    on it is not hooked on another fork."""
+    installed = Version(version("vllm"))
+    return installed.public if any(installed.release) else str(installed)
 
 
 def _install() -> list[str]:
