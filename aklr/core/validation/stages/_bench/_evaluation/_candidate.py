@@ -407,7 +407,10 @@ class CandidateRun:
                 lent,
                 filled,
             )
-        call = request.assemble_call(request.compose_inputs(None, self.device, self.rank), self.device)
+        call, baseline_call = (
+            request.assemble_call(request.compose_inputs(None, self.device, self.rank), self.device)
+            for _ in range(2)
+        )
         allocated = dict.fromkeys(contract.allocated_outputs)
         # a new dict per call: the dispatcher allocates into the one it gets
         fns = {"candidate": lambda: dispatcher.dispatch(call | allocated)}
@@ -419,7 +422,8 @@ class CandidateRun:
                 raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)
         where = f"{request.schema_path}:{request.axes_text}"
         try:
-            fns["baseline"] = lambda: contract.baseline.baseline(**call)
+            # its own tensors: what a kernel writes in place never reaches the baseline, nor back
+            fns["baseline"] = lambda: contract.baseline.baseline(**baseline_call)
             rounds = ()
             if request.thresholds:  # none: an untimed bench
                 root_hash = semantics.workload_hash(request.schema_json["name"], request.workload_json)
