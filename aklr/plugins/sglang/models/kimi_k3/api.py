@@ -10,12 +10,14 @@ from aklr.plugins.sglang.models.kimi_k3.contract import (
     KIMI_K3_LATENT_MOE,
     KIMI_K3_MLA_PREFILL_GATE,
     KIMI_K3_MLA_VC_OUTPUT_GATE,
+    KIMI_K3_ROUTED_MOE_MXFP8,
 )
 
 __all__ = [
     "kimi_k3_latent_moe",
     "kimi_k3_mla_prefill_gate",
     "kimi_k3_mla_vc_output_gate",
+    "kimi_k3_routed_moe_mxfp8",
 ]
 
 
@@ -37,6 +39,68 @@ def kimi_k3_latent_moe(
 
 @api(KIMI_K3_MLA_VC_OUTPUT_GATE)
 def kimi_k3_mla_vc_output_gate(latent, vc_weight, gate, output=None): ...
+
+
+@api(KIMI_K3_ROUTED_MOE_MXFP8)
+def kimi_k3_routed_moe_mxfp8(
+    a,
+    a_scale,
+    topk_ids,
+    topk_weights,
+    w1,
+    w1_scale,
+    w2,
+    w2_scale,
+    beta,
+    linear_beta,
+    out_dtype=None,
+    out=None,
+): ...
+
+
+# sglang's own gfx950 kernels (python/sglang/kernels/jit/csrc/moe/k3_a8w4_gfx950.cuh), which Kimi-K3.1's MoE
+# runs from 2048 tokens (KimiK3MoEHipMixin._run_a8w4)
+@sglang_route("sglang.kernels.ops.moe.k3_a8w4_gfx950.k3_a8w4_moe", versions=("0.5.24.dev809",))
+def _k3_a8w4_moe(
+    hidden_states,
+    topk_ids,
+    topk_weights,
+    w13,
+    w13_scale,
+    w2,
+    w2_scale,
+    *,
+    beta,
+    linear_beta,
+    out=None,
+    a_mx=None,
+):
+    """The experts on the input the row-sharded front gathered in MXFP8 (a_mx: e4m3 rows and their
+    e8m0 scales, as uint8; hidden_states then only gives the shape). A bf16 input, which the
+    experts would quantize themselves, stays on sglang. A row-strided ``out`` gets the op's own
+    output."""
+    import torch
+
+    if a_mx is None:
+        return FallbackReason.OUT_OF_CONTRACT
+    a, a_scale = a_mx
+    is_strided = out is not None and not out.is_contiguous()
+    result = kimi_k3_routed_moe_mxfp8(
+        a=a.view(torch.float8_e4m3fn),
+        a_scale=a_scale.view(torch.float8_e8m0fnu),
+        topk_ids=topk_ids,
+        topk_weights=topk_weights,
+        w1=w13,
+        w1_scale=w13_scale,
+        w2=w2,
+        w2_scale=w2_scale,
+        beta=float(beta),
+        linear_beta=float(linear_beta),
+        out=None if is_strided else out,
+    )
+    if isinstance(result, FallbackReason) or not is_strided:
+        return result
+    return out.copy_(result)
 
 
 @api(KIMI_K3_MLA_PREFILL_GATE)

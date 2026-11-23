@@ -16,16 +16,24 @@ does not cover the shapes).
 
 kimi_k3_mla_prefill_gate: forward_extend's extend_attention_fwd on a zero prefix, which casts
 Q, K and V to FP8 for Kimi-K3's shapes on gfx950 (SGLANG_TRITON_FP8_PREFILL_ATTN, on by
-default), then the fused output gate."""
+default), then the fused output gate.
+
+kimi_k3_routed_moe_mxfp8: from sglang 0.5.24.dev809 (Kimi-K3.1's image), its own gfx950 A8W4
+experts, k3_a8w4_moe, on the input its row-sharded front gathered in MXFP8 (a_mx): aiter's
+moe_sorting, then the copy of sglang's gateup, down and reduce kernels in _k3_a8w4_gfx950.hip, built
+here as a torch extension, so a sglang without them (CI's release) runs the baseline too;
+tests/plugins/sglang/test_k3_a8w4_baseline.py holds the copy to sglang's own kernels bit for bit."""
 
 from __future__ import annotations
 
 import functools
+from pathlib import Path
 
 __all__ = [
     "kimi_k3_latent_moe_baseline",
     "kimi_k3_mla_prefill_gate_baseline",
     "kimi_k3_mla_vc_output_gate_baseline",
+    "kimi_k3_routed_moe_mxfp8_baseline",
 ]
 
 
@@ -207,3 +215,116 @@ def kimi_k3_mla_prefill_gate_baseline(
     if mla_output_gate.covered(x, gate):
         return mla_output_gate.kimi_k3_mla_output_gate(x, gate)
     return x * torch.sigmoid(gate)
+
+
+_K3_A8W4_SOURCE = Path(__file__).with_name("_k3_a8w4_gfx950.hip")
+_K3_A8W4_LIBRARY = "aklr_baseline_k3_a8w4_gfx950"
+# sglang's k3_a8w4_gfx950.py: blocks of one expert per down work item, and the down's y column chunk
+_DOWN_SEG_BLOCKS = 8
+_Y_CHUNK_COLS = 512
+
+
+@functools.cache
+def _k3_a8w4_ops():
+    """The copy's ops, its library built on the first call for this process's GPU."""
+    import torch
+
+    from aklr.core.jit import hip_extension
+    from aklr.core.platform.device import DeviceTarget
+    from aklr.core.runtime.builder.builder import get_build_cache_path
+
+    arch = DeviceTarget.current().arch
+    if arch is None:
+        raise RuntimeError("k3_a8w4_gfx950: no GPU arch to build for")
+    root = get_build_cache_path() / "baselines" / _K3_A8W4_LIBRARY
+    hip_extension.load_library(
+        _K3_A8W4_LIBRARY, {"k3_a8w4_gfx950.hip": _K3_A8W4_SOURCE.read_text()}, root, arch
+    )
+    return getattr(torch.ops, _K3_A8W4_LIBRARY)
+
+
+def _block_m(num_tokens: int, top_k: int, num_experts: int) -> int:
+    """sglang's pick_block_m: rows of a sort block by the rows an expert gets."""
+    rows_per_expert = num_tokens * top_k / num_experts
+    if rows_per_expert <= 4:
+        return 16
+    if rows_per_expert <= 32:
+        return 32
+    return 64
+
+
+def kimi_k3_routed_moe_mxfp8_baseline(
+    a,
+    a_scale,
+    topk_ids,
+    topk_weights,
+    w1,
+    w1_scale,
+    w2,
+    w2_scale,
+    beta,
+    linear_beta,
+    out_dtype=None,
+    out=None,
+):
+    """k3_a8w4_moe(..., a_mx=(a, a_scale)) as sglang's _k3_a8w4_moe runs it: aiter's moe_sorting into
+    block_m-row blocks, gateup, down and the fp32 top-k reduce into out."""
+    import torch
+
+    num_tokens, hidden = a.shape
+    num_experts, top_k, inter_dim = w1.shape[0], topk_ids.shape[1], w1.shape[1] // 2
+    # KimiK3MoEHipMixin._a8w4_moe_min_tokens: the experts are built for these; elsewhere aiter's fused_moe runs
+    if hidden % 512 or inter_dim not in (384, 512) or top_k != 16 or num_experts > 1024:
+        raise NotImplementedError(
+            "sglang's k3_a8w4_moe: a hidden size a multiple of 512, inter 384 or 512, top-16, 1024 experts at most"
+        )
+    from aiter.fused_moe import moe_sorting
+
+    if out is None:
+        out = torch.empty(num_tokens, w2.shape[1], dtype=torch.bfloat16, device=a.device)
+    if num_tokens == 0:
+        return out
+    block_m = _block_m(num_tokens, top_k, num_experts)
+    sorted_ids, _, expert_ids, num_valid, _ = moe_sorting(
+        topk_ids, topk_weights, num_experts, hidden, torch.bfloat16, block_size=block_m, accumulate=False
+    )
+    ops, u8 = _k3_a8w4_ops(), torch.uint8
+    rows = expert_ids.shape[0] * block_m
+    inter = torch.empty(rows, inter_dim, dtype=u8, device=a.device)
+    inter_scale = torch.empty(rows, inter_dim // 32, dtype=u8, device=a.device)
+    ops.gateup(
+        a.view(u8),
+        a_scale.view(u8),
+        w1.view(u8),
+        w1_scale.view(u8),
+        sorted_ids,
+        expert_ids,
+        num_valid,
+        inter,
+        inter_scale,
+        block_m,
+        float(beta),
+        float(linear_beta),
+    )
+    y = torch.empty(sorted_ids.shape[0], w2.shape[1], dtype=torch.bfloat16, device=a.device)
+    pos = torch.empty(num_tokens * top_k, dtype=torch.int32, device=a.device)
+    # the down's work list: a header and at most max_blocks / seg_blocks + E items, int4 each
+    max_items = -(-expert_ids.shape[0] // _DOWN_SEG_BLOCKS) + w2.shape[0]
+    work = torch.empty(4 * (1 + max_items), dtype=torch.int32, device=a.device)
+    ops.down(
+        inter,
+        inter_scale,
+        w2.view(u8),
+        w2_scale.view(u8),
+        sorted_ids,
+        expert_ids,
+        num_valid,
+        y,
+        pos,
+        topk_weights,
+        work,
+        block_m,
+        _DOWN_SEG_BLOCKS,
+    )
+    ops.reduce(y, topk_weights, pos, out, _Y_CHUNK_COLS)
+    return out

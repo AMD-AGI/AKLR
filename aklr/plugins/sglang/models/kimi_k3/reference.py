@@ -18,6 +18,7 @@ __all__ = [
     "kimi_k3_latent_moe_reference",
     "kimi_k3_mla_prefill_gate_reference",
     "kimi_k3_mla_vc_output_gate_reference",
+    "kimi_k3_routed_moe_mxfp8_reference",
 ]
 
 _BLOCK = 32
@@ -78,6 +79,37 @@ def kimi_k3_latent_moe_reference(
         h = rounded_to_bfloat16(_situ(g, u))
         latent.index_add_(0, tokens, weights[tokens, slots, None] * (_mxfp8(h) @ weight("w2", e).T))
     return latent, shared
+
+
+def kimi_k3_routed_moe_mxfp8_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+) -> Tensor:
+    """The routed experts' weighed sum. Rounding points: the input is the MXFP8 it is given; each
+    expert's SiTUv2 product to bf16, then to MXFP8 per 1 x 32 for the down projection, as sglang's
+    k3_a8w4 experts take it."""
+    import torch
+
+    args = row_major_args
+
+    def f(name: str, index: Any = None) -> Tensor:
+        tensor = args[name] if index is None else args[name][index]
+        return to_float32(tensor, point.dtypes[name])
+
+    def weight(name: str, e: int) -> Tensor:
+        return f(name, e) * f(f"{name}_scale", e).repeat_interleave(_BLOCK, dim=-1)
+
+    beta, linear_beta = float(args["beta"]), float(args["linear_beta"])
+    x = f("a") * f("a_scale").repeat_interleave(_BLOCK, dim=-1)
+    ids, weights = args["topk_ids"].long(), f("topk_weights")
+    out = torch.zeros_like(x)
+    for e in ids.unique().tolist():
+        tokens, slots = (ids == e).nonzero(as_tuple=True)
+        g, u = (x[tokens] @ weight("w1", e).T).chunk(2, dim=-1)
+        situ = beta * torch.tanh(g / beta) * torch.sigmoid(g) * (linear_beta * torch.tanh(u / linear_beta))
+        h = rounded_to_bfloat16(situ)
+        out.index_add_(0, tokens, weights[tokens, slots, None] * (_mxfp8(h) @ weight("w2", e).T))
+    return out
 
 
 def kimi_k3_mla_vc_output_gate_reference(
