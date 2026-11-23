@@ -87,7 +87,7 @@ def test_the_brief_states_the_operator_and_points_at_aklrs_rules(aklr_root: Path
     assert "Inputs: `a`, `b`. Outputs: `out`." in brief
     assert str(run.schema_json) in brief
     assert all(f"`{case_id}`" in brief for case_id in CASES)
-    assert f"{aklr_root}/aklr/ops/README.md" in brief
+    assert f"{aklr_root}/aklr/plugins/aiter/README.md" in brief
     assert "bitwise" in brief
     assert "faster than the baseline on average" in brief
 
@@ -240,5 +240,5 @@ def test_a_schema_outside_aklr_ops_is_refused(aklr_root: Path, tmp_path: Path, p
     copy = tmp_path / parent / "schema.json"
     copy.parent.mkdir(parents=True)
     shutil.copyfile(find(aklr_root, SCHEMA_NAME), copy)
-    with pytest.raises(SchemaError, match="not under aklr/ops"):
+    with pytest.raises(SchemaError, match="not under aklr/plugins/aiter"):
         load(copy)

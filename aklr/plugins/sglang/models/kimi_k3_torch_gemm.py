@@ -9,19 +9,30 @@ through ``kimi_k3_tiny_gemm``, which the model imports at each call. Both are ``
 
 from __future__ import annotations
 
-from aklr.ops.gemm.api import gemm
-from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins import Plugin
+from aklr.plugins.aiter.gemm.plugin import gemm
 
 __all__: list[str] = []
 
 
-@sglang_route("sglang.srt.models.kimi_k3._k3_bf16_gemm", versions=("0.5.22", "0.5.23"))
 def _k3_bf16_gemm(x, weight, out=None, out_dtype=None):
     if out_dtype is None and out is not None:
         out_dtype = out.dtype
     return gemm(x, weight, out_dtype=out_dtype, out=out)
 
 
-@sglang_route("sglang.kernels.ops.gemm.kimi_k3_tiny_gemm", versions=("0.5.22", "0.5.23"))
 def _kimi_k3_tiny_gemm(x, w):
     return gemm(x, w)
+
+
+def declare(plugin: Plugin) -> None:
+    plugin.wrap(
+        "sglang.srt.models.kimi_k3._k3_bf16_gemm",
+        versions=("0.5.22", "0.5.23"),
+        replace=_k3_bf16_gemm,
+    )
+    plugin.wrap(
+        "sglang.kernels.ops.gemm.kimi_k3_tiny_gemm",
+        versions=("0.5.22", "0.5.23"),
+        replace=_kimi_k3_tiny_gemm,
+    )

@@ -3,6 +3,6 @@
 
 """Kimi-K3's KDA chain verify in ReplaySSM ring mode, as sglang runs it on gfx950."""
 
-from aklr.plugins.sglang.layers.kda_backend_hip.api import kda_chain_verify_ring
+from aklr.plugins.sglang.layers.kda_backend_hip.plugin import kda_chain_verify_ring
 
 __all__ = ["kda_chain_verify_ring"]

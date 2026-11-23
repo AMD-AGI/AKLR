@@ -21,7 +21,7 @@ def situv2_a4w4_moe_reference(
     row_major_args: Mapping[str, Any],
 ) -> Tensor:
     """Each token through its top-k experts, weighted by its routing weights, summed."""
-    from aklr.ops.fused_moe.reference import fused_moe_reference
+    from aklr.plugins.aiter.fused_moe.reference import fused_moe_reference
 
     attrs = {
         "activation": "situv2",

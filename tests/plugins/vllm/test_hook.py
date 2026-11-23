@@ -10,7 +10,7 @@ import pkgutil
 import sys
 import tomllib
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import torch
@@ -19,17 +19,38 @@ import aklr.plugins.vllm as plugin
 from aklr.core.platform.env import ENV_DISABLE, ENV_TRACE, ENV_VLLM_PLUGIN
 from aklr.core.runtime._vllm_hook_registry import HookRegistry, HookSpec, HookType
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
+from aklr.plugins import Plugin
 from aklr.plugins.vllm import hook, warmup
+from aklr.plugins.vllm.models.kimi_k3.attn_res.contract import KIMI_K3_ATTN_RES
+from aklr.plugins.vllm.models.muse_spark.contract import MUSE_SPARK_MOE
 
-# at collection, as the plugin does in each worker: before any test empties hook._ROUTES
-importlib.import_module("aklr.plugins.vllm.layers")
-importlib.import_module("aklr.plugins.vllm.models")
-DECLARED = [
-    (callee, route, declaration)
-    for route, targets in hook._ROUTES.items()
-    for callee, declaration in targets.items()
-]
-INSTALLED = "0.33.0rc1.dev910"
+
+class Declared:
+    def __init__(self):
+        self.routes = []
+
+    def intercept(self, caller, *callees, versions, replace, group=None):
+        for callee in callees:
+            self.routes.append(
+                (callee, replace, SimpleNamespace(caller=caller, versions=versions, group=group))
+            )
+
+
+def declared_routes():
+    declared = Declared()
+    for path in (
+        "layers.attention",
+        "layers.fused_moe_router",
+        "layers.skinny_gemm",
+        "models.kimi_k3.attn_res.plugin",
+        "models.muse_spark.plugin",
+    ):
+        importlib.import_module(f"aklr.plugins.vllm.{path}").declare(declared)
+    return declared.routes
+
+
+DECLARED = declared_routes()
+INSTALLED = "99.0.1"
 
 
 @pytest.fixture(autouse=True)
@@ -99,7 +120,7 @@ def fake(monkeypatch):
     module = ModuleType("fake_aiter")
     module.callee = lambda x: f"aiter({x})"
     monkeypatch.setitem(sys.modules, module.__name__, module)
-    monkeypatch.setattr(hook, "_ROUTES", {})
+    monkeypatch.setattr(plugin, "plugin", Plugin("vllm"))
     monkeypatch.setattr(hook, "_vllm_version", lambda: INSTALLED)
     return module
 
@@ -114,7 +135,7 @@ CALLER = f"{__name__}.caller"
 
 
 def declare(route, versions=(INSTALLED,), group=None):
-    hook.vllm_route(CALLER, "fake_aiter.callee", versions=versions, group=group)(route)
+    plugin.plugin.intercept(CALLER, "fake_aiter.callee", versions=versions, group=group, replace=route)
 
 
 def test_a_route_serves(fake):
@@ -195,7 +216,7 @@ def test_module_alias_routes_install_once_and_capture_replaced_natives(
 
         return native
 
-    hook.vllm_route(CALLER, *callees, versions=(INSTALLED,))(route)
+    plugin.plugin.intercept(CALLER, *callees, versions=(INSTALLED,), replace=route)
     for label in ("aiter", "replacement"):
         native = make_native(label)
         fake.callee = alias.callee = native
@@ -228,9 +249,14 @@ def test_different_routes_on_aliased_modules_conflict_before_writing(monkeypatch
     fake.other = lambda x: f"other({x})"
     other_native = fake.other
     declare(lambda x: f"first({x})")
-    hook.vllm_route(CALLER, "fake_aiter_compat.callee", versions=(INSTALLED,))(lambda x: f"second({x})")
-    hook.vllm_route(f"{__name__}.other_caller", "fake_aiter.other", versions=(INSTALLED,))(
-        lambda x: f"aklr_other({x})"
+    plugin.plugin.intercept(
+        CALLER, "fake_aiter_compat.callee", versions=(INSTALLED,), replace=lambda x: f"second({x})"
+    )
+    plugin.plugin.intercept(
+        f"{__name__}.other_caller",
+        "fake_aiter.other",
+        versions=(INSTALLED,),
+        replace=lambda x: f"aklr_other({x})",
     )
     with pytest.raises(RuntimeError, match="conflicts with"):
         hook._install()
@@ -309,8 +335,8 @@ def test_a_route_untested_on_the_installed_vllm_is_not_hooked(fake):
 
 
 def test_a_caller_that_does_not_call_the_callee_raises(fake):
-    hook.vllm_route(f"{__name__}.test_a_route_serves", "fake_aiter.callee", versions=(INSTALLED,))(
-        lambda x: x
+    plugin.plugin.intercept(
+        f"{__name__}.test_a_route_serves", "fake_aiter.callee", versions=(INSTALLED,), replace=lambda x: x
     )
     with pytest.raises(RuntimeError, match="does not call"):
         hook._install()
@@ -341,8 +367,12 @@ def other_caller(x):
 def test_group_members_are_installed_or_skipped_together(fake, other_versions):
     fake.other = lambda x: f"other({x})"
     declare(lambda x: f"aklr({x})", group="paired")
-    hook.vllm_route(f"{__name__}.other_caller", "fake_aiter.other", versions=other_versions, group="paired")(
-        lambda x: f"aklr_other({x})"
+    plugin.plugin.intercept(
+        f"{__name__}.other_caller",
+        "fake_aiter.other",
+        versions=other_versions,
+        group="paired",
+        replace=lambda x: f"aklr_other({x})",
     )
     installed = hook._install()
     if INSTALLED in other_versions:
@@ -361,8 +391,12 @@ def test_invalid_group_member_leaves_every_binding_native(fake):
         return f"aklr({x})"
 
     declare(route, group="paired")
-    hook.vllm_route(f"{__name__}.other_caller", "fake_aiter.other", versions=(INSTALLED,), group="paired")(
-        lambda x, extra: x
+    plugin.plugin.intercept(
+        f"{__name__}.other_caller",
+        "fake_aiter.other",
+        versions=(INSTALLED,),
+        group="paired",
+        replace=lambda x, extra: x,
     )
     with pytest.raises(RuntimeError, match="incompatible parameters"):
         hook._install()
@@ -488,3 +522,14 @@ def test_any_other_switch_value_ends_the_process(monkeypatch, worker):
     monkeypatch.setenv(ENV_VLLM_PLUGIN, "true")
     with pytest.raises(SystemExit, match=ENV_VLLM_PLUGIN):
         plugin.register()
+
+
+def test_vllm_exports_one_instance_for_extensions():
+    assert isinstance(plugin.plugin, Plugin)
+    assert plugin.plugin.name == "vllm"
+
+
+def test_register_publishes_the_vllm_families(monkeypatch, worker):
+    monkeypatch.setenv(ENV_VLLM_PLUGIN, "1")
+    plugin.register()
+    assert plugin.plugin.contracts == (KIMI_K3_ATTN_RES, MUSE_SPARK_MOE)

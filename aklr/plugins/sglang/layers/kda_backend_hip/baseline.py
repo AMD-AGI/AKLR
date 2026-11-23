@@ -10,7 +10,7 @@ from __future__ import annotations
 import functools
 from pathlib import Path
 
-from aklr.plugins.sglang.layers.kda_backend_hip.contract import HEAD_DIM
+from aklr.plugins.sglang.layers.kda_backend_hip.plugin import HEAD_DIM
 
 __all__ = ["kda_chain_verify_ring_baseline"]
 

@@ -7,14 +7,29 @@ from __future__ import annotations
 
 import importlib
 
-from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import RuntimeEnv
 from aklr.core.runtime import _vllm_hook_registry as _hooks
 from aklr.core.runtime.dispatch._vllm import _register_runtime_hook
+from aklr.plugins import Plugin, _declare_families
 from aklr.plugins.vllm import hook
 from aklr.plugins.vllm.stack import roomy
 
-__all__ = ["register"]
+__all__ = ["plugin", "register"]
+
+plugin = Plugin("vllm")
+_MODULES = (
+    "layers.attention",
+    "layers.fused_moe_router",
+    "layers.skinny_gemm",
+    "models.kimi_k3.attn_res.plugin",
+    "models.muse_spark.plugin",
+)
+
+
+def _build():
+    return plugin.build(
+        _declare_families, *(importlib.import_module(f"{__name__}.{name}").declare for name in _MODULES)
+    )
 
 
 def register() -> None:
@@ -34,6 +49,8 @@ def _register() -> None:
 
         enable("AKLR vllm plugin, AKLR_AITER_PLUGIN=1")
     enabled = not env.is_all_disabled and env.is_vllm_plugin_enabled
+    if enabled:
+        _build()
     _register_runtime_hook()
     registry = _hooks.HookRegistry.default()
     if enabled:
@@ -78,11 +95,4 @@ def _execute(next_fn, *args, **kwargs):
 
 def _install_once() -> list[str]:
     """Import route declarations and let the registry install them idempotently."""
-    # The registry owns installation state, including restore/retry. Do not cache
-    # an installed target list here: restore invalidates it. Python caches imports.
-    importlib.import_module(f"{__name__}.layers")
-    importlib.import_module(f"{__name__}.models")
-    for package in op_packages():
-        if package.startswith(f"{__name__}."):
-            importlib.import_module(f"{package}.api")
     return hook._install()

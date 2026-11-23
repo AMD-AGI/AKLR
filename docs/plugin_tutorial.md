@@ -25,7 +25,7 @@ SGLang runs steps 1–3 as separate calls before `fused_moe`. In decode, where a
 
 So:
 
-- To make one op faster, write an op in `aklr/ops`.
+- To make one op faster, write an op in `aklr/plugins/aiter`.
 - When the optimization crosses one op's boundary, write a plugin.
 
 ## How the plugin runs
@@ -46,26 +46,25 @@ def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_i
 
 ### 2. Create the package
 
-Create `aklr/plugins/sglang/models/deepseek_v2/`, named after SGLang's source file. It holds the same files as an op in `aklr/ops`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`. The package name is the op's `op_type` and must be unique across `aklr/ops` and `aklr/plugins`.
+Create `aklr/plugins/sglang/models/deepseek_v2/`, named after SGLang's source file. It holds the same files as an op in `aklr/plugins/aiter`: `__init__.py`, `plugin.py`, `reference.py`, `baseline.py` and `impls/`. The package name is the op's `op_type` and must be unique across `aklr/plugins/aiter` and `aklr/plugins`.
 
 ### 3. Write the op
 
 As in step 1. A of the ops tutorial. For this op:
 
-- `contract.py` defines `DEEPSEEK_V2_MXFP4_MOE` (`deepseek_v2_mxfp4_moe@1.0`):
+- `plugin.py` defines `DEEPSEEK_V2_MXFP4_MOE` (`deepseek_v2_mxfp4_moe@1.0`):
   - inputs: what `forward_normal` reads, namely `hidden_states`; the router's `router_weight` and `correction_bias`; the experts' `w1`, `w1_scale`, `w2` and `w2_scale`, with the shared expert in the last slot (`n_experts = n_routed + 1`); and the scalar `routed_scaling_factor`;
   - attrs: the routing settings `topk`, `num_expert_group`, `topk_group`, `renormalize` and `scoring_func`;
   - output: `out`, the layer's output on this GPU, before the all-reduce.
 - `reference.py`: `deepseek_v2_mxfp4_moe_reference`, the contract's computation in fp32.
 - `baseline.py`: `deepseek_v2_mxfp4_moe_baseline`, what SGLang runs today for steps 1–9: the router GEMM, AITER's grouped top-k, SGLang's shared-expert append and AITER's `fused_moe`. A kernel has to beat this whole path, not `fused_moe` alone.
-- `api.py`: the entry function `@api(DEEPSEEK_V2_MXFP4_MOE)`, whose body is `...`.
+- In `plugin.py`, define and build `family`, then bind the `deepseek_v2_mxfp4_moe` signature with `@family.op`. Its body is `...`.
 
 ### 4. Write the route
 
-The route goes in `api.py`, beside the op's entry function. Some parameters are omitted below:
+The route goes in `plugin.py`, beside the op's entry function. Some parameters are omitted below:
 
 ```python
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
 def _moe_forward_normal(self, hidden_states, ...):  # exactly the replaced function's parameters
     # an SGLang configuration AKLR does not support
     if _forward_normal_falls_back(self, ...):
@@ -80,7 +79,16 @@ def _moe_forward_normal(self, hidden_states, ...):  # exactly the replaced funct
     from sglang.srt.layers.moe import post_experts_all_reduce
 
     return post_experts_all_reduce(out)
+
+
+def declare(plugin):
+    plugin.wrap(
+        "sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal",
+        versions=("0.5.23",), replace=_moe_forward_normal,
+    )
 ```
+
+The `aklr.plugins.sglang` package includes each built-in declaration at startup. External extensions call their own `declare` with `aklr.plugins.sglang.plugin` before the host first starts.
 
 It calls two helpers:
 
@@ -108,7 +116,7 @@ PointSpec(
 Its baseline runs only on gfx950, so its contract id also goes into `GFX950_CONTRACT_IDS` in the same file. Then update `tests/plugins/sglang/names.txt`:
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
 The route needs no test of its own: `tests/plugins/sglang/test_hook.py` checks every route, that its target exists in the installed SGLang with the same parameters and that no other route replaces it.

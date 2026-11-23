@@ -25,7 +25,11 @@ def reference_contracts(base: str, head: str) -> set[str]:
         # Kernel PRs may also update a case note; these Markdown files are not test inputs.
         if re.fullmatch(r"harness/skills/kb/cases/[a-zA-Z0-9_-]+\.md", path):
             continue
-        if not path.startswith("aklr/ops/") or ValidationScope.path_kind(path) != "schema_data":
+        if (
+            not path.startswith(("aklr/ops/", "aklr/plugins/aiter/"))
+            or path.startswith("aklr/plugins/aiter/situv2_a4w4_moe/")
+            or ValidationScope.path_kind(path) != "schema_data"
+        ):
             return set()
         if old_mode == b"100644":
             blob_ids.add(old_oid)

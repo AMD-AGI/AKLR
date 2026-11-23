@@ -23,7 +23,7 @@ FlyDSL, aiter or Turbo source they cite, should carry over to Triton or HIP; the
 
 ## What it computes
 
-`fused_moe@1.0` (`aklr/ops/fused_moe/contract.py`, reference in `reference.py`): for each token and each of its top-k
+`fused_moe@1.0` (`aklr/plugins/aiter/fused_moe/plugin.py`, reference in `reference.py`): for each token and each of its top-k
 experts e (`topk_ids`), stage 1 computes act(x · W1_gate,eᵀ, x · W1_up,eᵀ), stage 2 projects that row with W2_e, and
 the output row is the sum over the token's k routes of `topk_weights` × that projection.
 
@@ -141,14 +141,14 @@ tokens per call. Reuse the mechanism and re-derive the number.
 
 ## In AKLR
 
-- The contract and its compare: `aklr/ops/fused_moe/contract.py`. The api:
-  `aklr/ops/fused_moe/api.py`. The baseline call and its environment (`AITER_BF16_FP8_MOE_BOUND=16` for gate mode
-  interleave, sglang's DeepSeek-V4 setting): `aklr/ops/fused_moe/baseline.py`.
-- Kernel form, scratch and compile function: `aklr/ops/README.md` § The kernel section and ABI (`../SKILL.md`, Stop
+- The contract and its compare: `aklr/plugins/aiter/fused_moe/plugin.py`. The api:
+  `aklr/plugins/aiter/fused_moe/plugin.py`. The baseline call and its environment (`AITER_BF16_FP8_MOE_BOUND=16` for gate mode
+  interleave, sglang's DeepSeek-V4 setting): `aklr/plugins/aiter/fused_moe/baseline.py`.
+- Kernel form, scratch and compile function: `aklr/plugins/aiter/README.md` § The kernel section and ABI (`../SKILL.md`, Stop
   table). Workflow and CI: § Workflow. The serving threshold: § Environment variables. Kernel-less files (a
   definition: loaded and audited, not served): § Schema fields.
 - `AKLR_DISABLE=fused_moe@1.0` stops serving every MoE schema.
-- Kernel-less `fused_moe` files on main at e525989, counted from `aklr/ops/fused_moe/impls/flydsl/`: 14 of the 46
+- Kernel-less `fused_moe` files on main at e525989, counted from `aklr/plugins/aiter/fused_moe/impls/flydsl/`: 14 of the 46
   files, 89 Points, none served (S1). By schema name, after `fused_moe_`:
 
 | Name | Points |
@@ -213,7 +213,7 @@ group's GPUs inside the call), and the sglang plugin's MoE ops take a whole MoE 
 at § Techniques that apply above, which routes each problem at any token count to its card section (at a few tokens
 first `few_tokens.md`, then `grouped_sorted_tokens.md`); AKLR's own FlyDSL MoE kernels are listed
 in `../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels. Where a card disagrees with
-`aklr/ops/README.md` (§ The kernel section and ABI), the README wins
+`aklr/plugins/aiter/README.md` (§ The kernel section and ABI), the README wins
 (`../SKILL.md` § In AKLR). What it changes here:
 - **Cache keys.** A compile function caches by the Point's full shape, M included: one compile per Point. The rule
   against keying on `M_total` (`grouped_host_autotune.md` §3) is for callers that compile once for many token
@@ -280,4 +280,4 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Kernel map.
 - E8 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, AKLR bench_cudagraph or graph wall clock, 1 GiB flush per call] touched experts' weight bytes over the call time: delivered kernels 6.09–6.31 TB/s (TP, m 40–112) and 6.22–6.48 (EP8, m 32–112); aiter 4.91–5.89; a 2 GiB Triton read-only stream 6.87 TB/s at its best configuration, 6.53 with uint8 loads; left 8.2–11.3% (TP) and 5.6–9.4% (EP8) (TP e0678268dac4bef6; EP8 b4c655c5220c02de and a22cc342a6677a10)
 - E9 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, eager, torch.profiler kernel times after a 1 GiB flush] at 9397 and 16384 tokens, stage 1 and stage 2 useful TF/s over 4921 TF/s (a HIP microbenchmark's fp8 × MXFP4 MFMA rate) 0.32–0.44; touched weights, activations read once and output written once over the stage time, against a 6.66 TB/s Triton read-only stream, 0.31–0.48, and 0.70–0.89 at 2732 tokens (TP ae24d42e524edf7d, EP8 84181fb6b00938c6; eea13e61bb2a6241 and 6dba52d6b5e138ae at 2732)
 - E10 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6 rounds (TP measured twice), eager, torch.profiler kernel times after a 1 GiB flush; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, delivered against aiter: TP stage 1 2168 / 2099 TF/s (aiter 1369), stage 2 1703 / 1679 (922), reduce 105.0 / 99.6 µs of 1260.7 / 1290.0 µs for all kernels; EP8 stage 1 2140 (1409), stage 2 1834 (1235) (TP ae24d42e524edf7d, EP8 84181fb6b00938c6)
-- S1 aklr/ops/README.md:83 a schema file with empty `sources` is a definition: loaded and audited, not served or benched
+- S1 aklr/plugins/aiter/README.md:83 a schema file with empty `sources` is a definition: loaded and audited, not served or benched

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-from aklr.plugins.sglang.layers.dsa_backend.api import (
+from aklr.plugins.sglang.layers.dsa_backend.plugin import (
     dsa_sparse_mla_decode,
     dsa_sparse_mla_prefill,
     dsa_topk_transform,

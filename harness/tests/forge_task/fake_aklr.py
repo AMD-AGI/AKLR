@@ -195,7 +195,8 @@ def write_schema(aklr_root: Path, payload: dict, uuid: str = "0123456789abcdef")
     path = (
         aklr_root
         / "aklr"
-        / "ops"
+        / "plugins"
+        / "aiter"
         / payload["op_type"]
         / "impls"
         / "flydsl"

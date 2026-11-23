@@ -15,11 +15,10 @@ import torch
 
 from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.kda_conv.reference import kimi_k3_kda_conv_reference
+from aklr.plugins.aiter.kda_conv.reference import kimi_k3_kda_conv_reference
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
-base = importlib.import_module("aklr.plugins.aiter.provider._base")
-conv = importlib.import_module("aklr.plugins.aiter.provider.conv")
+conv = importlib.import_module("aklr.plugins.aiter.kda_conv.plugin")
 
 BF16, F32, I32 = torch.bfloat16, torch.float32, torch.int32
 KERNEL = RunnableMetadata(
@@ -91,7 +90,13 @@ def _args(call):
 
 
 def _select(call):
-    return base.SELECTORS["causal_conv1d_split_qkv"][1](_args(call), {})
+    return provider.provider.select(
+        SimpleNamespace(
+            name="causal_conv1d_split_qkv", version=AITER_CONTRACTS["causal_conv1d_split_qkv"][0]
+        ),
+        _args(call),
+        {},
+    )
 
 
 def _answer(monkeypatch, serving):
@@ -101,6 +106,7 @@ def _answer(monkeypatch, serving):
 @pytest.fixture
 def aklr_serves(monkeypatch):
     """AKLR's op answers with KERNEL; a candidate is (kernel, run)."""
+    monkeypatch.setattr(provider, "ready", lambda: True)
     monkeypatch.setattr(
         conv, "offer", lambda serving, run: None if isinstance(serving, FallbackReason) else (serving, run)
     )
@@ -150,8 +156,8 @@ def _aiters_result(call):
 
 def test_the_selector_serves_aiters_contract_at_its_version():
     version, _ = AITER_CONTRACTS["causal_conv1d_split_qkv"]
-    assert base.SELECTORS["causal_conv1d_split_qkv"][0] == version
-    assert provider.Provider.op_versions["causal_conv1d_split_qkv"] == {version}
+
+    assert provider.provider.op_versions["causal_conv1d_split_qkv"] == {version}
 
 
 def test_a_served_call_offers_a_run_taking_aiters_contract(aklr_serves):

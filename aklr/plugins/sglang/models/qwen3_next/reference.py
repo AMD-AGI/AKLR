@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from aklr.core.contract.semantics import to_float32
-from aklr.plugins.sglang.models.qwen3_5.contract import ROTARY_DIM
+from aklr.plugins.sglang.models.qwen3_5._specs import ROTARY_DIM
 
 __all__ = [
     "qwen3_next_gated_attention_decode_group_fp8_quant_reference",

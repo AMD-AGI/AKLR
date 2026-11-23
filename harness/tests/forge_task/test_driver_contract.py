@@ -225,7 +225,7 @@ def test_the_published_candidate_leaves_the_checkout(run, aklr_root: Path):
     _run_driver(run)
     published = [
         path
-        for path in aklr_root.glob("aklr/ops/*/impls/*/*/*.json")
+        for path in aklr_root.glob("aklr/plugins/aiter/*/impls/*/*/*.json")
         if json.loads(path.read_text())["kernel"]["sources"]
     ]
     assert published == []

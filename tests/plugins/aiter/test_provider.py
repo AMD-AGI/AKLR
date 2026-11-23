@@ -16,7 +16,6 @@ from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
-base = importlib.import_module("aklr.plugins.aiter.provider._base")
 
 FP8, BF16, F32 = torch.float8_e4m3fn, torch.bfloat16, torch.float32
 E8M0 = getattr(torch, "float8_e8m0fnu", None)
@@ -57,6 +56,7 @@ AITER_CONTRACTS = {
             "scale_layout_m32k4",
         ),
     ),
+    "mhc_post": (1, ("out", "x", "residual", "post_layer_mix", "comb_res_mix", "store_nt", "res_preshuffle")),
     "mhc_pre": (
         1,
         (
@@ -370,6 +370,15 @@ def _served_calls():
         "gemm_a8w8_blockscale_bpreshuffle": {**blockscale, "out": None},
         "per_group_quant_fp8": {**quant, "group_size": 128, "transpose_scale": True, "scale_type": F32},
         "per_group_quant_mxfp8": {**quant, "group_size": 32, "transpose_scale": False, "scale_type": E8M0},
+        "mhc_post": {
+            "out": z(4, 4, 8, dtype=BF16),
+            "x": z(4, 8, dtype=BF16),
+            "residual": z(4, 4, 8, dtype=BF16),
+            "post_layer_mix": z(4, 4, 1),
+            "comb_res_mix": z(4, 4, 4),
+            "store_nt": -1,
+            "res_preshuffle": False,
+        },
         "mhc_pre": {
             "residual": z(4, 4, 8, dtype=BF16),
             "fn": z(24, 32),
@@ -415,12 +424,15 @@ def _args(case: str, **changes):
 
 
 def _select(case: str, **changes):
-    return base.SELECTORS[_op(case)][1](_args(case, **changes), {})
+    return provider.provider.select(
+        SimpleNamespace(name=_op(case), version=AITER_CONTRACTS[_op(case)][0]), _args(case, **changes), {}
+    )
 
 
 @pytest.fixture
 def aklr_serves(monkeypatch):
     """Every AKLR api the selectors ask answers with KERNEL; a candidate is (kernel, run)."""
+    monkeypatch.setattr(provider, "ready", lambda: True)
     for module in _selector_modules():
         monkeypatch.setattr(
             module,
@@ -432,9 +444,7 @@ def aklr_serves(monkeypatch):
 
 def _selector_modules():
     return [
-        module
-        for _, module in inspect.getmembers(provider, inspect.ismodule)
-        if module.__name__.startswith(f"{provider.__name__}.") and module is not base
+        module for _, module in inspect.getmembers(provider, inspect.ismodule) if hasattr(module, "declare")
     ]
 
 
@@ -447,9 +457,6 @@ def _answer(monkeypatch, serving):
 
 
 def test_each_selector_serves_an_aiter_contract_at_its_version():
-    assert {op: version for op, (version, _) in base.SELECTORS.items()} == {
-        op: version for op, (version, _) in AITER_CONTRACTS.items()
-    }
     assert provider.provider.op_versions == {op: {v} for op, (v, _) in AITER_CONTRACTS.items()}
 
 
@@ -458,6 +465,7 @@ def test_a_served_call_offers_a_run_taking_aiters_contract(aklr_serves, case):
     """aiter hands run every positional parameter; one it cannot bind is a contract mismatch."""
     kernel, run = _select(case)
     assert kernel is KERNEL
+    assert tuple(inspect.signature(run).parameters) == AITER_CONTRACTS[_op(case)][1]
     inspect.signature(run).bind(*_args(case))
 
 
@@ -479,6 +487,9 @@ DECLINED = [
     ("per_group_quant_mxfp8", {"transpose_scale": True}),
     ("mhc_pre", {"w_preshuffle_bf16": 1}),
     ("mhc_pre", {"res_preshuffle": True}),
+    ("mhc_post", {"res_preshuffle": True}),
+    ("mhc_post", {"out": None}),
+    ("mhc_post", {"post_layer_mix": torch.empty(4, 4, 2)}),
     ("topk_gating", {"score_func": "sqrtsoftplus"}),
     ("topk_gating", {"score_func": "softmax"}),
     ("topk_gating", {"correction_bias": None}),
@@ -499,6 +510,22 @@ DECLINED.append(("gemm_a8w8_blockscale_bpreshuffle", {"x_scale": _row_major(torc
 @pytest.mark.parametrize(("case", "changes"), DECLINED)
 def test_a_call_outside_aklrs_contract_is_declined_before_aklr_is_asked(aklr_serves, case, changes):
     assert _select(case, **changes) is None
+
+
+def test_mhc_post_writes_the_caller_buffer_and_returns_none(aklr_serves, monkeypatch):
+    out = torch.empty(4, 4, 8, dtype=BF16)
+    post_mix = torch.zeros(4, 4, 1)
+
+    def post(x, residual, mix, comb, *, out):
+        assert mix.shape == (4, 4) and mix.data_ptr() == post_mix.data_ptr()
+        return out.fill_(7)
+
+    post.serving = lambda *args, **kwargs: KERNEL
+    monkeypatch.setattr(provider.mhc, "mhc_post", post)
+    changes = {"out": out, "post_layer_mix": post_mix}
+    kernel, run = _select("mhc_post", **changes)
+    assert kernel == KERNEL and run(*_args("mhc_post", **changes)) is None
+    assert (out == 7).all()
 
 
 def test_topk_gating_is_declined_while_aiter_routes_by_herd(monkeypatch, aklr_serves):
@@ -523,14 +550,14 @@ def _api(fn):
 def test_runs_hand_aklr_aiters_layouts(monkeypatch, aklr_serves):
     """The transposed fp8 scales come back as aiter shapes them, (rows, groups) over AKLR's
     group-major bytes; the shuffled-weight GEMM asks for AKLR's preshuffled operand format."""
-    quant = importlib.import_module("aklr.plugins.aiter.provider.quant")
+    quant = importlib.import_module("aklr.plugins.aiter.quant.plugin")
     scales = torch.arange(4.0).view(1, 4)  # AKLR's (groups, rows) for 4 rows of 128
     monkeypatch.setattr(quant, "per_group_quant_fp8", _api(lambda x: ("q", scales)))
     _, run = _select("per_group_quant_fp8")
     quantized, aiter_scales = run(*_args("per_group_quant_fp8"))
     assert quantized == "q" and aiter_scales.shape == (4, 1) and aiter_scales.data_ptr() == scales.data_ptr()
 
-    gemm = importlib.import_module("aklr.plugins.aiter.provider.gemm")
+    gemm = importlib.import_module("aklr.plugins.aiter.gemm.plugin")
     calls = []
     monkeypatch.setattr(gemm, "gemm_a8w8_blockwise_scaled", _api(lambda *a, **k: calls.append(k) or "y"))
     _, run = _select("gemm_a8w8_blockscale_bpreshuffle")
@@ -539,14 +566,14 @@ def test_runs_hand_aklr_aiters_layouts(monkeypatch, aklr_serves):
 
 
 def test_mxfp8_is_declined_on_a_torch_without_e8m0(monkeypatch, aklr_serves):
-    quant = importlib.import_module("aklr.plugins.aiter.provider.quant")
+    quant = importlib.import_module("aklr.plugins.aiter.quant.plugin")
     monkeypatch.setattr(quant, "_E8M0", None)
     assert _select("per_group_quant_fp8", group_size=32, transpose_scale=False, scale_type=None) is None
 
 
 def test_a_fallback_after_select_accepted_raises(monkeypatch, aklr_serves):
     """aiter does not fall back once run started; a fallback there is a bug, not a decline."""
-    norm = importlib.import_module("aklr.plugins.aiter.provider.norm")
+    norm = importlib.import_module("aklr.plugins.aiter.rms_norm.plugin")
     _, run = _select("rmsnorm")
     monkeypatch.setattr(norm, "rms_norm", _api(lambda *a: FallbackReason.NOT_WARMED))
     with pytest.raises(RuntimeError, match="not_warmed"):
@@ -611,7 +638,7 @@ def test_aiter_routes_a_call_aklr_serves_to_aklrs_kernel(monkeypatch, aiter_plug
             raise AssertionError("explain runs nothing")
 
     provider.enable("test")
-    norm = importlib.import_module("aklr.plugins.aiter.provider.norm")
+    norm = importlib.import_module("aklr.plugins.aiter.rms_norm.plugin")
     monkeypatch.setattr(norm.rms_norm, "serving", lambda *a: KERNEL)
     decision = aiter_plugin.explain("rmsnorm", *_args("rmsnorm")).decision
     assert (decision.route, decision.provider, decision.kernel_id) == ("provider", "aklr", KERNEL.kernel_ref)
@@ -619,15 +646,81 @@ def test_aiter_routes_a_call_aklr_serves_to_aklrs_kernel(monkeypatch, aiter_plug
     assert aiter_plugin.explain("rmsnorm", *_args("rmsnorm")).decision.route == "native"
 
 
-def test_a_call_in_declining_is_never_offered_to_aklr(monkeypatch):
-    """A framework route that asked AKLR and fell back runs aiter's own kernel inside ``declining()``."""
-    asked = []
-    monkeypatch.setitem(
-        base.SELECTORS, "rmsnorm", (2, lambda args, kwargs: asked.append(args) or "candidate")
-    )
-    monkeypatch.setattr(provider, "ready", lambda: True)
-    op = SimpleNamespace(name="rmsnorm")
+def test_a_call_in_declining_is_never_offered_to_aklr(aklr_serves):
+    op = SimpleNamespace(name="rmsnorm", version=2)
+    args = _args("rmsnorm")
     with provider.declining():
-        assert provider.provider.select(op, (), {}) is None
-    assert asked == []
-    assert provider.provider.select(op, (), {}) == "candidate"
+        assert provider.provider.select(op, args, {}) is None
+    assert provider.provider.select(op, args, {})[0] is KERNEL
+
+
+def test_provider_publishes_external_abi_versions_in_a_fresh_process():
+    import subprocess
+    import sys
+    import textwrap
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent("""
+        from types import SimpleNamespace
+        from aklr.core.contract.registry import ContractRegistry
+        from aklr.plugins.aiter import plugin
+
+        plugin.provide("rmsnorm", version=3, select=lambda args, kwargs: None)
+        from aklr.plugins.aiter.provider import provider
+
+        assert provider.op_versions["rmsnorm"] == {2, 3}
+        assert len(provider.op_versions) == 21
+        expected = [c for c in ContractRegistry.default().contracts() if c.op_package.startswith("aklr.plugins.aiter.")]
+        assert {id(c) for c in plugin.contracts} == {id(c) for c in expected}
+        assert provider.select(SimpleNamespace(name="rmsnorm", version=99), (), {}) is None
+    """),
+        ],
+        check=True,
+    )
+
+
+def test_enable_preserves_exclusions_from_the_host(monkeypatch):
+    import sys
+
+    applied = []
+    host = SimpleNamespace(
+        status=lambda: {"enabled": ("other", "aklr"), "excluded": ("aklr:rmsnorm",)},
+        configure=lambda **options: applied.append(options),
+    )
+    monkeypatch.setitem(sys.modules, "aiter", SimpleNamespace(plugin=host))
+    assert provider.enable("framework")
+    assert applied == [{"source": "framework", "enable": ["aklr", "other"], "exclude": ("aklr:rmsnorm",)}]
+
+
+def test_first_capture_leaves_the_registry_available_for_eager_initialization():
+    import subprocess
+    import sys
+    import textwrap
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent("""
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from aklr.core.runtime.dispatch import DispatcherRegistry
+        from aklr.plugins.aiter.provider import provider
+
+        os.environ["AKLR_DISABLE"] = "1"
+        registry = DispatcherRegistry.default()
+        op = SimpleNamespace(name="rmsnorm", version=2)
+        args = (None, None, 1e-6, True)
+        with patch("torch.cuda.is_available", return_value=True), patch("torch.cuda.is_current_stream_capturing", return_value=True):
+            assert provider.select(op, args, {}) is None
+            assert not registry.is_initialized
+        assert provider.select(op, args, {}) is None
+        assert registry.is_initialized
+    """),
+        ],
+        check=True,
+    )

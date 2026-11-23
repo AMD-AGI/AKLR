@@ -23,9 +23,9 @@ AKLR has two main parts: `aklr/` runs kernels, while `harness/` helps agents bui
 
 | Path | What is here |
 |---|---|
-| [`aklr/ops/`](../aklr/ops/README.md) | Each operator's API, correctness check, speed-test baseline, and kernel files. |
+| [`aklr/plugins/aiter/`](../aklr/plugins/aiter/README.md) | Each operator's API, correctness check, speed-test baseline, and kernel files. |
 | [`aklr/core/`](../aklr/core/) | Shared code that checks inputs, loads kernels, picks one for each workload, and validates results. |
-| [`aklr/plugins/`](../aklr/plugins/README.md) | Plugins for other projects. SGLang works today; vLLM and AITER are planned. |
+| [`aklr/plugins/`](../aklr/plugins/README.md) | Operator families, the AITER kernel provider, and the SGLang and vLLM integrations. |
 | [`aklr/benchmarks/`](../aklr/benchmarks/) | Model workloads and benchmark code. |
 | [`harness/`](../harness/README.md) | Guides and tools for agents to write, test, review, and submit kernels. [`forge_task`](../docs/forge_task.md) sends an AKLR problem to KernelForge. |
 | [`tests/`](../tests/) and [`.github/workflows/`](workflows/) | Local tests and CI checks. |
@@ -60,24 +60,26 @@ pip install -e .
 
 ## Usage
 
-SGLang loads AKLR at startup and, with `AKLR_SGLANG_PLUGIN=1`, runs AKLR's kernels through the SGLang plugin. vLLM also loads AKLR, but no vLLM code calls AKLR's ops yet. Other code starts AKLR once (`DispatcherRegistry.default().init()`, from `aklr.core.runtime.dispatch`), then calls the ops in `aklr.ops` and runs its own code when one returns a `FallbackReason`.
+SGLang and vLLM load AKLR through their plugin entry points. Their switches enable framework hooks. `AKLR_AITER_PLUGIN=1` lets either framework enable AKLR's AITER kernel provider. Direct AITER callers enable the provider with `aklr.plugins.aiter.provider.enable("my application")` and use native AITER functions. The same functions are available from `aklr.plugins.aiter.api`. AITER handles fallback.
 
 | Variable | Effect |
 |---|---|
 | `AKLR_DISABLE=1` | Turn AKLR off |
 | `AKLR_DISABLE=<contract id>,...` | Turn off the listed ops, e.g. `gemm@1.0` |
 | `AKLR_SGLANG_PLUGIN=1` | Hook SGLang's functions to the plugin's ops ([aklr/plugins/README.md](../aklr/plugins/README.md)) |
+| `AKLR_VLLM_PLUGIN=1` | Install vLLM call-site hooks when the worker device is ready |
+| `AKLR_AITER_PLUGIN=1` | Enable AKLR as an AITER kernel provider from the active framework |
 | `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.05) |
 
 ## Development
 
 Read in this order:
 
-1. [Ops tutorial](../docs/ops_tutorial.md) ([中文](../docs/ops_tutorial.zh.md)): add a kernel to an op in `aklr/ops/`. The example is `fused_moe`, the experts of GLM-5's MoE layer.
+1. [Ops tutorial](../docs/ops_tutorial.md) ([中文](../docs/ops_tutorial.zh.md)): add a kernel to an op in `aklr/plugins/aiter/`. The example is `fused_moe`, the experts of GLM-5's MoE layer.
 2. [Plugin tutorial](../docs/plugin_tutorial.md) ([中文](../docs/plugin_tutorial.zh.md)): when an optimization crosses one op's boundary, replace a whole SGLang function. The example, `deepseek_v2_mxfp4_moe`, takes the same MoE layer whole.
 3. [forge_task](../docs/forge_task.md): let agents write and tune a kernel.
 
-For reference: [aklr/ops/README.md](../aklr/ops/README.md) (schema fields, the kernel interface, names, commands), [aklr/plugins/README.md](../aklr/plugins/README.md) (the plugin layout, rules for routes, upgrading SGLang), [harness/README.md](../harness/README.md) (agent skills and the kernel lifecycle).
+For reference: [aklr/plugins/aiter/README.md](../aklr/plugins/aiter/README.md) (schema fields, the kernel interface, names, commands), [aklr/plugins/README.md](../aklr/plugins/README.md) (the plugin layout, rules for routes, upgrading SGLang), [harness/README.md](../harness/README.md) (agent skills and the kernel lifecycle).
 
 ## Testing
 

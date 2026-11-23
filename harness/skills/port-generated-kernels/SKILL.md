@@ -15,7 +15,7 @@ Read the harness [rules](../../rules.md), [gates](../../gates.md), and current
 [references/workflow.md](references/workflow.md) before changing code,
 [references/porting-notes.md](references/porting-notes.md) while porting, and
 [references/new-op.md](references/new-op.md) when AKLR has no contract for the op.
-`aklr/ops/README.md` is the authority on the schema format and the audit.
+`aklr/plugins/aiter/README.md` is the authority on the schema format and the audit.
 
 ## Responsibilities
 
@@ -26,7 +26,7 @@ Read the harness [rules](../../rules.md), [gates](../../gates.md), and current
   self-contained and pass the audit, with `kernel.author` naming the generator.
 - Replace numeric or opaque artifact names with meaningful operator, variant,
   dtype, shape, or architecture names without obscuring source traceability.
-- Reach the kernel only through the contract's `@api` function; dispatch
+- Reach the kernel only through the contract's `@family.op` function; dispatch
   serves a Point once its measured speedup clears `AKLR_MIN_SPEEDUP`. Avoid a
   parallel public API for the generated kernel.
 - Preserve unsupported cases by falling back safely rather than returning a

@@ -26,7 +26,7 @@ def muse_spark_moe_reference(
     """Each row normalized, then each of its routes through its expert, unweighted."""
     import torch
 
-    from aklr.ops.fused_moe.reference import fused_moe_reference
+    from aklr.plugins.aiter.fused_moe.reference import fused_moe_reference
 
     hidden = row_major_args["hidden_states"]
     x = to_float32(hidden, point.dtypes["hidden_states"])

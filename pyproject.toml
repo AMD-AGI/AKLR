@@ -36,8 +36,8 @@ aklr = "aklr.plugins.aiter.provider:provider"
 include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
-"aklr.ops" = ["*/impls/*/*/*.json"]
-"aklr.plugins" = ["*/*/*/impls/*/*/*.json", "*/*/*/*.hip"]
+"*" = ["impls/*/*/*.json", "*.hip"]
+"aklr.core.utils" = ["_kernel_tracer.cpp"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]
@@ -81,7 +81,7 @@ omit = [
 show_missing = true
 # Python line coverage does not measure JIT kernel bodies.
 omit = [
-    "aklr/ops/*/impls/*",
+    "aklr/plugins/aiter/*/impls/*",
 ]
 
 [tool.coverage.paths]

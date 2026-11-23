@@ -7,13 +7,12 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.gemm.api import gemm
-from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins import Plugin
+from aklr.plugins.aiter.gemm.plugin import gemm
 
 __all__: list[str] = []
 
 
-@sglang_route("sglang.srt.layers.logits_processor.LogitsProcessor._compute_lm_head", versions=("0.5.23",))
 def _compute_lm_head(self, hidden_states, lm_head, embedding_bias=None, *, out=None):
     from sglang.srt.layers.logits_processor import should_apply_lm_head_quant_method
     from sglang.srt.utils.common import use_intel_amx_backend
@@ -32,3 +31,11 @@ def _compute_lm_head(self, hidden_states, lm_head, embedding_bias=None, *, out=N
         return FallbackReason.OUT_OF_CONTRACT
     # hidden states of another dtype than the head's go back to sglang, which converts them: none is copied first
     return gemm(hidden_states, lm_head.weight)
+
+
+def declare(plugin: Plugin) -> None:
+    plugin.wrap(
+        "sglang.srt.layers.logits_processor.LogitsProcessor._compute_lm_head",
+        versions=("0.5.23",),
+        replace=_compute_lm_head,
+    )

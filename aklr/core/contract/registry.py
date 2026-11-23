@@ -31,7 +31,10 @@ class ContractRegistry:
     def __init__(self, contracts: Iterable[OpContract]) -> None:
         by_id, by_api = {}, {}
         for c in sorted(contracts, key=lambda c: c.contract_id):
-            for by_key, key in ((by_id, c.contract_id), (by_api, c.api_name)):
+            entries = [(by_id, c.contract_id), (by_api, c.api_name)]
+            if c.definition_name != c.api_name:
+                entries.append((by_api, c.definition_name))
+            for by_key, key in entries:
                 if key in by_key:
                     clash = f"{by_key[key].contract_id} and {c.contract_id}"
                     raise ValueError(f"{key!r} declared by {clash}")
@@ -42,8 +45,8 @@ class ContractRegistry:
     @classmethod
     @functools.cache
     def default(cls) -> ContractRegistry:
-        """The ``CONTRACTS`` of every op package's ``contract`` module."""
-        return cls(c for pkg in locate.op_packages() for c in locate.op_module(pkg, "contract").CONTRACTS)
+        """The published contracts of every installed operator family."""
+        return cls(c for pkg in locate.op_packages() for c in locate.op_contracts(pkg))
 
     def get(self, contract_id: ContractId) -> OpContract:
         """The contract of ``contract_id``; else ``UnknownContractError``."""
@@ -96,7 +99,7 @@ class ContractRegistry:
         if parsed.get("name") != schema.name:
             raise ValueError(
                 f"{where}: name {parsed.get('name')!r} is not {schema.name!r}: the "
-                "naming rule (aklr/ops/README.md, Names) or a declaration order changed"
+                "naming rule (aklr/plugins/aiter/README.md, Names) or a declaration order changed"
             )
         if text != expected_text:
             pairs = itertools.zip_longest(text.split("\n"), expected_text.split("\n"))
@@ -126,13 +129,27 @@ class ContractRegistry:
         passed: list[tuple[Path, OpContract]] = []
         errors: list[str] = []
         op_dir = locate.op_dir(op_package)
-        for path in locate.committed_schema_paths(op_dir):
+        for committed in locate.committed_schema_paths(op_dir):
+            path = committed
+            legacy = False
             if measured_dir is not None:
-                measured = measured_dir.joinpath(*op_package.split("."), path.relative_to(op_dir))
-                path = measured if measured.is_file() else path
+                relative = Path(*op_package.split("."), path.relative_to(op_dir))
+                measured = measured_dir / relative
+                if measured.is_file():
+                    path = measured
+                elif (previous := locate.legacy_aiter_path(relative)) and (measured_dir / previous).is_file():
+                    path = measured_dir / previous
+                    legacy = True
             try:
                 data = path.read_bytes()
                 schema = self.parse_schema(data, str(path))
+                if legacy and schema.contract_id not in skipped_contract_ids:
+                    base = self.parse_schema(committed.read_bytes(), str(committed))
+                    if (
+                        base.contract_id != schema.contract_id
+                        or base.relative_path() != schema.relative_path()
+                    ):
+                        raise ValueError(f"{path}: authored data differs from {committed}")
             except OSError as e:
                 errors.append(f"{path}: {e.strerror or e}")
                 continue

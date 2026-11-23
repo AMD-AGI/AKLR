@@ -18,7 +18,7 @@ input.
 
 import functools
 
-from aklr.plugins.sglang.models.qwen3_5.contract import MROPE_SECTION, ROTARY_DIM
+from aklr.plugins.sglang.models.qwen3_5._specs import MROPE_SECTION, ROTARY_DIM
 
 # sglang's aiter backend sizes its decode partitions for the served context
 # (--context-length): 131072 here, half of Qwen3.5's 262144-token default, which launches

@@ -1,18 +1,18 @@
 # Ops tutorial: adding a kernel to an AKLR op
 
-This tutorial adds a kernel to an op in `aklr/ops/`, from the op's definition to a merged kernel. Its example is `fused_moe`, the experts of an MoE layer (the computation AITER's `fused_moe` does), at the shapes of GLM-5's MoE layer. The [plugin tutorial](plugin_tutorial.md) continues with the same layer and optimizes beyond this op's boundary.
+This tutorial adds a kernel to an op in `aklr/plugins/aiter/`, from the op's definition to a merged kernel. Its example is `fused_moe`, the experts of an MoE layer (the computation AITER's `fused_moe` does), at the shapes of GLM-5's MoE layer. The [plugin tutorial](plugin_tutorial.md) continues with the same layer and optimizes beyond this op's boundary.
 
 ## Concepts
 
-Contract: **a contract is the complete definition of an op.** It is an `OpContract` constant in `aklr/ops/<op>/contract.py`, registered in that module's `CONTRACTS` (the registry discovers it automatically).
+Contract: **a contract is the complete definition of an op.** It is an `OpContract` constant in `aklr/plugins/aiter/<op>/plugin.py`, published in that module's `family.contracts`.
 
-Schema: **a schema is a JSON file.** It narrows an op's `OpContract` to one scenario (fixed dtypes, const axes, attrs, layout), lists the workloads that scenario serves (concrete values of the var axes), and embeds the kernel source. Schemas live at `aklr/ops/<op>/impls/<language>/<name>/<uuid>.json`. The schema is the interface agreement between AKLR and other kernel-generation tools.
+Schema: **a schema is a JSON file.** It narrows an op's `OpContract` to one scenario (fixed dtypes, const axes, attrs, layout), lists the workloads that scenario serves (concrete values of the var axes), and embeds the kernel source. Schemas live at `aklr/plugins/aiter/<op>/impls/<language>/<name>/<uuid>.json`. The schema is the interface agreement between AKLR and other kernel-generation tools.
 
 ## Workflow
 
 ```mermaid
 flowchart TD
-    S{"1. Does the target op already have a contract?"} -->|"No: path A"| A["1. A Create the op<br/>contract.py / reference.py / api.py / baseline.py / __init__.py<br/>small test Points + names.txt"]
+    S{"1. Does the target op already have a contract?"} -->|"No: path A"| A["1. A Create the op<br/>plugin.py / reference.py / baseline.py / __init__.py<br/>small test Points + names.txt"]
     S -->|"Yes: path B"| B["1. B Narrow to a scenario<br/>get → PointSpec → workload_for → narrow → schema_text"]
     A -->|"once the contract is registered"| B
     B -->|"kernel-less schema<br/>(sources = [], temporary uuid)"| D["2. Develop the kernel<br/>fill in sources / requires / author"]
@@ -27,7 +27,7 @@ flowchart TD
 
 | Step | Key actions | Output |
 |---|---|---|
-| 1. A contract does not exist | Create `contract.py`/`reference.py`/`api.py`/`baseline.py`/`__init__.py` and small test Points, update `names.txt`, then narrow as in 1. B | New op package + kernel-less schema |
+| 1. A contract does not exist | Create `plugin.py`/`reference.py`/`baseline.py`/`__init__.py` and small test Points, update `names.txt`, then narrow as in 1. B | New op package + kernel-less schema |
 | 1. B contract exists | `get` → `PointSpec` → `workload_for` → `narrow(sources=[])` → `schema_text()` | kernel-less schema (temporary uuid) |
 | 2. Develop the kernel | Fill in `kernel.sources` and `requires` (optionally `author`), then rerun the 1. B script | Schema with the kernel (new uuid) |
 | 3. Local validation | `python -m aklr validate --base origin/main --stages audit,bench <schema>`; check the demoted list and delete the workloads that miss the bar | `aklr_validation/report.md`, `report.json` |
@@ -39,14 +39,14 @@ flowchart TD
 
 Following `harness/skills/port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
 
-1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`.
-2. `reference.py`: `<contract>_reference(point, row_major_args)` in the op's dtypes, else float32 (for now float32, each input read through `semantics.to_float32`); integer outputs in their declared dtype. Rules: "Reference and baseline" in `aklr/ops/README.md`.
-3. `api.py`: an `@api(<CONTRACT>)` stub (the body may only be `...`).
+1. In `plugin.py`, define an `OpContract` for each op. Use the family directory name as `op_type` and name the inputs and outputs after the math. Give each output its `error_bounds` and the contract its `determinism`. A contract with multiple outputs requires a name other than `out` for each. Create `family = Plugin("aiter")`, call `family.define(contract)` for each contract, then `family.build()`. [RMSNorm example](../aklr/plugins/aiter/rms_norm/plugin.py)
+2. `reference.py`: `<contract>_reference(point, row_major_args)` in the op's dtypes, else float32 (for now float32, each input read through `semantics.to_float32`); integer outputs in their declared dtype. Rules: "Reference and baseline" in `aklr/plugins/aiter/README.md`.
+3. In the same `plugin.py`, use `@family.op` on the named signature with body `...`.
 4. `baseline.py`: one `<contract>_baseline` per contract that has a baseline, the engine's own call for the op. It takes the api's arguments (passed as the call's keyword arguments), imports AITER or SGLang inside the function, and returns the outputs the same way the api does; for an unsupported call it raises `NotImplementedError` (bench reports `baseline_failed`). Without this function the op is its own baseline, and the kernel has nothing to beat.
-5. `__init__.py`: exports the api.
-6. Add each contract's base small Point to `SMALL_POINTS` in `tests/ops/cases.py`, in contract order, then run `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` to regenerate `tests/ops/names.txt` and commit it with the rest.
+5. Include `__init__.py` for the family package.
+6. Add each contract's base small Point to `SMALL_POINTS` in `tests/plugins/aiter/cases.py`, in contract order, then run `AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py` to regenerate `tests/plugins/aiter/names.txt` and commit it with the rest.
 
-Only non-`.md` changes under `aklr/core/` make CI test **all** committed schemas (`aklr/core/validation/stages/validation_scope.py`). A new `aklr/ops/<op>` is not among them: it is tested by change set, so only the schemas in the change are tested (the last section of `new-op.md` says all schemas are tested; that is outdated, and `validation_scope.py` is authoritative). Open it as a separate PR from the kernel.
+Only non-`.md` changes under `aklr/core/` make CI test **all** committed schemas (`aklr/core/validation/stages/validation_scope.py`). A new `aklr/plugins/aiter/<op>` is not among them: it is tested by change set, so only the schemas in the change are tested. Open it as a separate PR from the kernel.
 
 ### 1. B contract exists: generate the concrete schema
 
@@ -96,7 +96,7 @@ Once every source field is filled in, rerun the 1.B script (replace `"sources": 
 Local validation checks that the schema is well-formed and that the kernel's performance meets the bar for merging.
 
 ```bash
-python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/impls/<lang>/<name>/<uuid>.json
+python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/<op>/impls/<lang>/<name>/<uuid>.json
 ```
 
 - **audit**: checks that the text equals `schema_text()`, naming, consistency with the contract, path/uuid, domain, scalars, duplicates, measurement fields, and audits the source
@@ -104,18 +104,18 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - Correctness: for each workload, compares against the reference implementation on inputs sampled from the declared distributions;
   - Performance: compares against the baseline over multiple rounds under CUDA graph.
 
-**Thresholds**: every Point of a new kernel must reach ≥ **1.05** over the baseline (`<contract>_baseline` in `aklr/ops/<op>/baseline.py`) and ≥ **0.99** against the kernel already serving it, and runtime serving requires ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses the bar is only recorded in the report's demoted list and does not fail validate. The demoted list holds both performance misses and correctness failures (such as `numeric_mismatch`, `build_failed`, `candidate_crash`, which CI writes as `accuracy: failed`); both kinds need handling. Only when not a single workload qualifies does the schema report `no_qualifying_workload`.
+**Thresholds**: every Point of a new kernel must reach ≥ **1.05** over the baseline (`<contract>_baseline` in `aklr/plugins/aiter/<op>/baseline.py`) and ≥ **0.99** against the kernel already serving it, and runtime serving requires ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses the bar is only recorded in the report's demoted list and does not fail validate. The demoted list holds both performance misses and correctness failures (such as `numeric_mismatch`, `build_failed`, `candidate_crash`, which CI writes as `accuracy: failed`); both kinds need handling. Only when not a single workload qualifies does the schema report `no_qualifying_workload`.
 
 ## 4. PR and CI
 
 **PR rules**:
 - Write the body following `.github/pull_request_template.md`. Add `ci:gpu` to both kernel and code PRs (an external contributor's CI run waits for a maintainer to approve it); a kernel PR pastes the results from 3.;
-- The code for a new op (`contract.py` and the rest, which counts as code) goes in its own PR; the kernel-less schema (called contract in the template) and the schema with the kernel each fill in their own section of the template.
+- The code for a new op (`plugin.py` and the rest, which counts as code) goes in its own PR; the kernel-less schema (called contract in the template) and the schema with the kernel each fill in their own section of the template.
 - Do not write `accuracy`/`speedup`/`microseconds` in a submitted PR (writing them by hand reports `perf_edited`). After merge, main's push CI remeasures and `publish-measurement` updates the `aklr-perf/main` bot PR; only after that bot PR is squash-merged under its own title do the workloads carry `accuracy`/`speedup`/`microseconds`.
 
 **CI rules**:
-- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → aiter-test (GPU, `aiter_image`, for now the sglang image, with the baseline aiter installed over its own: `tests/core`, `tests/ops`, `tests/benchmarks`, then `validate --base <merge base> --under aklr/ops`) → sglang-test (`sglang_image` as it ships: `tests/plugins/aiter`, `tests/plugins/sglang`, then `validate --under aklr/plugins --exclude aklr/plugins/vllm` and `--under aklr/ops --no-timing`) → vllm-test (`vllm_image` as it ships: `tests/plugins/vllm`, then `validate --under aklr/plugins/vllm` and `--under aklr/ops --no-timing`). Validation runs only when there are schemas to bench.
-- Only non-`.md` changes under `aklr/core/` and `stack.json` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
+- After CPU lint, export and audit checks, each GPU job times its own schemas. AITER owns `aklr/plugins/aiter` (including `mega_moe`) except `situv2_a4w4_moe`. SGLang owns `aklr/plugins/sglang` and SiTUv2. vLLM owns `aklr/plugins/vllm`. The framework jobs also check the shared AITER families with `--no-timing`. CI checks that every schema has exactly one timing owner.
+- Only non-`.md` changes under `aklr/core/` and `stack.json` test all schemas; any other change (schemas, docs, a new `aklr/plugins/aiter/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
 
 ## 5. Runtime dispatch
 
@@ -138,7 +138,7 @@ In every other case no kernel runs: the api returns a `FallbackReason`, and the 
 
 How the example steps map to the sections above: steps 0 and 1 correspond to 1. B, step 2 to writing the kernel in §2, step 3 first runs the §2 rerun script and then the §3 validation, and steps 4 and 5 correspond to §4.
 
-**0. Choose the scenario.** What `fused_moe@1.0` (`FUSED_MOE` in `aklr/ops/fused_moe/contract.py`) does: it routes each token to its top-k experts, runs the two projections, and combines the results. The weights are always MXFP4.
+**0. Choose the scenario.** What `fused_moe@1.0` (`FUSED_MOE` in `aklr/plugins/aiter/fused_moe/plugin.py`) does: it routes each token to its top-k experts, runs the two projections, and combines the results. The weights are always MXFP4.
 
 - axes: var axis `n_tokens` (1–65536); const axes `model_dim`, `inter_dim` (both multiples of 128), `n_experts`, `topk`, `global_experts`; derived axes `gate_up_rows = 2 * inter_dim`, `model_blocks = model_dim // 32`, `inter_blocks = inter_dim // 32`.
 - attrs: `activation` (silu/gelu/situv2/swiglu), `quant_type` (only `per_1x32`), `doweight_stage1`, `gate_mode` (separated/interleave), `has_expert_mask`, `act_quant` (4/8), plus two optional attrs, `has_num_local_tokens` and `has_swiglu_limit`.
@@ -187,7 +187,7 @@ path.write_text(schema.schema_text(), encoding="utf-8")
 print(path)
 ```
 
-Running `python ~/make_moe_schema.py` writes `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json` (`<uuid0>` belongs to the kernel-less version only and is temporary). Only `shuffled_16x16` appears in the name because it is not the first declared layout; every other attr/dtype is its first declared value and stays out of the name (the Names section of `aklr/ops/README.md`). Apart from `kernel.sources` and the measurement fields, the file equals the committed `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json`. An excerpt of the new file:
+Running `python ~/make_moe_schema.py` writes `aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json` (`<uuid0>` belongs to the kernel-less version only and is temporary). Only `shuffled_16x16` appears in the name because it is not the first declared layout; every other attr/dtype is its first declared value and stays out of the name (the Names section of `aklr/plugins/aiter/README.md`). Apart from `kernel.sources` and the measurement fields, the file equals the committed `aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json`. An excerpt of the new file:
 
 ```json
 "axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 6144, ...}, "n_experts": {..., "value": 257}, "topk": {..., "value": 9},
@@ -214,7 +214,7 @@ Running `python ~/make_moe_schema.py` writes `aklr/ops/fused_moe/impls/flydsl/fu
 **3. Local validation.** Once the kernel is written, rerun `make_moe_schema.py` to generate the final schema file `<uuid1>.json`
 
 ```bash
-D=aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256
+D=aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256
 # ~/moe_kernel: the kernel source directory written in step 2 (contains the kernel.py::run entry file)
 python ~/make_moe_schema.py ~/moe_kernel             # → $D/<uuid1>.json
 rm $D/<uuid0>.json                                   # delete the original schema

@@ -6,15 +6,18 @@ from __future__ import annotations
 import functools
 import hashlib
 import importlib
-import pkgutil
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from types import ModuleType
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from aklr.core.contract import spec
 from aklr.core.contract.semantics import sorted_key_json
+
+if TYPE_CHECKING:
+    from aklr.core.contract.op import OpContract
 
 __all__ = [
     "OP_PACKAGE_PATTERN",
@@ -23,7 +26,11 @@ __all__ = [
     "SCHEMA_ROOTS",
     "committed_schema_paths",
     "import_entry",
+    "legacy_aiter_path",
+    "op_api_modules",
+    "op_contracts",
     "op_dir",
+    "op_dirs",
     "op_module",
     "op_package_of",
     "op_packages",
@@ -32,51 +39,107 @@ __all__ = [
     "schema_uuid",
 ]
 
-OP_PACKAGE_PATTERN = re.compile(r"aklr\.(?:ops|plugins(?:\.[a-z][a-z0-9_]*)+)\.[a-z][a-z0-9_]*")
+OP_PACKAGE_PATTERN = re.compile(r"aklr\.plugins(?:\.[a-z][a-z0-9_]*){2,}")
 # schema_relative_path's layout, relative to an op directory; main's legacy solution
 # files impls/<language>/<dir>/<stem>.json are not schemas
 SCHEMA_PATH_PATTERN: Final = r"^impls/(?P<language>[^/]+)/(?P<name>[^/]+)/(?P<uuid>[0-9a-f]{16})\.json$"
 # the same, relative to the repository: under an op directory of aklr/ops or aklr/plugins
 REPOSITORY_SCHEMA_PATH_PATTERN: Final = r"^aklr/(?:ops|plugins(?:/[^/]+)+)/[^/]+/" + SCHEMA_PATH_PATTERN[1:]
 SCHEMA_ROOTS: Final = ("aklr/ops", "aklr/plugins")
+_MOVED_FAMILIES = frozenset(
+    {
+        "attention",
+        "fused_moe",
+        "gemm",
+        "kda_conv",
+        "mega_moe",
+        "mhc",
+        "mla",
+        "mla_prefill",
+        "quant",
+        "rms_norm",
+        "topk",
+    }
+)
 _AKLR_DIR: Final = Path(__file__).resolve().parents[2]
 
 
+def legacy_aiter_path(path: PurePosixPath) -> PurePosixPath | None:
+    """The exact pre-migration counterpart, for reading historical Git trees and reports."""
+    parts = path.parts
+    if len(parts) >= 4 and parts[:3] == ("aklr", "plugins", "aiter") and parts[3] in _MOVED_FAMILIES:
+        return PurePosixPath("aklr", "ops", *parts[3:])
+    return None
+
+
 def op_packages() -> tuple[str, ...]:
-    """Every ``aklr.ops.<pkg>`` package and every plugin op package, sorted."""
-    ops = importlib.import_module("aklr.ops")
-    ops_packages = (f"aklr.ops.{m.name}" for m in pkgutil.iter_modules(ops.__path__) if m.ispkg)
-    return tuple(sorted([*ops_packages, *_plugin_op_packages().values()]))
+    """Every installed plugin family which publishes contracts."""
+    return tuple(sorted(_plugin_op_packages().values()))
+
+
+def op_dirs(plugins_dir: Path) -> tuple[Path, ...]:
+    """Family directories in this checkout or installation, without importing any code."""
+    families = []
+    for directory, children, files in os.walk(plugins_dir):
+        children[:] = [name for name in children if name not in {"impls", "__pycache__"}]
+        if "plugin.py" in files or "contract.py" in files:
+            path = Path(directory)
+            if len(path.relative_to(plugins_dir).parts) >= 2:
+                families.append(path)
+    return tuple(sorted(families))
 
 
 @functools.cache
 def _plugin_op_packages() -> dict[str, str]:
-    """``op_type -> package`` of every package under ``aklr/plugins`` holding a
-    ``contract.py``: its last name, unique across ``aklr/ops`` and ``aklr/plugins``."""
+    """Installed family packages by globally unique op type."""
     packages: dict[str, str] = {}
     plugins_dir = _AKLR_DIR / "plugins"
-    for path in sorted(plugins_dir.rglob("contract.py")):
-        parts = path.parent.relative_to(plugins_dir).parts
+    for path in op_dirs(plugins_dir):
+        parts = path.relative_to(plugins_dir).parts
         op_type, package = parts[-1], ".".join(("aklr", "plugins", *parts))
-        if op_type in packages or (_AKLR_DIR / "ops" / op_type).is_dir():
-            raise ValueError(f"{package}: op_type {op_type!r} is taken")
+        if op_type in packages:
+            raise ValueError(f"{package}: op_type {op_type!r} is taken by {packages[op_type]}")
         packages[op_type] = package
     return packages
 
 
 def op_package_of(op_type: str) -> str:
-    """The package of ``op_type``: a plugin op's, else ``aklr.ops.<op_type>``."""
-    return _plugin_op_packages().get(op_type, f"aklr.ops.{op_type}")
+    """The unique installed plugin family for an op type."""
+    try:
+        return _plugin_op_packages()[op_type]
+    except KeyError:
+        raise ValueError(f"unknown op_type {op_type!r}") from None
 
 
 def op_module(op_package: str, submodule: str) -> ModuleType:
-    """``<op_package>.<submodule>``; ``submodule`` is contract, api, reference, baseline or group."""
+    """``<op_package>.<submodule>``; ``submodule`` can be plugin, reference, baseline, group or a legacy module."""
     return importlib.import_module(f"{op_package}.{submodule}")
 
 
+@functools.cache
 def op_dir(op_package: str) -> Path:
-    """The op package's directory."""
-    return Path(op_module(op_package, "contract").__file__).parent
+    """Locate a family without importing its partially constructed module."""
+    path = _AKLR_DIR.parent.joinpath(*op_package.split("."))
+    if not OP_PACKAGE_PATTERN.fullmatch(op_package) or not path.is_dir():
+        raise ModuleNotFoundError(f"No op package {op_package!r}", name=op_package)
+    return path
+
+
+@functools.cache
+def op_api_modules(op_package: str) -> tuple[str, str]:
+    """Definition and public import module names, including mixed-layout installations."""
+    directory = op_dir(op_package)
+    definition = "plugin" if (directory / "plugin.py").is_file() else "api"
+    public = "api" if (directory / "api.py").is_file() else definition
+    return f"{op_package}.{definition}", f"{op_package}.{public}"
+
+
+def op_contracts(op_package: str) -> tuple[OpContract, ...]:
+    """Read the family's publication once, including families from the earlier layout."""
+    definition, _ = op_api_modules(op_package)
+    if definition.endswith(".plugin"):
+        return importlib.import_module(definition).family.contracts
+    return op_module(op_package, "contract").CONTRACTS
 
 
 def import_entry(entry: str) -> Any:

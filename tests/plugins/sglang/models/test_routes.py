@@ -10,10 +10,10 @@ import pytest
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.sglang.models.deepseek_v2 import api as deepseek_v2
-from aklr.plugins.sglang.models.qwen3_5 import api as qwen3_5
-from aklr.plugins.sglang.models.qwen3_moe import api as qwen3_moe
-from aklr.plugins.sglang.models.qwen3_next import api as qwen3_next
+from aklr.plugins.sglang.models.deepseek_v2 import plugin as deepseek_v2
+from aklr.plugins.sglang.models.qwen3_5 import plugin as qwen3_5
+from aklr.plugins.sglang.models.qwen3_moe import plugin as qwen3_moe
+from aklr.plugins.sglang.models.qwen3_next import plugin as qwen3_next
 
 
 @pytest.fixture

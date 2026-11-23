@@ -58,8 +58,10 @@ from aklr.core.validation.stages._report._markdown import one_line
 from aklr.core.validation.stages.stage import StageStatus
 
 # a committed gfx950/MI355X schema, rewritten under tmp_path with a stored speedup
-_SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/b88f9602c806937b.json"
-_TRITON_SCHEMA = "aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/4a159c69e56742a3.json"
+_SCHEMA = "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n512_k4096/b88f9602c806937b.json"
+_TRITON_SCHEMA = (
+    "aklr/plugins/aiter/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/4a159c69e56742a3.json"
+)
 _PLATFORM = dict.fromkeys(PlatformRecord.model_fields, "unknown") | {
     "arch": "gfx950",
     "hardware": "MI355X",
@@ -291,7 +293,7 @@ class TestPipeline:
     @pytest.mark.parametrize(
         ("base_path", "first_release", "threshold"),
         [
-            ("aklr/ops/gemm/impls/triton/fp8/fp8_gfx950_m1.json", True, "retain"),
+            ("aklr/plugins/aiter/gemm/impls/triton/fp8/fp8_gfx950_m1.json", True, "retain"),
             (_TRITON_SCHEMA, False, "entry"),
         ],
         ids=["legacy_base", "schema_base"],
@@ -1101,7 +1103,7 @@ def test_warm_up_covers_the_workload_scalars(monkeypatch: pytest.MonkeyPatch) ->
         CandidateRun,
     )
 
-    path = str(min(Path("aklr/ops/mhc/impls").rglob("*.json")))
+    path = str(min(Path("aklr/plugins/aiter/mhc/impls").rglob("*.json")))
     schema = ContractRegistry.default().parse_schema(Path(path).read_bytes(), path)
     contract = ContractRegistry.default().get(schema.contract_id)
     request = TrialRequest.of_workload(

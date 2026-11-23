@@ -1,18 +1,18 @@
 # Ops 教程：给 AKLR 算子添加 kernel
 
-本教程演示如何给 `aklr/ops/` 中的算子添加 kernel，从定义算子一直到 kernel 合入。示例是 `fused_moe`，即 MoE 层的专家计算部分（AITER 的 `fused_moe` 所做的计算），使用 GLM-5 MoE 层的形状。[插件教程](plugin_tutorial.zh.md) 接着以同一个 MoE 层为例，说明如何越过这个算子的边界继续优化。
+本教程演示如何给 `aklr/plugins/aiter/` 中的算子添加 kernel，从定义算子一直到 kernel 合入。示例是 `fused_moe`，即 MoE 层的专家计算部分（AITER 的 `fused_moe` 所做的计算），使用 GLM-5 MoE 层的形状。[插件教程](plugin_tutorial.zh.md) 接着以同一个 MoE 层为例，说明如何越过这个算子的边界继续优化。
 
 ## 概念
 
-Contract: **contract 是算子的完整定义。** 它是 `aklr/ops/<op>/contract.py` 里的一个 `OpContract` 常量，登记在该模块的 `CONTRACTS` 中（registry 会自动发现）。
+Contract: **contract 是算子的完整定义。** 它是 `aklr/plugins/aiter/<op>/plugin.py` 里的一个 `OpContract` 常量，由该模块的 `family.contracts` 发布，由 registry 自动发现。
 
-Schema: **schema 是一个 JSON 文件。** 它把某个算子的 `OpContract` 收窄到一个场景（固定 dtype、常量轴、属性、布局），列出这个场景要服务的 workload（var 轴的具体取值），并内嵌 kernel 源码。schema 存放在 `aklr/ops/<op>/impls/<language>/<name>/<uuid>.json`。Schema 是 AKLR 与其他 kernel 生成工具交互的契约。
+Schema: **schema 是一个 JSON 文件。** 它把某个算子的 `OpContract` 收窄到一个场景（固定 dtype、常量轴、属性、布局），列出这个场景要服务的 workload（var 轴的具体取值），并内嵌 kernel 源码。schema 存放在 `aklr/plugins/aiter/<op>/impls/<language>/<name>/<uuid>.json`。Schema 是 AKLR 与其他 kernel 生成工具交互的契约。
 
 ## 工作流程
 
 ```mermaid
 flowchart TD
-    S{"1. 目标算子已有 contract 吗？"} -->|"没有：path A"| A["1. A 新建算子<br/>contract.py / reference.py / api.py / baseline.py / __init__.py<br/>tests 小 Point + names.txt"]
+    S{"1. 目标算子已有 contract 吗？"} -->|"没有：path A"| A["1. A 新建算子<br/>plugin.py / reference.py / baseline.py / __init__.py<br/>tests 小 Point + names.txt"]
     S -->|"有：path B"| B["1. B 收窄到场景<br/>get → PointSpec → workload_for → narrow → schema_text"]
     A -->|"contract 注册后"| B
     B -->|"kernel-less schema<br/>（sources = []，uuid 临时）"| D["2. 开发 kernel<br/>填 sources / requires / author"]
@@ -27,7 +27,7 @@ flowchart TD
 
 | 步骤 | 关键动作 | 产出 |
 |---|---|---|
-| 1. A contract 不存在 | 新建 `contract.py`/`reference.py`/`api.py`/`baseline.py`/`__init__.py`、测试小 Point、更新 `names.txt`，再按 1. B 收窄 | 新算子包 + kernel-less schema |
+| 1. A contract 不存在 | 新建 `plugin.py`/`reference.py`/`baseline.py`/`__init__.py`、测试小 Point、更新 `names.txt`，再按 1. B 收窄 | 新算子包 + kernel-less schema |
 | 1. B contract 已存在 | `get` → `PointSpec` → `workload_for` → `narrow(sources=[])` → `schema_text()` | kernel-less schema（uuid 临时） |
 | 2. 开发 kernel | 填 `kernel.sources` 和 `requires`（可选 `author`），再重新执行 1. B 脚本 | 带 kernel 的 schema（新 uuid） |
 | 3. 本地验证 | `python -m aklr validate --base origin/main --stages audit,bench <schema>`；看 demoted 列表，删掉不达标的 workload | `aklr_validation/report.md`、`report.json` |
@@ -39,14 +39,14 @@ flowchart TD
 
 参考仓库里的 `harness/skills/port-generated-kernels/references/new-op.md` 依次实现以下文件：
 
-1. `contract.py`：定义 `OpContract` 和 `CONTRACTS`（registry 会自动发现）；`op_type` 取目录名 `<op>`；按数学含义命名；多输出时不能有叫 `out` 的；每个输出给出 `error_bounds`，contract 给出 `determinism`。
-2. `reference.py`：`<contract>_reference(point, row_major_args)`，按算子声明的 dtype 算，做不到就用 float32（目前都是 float32，输入用 `semantics.to_float32` 读）；整数输出用声明的 dtype。规则见 `aklr/ops/README.md` 的 "Reference and baseline"。
-3. `api.py`：`@api(<CONTRACT>)` 存根（函数体只能是 `...`）。
+1. 在 `plugin.py` 中为每个算子定义 `OpContract`。`op_type` 取族目录名，输入输出按数学含义命名。多输出时每个输出都要有区别于 `out` 的名字。每个输出给出 `error_bounds`，契约给出 `determinism`。创建 `family = Plugin("aiter")`，逐个 `family.define(contract)`，然后 `family.build()`。[RMSNorm 示例](../aklr/plugins/aiter/rms_norm/plugin.py)
+2. `reference.py`：`<contract>_reference(point, row_major_args)`，按算子声明的 dtype 算，做不到就用 float32（目前都是 float32，输入用 `semantics.to_float32` 读）；整数输出用声明的 dtype。规则见 `aklr/plugins/aiter/README.md` 的 "Reference and baseline"。
+3. 在同一个 `plugin.py` 里用 `@family.op` 装饰契约对应的具名函数，函数体为 `...`。
 4. `baseline.py`：每个有基线的 contract 一个 `<contract>_baseline`，就是推理引擎对这个算子的实际调用；接收 api 的参数（以调用的关键字参数传入），在函数内部 import AITER 或 SGLang，像 api 一样返回输出；不支持的调用抛 `NotImplementedError`（bench 报 `baseline_failed`）。没有这个函数时算子以自己为基线，kernel 没有要超过的对象。
-5. `__init__.py`：导出 api。
-6. 在 `tests/ops/cases.py` 的 `SMALL_POINTS` 中按 contract 顺序加入各 contract 的 base 小 Point，然后运行 `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` 重新生成 `tests/ops/names.txt` 并一起提交。
+5. 添加族包的 `__init__.py`。
+6. 在 `tests/plugins/aiter/cases.py` 的 `SMALL_POINTS` 中按 contract 顺序加入各 contract 的 base 小 Point，然后运行 `AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py` 重新生成 `tests/plugins/aiter/names.txt` 并一起提交。
 
-只有 `aklr/core/` 下的非 `.md` 改动才会让 CI 测**全部**已提交 schema（`aklr/core/validation/stages/validation_scope.py`）；新建 `aklr/ops/<op>` 不在其中，按改动集合测试，只测改动里的 schema（`new-op.md` 末段说会测全部 schema，已过时，以 `validation_scope.py` 为准）。建议和 kernel 分开提 PR。
+只有 `aklr/core/` 下的非 `.md` 改动才会让 CI 测**全部**已提交 schema（`aklr/core/validation/stages/validation_scope.py`）；新建 `aklr/plugins/aiter/<op>` 不在其中，按改动集合测试，只测改动里的 schema。建议和 kernel 分开提 PR。
 
 ### 1. B contract 已存在：生成具体的 schema
 
@@ -96,7 +96,7 @@ source 字段全部填写完毕后，重新执行 1.B 脚本（把 `"sources": [
 本地验证目的是为了检验 schema 格式是否合法；kernel 的性能是否到达合入门槛。
 
 ```bash
-python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/impls/<lang>/<name>/<uuid>.json
+python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/<op>/impls/<lang>/<name>/<uuid>.json
 ```
 
 - **audit**：检查文本是否等于 `schema_text()`、命名、与 contract 的一致性、路径/uuid、domain、标量、重复项、测量字段，以及源码审计
@@ -104,18 +104,18 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - 正确性：对每个 workload 用分布采样的输入，参考实现进行比较；
   - 性能：在 CUDA graph 下与基线多轮对比。
 
-**门槛**：新 kernel 的每个 Point 相对基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`）要 ≥ **1.05**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
+**门槛**：新 kernel 的每个 Point 相对基线（`aklr/plugins/aiter/<op>/baseline.py` 的 `<contract>_baseline`）要 ≥ **1.05**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
 
 ## 4. PR 与 CI
 
 **PR 规则**：
 - 按 `.github/pull_request_template.md` 写正文。kernel 和 code PR 都加 `ci:gpu`（外部贡献者的 CI 要等 maintainer 批准后才跑）；kernel PR 贴 3. 的结果；
-- 新算子的代码（`contract.py` 等，属于 code）单独提 PR；kernel-less schema（模板里叫 contract）和带 kernel 的 schema 各按模板对应一节填写。
+- 新算子的代码（`plugin.py` 等，属于 code）单独提 PR；kernel-less schema（模板里叫 contract）和带 kernel 的 schema 各按模板对应一节填写。
 - 提交 PR 不写 `accuracy`/`speedup`/`microseconds`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`/`microseconds`。
 
 **CI 规则**：
-- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ aiter-test（GPU，`aiter_image`，暂时是 sglang 镜像，覆盖安装对照 aiter：`tests/core`、`tests/ops`、`tests/benchmarks`，再 `validate --base <合并基> --under aklr/ops`）→ sglang-test（`sglang_image` 原样：`tests/plugins/aiter`、`tests/plugins/sglang`，再 `validate --under aklr/plugins --exclude aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）→ vllm-test（`vllm_image` 原样：`tests/plugins/vllm`，再 `validate --under aklr/plugins/vllm` 和 `--under aklr/ops --no-timing`）。只在有要 bench 的 schema 时验证。
-- 只有 `aklr/core/` 下的非 `.md` 改动和 `stack.json` 才测全部 schema，其他改动（schema、文档、新建 `aklr/ops/<op>` 等）只测改动集合里的 schema（`validation_scope.py`）。
+- CPU 完成 lint、导出和审计后，三个 GPU 作业各自计时。AITER 负责 `aklr/plugins/aiter` 中除 `situv2_a4w4_moe` 外的全部族（含 `mega_moe`）。SGLang 负责 `aklr/plugins/sglang` 和 SiTUv2。vLLM 负责 `aklr/plugins/vllm`。两个框架作业还用 `--no-timing` 验证共享的 AITER 族。CI 检查每份 schema 都有且只有一个计时作业。
+- 只有 `aklr/core/` 下的非 `.md` 改动和 `stack.json` 才测全部 schema，其他改动（schema、文档、新建 `aklr/plugins/aiter/<op>` 等）只测改动集合里的 schema（`validation_scope.py`）。
 
 ## 5. 运行时分发
 
@@ -138,7 +138,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 
 示例步骤与上面的对应关系：第 0、1 步对应 1. B，第 2 步对应 §2 写 kernel，第 3 步先做 §2 的重跑脚本再做 §3 验证，第 4、5 步对应 §4。
 
-**0. 选定场景。** `fused_moe@1.0`（`aklr/ops/fused_moe/contract.py` 的 `FUSED_MOE`）做的事：把每个 token 路由到 top-k 个 expert，跑完两次投影后合并。权重固定是 MXFP4。
+**0. 选定场景。** `fused_moe@1.0`（`aklr/plugins/aiter/fused_moe/plugin.py` 的 `FUSED_MOE`）做的事：把每个 token 路由到 top-k 个 expert，跑完两次投影后合并。权重固定是 MXFP4。
 
 - axes：var 轴 `n_tokens`（1–65536）；常量轴 `model_dim`、`inter_dim`（均为 128 的倍数）、`n_experts`、`topk`、`global_experts`；派生轴 `gate_up_rows = 2 * inter_dim`、`model_blocks = model_dim // 32`、`inter_blocks = inter_dim // 32`。
 - attrs：`activation`（silu/gelu/situv2/swiglu）、`quant_type`（只有 `per_1x32`）、`doweight_stage1`、`gate_mode`（separated/interleave）、`has_expert_mask`、`act_quant`（4/8），以及两个 optional attr `has_num_local_tokens`、`has_swiglu_limit`。
@@ -187,7 +187,7 @@ path.write_text(schema.schema_text(), encoding="utf-8")
 print(path)
 ```
 
-运行 `python ~/make_moe_schema.py`，会写出 `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json`（`<uuid0>` 只对应 kernel-less 版本，是临时的）。名字里只有 `shuffled_16x16`，因为它不是第一个声明的 layout；其余 attr/dtype 都是各自第一个声明的值，不进名字（`aklr/ops/README.md` 的 Names 一节）。除 `kernel.sources` 和测量字段外，文件内容与已提交的 `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json` 完全相同。新文件节选：
+运行 `python ~/make_moe_schema.py`，会写出 `aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json`（`<uuid0>` 只对应 kernel-less 版本，是临时的）。名字里只有 `shuffled_16x16`，因为它不是第一个声明的 layout；其余 attr/dtype 都是各自第一个声明的值，不进名字（`aklr/plugins/aiter/README.md` 的 Names 一节）。除 `kernel.sources` 和测量字段外，文件内容与已提交的 `aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json` 完全相同。新文件节选：
 
 ```json
 "axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 6144, ...}, "n_experts": {..., "value": 257}, "topk": {..., "value": 9},
@@ -214,7 +214,7 @@ print(path)
 **3. 本地验证。** kernel 写完后, 重新执行 `make_moe_schema.py`，生成最终的 schema 文件 `<uuid1>.json`
 
 ```bash
-D=aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256
+D=aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256
 # ~/moe_kernel：第 2 步写好的 kernel 源码目录（含 kernel.py::run 入口文件）
 python ~/make_moe_schema.py ~/moe_kernel             # → $D/<uuid1>.json
 rm $D/<uuid0>.json                                   # 删除原本的 schema

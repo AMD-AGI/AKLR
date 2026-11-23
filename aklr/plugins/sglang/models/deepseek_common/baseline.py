@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from aklr.plugins.sglang.models.deepseek_common.contract import FP8_GROUP
+from aklr.plugins.sglang.models.deepseek_common.plugin import FP8_GROUP
 
 __all__ = ["mla_kc_rope_cache_baseline", "mla_qkv_a_norm_baseline", "mla_vc_baseline"]
 

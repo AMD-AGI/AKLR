@@ -243,7 +243,7 @@ class BenchStage(PipelineStage[BenchReport]):
         impls_dir = (schema_op_dir(Path(schema_path)) / "impls").as_posix()
         paths = [
             p
-            for p in scope.paths_at_base(impls_dir)
+            for p in scope.schema_paths_at_base(impls_dir)
             if ValidationScope.path_kind(p) == "schema_data" and PurePosixPath(p).parent.name == schema.name
         ]
         served: dict[Any, list[tuple[OpContract, WorkloadSpec, str]]] = {}

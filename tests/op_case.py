@@ -23,8 +23,8 @@ from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import CompareResult
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
 from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
-from tests.ops import cases as ops_cases
 from tests.plugins.aiter import cases as aiter_cases
+from tests.plugins.aiter import operator_cases as ops_cases
 from tests.plugins.sglang import cases as sglang_cases
 from tests.plugins.vllm import cases as vllm_cases
 
@@ -131,7 +131,7 @@ def hsaco_gemm_sources() -> dict[str, str]:
 
 _NO_OP_KERNEL_SOURCE = "def run(**call): ...\n"  # a schema's kernel no test runs
 
-# every contract's small Points (tests/ops/cases.py, tests/plugins/<framework>/cases.py),
+# every contract's small Points (tests/plugins/aiter/operator_cases.py, tests/plugins/<framework>/cases.py),
 # contract order: each contract's base Point first
 _SMALL_POINTS: tuple[PointSpec, ...] = tuple(
     sorted(

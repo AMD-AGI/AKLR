@@ -3,6 +3,6 @@
 
 """Kimi-K3's attention-residual aggregation, as sglang runs it on ROCm."""
 
-from aklr.plugins.sglang.layers.attn_residual.api import add_attn_res, attn_res
+from aklr.plugins.sglang.layers.attn_residual.plugin import add_attn_res, attn_res
 
 __all__ = ["add_attn_res", "attn_res"]

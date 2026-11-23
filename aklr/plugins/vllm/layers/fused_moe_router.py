@@ -12,8 +12,9 @@ import torch
 
 from aklr.core.contract.fastkey._fast_key_fn import MIN_PTR_ALIGN_BYTES
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.gemm.api import gemm
-from aklr.plugins.vllm.hook import _original, vllm_route
+from aklr.plugins import Plugin
+from aklr.plugins.aiter.gemm.plugin import gemm
+from aklr.plugins.vllm.hook import _original
 
 __all__: list[str] = []
 
@@ -22,7 +23,6 @@ _CALLER = "vllm.model_executor.layers.fused_moe.router.gate_linear.fp32_router_g
 _ROUTER = "vllm.model_executor.layers.fused_moe.router.rocm_fp32_router_gemm"
 
 
-@vllm_route(_CALLER, f"{_ROUTER}.rocm_fp32_router_gemm", versions=_VERSIONS)
 def _rocm_fp32_router_gemm(hidden_states, router_weight):
     """The gate's ``hidden_states @ router_weight.T`` in fp32: vLLM's own kernel where vLLM takes the call (at
     most 9 tokens for Kimi-K3's 896 bf16 experts), else AKLR's, which ``_can_use_rocm_fp32_router_gemm`` let in."""
@@ -34,7 +34,6 @@ def _rocm_fp32_router_gemm(hidden_states, router_weight):
     return _unrouted(hidden_states, router_weight) if isinstance(out, FallbackReason) else out
 
 
-@vllm_route(_CALLER, f"{_ROUTER}.can_use_rocm_fp32_router_gemm", versions=_VERSIONS)
 def _can_use_rocm_fp32_router_gemm(hidden_states, router_weight):
     """Whether vLLM takes its fp32 router GEMM: vLLM's own answer where it takes the call itself, else yes where
     AKLR serves it. For Kimi-K3's router vLLM's kernel stops at 9 tokens (hipBLASLt from 10, its decode's 16
@@ -73,3 +72,15 @@ def _unrouted(hidden_states, router_weight):
 _REASONS: dict[tuple, FallbackReason | None] = {}
 _UNASKED = object()
 _REMEMBER = os.environ.get("AKLR_EXPORT") != "1"
+
+
+def declare(host: Plugin) -> None:
+    host.intercept(
+        _CALLER, f"{_ROUTER}.rocm_fp32_router_gemm", versions=_VERSIONS, replace=_rocm_fp32_router_gemm
+    )
+    host.intercept(
+        _CALLER,
+        f"{_ROUTER}.can_use_rocm_fp32_router_gemm",
+        versions=_VERSIONS,
+        replace=_can_use_rocm_fp32_router_gemm,
+    )

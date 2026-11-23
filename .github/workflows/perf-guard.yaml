@@ -64,6 +64,17 @@ jobs:
               if [[ $AKLR_BOT_PR == true ]]; then
                 reason='the bot PR may only change paths present at the base'
               else
+                # The AITER migration moves these families, including their CI measurements.
+                # Trust the base's regular blob only at its exact counterpart, once the old path is gone.
+                families='attention|fused_moe|gemm|kda_conv|mega_moe|mhc|mla|mla_prefill|quant|rms_norm|topk'
+                if [[ $p =~ ^aklr/plugins/aiter/($families)/impls/[a-z0-9_]+/[a-z0-9_]+/[0-9a-f]{16}\.json$ ]]; then
+                  previous="aklr/ops/${p#aklr/plugins/aiter/}"
+                  if ! git cat-file -e "$HEAD_SHA:$previous" 2>/dev/null; then
+                    old_entry=$(git ls-tree "$base" -- "$previous" | cut -f1)
+                    new_entry=$(git ls-tree "$HEAD_SHA" -- "$p" | cut -f1)
+                    [[ $old_entry == '100644 blob '* && $old_entry == "$new_entry" ]] && continue
+                  fi
+                fi
                 [[ $(jq -c "$measured" <<<"$new") == '[]' ]] && continue
                 reason='a new schema carries measured fields'
               fi

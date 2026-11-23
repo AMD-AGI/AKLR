@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from aklr.core.contract.semantics import to_float32
-from aklr.plugins.sglang.layers.dsa_indexer.contract import (
+from aklr.plugins.sglang.layers.dsa_indexer.plugin import (
     FP8_MAX,
     HEAD_DIM,
     PAGE_SIZE,

@@ -139,7 +139,7 @@ def test_a_relative_aklr_root_reaches_the_driver_and_the_brief_absolute(
     driver = (workspace_dir / "driver.py").read_text(encoding="utf-8")
     assert f'AKLR_ROOT = Path("{aklr_root.resolve()}")' in driver
     brief = (workspace_dir / "program.md").read_text(encoding="utf-8")
-    assert f"{aklr_root.resolve()}/aklr/ops/README.md" in brief
+    assert f"{aklr_root.resolve()}/aklr/plugins/aiter/README.md" in brief
 
 
 def test_a_schema_file_from_another_checkout_is_read_with_this_ones_contracts(

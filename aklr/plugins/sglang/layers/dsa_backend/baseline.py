@@ -7,7 +7,7 @@ for the DSA indexer's decode top-k, sgl_kernel's."""
 
 from __future__ import annotations
 
-from aklr.plugins.sglang.layers.dsa_backend.contract import ROPE_DIM
+from aklr.plugins.sglang.layers.dsa_backend.plugin import ROPE_DIM
 
 __all__ = [
     "dsa_sparse_mla_decode_baseline",

@@ -10,19 +10,13 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.attention.api import unified_attention
-from aklr.plugins.vllm.hook import vllm_route
+from aklr.plugins import Plugin
+from aklr.plugins.aiter.attention.plugin import unified_attention
 
 __all__: list[str] = []
 
 
 # vLLM imports aiter's backward-compatible path, which may alias the current module.
-@vllm_route(
-    "vllm.v1.attention.backends.rocm_aiter_fa.AiterFlashAttentionImpl.forward",
-    "aiter.ops.triton.unified_attention.unified_attention",
-    "aiter.ops.triton.attention.unified_attention.unified_attention",
-    versions=("0.33.0rc1.dev910", "0.33.0", "0.34.0"),
-)
 def _unified_attention(
     q,
     k,
@@ -80,3 +74,13 @@ def _unified_attention(
     )
     # aiter's returns nothing: it writes out
     return result if isinstance(result, FallbackReason) else None
+
+
+def declare(plugin: Plugin) -> None:
+    plugin.intercept(
+        "vllm.v1.attention.backends.rocm_aiter_fa.AiterFlashAttentionImpl.forward",
+        "aiter.ops.triton.unified_attention.unified_attention",
+        "aiter.ops.triton.attention.unified_attention.unified_attention",
+        versions=("0.33.0rc1.dev910", "0.33.0", "0.34.0"),
+        replace=_unified_attention,
+    )

@@ -58,25 +58,27 @@ class ValidationScope:
             changed = (root / p for p, kind in kinds.items() if kind == "schema_data")
             paths = tuple(sorted(p for p in changed if p.is_file()))
         else:
-            op_dirs = [d for d in (root / "aklr/ops").iterdir() if d.is_dir()]
-            op_dirs += [p.parent for p in (root / "aklr/plugins").rglob("contract.py")]
-            paths = tuple(p for op_dir in sorted(op_dirs) for p in committed_schema_paths(op_dir))
+            paths = tuple(
+                p for op_dir in locate.op_dirs(root / "aklr/plugins") for p in committed_schema_paths(op_dir)
+            )
         bench_paths = paths
         if is_schema_only:
             at_base = set(scope.paths_at_schema_roots())
-            bench_paths = tuple(p for p in paths if scope.relative_path(p) not in at_base)
+            bench_paths = tuple(
+                p for p in paths if scope.relative_path(p) not in at_base and not scope.moved_from_base(p)
+            )
         return replace(scope, schema_paths=paths, bench_paths=bench_paths)
 
     def relative_path(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.root.resolve()).as_posix()
 
-    def under(self, directory: str, *, inside: bool = True) -> ValidationScope:
-        """This scope's schemas under ``directory``, a path relative to the root; not
-        ``inside``, those outside it. A directory outside the root is a ValueError."""
-        relative = self.relative_path(self.root / directory)
-        prefix = "" if relative == "." else relative + "/"
-        kept = tuple(p for p in self.schema_paths if self.relative_path(p).startswith(prefix) == inside)
-        bench = tuple(p for p in self.bench_paths if p in kept)
+    def under(self, directory: str, *others: str, inside: bool = True) -> ValidationScope:
+        """The subset inside (or outside) the union of these repository directories."""
+        roots = [self.relative_path(self.root / d) for d in (directory, *others)]
+        prefixes = tuple("" if d == "." else d + "/" for d in roots)
+        kept = tuple(p for p in self.schema_paths if self.relative_path(p).startswith(prefixes) == inside)
+        selected = set(kept)
+        bench = tuple(p for p in self.bench_paths if p in selected)
         return replace(self, schema_paths=kept, bench_paths=bench)
 
     def changed_paths(self) -> tuple[str, ...]:
@@ -96,11 +98,49 @@ class ValidationScope:
         """``paths_at_base`` of every ``locate.SCHEMA_ROOTS`` directory."""
         return tuple(p for d in locate.SCHEMA_ROOTS for p in self.paths_at_base(d))
 
+    @functools.cached_property
+    def _base_blobs(self) -> dict[str, bytes]:
+        if self.base_sha is None:
+            return {}
+        entries = self._git("ls-tree", "-r", "-z", self.base_sha, "--", *locate.SCHEMA_ROOTS)
+        result = {}
+        for entry in entries.split(b"\0"):
+            if entry:
+                info, path = entry.split(b"\t", 1)
+                result[os.fsdecode(path)] = info
+        return result
+
+    def moved_from_base(self, path: Path) -> bool:
+        """A regular schema moved from its historical location, byte for byte."""
+        relative = path.relative_to(self.root)
+        previous = locate.legacy_aiter_path(relative)
+        if previous is None or relative.as_posix() in self._base_blobs:
+            return False
+        old = self.root / previous
+        info = self._base_blobs.get(previous.as_posix(), b"")
+        if (
+            old.exists()
+            or old.is_symlink()
+            or path.resolve() != path
+            or path.stat().st_mode & 0o111
+            or not info.startswith(b"100644 blob ")
+        ):
+            return False
+        return info.split()[-1] == self._git("hash-object", "--no-filters", "--", str(path)).strip()
+
     def paths_at_base(self, directory: str) -> tuple[str, ...]:
         if self.base_sha is None:
             return ()
         stdout = self._git("ls-tree", "-r", "--name-only", "-z", self.base_sha, "--", directory)
         return tuple(sorted(os.fsdecode(p) for p in stdout.split(b"\0") if p))
+
+    def schema_paths_at_base(self, directory: str) -> tuple[str, ...]:
+        """Paths as stored at the base, including the former location of a moved family."""
+        paths = self.paths_at_base(directory)
+        previous = locate.legacy_aiter_path(Path(directory))
+        if not paths and previous is not None:
+            return self.paths_at_base(previous.as_posix())
+        return paths
 
     @functools.cached_property  # one git call per run, not per workload
     def is_first_release(self) -> bool:

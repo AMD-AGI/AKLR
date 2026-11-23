@@ -11,7 +11,7 @@ from __future__ import annotations
 import functools
 from types import SimpleNamespace
 
-from aklr.plugins.sglang.layers.dsa_indexer.contract import HEAD_DIM, PAGE_SIZE, ROPE_DIM
+from aklr.plugins.sglang.layers.dsa_indexer.plugin import HEAD_DIM, PAGE_SIZE, ROPE_DIM
 
 __all__ = ["dsa_indexer_key_prepare_baseline", "dsa_indexer_prepare_baseline"]
 

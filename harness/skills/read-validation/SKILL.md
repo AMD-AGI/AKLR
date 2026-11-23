@@ -12,13 +12,13 @@ failing Point in the report: the log names the failing schema, and only the repo
 
 Read [references/ruler.md](references/ruler.md) (how a Point is timed and judged),
 [references/ci.md](references/ci.md) (what CI validates and where its report is) and
-`aklr/ops/README.md`.
+`aklr/plugins/aiter/README.md`.
 
 ## Procedure
 
 1. **Get the report.** Locally, `python -m aklr validate --base origin/main --stages audit,bench
    <schemas> --out <dir>` writes `<dir>/report.md` and `report.json`. From CI, download the run's
-   artifact `validation-report-aiter-test-<attempt>` (`aklr/ops`), `validation-report-sglang-test-<attempt>`
+   artifact `validation-report-aiter-test-<attempt>` (`aklr/plugins/aiter`), `validation-report-sglang-test-<attempt>`
    (sglang's plugins) or `validation-report-vllm-test-<attempt>` (vLLM's); the `aiter-test`, `sglang-test` and
    `vllm-test` jobs' `Validate` step logs end with the findings, and `Enforce the overall CI result` only names the job that failed.
 2. **Separate findings from demotions.** A run fails on its `findings` (`not_faster`, `regressed`,

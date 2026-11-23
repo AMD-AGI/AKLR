@@ -175,6 +175,33 @@ jobs:
       - name: Check exported files
         id: export
         run: python -m aklr export check
+      - name: Check that each timed schema has one owner
+        env:
+          AITER_SCOPE: &aiter_scope --under aklr/plugins/aiter --exclude aklr/plugins/aiter/situv2_a4w4_moe
+          SGLANG_SCOPE: &sglang_scope --under aklr/plugins/sglang --under aklr/plugins/aiter/situv2_a4w4_moe
+          VLLM_SCOPE: &vllm_scope --under aklr/plugins/vllm
+        run: |
+          python - <<'PYTHON'
+          import argparse
+          import os
+          from collections import Counter
+          from aklr.core.validation import ValidationScope
+
+          parser = argparse.ArgumentParser()
+          parser.add_argument("--under", action="append", required=True)
+          parser.add_argument("--exclude", action="append", default=[])
+          scope = ValidationScope.of_working_tree(None, None)
+          owners = Counter()
+          for job in ("AITER_SCOPE", "SGLANG_SCOPE", "VLLM_SCOPE"):
+              args = parser.parse_args(os.environ[job].split())
+              selected = scope.under(*args.under)
+              if args.exclude:
+                  selected = selected.under(*args.exclude, inside=False)
+              owners.update(selected.schema_paths)
+          expected = Counter(scope.schema_paths)
+          if owners != expected:
+              raise SystemExit(f"Timing scope mismatch: extra {owners - expected}, missing {expected - owners}")
+          PYTHON
       # A jq that decides the gate is its own assignment: inside echo, a failure would not stop the step.
       - name: Audit gate
         id: audit
@@ -206,7 +233,7 @@ jobs:
           echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
           echo "AITER op baseline/reference tests: ${contracts:-all contracts}" >> "$GITHUB_STEP_SUMMARY"
 
-  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; beside it sglang-test and
+  # aiter-test: aklr/plugins/aiter timed against the baseline AITER, in aiter_image; beside it sglang-test and
   # vllm-test. No secrets and no actions/cache: they run the PR's code and kernels.
   aiter-test:
     needs: code-lint
@@ -218,7 +245,8 @@ jobs:
     env:
       TIMEOUT_MINUTES: 180
       IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
-      TESTS: tests/core tests/ops tests/benchmarks
+      TESTS: tests/core tests/plugins/aiter tests/benchmarks
+      PLUGINS: *aiter_scope
       AKLR_REFERENCE_CONTRACTS: ${{ needs.code-lint.outputs.reference_contracts }}
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
     steps:
@@ -269,7 +297,7 @@ jobs:
           import os
           from importlib.metadata import distribution, version
           from pathlib import Path
-          import aiter
+          import aiter.plugin
           dist = distribution("amd-aiter")
           installed = Path(dist.locate_file("aiter/__init__.py")).resolve()
           assert Path(aiter.__file__).resolve() == installed, aiter.__file__
@@ -312,15 +340,15 @@ jobs:
           flags=(${BASE:+--base "$BASE"})
           [[ ${MEASURED_BY_BOT:-} != true ]] || flags+=(--allow-measured-edits)
           if [[ -n ${AKLR_BASELINE_AITER:-} ]]; then
-            echo '::group::Validate aklr/ops'
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --out "$reports/validation-report"
+            echo '::group::Validate aklr/plugins/aiter'
+            python3 -m aklr validate "${flags[@]}" $PLUGINS --out "$reports/validation-report"
           else
             : "${PLUGINS:?}"
-            echo "::group::Validate plugins ($PLUGINS), check aklr/ops"
+            echo "::group::Validate plugins ($PLUGINS), check aklr/plugins/aiter"
             plugins=0 ops=0
             # shellcheck disable=SC2086 # PLUGINS is a list of flags
             python3 -m aklr validate "${flags[@]}" $PLUGINS --out "$reports/validation-report" || plugins=$?
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --no-timing --out "$reports/validation-check" || ops=$?
+            python3 -m aklr validate "${flags[@]}" --under aklr/plugins/aiter --exclude aklr/plugins/aiter/situv2_a4w4_moe --no-timing --out "$reports/validation-check" || ops=$?
             exit $((plugins ? plugins : ops))
           fi
       - &finish_gpu_tests
@@ -364,7 +392,7 @@ jobs:
           retention-days: 90
 
   # sglang-test: the sglang image as it ships, AKLR alone installed. Its plugins are timed against
-  # sglang's own code; aklr/ops is built and checked only, its timing being aiter-test's.
+  # sglang's own code; aklr/plugins/aiter is built and checked only, its timing being aiter-test's.
   # aklr/plugins/vllm is vllm-test's.
   sglang-test:
     needs: code-lint
@@ -374,8 +402,8 @@ jobs:
     env:
       TIMEOUT_MINUTES: 150
       IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
-      TESTS: tests/plugins/aiter tests/plugins/sglang
-      PLUGINS: --under aklr/plugins --exclude aklr/plugins/vllm
+      TESTS: tests/plugins/sglang
+      PLUGINS: *sglang_scope
     steps:
       - *checkout_source
       - *gpu_tests
@@ -385,7 +413,7 @@ jobs:
       - *summarize
       - *upload_report
       - &upload_check
-        name: Upload the check of aklr/ops (validation-check-${{ github.job }}-<attempt>)
+        name: Upload the check of aklr/plugins/aiter (validation-check-${{ github.job }}-<attempt>)
         if: always() && needs.code-lint.outputs.has_bench_paths == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -394,7 +422,7 @@ jobs:
           retention-days: 90
 
   # vllm-test: the vllm image as it ships, AKLR alone installed. aklr/plugins/vllm is timed in it;
-  # aklr/ops is built and checked only, as in sglang-test.
+  # aklr/plugins/aiter is built and checked only, as in sglang-test.
   vllm-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
@@ -404,7 +432,7 @@ jobs:
       TIMEOUT_MINUTES: 60
       IMAGE: ${{ needs.code-lint.outputs.vllm_image }}
       TESTS: tests/plugins/vllm
-      PLUGINS: --under aklr/plugins/vllm
+      PLUGINS: *vllm_scope
     steps:
       - *checkout_source
       - *gpu_tests
@@ -551,8 +579,8 @@ jobs:
       - *setup_python
       - *install_cpu_deps
       # A missed measurement is not retried; the next aklr/core or stack.json change on main re-benches every schema.
-      # A test job can fail before write_schemas: no artifact is nothing to write. aklr/ops is
-      # aiter-test's, aklr/plugins/vllm vllm-test's, the rest of aklr/plugins sglang-test's (validate --under).
+      # A test job can fail before write_schemas: no artifact is nothing to write. aklr/plugins/aiter is
+      # aiter-test's, aklr/plugins/vllm vllm-test's, SGLang and AITER SiTUv2 sglang-test's.
       - name: Download aiter-test's validation report
         continue-on-error: true
         uses: actions/download-artifact@v4

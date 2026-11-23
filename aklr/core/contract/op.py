@@ -19,6 +19,7 @@ from pydantic import Field, ValidationError, model_validator
 from aklr.core.contract import expr, semantics
 from aklr.core.contract.locate import (
     OP_PACKAGE_PATTERN,
+    op_api_modules,
     op_module,
     op_package_of,
     schema_relative_path,
@@ -75,7 +76,7 @@ class OpContract(FrozenModel):
     name: Annotated[str, Field(min_length=1)] | None = None
     contract_id: ContractId
     description: str
-    op_type: str  # the op family: "gemm" for aklr/ops/gemm/
+    op_type: str  # the op family: "gemm" for aklr/plugins/aiter/gemm/
     workloads: tuple[WorkloadSpec, ...] = ()
     axes: dict[str, AxisSpec]
     attrs: dict[str, AttrSpec] = {}  # noqa: RUF012 -- pydantic copies defaults
@@ -385,15 +386,21 @@ class OpContract(FrozenModel):
 
     @property
     def op_package(self) -> str:
-        """``"aklr.ops.gemm"`` for ``op_type`` ``"gemm"``; a plugin op's package
+        """``"aklr.plugins.aiter.gemm"`` for ``op_type`` ``"gemm"``; a plugin op's package
         under ``aklr.plugins``."""
         return op_package_of(self.op_type)
 
     @property
     def api_name(self) -> str:
-        """``<op_package>.api.<contract_name>``; a plain property so a
-        ``model_copy`` never carries a stale one."""
-        return f"{self.op_package}.api.{contract_name(self.contract_id)}"
+        """Public import path of the callable, including published compatibility paths."""
+        _, public = op_api_modules(self.op_package)
+        return f"{public}.{contract_name(self.contract_id)}"
+
+    @property
+    def definition_name(self) -> str:
+        """Where the author defines the signature validated by the dispatcher."""
+        definition, _ = op_api_modules(self.op_package)
+        return f"{definition}.{contract_name(self.contract_id)}"
 
     @cached_property
     def var_axes(self) -> dict[str, AxisSpec]:
@@ -1041,7 +1048,7 @@ class OpContract(FrozenModel):
     def check_api_signature(self, fn: Callable) -> None:
         """Raise ``TypeError`` unless ``fn`` is this contract's api function: named
         params, every required one without a non-``None`` default, extra ones
-        defaulted, named and placed at ``api_name``, a body of exactly ``...``."""
+        defaulted, named and placed at ``definition_name``, a body of exactly ``...``."""
         params = inspect.signature(fn).parameters
         named = (
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -1066,8 +1073,8 @@ class OpContract(FrozenModel):
             raise TypeError(f"{fn.__name__}: {undefaulted} not in {self.contract_id} need a default")
         if fn.__name__ != contract_name(self.contract_id):
             raise TypeError(f"{fn.__name__} must be named {contract_name(self.contract_id)}")
-        if api_name(fn) != self.api_name:
-            raise TypeError(f"{api_name(fn)} != {self.api_name}")
+        if api_name(fn) != self.definition_name:
+            raise TypeError(f"{api_name(fn)} != {self.definition_name}")
         (node,) = ast.parse(textwrap.dedent(inspect.getsource(fn))).body
         if ast.dump(ast.Module(body=node.body, type_ignores=[])) != _ELLIPSIS_BODY:
             raise TypeError(f"{fn.__name__}: the body must be exactly `...`")

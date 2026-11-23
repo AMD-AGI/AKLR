@@ -38,8 +38,12 @@ def main(argv: Sequence[str]) -> int:
         help=f"a part of {','.join(STAGE_ORDER)} that starts with audit",
     )
     parser.add_argument("--devices", help="0-7 or 0,2,5")
-    parser.add_argument("--under", metavar="DIR", help="only the schemas under DIR, such as aklr/ops")
-    parser.add_argument("--exclude", metavar="DIR", help="not the schemas under DIR")
+    parser.add_argument(
+        "--under", action="append", metavar="DIR", help="include schemas under DIR (repeatable)"
+    )
+    parser.add_argument(
+        "--exclude", action="append", metavar="DIR", help="exclude schemas under DIR (repeatable)"
+    )
     parser.add_argument(
         "--no-timing",
         action="store_true",
@@ -61,9 +65,9 @@ def main(argv: Sequence[str]) -> int:
     try:
         scope = ValidationScope.of_working_tree(args.base, args.paths or None)
         if args.under is not None:
-            scope = scope.under(args.under)
+            scope = scope.under(*args.under)
         if args.exclude is not None:
-            scope = scope.under(args.exclude, inside=False)
+            scope = scope.under(*args.exclude, inside=False)
         stages: list[PipelineStage] = [AuditStage(allow_measured_edits=args.allow_measured_edits)]
         if "bench" in names:
             if args.devices is None:

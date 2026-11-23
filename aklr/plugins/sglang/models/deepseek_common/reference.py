@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from aklr.core.contract.semantics import to_float32
-from aklr.plugins.sglang.models.deepseek_common.contract import FP8_GROUP
+from aklr.plugins.sglang.models.deepseek_common.plugin import FP8_GROUP
 
 if TYPE_CHECKING:
     from torch import Tensor

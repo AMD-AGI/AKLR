@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from aklr.core.contract.semantics import to_float32
-from aklr.plugins.sglang.layers.kda_backend_hip.contract import HEAD_DIM
+from aklr.plugins.sglang.layers.kda_backend_hip.plugin import HEAD_DIM
 
 if TYPE_CHECKING:
     from torch import Tensor

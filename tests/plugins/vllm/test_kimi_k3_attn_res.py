@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.vllm.models.kimi_k3.attn_res import api
+from aklr.plugins.vllm.models.kimi_k3.attn_res import plugin as api
 
 TOKENS, HIDDEN, ROWS = 4, 256, 4
 

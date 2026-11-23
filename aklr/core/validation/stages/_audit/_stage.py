@@ -99,6 +99,8 @@ class AuditStage(PipelineStage[AuditReport]):
             head_path = root / path
             if ValidationScope.path_kind(path) != "schema_data" or not head_path.exists():
                 continue
+            if scope.moved_from_base(head_path):
+                continue
             at_base = scope.paths_at_base(PurePosixPath(path).parent.as_posix())
             head = _schema_parts_of(head_path.read_text(encoding="utf-8", errors="replace"))
             if self._allow_measured_edits or head is None:

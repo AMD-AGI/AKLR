@@ -116,7 +116,7 @@ class ContractReport:
 
     @property
     def group(self) -> str:
-        """The op package without ``aklr.`` and ``plugins.``: ops.gemm, sglang.models.qwen3_5."""
+        """The op package without ``aklr.`` and ``plugins.``: aiter.gemm, sglang.models.qwen3_5."""
         return re.sub(r"^aklr\.(plugins\.)?", "", self.op_package)
 
 
@@ -264,6 +264,13 @@ def read_measurements(root: Path, rev: str = "HEAD") -> dict[str, Measurement]:
     return parse_measurements(log)
 
 
+def _schema_measurement(path: str, measurements: Mapping[str, Measurement]) -> Measurement | None:
+    if path in measurements:
+        return measurements[path]
+    previous = locate.legacy_aiter_path(Path(path))
+    return measurements.get(previous.as_posix()) if previous else None
+
+
 def collect(
     root: Path,
     *,
@@ -291,7 +298,7 @@ def collect(
         contract = registry.get(contract_id)
         baseline = baseline_summary(locate.op_dir(contract.op_package), contract.baseline_name)
         newest = max(
-            (measurements[path] for path, _ in schemas if path in measurements),
+            (m for path, _ in schemas if (m := _schema_measurement(path, measurements)) is not None),
             key=lambda m: m.measured_at,
             default=None,
         )

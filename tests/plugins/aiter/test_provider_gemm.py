@@ -18,8 +18,7 @@ from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
-base = importlib.import_module("aklr.plugins.aiter.provider._base")
-gemm = importlib.import_module("aklr.plugins.aiter.provider.gemm")
+gemm = importlib.import_module("aklr.plugins.aiter.gemm.plugin")
 
 FP8, BF16, FP16, F32, I8 = torch.float8_e4m3fn, torch.bfloat16, torch.float16, torch.float32, torch.int8
 E5M2 = torch.float8_e5m2
@@ -113,12 +112,15 @@ def _args(op: str, **changes):
 
 
 def _select(op: str, **changes):
-    return base.SELECTORS[op][1](_args(op, **changes), {})
+    return provider.provider.select(
+        SimpleNamespace(name=op, version=AITER_CONTRACTS[op][0]), _args(op, **changes), {}
+    )
 
 
 @pytest.fixture
 def aklr_serves(monkeypatch):
     """Every AKLR api the GEMM selectors ask answers with KERNEL; a candidate is (kernel, run)."""
+    monkeypatch.setattr(provider, "ready", lambda: True)
     monkeypatch.setattr(
         gemm, "offer", lambda serving, run: None if isinstance(serving, FallbackReason) else (serving, run)
     )
@@ -150,8 +152,7 @@ def _api(monkeypatch, name, result=None):
 
 def test_each_gemm_selector_serves_its_aiter_contract_at_its_version():
     for op, (version, _) in AITER_CONTRACTS.items():
-        assert base.SELECTORS[op][0] == version, op
-        assert provider.Provider.op_versions[op] == {version}
+        assert provider.provider.op_versions[op] == {version}
 
 
 @pytest.mark.parametrize("op", list(AITER_CONTRACTS))
@@ -256,7 +257,9 @@ def test_the_tuned_gemm_hands_aklr_rows_and_returns_aiters_shape(monkeypatch, ak
     bias = torch.zeros(256, dtype=BF16)
     out = torch.zeros(2, 3, 256, dtype=BF16)
     args = _args("gemm_a16w16", A=a, B=b, bias=bias, out=out)
-    _, run = base.SELECTORS["gemm_a16w16"][1](args, {})
+    _, run = provider.provider.select(
+        SimpleNamespace(name="gemm_a16w16", version=AITER_CONTRACTS["gemm_a16w16"][0]), args, {}
+    )
     result = run(*args)
     assert result.shape == (2, 3, 256) and result.data_ptr() == out.data_ptr()
     for got_args, got_kwargs in (calls.serving[-1], calls.run[-1]):
@@ -267,7 +270,9 @@ def test_the_tuned_gemm_hands_aklr_rows_and_returns_aiters_shape(monkeypatch, ak
 
     calls = _api(monkeypatch, "gemm", result=torch.ones(4, 256, dtype=F32))
     args = _args("gemm_a16w16", otype=F32)
-    _, run = base.SELECTORS["gemm_a16w16"][1](args, {})
+    _, run = provider.provider.select(
+        SimpleNamespace(name="gemm_a16w16", version=AITER_CONTRACTS["gemm_a16w16"][0]), args, {}
+    )
     assert run(*args).shape == (4, 256)
     assert calls.run[-1][1] == {"bias": None, "out_dtype": F32, "out": None}
 
@@ -277,7 +282,11 @@ def test_the_triton_gemm_hands_aklr_y_and_its_dtype(monkeypatch, aklr_serves):
     calls = _api(monkeypatch, "gemm")
     y = torch.zeros(4, 256, dtype=FP16)
     args = _args("gemm_a16w16_activation", dtype=BF16, y=y, config='{"NUM_KSPLIT": 2}')
-    _, run = base.SELECTORS["gemm_a16w16_activation"][1](args, {})
+    _, run = provider.provider.select(
+        SimpleNamespace(name="gemm_a16w16_activation", version=AITER_CONTRACTS["gemm_a16w16_activation"][0]),
+        args,
+        {},
+    )
     assert run(*args) is y
     x, w = args[:2]
     for got_args, got_kwargs in (calls.serving[-1], calls.run[-1]):
@@ -289,7 +298,13 @@ def test_the_triton_blockscale_gemm_hands_aklr_row_major_operands(monkeypatch, a
     calls = _api(monkeypatch, "gemm_a8w8_blockwise_scaled")
     y = torch.zeros(4, 256, dtype=BF16)
     args = _args("gemm_a8w8_blockscale_out", y=y)
-    _, run = base.SELECTORS["gemm_a8w8_blockscale_out"][1](args, {})
+    _, run = provider.provider.select(
+        SimpleNamespace(
+            name="gemm_a8w8_blockscale_out", version=AITER_CONTRACTS["gemm_a8w8_blockscale_out"][0]
+        ),
+        args,
+        {},
+    )
     assert run(*args) is y
     for got_args, got_kwargs in (calls.serving[-1], calls.run[-1]):
         assert all(got is given for got, given in zip(got_args, args[:4]))
@@ -297,7 +312,13 @@ def test_the_triton_blockscale_gemm_hands_aklr_row_major_operands(monkeypatch, a
 
     calls = _api(monkeypatch, "gemm_a8w8_blockwise_scaled", result="new")
     args = _args("gemm_a8w8_blockscale_out", dtype=FP16)
-    _, run = base.SELECTORS["gemm_a8w8_blockscale_out"][1](args, {})
+    _, run = provider.provider.select(
+        SimpleNamespace(
+            name="gemm_a8w8_blockscale_out", version=AITER_CONTRACTS["gemm_a8w8_blockscale_out"][0]
+        ),
+        args,
+        {},
+    )
     assert run(*args) == "new"
     assert calls.run[-1][1] == {"out_dtype": FP16, "out": None, "operand_format": "none:none"}
 
@@ -321,7 +342,11 @@ def test_the_preshuffled_gemm_hands_aklr_its_weight_marked_shuffled(monkeypatch,
     tensor is left as it was."""
     calls = _api(monkeypatch, "gemm_a8w8", result="new")
     args = _args("gemm_a8w8_bpreshuffle", WQ=weight, dtype=FP16)
-    _, run = base.SELECTORS["gemm_a8w8_bpreshuffle"][1](args, {})
+    _, run = provider.provider.select(
+        SimpleNamespace(name="gemm_a8w8_bpreshuffle", version=AITER_CONTRACTS["gemm_a8w8_bpreshuffle"][0]),
+        args,
+        {},
+    )
     assert run(*args) == "new"
     xq, _, x_scale, w_scale = args[:4]
     for got_args, got_kwargs in (calls.serving[-1], calls.run[-1]):
@@ -336,7 +361,11 @@ def test_a_weight_still_marked_shuffled_is_handed_over_as_it_is(monkeypatch, akl
     calls = _api(monkeypatch, "gemm_a8w8", result="new")
     weight = _marked_shuffled(torch.zeros(256, 256, dtype=FP8))
     args = _args("gemm_a8w8_bpreshuffle", WQ=weight)
-    _, run = base.SELECTORS["gemm_a8w8_bpreshuffle"][1](args, {})
+    _, run = provider.provider.select(
+        SimpleNamespace(name="gemm_a8w8_bpreshuffle", version=AITER_CONTRACTS["gemm_a8w8_bpreshuffle"][0]),
+        args,
+        {},
+    )
     run(*args)
     assert calls.serving[-1][0][1] is weight and calls.run[-1][0][1] is weight
 

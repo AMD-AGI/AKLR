@@ -16,24 +16,46 @@ from packaging.version import Version
 
 import aklr.plugins.sglang as plugin
 from aklr.core.contract.locate import op_packages
+from aklr.core.contract.registry import ContractRegistry
 from aklr.core.platform.env import ENV_DISABLE, ENV_SGLANG_PLUGIN, ENV_TRACE
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.plugins import Plugin
 from aklr.plugins.sglang import hook
 
-# at collection, as the plugin does at start-up: before any test empties hook._ROUTES
-for package in op_packages():
-    if package.startswith("aklr.plugins.sglang."):
-        importlib.import_module(f"{package}.api")
-importlib.import_module("aklr.plugins.sglang.models.kimi_k3_torch_gemm")
-importlib.import_module("aklr.plugins.sglang.models.dspark_torch_gemm")
-importlib.import_module("aklr.plugins.sglang.layers.logits_processor_torch_gemm")
-importlib.import_module("aklr.plugins.sglang.layers.aiter_backend_mla_prefill")
-DECLARED = list(hook._ROUTES)
+
+class Declared:
+    def __init__(self):
+        self.routes = []
+
+    def wrap(self, target, *, versions, replace=None, around=None, eager=False):
+        self.routes.append((target, versions, replace or around, around is not None))
+
+
+def declared_routes():
+    declared = Declared()
+    names = [f"{package}.plugin" for package in op_packages() if package.startswith("aklr.plugins.sglang.")]
+    names += [
+        "aklr.plugins.sglang." + path
+        for path in (
+            "models.kimi_k3_torch_gemm",
+            "models.dspark_torch_gemm",
+            "layers.logits_processor_torch_gemm",
+            "layers.aiter_backend_mla_prefill",
+        )
+    ]
+    for name in names:
+        fragment = getattr(importlib.import_module(name), "declare", None)
+        if fragment:
+            fragment(declared)
+    return declared.routes
+
+
+DECLARED = declared_routes()
 INSTALLED = "0.5.22"
 
 
 def test_no_two_routes_take_one_target():
-    targets = [target for target, _, _ in DECLARED]
+    targets = [target for target, _, _, _ in DECLARED]
     assert targets and len(set(targets)) == len(targets)
 
 
@@ -50,11 +72,14 @@ def model_image_only(versions):
 
 
 def test_every_route_was_tested_on_the_installed_sglang():
-    """A new sglang image needs the routes adapted."""
+    """The release image covers the common routes. Each model image has its own declared targets."""
     installed = installed_sglang()
+    if Version(installed).is_devrelease:
+        assert any(installed in versions for _, versions, _, _ in DECLARED), installed
+        return
     untested = [
         target
-        for target, versions, _ in DECLARED
+        for target, versions, _, _ in DECLARED
         if installed not in versions and not model_image_only(versions)
     ]
     assert untested == []
@@ -71,10 +96,21 @@ def parameters(fn, *, defaults=True):
     ]
 
 
-@pytest.mark.parametrize(("target", "versions", "route"), DECLARED, ids=[t for t, _, _ in DECLARED])
-def test_every_route_takes_its_targets_parameters(target, versions, route):
+@pytest.mark.parametrize(("target", "versions", "route", "around"), DECLARED, ids=[d[0] for d in DECLARED])
+def test_every_route_takes_its_targets_parameters(target, versions, route, around):
     if installed_sglang() not in versions:
         pytest.skip("declared for another sglang, which holds its target")
+    if around:
+        native = pkgutil.resolve_name(target)
+        inspect.signature(route).bind(
+            native,
+            *[
+                object()
+                for p in inspect.signature(native).parameters.values()
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ],
+        )
+        return
     if not target.startswith("aiter."):
         assert parameters(route) == parameters(pkgutil.resolve_name(target))
         return
@@ -119,13 +155,13 @@ def hooks(monkeypatch):
     registry.HookType = SimpleNamespace(AROUND="around")
     registry.HookRegistry = SimpleNamespace(register=lambda *args: registered.append(args))
     monkeypatch.setitem(sys.modules, registry.__name__, registry)
-    monkeypatch.setattr(hook, "_ROUTES", [])
+    monkeypatch.setattr(plugin, "plugin", Plugin("sglang"))
     monkeypatch.setattr(hook, "sglang_version", lambda: INSTALLED)
     return registered
 
 
 def declare(route):
-    hook.sglang_route(TARGET, versions=(INSTALLED,))(route)
+    plugin.plugin.wrap(TARGET, versions=(INSTALLED,), replace=route)
 
 
 def wrapper(hooks):
@@ -178,19 +214,19 @@ def test_a_raising_route_raises(hooks):
 
 
 def test_a_route_untested_on_the_installed_sglang_is_neither_resolved_nor_hooked(hooks):
-    hook.sglang_route(f"{__name__}.missing", versions=("0.5.21",))(lambda x: x)
+    plugin.plugin.wrap(f"{__name__}.missing", versions=("0.5.21",), replace=lambda x: x)
     hook.install()
     assert hooks == []
 
 
 def test_a_target_that_does_not_resolve_raises(hooks):
-    hook.sglang_route(f"{__name__}.missing", versions=(INSTALLED,))(lambda x: x)
+    plugin.plugin.wrap(f"{__name__}.missing", versions=(INSTALLED,), replace=lambda x: x)
     with pytest.raises((AttributeError, ImportError)):
         hook.install()
 
 
 def test_a_target_in_a_package_that_is_not_installed_is_left_unhooked(hooks, caplog):
-    hook.sglang_route("aklr_absent_package.fused_moe.fused_moe", versions=(INSTALLED,))(lambda x: x)
+    plugin.plugin.wrap("aklr_absent_package.fused_moe.fused_moe", versions=(INSTALLED,), replace=lambda x: x)
     declare(lambda x: f"aklr({x})")
     hook.install()
     assert [t for t, *_ in hooks] == [TARGET]
@@ -204,7 +240,7 @@ def test_a_target_whose_module_needs_a_missing_part_of_an_installed_package_rais
         "import json.aklr_absent_part\n\ndef f(x):\n    return x\n"
     )
     monkeypatch.syspath_prepend(str(tmp_path))
-    hook.sglang_route("aklr_test_needs_json_part.f", versions=(INSTALLED,))(lambda x: x)
+    plugin.plugin.wrap("aklr_test_needs_json_part.f", versions=(INSTALLED,), replace=lambda x: x)
     with pytest.raises(ModuleNotFoundError, match="json.aklr_absent_part"):
         hook.install()
 
@@ -230,8 +266,9 @@ def test_inside_a_compiled_region_the_route_is_not_traced(hooks):
 
 def test_inside_a_compiled_region_an_eager_route_serves_outside_the_graph(hooks, monkeypatch):
     served = []
-    monkeypatch.setattr(hook, "_EAGER", set())
-    hook.sglang_route(TARGET, versions=(INSTALLED,), eager=True)(lambda x: served.append(x) or x + 10)
+    plugin.plugin.wrap(
+        TARGET, versions=(INSTALLED,), eager=True, replace=lambda x: served.append(x) or x + 10
+    )
     hook.install()
     around = wrapper(hooks)
 
@@ -252,8 +289,8 @@ def register_calls(monkeypatch):
     """What register() did, in order."""
     calls = []
     monkeypatch.setattr(plugin, "register_sglang_plugin", lambda: calls.append("aklr starts"))
-    monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.ops.gemm", "aklr.plugins.sglang.x.y"))
-    monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
+    monkeypatch.setattr(plugin, "plugin", Plugin("sglang"))
+    monkeypatch.setattr(plugin, "_bootstrapped", False)
     monkeypatch.setattr(hook, "install", lambda: calls.append("install"))
     return calls
 
@@ -272,19 +309,17 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = (
-        [
-            "aklr.plugins.sglang.x.y.api",
-            "aklr.plugins.sglang.models.kimi_k3_torch_gemm",
-            "aklr.plugins.sglang.models.dspark_torch_gemm",
-            "aklr.plugins.sglang.layers.logits_processor_torch_gemm",
-            "aklr.plugins.sglang.layers.aiter_backend_mla_prefill",
-            "install",
-        ]
-        if hooked
-        else []
-    )
+    routes = ["install"] if hooked else []
     assert register_calls == ["aklr starts", *routes]
+
+
+def test_register_publishes_the_sglang_families(monkeypatch, register_calls):
+    monkeypatch.setenv(ENV_SGLANG_PLUGIN, "1")
+    plugin.register()
+    expected = [
+        c for c in ContractRegistry.default().contracts() if c.op_package.startswith(plugin.__name__ + ".")
+    ]
+    assert {id(c) for c in plugin.plugin.contracts} == {id(c) for c in expected}
 
 
 def test_any_other_switch_value_ends_the_process(monkeypatch, register_calls):
@@ -303,3 +338,29 @@ def test_a_plugin_that_cannot_start_ends_the_process(monkeypatch, register_calls
     monkeypatch.setattr(hook, "install", install)
     with pytest.raises(SystemExit, match="broken declaration"):
         plugin.register()
+
+
+def test_external_around_owns_the_original_call_and_installs_once(monkeypatch):
+    declarations = Plugin("sglang")
+    monkeypatch.setattr(plugin, "plugin", declarations)
+    registered = []
+    registry = ModuleType("sglang.srt.plugins.hook_registry")
+    registry.HookType = SimpleNamespace(AROUND="around")
+    registry.HookRegistry = SimpleNamespace(register=lambda *args: registered.append(args))
+    monkeypatch.setitem(sys.modules, registry.__name__, registry)
+    monkeypatch.setattr(hook, "sglang_version", lambda: "9.9.9")
+    declarations.wrap(TARGET, versions=("9.9.9",), around=lambda orig, x: orig(x + 1))
+    hook.install()
+    hook.install()
+    assert len(registered) == 1
+    assert registered[0][1](original, 2) == "sglang(3)"
+
+
+def test_incompatible_replace_is_reported_before_registering_any_hook(hooks):
+    def incompatible(*, missing):
+        return missing
+
+    plugin.plugin.wrap(f"{__name__}.original", versions=(INSTALLED,), replace=incompatible)
+    with pytest.raises(TypeError, match="original"):
+        hook.install()
+    assert not hooks

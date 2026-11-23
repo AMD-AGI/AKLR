@@ -8,6 +8,7 @@ interface, that aiter hands such a call to AKLR."""
 
 import importlib
 import inspect
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -17,10 +18,9 @@ from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
-base = importlib.import_module("aklr.plugins.aiter.provider._base")
-mla = importlib.import_module("aklr.plugins.aiter.provider.mla")
-mla_prefill = importlib.import_module("aklr.plugins.aiter.provider.mla_prefill")
-mhc = importlib.import_module("aklr.plugins.aiter.provider.mhc")
+mla = importlib.import_module("aklr.plugins.aiter.mla.plugin")
+mla_prefill = importlib.import_module("aklr.plugins.aiter.mla_prefill.plugin")
+mhc = importlib.import_module("aklr.plugins.aiter.mhc.plugin")
 
 FP8, BF16, F32, I32 = torch.float8_e4m3fn, torch.bfloat16, torch.float32, torch.int32
 KERNEL = RunnableMetadata(
@@ -348,14 +348,16 @@ def _args(case: str, call=None, **changes):
 
 
 def _select(case: str, call=None, **changes):
-    return base.SELECTORS[_op(case)][1](_args(case, call, **changes), _kwargs(case, call, **changes))
+    return provider.provider.select(
+        SimpleNamespace(name=_op(case), version=AITER_CONTRACTS[_op(case)][0]),
+        _args(case, call, **changes),
+        _kwargs(case, call, **changes),
+    )
 
 
 def _selector_modules():
     return [
-        module
-        for _, module in inspect.getmembers(provider, inspect.ismodule)
-        if module.__name__.startswith(f"{provider.__name__}.") and module is not base
+        module for _, module in inspect.getmembers(provider, inspect.ismodule) if hasattr(module, "declare")
     ]
 
 
@@ -370,12 +372,15 @@ def _answer(monkeypatch, serving):
 @pytest.fixture
 def aklr_serves(monkeypatch):
     """Every AKLR api the selectors ask answers with KERNEL; a candidate is (kernel, run)."""
-    for module in _selector_modules():
-        monkeypatch.setattr(
-            module,
-            "offer",
-            lambda serving, run: None if isinstance(serving, FallbackReason) else (serving, run),
-        )
+    monkeypatch.setattr(provider, "ready", lambda: True)
+
+    def candidate(*, provider, kernel_id, artifact_digest, qualification, run):
+        assert (provider, kernel_id) == ("aklr", KERNEL.kernel_ref)
+        return KERNEL, run
+
+    monkeypatch.setitem(
+        sys.modules, "aiter", SimpleNamespace(plugin=SimpleNamespace(KernelCandidate=candidate))
+    )
     _answer(monkeypatch, KERNEL)
 
 
@@ -395,7 +400,6 @@ class _Api:
 
 def test_each_selector_serves_an_aiter_contract_at_its_version():
     for op, (version, _) in AITER_CONTRACTS.items():
-        assert base.SELECTORS[op][0] == version
         assert provider.provider.op_versions[op] == {version}
 
 
@@ -641,11 +645,12 @@ def _verify_call():
 @pytest.fixture
 def logits_ops(monkeypatch, aklr_serves):
     """Both logits ops of AKLR faked, and no target verify noted."""
-    monkeypatch.setattr(mla, "_TARGET_VERIFY", [None])
+    mla.note_target_verify(0, 0)
     ops = SimpleNamespace(rows=_Api(), verify=_Api())
     monkeypatch.setattr(mla, "fp8_paged_mqa_logits", ops.rows)
     monkeypatch.setattr(mla, "fp8_paged_mqa_logits_verify", ops.verify)
-    return ops
+    yield ops
+    mla.note_target_verify(0, 0)
 
 
 def _run_logits(call):
@@ -672,7 +677,6 @@ def test_a_noted_target_verify_is_scored_by_request_into_aiters_out_logits(logit
     assert kwargs["kv_cache"].dtype == torch.uint8
     assert (kwargs["page_size"], kwargs["preshuffled"]) == (64, True)
     # the note is taken: the next call, unnoted, is a row call
-    assert mla._TARGET_VERIFY[0] is None
     _run_logits(call)
     assert len(logits_ops.rows.calls) == 1 and len(logits_ops.verify.calls) == 1
 
@@ -901,3 +905,42 @@ def _fake_result(api_name):
     if api_name == "sparse_prefill_mxfp8":
         return lambda q_nope, *a, **k: torch.zeros(*q_nope.shape, dtype=BF16)
     return ("aklr",)
+
+
+def test_nested_indexer_restores_verify_after_decode_and_cleans_up_on_failure(monkeypatch, logits_ops):
+    import sys
+    from types import ModuleType
+
+    from aklr.plugins.sglang.layers.dsa_backend import plugin as dsa
+
+    callbacks = {}
+
+    def wrap(target, **options):
+        if "around" in options:
+            callbacks[target] = options["around"]
+
+    dsa.declare(SimpleNamespace(wrap=wrap))
+    around = callbacks["sglang.srt.layers.attention.dsa.dsa_indexer.Indexer._get_topk_paged"]
+    runtime = ModuleType("sglang.srt.runtime_context")
+    runtime.get_parallel = lambda: SimpleNamespace(attn_dcp_size=2)
+    runtime.get_spec = lambda: SimpleNamespace(speculative_num_draft_tokens=DRAFT_TOKENS)
+    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
+    call = _verify_call()
+
+    def topk(verify, original):
+        batch = SimpleNamespace(forward_mode=SimpleNamespace(is_target_verify=lambda: verify))
+        return around(original, object(), batch, 0, call["q_fp8"])
+
+    def indexer(*args):
+        # A competing provider or explain() may query without running the candidate.
+        _select("fp8_paged_mqa_logits", call)
+        topk(False, lambda *args: _run_logits(call))
+        _run_logits(call)
+        raise RuntimeError("indexer failed")
+
+    with pytest.raises(RuntimeError, match="indexer failed"):
+        topk(True, indexer)
+    # A competing provider taking the whole next verify also leaves nothing behind.
+    topk(True, lambda *args: _select("fp8_paged_mqa_logits", call))
+    _run_logits(call)
+    assert len(logits_ops.rows.calls) == 2 and len(logits_ops.verify.calls) == 1

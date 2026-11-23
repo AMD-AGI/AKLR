@@ -11,7 +11,7 @@ import pytest
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.aiter.provider._base import is_declining
+from aklr.plugins.aiter._candidate import is_declining
 from aklr.plugins.sglang.layers import aiter_backend_mla_prefill as route
 
 HEADS, QK, V_DIM = 12, 192, 128
@@ -37,6 +37,7 @@ class _Op:
 
 @pytest.fixture
 def ops(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: False)
     ops = SimpleNamespace(varlen=_Op(False), lse=_Op(True))
     monkeypatch.setattr(route, "mla_prefill_varlen", ops.varlen)
     monkeypatch.setattr(route, "mla_prefill_varlen_lse", ops.lse)

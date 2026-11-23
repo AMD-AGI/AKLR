@@ -11,13 +11,12 @@ bias, stay on torch: there torch is as fast as AKLR's kernels."""
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.gemm.api import gemm
-from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins import Plugin
+from aklr.plugins.aiter.gemm.plugin import gemm
 
 __all__: list[str] = []
 
 
-@sglang_route("sglang.srt.models.dspark.project_through_lm_head", versions=("0.5.22", "0.5.23"))
 def _project_through_lm_head(hidden, lm_head):
     import importlib
 
@@ -31,3 +30,11 @@ def _project_through_lm_head(hidden, lm_head):
         return FallbackReason.OUT_OF_CONTRACT
     # hidden states of another dtype than the head's go back to sglang, which converts them: none is copied first
     return gemm(hidden, lm_head.weight)
+
+
+def declare(plugin: Plugin) -> None:
+    plugin.wrap(
+        "sglang.srt.models.dspark.project_through_lm_head",
+        versions=("0.5.22", "0.5.23"),
+        replace=_project_through_lm_head,
+    )

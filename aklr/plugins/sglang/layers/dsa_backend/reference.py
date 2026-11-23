@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from aklr.core.contract.semantics import to_float32, torch_dtypes
-from aklr.plugins.sglang.layers.dsa_backend.contract import ROPE_DIM
+from aklr.plugins.sglang.layers.dsa_backend.plugin import ROPE_DIM
 
 if TYPE_CHECKING:
     from torch import Tensor

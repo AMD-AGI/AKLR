@@ -10,7 +10,7 @@ import torch
 from aklr.core.runtime._vllm_hook_registry import HookRegistry
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.vllm import hook
-from aklr.plugins.vllm.models.muse_spark import api
+from aklr.plugins.vllm.models.muse_spark import plugin as api
 
 
 def _experts_apply(hidden_states):
@@ -35,9 +35,15 @@ def muse_routes(monkeypatch):
     """The real paired routes, with CPU stand-ins for their vLLM callers and callees."""
     registry = HookRegistry()
     monkeypatch.setattr(HookRegistry, "default", classmethod(lambda cls: registry))
-    monkeypatch.setattr(
-        hook, "_ROUTES", {route: hook._ROUTES[route] for route in (api._defer_norm, api._experts_apply)}
-    )
+    import aklr.plugins.vllm as vllm
+    from aklr.plugins import Plugin
+
+    class Paired(Plugin):
+        def intercept(self, caller, callee, *others, versions, replace, group=None):
+            if group:
+                super().intercept(caller, callee, *others, versions=versions, replace=replace, group=group)
+
+    monkeypatch.setattr(vllm, "plugin", Paired("vllm").build(api.declare))
     monkeypatch.setattr(hook, "_vllm_version", lambda: api._VERSIONS[0])
     for name in ("_EXPERTS", "_SERVES", "_TOPK_IDS"):
         monkeypatch.setattr(api, name, {})

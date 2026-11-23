@@ -104,7 +104,7 @@ The first three layers route by hash; the rest use a learned gate. The benchmark
 
 ## AKLR schema export
 
-Record every call of a AKLR `@api` function during a run, then export the schemas:
+Record every call of an AKLR operator during a run, then export the schemas:
 
 ```bash
 export AKLR_EXPORT=1
@@ -112,7 +112,7 @@ export AKLR_EXPORT_DIR=/tmp/aklr_export   # default: ./aklr_export, relative to 
 python -m aklr export --language flydsl   # from the repository root, after the run
 ```
 
-See the workflow in `aklr/ops/README.md`. Native SGLang/AITER calls are not recorded.
+See the workflow in `aklr/plugins/aiter/README.md`. Native SGLang/AITER calls are not recorded.
 
 ## Decode sweep
 

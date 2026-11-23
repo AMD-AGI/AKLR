@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""``@vllm_route``: the public API for declaring how a vLLM call reaches AKLR ops.
+"""Install vLLM call interception declared on its Plugin.
 
 Installation, native-callable lookup and the hook registry are plugin internals.
 
@@ -19,7 +19,6 @@ import inspect
 import logging
 import pkgutil
 from collections.abc import Callable
-from dataclasses import dataclass
 from importlib.metadata import version
 
 import torch
@@ -29,44 +28,10 @@ from aklr.core.runtime import _vllm_hook_registry as _hooks
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.core.runtime.dispatch._trace import trace
 
-__all__ = ["vllm_route"]
+__all__: list[str] = []
 
 _LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class _Route:
-    caller: str
-    versions: tuple[str, ...]
-    group: str | None
-
-
-# Index declarations by callable and callee so fallback never scans the route set.
-_ROUTES: dict[Callable, dict[str, _Route]] = {}
-
-
-def vllm_route(
-    caller: str, *callees: str, versions: tuple[str, ...], group: str | None = None
-) -> Callable[[Callable], Callable]:
-    """Declare that vLLM's ``caller`` reaches AKLR ops through this function where it calls
-    ``callees`` (each as the dotted name ``caller`` looks up at run time), on the vLLM releases
-    ``versions`` it was tested on; on any other, vLLM runs its own code.
-
-    Routes in a ``group`` are selected together: if one is untested on the installed
-    version, none is installed. The registry checks and installs the selected batch
-    atomically. Only the declared callee bindings change; aliases are not propagated.
-    """
-
-    def declare(route: Callable) -> Callable:
-        declaration = _Route(caller, versions, group)
-        targets = _ROUTES.get(route, {})
-        for callee in callees:
-            if callee in targets and targets[callee] != declaration:
-                raise ValueError(f"{callee}: conflicting declaration for route {route.__qualname__}")
-        _ROUTES.setdefault(route, {}).update(dict.fromkeys(callees, declaration))
-        return route
-
-    return declare
+_active_targets: dict[Callable, tuple[str, ...]] = {}
 
 
 def _vllm_version() -> str:
@@ -77,23 +42,22 @@ def _vllm_version() -> str:
 
 def _install() -> list[str]:
     """Validate the selected routes, then install them in one device-ready batch."""
+    from aklr.plugins.vllm import plugin
+
     installed = _vllm_version()
-    blocked_groups = {
-        declaration.group
-        for targets in _ROUTES.values()
-        for declaration in targets.values()
-        if declaration.group is not None and installed not in declaration.versions
-    }
-    hooked, untested, blocked, specs = [], [], [], []
+    declarations = plugin.build()._intercepts
+    blocked_groups = {d.group for d in declarations if d.group is not None and installed not in d.versions}
+    active = [d for d in declarations if installed in d.versions and d.group not in blocked_groups]
+    untested = [d.caller for d in declarations if installed not in d.versions]
+    blocked = [f"{d.caller} (group={d.group})" for d in declarations if d.group in blocked_groups]
+    targets: dict[Callable, list[str]] = {}
+    for d in active:
+        targets.setdefault(d.replace, []).extend(d.callees)
+    hooked, specs = [], []
     sources: dict[str, str] = {}
-    for route, targets in _ROUTES.items():
-        for callee, declaration in targets.items():
-            if installed not in declaration.versions:
-                untested.append(declaration.caller)
-                continue
-            if declaration.group in blocked_groups:
-                blocked.append(f"{declaration.caller} (group={declaration.group})")
-                continue
+    for declaration in active:
+        route = declaration.replace
+        for callee in declaration.callees:
             caller = declaration.caller
             if caller not in sources:
                 sources[caller] = inspect.getsource(pkgutil.resolve_name(caller))
@@ -104,7 +68,7 @@ def _install() -> list[str]:
                 _hooks.HookSpec(
                     hook_id=_hook_id(route, callee),
                     target=callee,
-                    hook=_around(route),
+                    hook=_around(route, tuple(targets[route])),
                     hook_type=_hooks.HookType.AROUND,
                     phase="device_ready",
                     group=declaration.group,
@@ -114,6 +78,9 @@ def _install() -> list[str]:
                 )
             )
             hooked.append(callee)
+    # Lookups on a failed or restored installation go through the registry as well.
+    global _active_targets
+    _active_targets = {route: tuple(paths) for route, paths in targets.items()}
     registry = _hooks.HookRegistry.default()
     for spec in specs:
         registry.register(spec)
@@ -160,7 +127,7 @@ def _original(route: Callable, callee: str | None = None) -> Callable:
     AROUND callback, this is the implementation saved before any hooks in the batch.
     """
     try:
-        targets = _ROUTES[route]
+        targets = _active_targets[route]
     except KeyError:
         raise ValueError(f"{route.__qualname__}: route is not declared") from None
     if callee is None:
@@ -175,7 +142,7 @@ def _original(route: Callable, callee: str | None = None) -> Callable:
 
 
 @functools.cache
-def _around(route: Callable) -> Callable:
+def _around(route: Callable, targets: tuple[str, ...]) -> Callable:
     # one hook per route: aliased callees of one native must share it
     route_name = f"{route.__module__}.{route.__qualname__}"
 
@@ -185,7 +152,7 @@ def _around(route: Callable) -> Callable:
             result = route(*args, **kwargs)
             fallback = result if isinstance(result, FallbackReason) else None
             if (tracer := trace()) is not None and tracer.is_plugin:
-                tracer.plugin("vllm", ",".join(_ROUTES.get(route, ())), route_name, fallback)
+                tracer.plugin("vllm", ",".join(targets), route_name, fallback)
             if fallback is None:
                 return result
         return orig(*args, **kwargs)

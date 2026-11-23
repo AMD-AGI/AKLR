@@ -31,8 +31,8 @@ import logging
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.mla_prefill.api import mla_prefill_varlen, mla_prefill_varlen_lse
-from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins import Plugin
+from aklr.plugins.aiter.mla_prefill.plugin import mla_prefill_varlen, mla_prefill_varlen_lse
 
 __all__: list[str] = []
 
@@ -71,11 +71,6 @@ def _flash_with_lse(q, k, v, layer, ps):
     return output, lse.transpose(0, 1).contiguous()
 
 
-@sglang_route(
-    "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._build_prefill_ps_metadata",
-    versions=("0.5.22", "0.5.23"),
-    eager=True,
-)
 def _build_prefill_ps_metadata(
     self,
     *,
@@ -155,11 +150,6 @@ def _lse_pass(q, k, v, layer, ps):
     return _flash_with_lse(q, k, v, layer, ps)
 
 
-@sglang_route(
-    "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._mla_fp8_prefill_attn_ps",
-    versions=("0.5.22", "0.5.23"),
-    eager=True,
-)
 def _mla_fp8_prefill_attn_ps(self, q, k, v, layer, ps):
     # the chunked prefix's passes need the LSE, and its prefix chunks attend without the causal mask; their plan
     # is unbuilt, so they never return to sglang
@@ -187,3 +177,18 @@ def _mla_fp8_prefill_attn_ps(self, q, k, v, layer, ps):
         return reason
     output = mla_prefill_varlen(q, k, v.contiguous(), offsets_q, **args)
     return output if isinstance(output, FallbackReason) else (output, None)
+
+
+def declare(plugin: Plugin) -> None:
+    plugin.wrap(
+        "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._build_prefill_ps_metadata",
+        versions=("0.5.22", "0.5.23"),
+        eager=True,
+        replace=_build_prefill_ps_metadata,
+    )
+    plugin.wrap(
+        "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._mla_fp8_prefill_attn_ps",
+        versions=("0.5.22", "0.5.23"),
+        eager=True,
+        replace=_mla_fp8_prefill_attn_ps,
+    )

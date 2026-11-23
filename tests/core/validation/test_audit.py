@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -385,13 +386,13 @@ class TestCheckHsacoKernel:
 
 
 _BAD_SOURCE = '"""K."""\n' + _SIGNATURE + "\n    a.zero_()\n"
-_OLD_FORMAT_PATH = "aklr/ops/gemm/kernels/gemm.py"  # a base that predates the format
+_OLD_FORMAT_PATH = "aklr/plugins/aiter/gemm/kernels/gemm.py"  # a base that predates the format
 # origin/main's solution file layout: under impls/, but its stem is not a schema uuid
-_LEGACY_SOLUTION_PATH = "aklr/ops/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
+_LEGACY_SOLUTION_PATH = "aklr/plugins/aiter/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
 
 
 class TestAuditStage:
-    """``AuditStage.run`` against a base whose files are given, no git."""
+    """``AuditStage.run`` against committed base files and a changed working tree."""
 
     @pytest.mark.parametrize(
         ("base", "head_source", "head_ms", "measured", "codes"),
@@ -454,30 +455,35 @@ class TestAuditStage:
                 workloads=[{"axes": {"m": m}, **measurement} for m in ms],
                 kernel=case.schema(source).kernel.model_copy(update={"author": author}),
             )
-            return f"aklr/ops/{op_type}/{schema.relative_path()}", schema.schema_text()
+            return f"aklr/plugins/aiter/{op_type}/{schema.relative_path()}", schema.schema_text()
 
         head_path, head_text = schema_at(head_source, head_ms, head_author)
-        (tmp_path / head_path).parent.mkdir(parents=True)
-        (tmp_path / head_path).write_text(head_text, encoding="utf-8")
         base_files = {base: ""} if isinstance(base, str) else dict([schema_at(*base)]) if base else {}
-        monkeypatch.setattr(
-            ValidationScope,
-            "paths_at_base",
-            lambda _, directory: tuple(sorted(p for p in base_files if p.startswith(directory + "/"))),
+        for name, content in base_files.items():
+            path = tmp_path / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+        git("init", "-q")
+        git("add", ".")
+        git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+            "--allow-empty",
         )
-        monkeypatch.setattr(ValidationScope, "text_at_base", lambda _, path: base_files[path])
-        monkeypatch.setattr(
-            ValidationScope,
-            "changed_paths",
-            lambda _: tuple(sorted({head_path, "aklr/core/x.py"} | base_files.keys())),
-        )
-        scope = ValidationScope(
-            tmp_path,
-            "",
-            None if base is None else "base",
-            ((tmp_path / head_path).resolve(),),
-            (),
-        )
+        head = tmp_path / head_path
+        head.parent.mkdir(parents=True, exist_ok=True)
+        head.write_text(head_text)
+        monkeypatch.chdir(tmp_path)
+        scope = ValidationScope.of_working_tree("HEAD" if base is not None else None, [head])
         report = AuditStage().run(scope, None)
         assert {f.code.value for f in report.findings} == codes
 
@@ -486,7 +492,7 @@ class TestAuditStage:
         case = OpCase.of("gemm@1.0")
         source = HIP_GEMM_KERNEL_SOURCE.replace(_LAUNCH, '    (void)getenv("X");\n' + _LAUNCH)
         schema = case.schema(source, language="hip")
-        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path = tmp_path / "aklr/plugins/aiter" / case.contract.op_type / schema.relative_path()
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
@@ -501,7 +507,7 @@ class TestAuditStage:
             "import struct\n", "import ctypes\nimport struct\n"
         ).replace(_HSACO_LAUNCH, "    a.zero_()\n" + _HSACO_LAUNCH)
         schema = case.schema(source, language="hsaco", other_sources=_CODE_OBJECTS)
-        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path = tmp_path / "aklr/plugins/aiter" / case.contract.op_type / schema.relative_path()
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())

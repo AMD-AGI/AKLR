@@ -24,7 +24,7 @@ vLLM runs step 2 on its own before `fused_moe`, in `fused_rmsnorm_expand`: it wr
 
 So:
 
-- To make one op faster, write an op in `aklr/ops`.
+- To make one op faster, write an op in `aklr/plugins/aiter`.
 - When the optimization crosses one op's boundary, write a plugin.
 
 ## How the plugin runs
@@ -52,36 +52,30 @@ def apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, activatio
 
 ### 2. Create the package
 
-Create `aklr/plugins/vllm/models/muse_spark/`, named after vLLM's source directory `models/muse_spark/`. It holds the same files as an op in `aklr/ops`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`; and `_norm_expand.py`, a copy of vLLM's norm kernel, so that the baseline runs without vLLM. The package name is the op's `op_type` (`muse_spark`) and must be unique across `aklr/ops` and `aklr/plugins`.
+Create `aklr/plugins/vllm/models/muse_spark/`, named after vLLM's source directory `models/muse_spark/`. It holds the same files as an op in `aklr/plugins/aiter`: `__init__.py`, `plugin.py`, `reference.py`, `baseline.py` and `impls/`; and `_norm_expand.py`, a copy of vLLM's norm kernel, so that the baseline runs without vLLM. The package name is the op's `op_type` (`muse_spark`) and must be unique across `aklr/plugins/aiter` and `aklr/plugins`.
 
 ### 3. Write the op
 
 As in step 1. A of the ops tutorial. For this op:
 
-- `contract.py` defines `MUSE_SPARK_MOE` (`muse_spark_moe@1.0`):
+- `plugin.py` defines `MUSE_SPARK_MOE` (`muse_spark_moe@1.0`):
   - inputs: the pooled rows `hidden_states`, not yet normalized; the norm's `norm_weight`; each row's routes `topk_ids`; `expert_mask`, the experts this GPU holds (its last slot is vLLM's always-masked one); the experts' `w1`, `w1_scale`, `w2` and `w2_scale`; and the scalars `eps` and `gain_center`;
   - layouts: `row_major` and `shuffled_16x16`, the latter as vLLM holds the experts for aiter;
   - output: `out`, of shape `[n_tokens, topk, model_dim]`: each route's expert output, not multiplied by the router weights; the routes to experts this GPU does not hold give zeros. The router weights, the post-expert norm and the sum over the routes are vLLM's, after it.
 - `reference.py`: `muse_spark_moe_reference`, the contract's computation: the RMSNorm in fp32, rounded to `hidden_states`' dtype as vLLM's `fused_rmsnorm_expand` writes it, then each route through `fused_moe`'s reference at weight 1.
 - `baseline.py`: `muse_spark_moe_baseline`, what vLLM runs today for steps 2–7: `fused_rmsnorm_expand`, then the aiter `fused_moe` (per_1x32) that `MuseSparkAiterExperts.apply` calls.
-- `api.py`: the entry function `@api(MUSE_SPARK_MOE)`, whose body is `...`.
+- In `plugin.py`, define and build `family`, then bind the `muse_spark_moe` signature with `@family.op`. Its body is `...`.
 
 ### 4. Write the routes
 
-The routes go in `api.py`, beside the op's entry function `muse_spark_moe`. Together they hand vLLM's two calls to this one op:
+The routes go in `plugin.py`, beside the op's entry function `muse_spark_moe`. Together they hand vLLM's two calls to this one op:
 
 - The contract's inputs are the rows not yet normalized and the norm's `norm_weight`, `eps` and `gain_center`: the op computes the norm. So `_defer_norm` skips vLLM's norm and leaves its arguments to the op.
 - `_experts_apply` turns vLLM's arguments into the op's and calls `muse_spark_moe`.
 
-The first argument of `@vllm_route` is the caller, the second the replaced function; the two routes are in one `group`. Some parameters and checks are omitted below:
+The first argument of `plugin.intercept` is the caller, the second the replaced function; the two routes are in one `group`. Some parameters and checks are omitted below:
 
 ```python
-@vllm_route(
-    "vllm.models.muse_spark.amd.model.MuseSparkMoE._pool",
-    "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
-    versions=("0.34.0",),
-    group="muse_spark.norm_experts",
-)
 def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):  # exactly the replaced function's parameters
     # an input AKLR does not support
     if weight is None or input_scale or x.dtype != torch.bfloat16 or x.shape[0] == 0:
@@ -113,12 +107,6 @@ def _would_serve(x, weight, eps, gain_center, layer):
     return reason is None
 
 
-@vllm_route(
-    "vllm.model_executor.layers.fused_moe.modular_kernel.FusedMoEKernelModularImpl._fused_experts",
-    "vllm.models.muse_spark.amd.muse_moe_runner.MuseSparkAiterExperts.apply",
-    versions=("0.34.0",),
-    group="muse_spark.norm_experts",
-)
 def _experts_apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, ...):
     deferred = getattr(hidden_states, _DEFERRED_NORM, None)
     # the layer's norm was not deferred: back to vLLM
@@ -153,7 +141,26 @@ def _experts_apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, 
     # each route's output, for vLLM's later steps (step 8)
     self._park_route_output(route_output.view_as(output))
     return None
+
+
+def declare(plugin):
+    plugin.intercept(
+        "vllm.models.muse_spark.amd.model.MuseSparkMoE._pool",
+        "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
+        versions=("0.34.0",),
+        group="muse_spark.norm_experts",
+        replace=_defer_norm,
+    )
+    plugin.intercept(
+        "vllm.model_executor.layers.fused_moe.modular_kernel.FusedMoEKernelModularImpl._fused_experts",
+        "vllm.models.muse_spark.amd.muse_moe_runner.MuseSparkAiterExperts.apply",
+        versions=("0.34.0",),
+        group="muse_spark.norm_experts",
+        replace=_experts_apply,
+    )
 ```
+
+The `aklr.plugins.vllm` package includes each built-in declaration at startup. External extensions call their own `declare` with `aklr.plugins.vllm.plugin` before the host first starts.
 
 When the op takes the call, it returns `out`, each route's output of shape `[n_tokens, topk, model_dim]`, which the route hands to `_park_route_output` in `output`'s shape, for vLLM's later steps (step 8); when it declines, it returns a `FallbackReason`, and the route runs the deferred norm and falls back to vLLM.
 
@@ -176,7 +183,7 @@ PointSpec(
 Its baseline runs only on gfx950, so its contract id also goes into `GFX950_CONTRACT_IDS` in the same file. Then update `tests/plugins/vllm/names.txt`:
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
 `tests/plugins/vllm/test_hook.py` checks every route: that the function it replaces exists in the installed vLLM with the same parameters, and that no other route replaces it. The deferred norm is an agreement between the two routes that `test_hook.py` cannot check, so it is tested on its own in `tests/plugins/vllm/test_muse_spark.py`: rows without a deferred norm fall back to vLLM, a deferred norm lost on the way raises, and the baseline's copy of the norm gives vLLM's bits.

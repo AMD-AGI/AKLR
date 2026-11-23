@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from kernels_report.data_collect import (
@@ -31,7 +33,7 @@ MEASUREMENT = Measurement(
 def gemm_schemas():
     """Two committed gemm@1.0 kernels of one schema name: candidates for the same Points."""
     registry = ContractRegistry.default()
-    schemas, errors = registry.read_schemas("aklr.ops.gemm")
+    schemas, errors = registry.read_schemas("aklr.plugins.aiter.gemm")
     assert not errors
     by_name = {}
     for path, schema in schemas:
@@ -142,9 +144,19 @@ def test_baseline_summary_without_baseline_py(tmp_path):
     assert baseline_summary(tmp_path, "op_baseline") is None
 
 
-def test_collect_reads_every_committed_kernel_with_any_size_axes_as_wildcards():
-    root = locate.op_dir("aklr.ops.gemm").parents[2]
-    reports = collect(root, min_speedup=1.05, measurements={})
+@pytest.mark.parametrize("has_new_measurement", [False, True], ids=["legacy-path", "remeasured"])
+def test_collect_reads_committed_kernels_and_their_measurements(gemm_schemas, has_new_measurement):
+    family = locate.op_dir("aklr.plugins.aiter.gemm")
+    root = family.parents[3]
+    path = Path(gemm_schemas[1][0][0])
+    measurements = {f"aklr/ops/gemm/{path.relative_to(family).as_posix()}": MEASUREMENT}
+    expected = MEASUREMENT
+    if has_new_measurement:
+        expected = replace(MEASUREMENT, run_id="45", measured_at="2026-11-20T09:18:14+00:00")
+        measurements[path.relative_to(root).as_posix()] = expected
+    reports = collect(root, min_speedup=1.05, measurements=measurements)
+    gemm = next(report for report in reports if report.contract_id == "gemm@1.0")
+    assert gemm.measured == expected
 
     registry = ContractRegistry.default()
     assert reports and all(r.points for r in reports)

@@ -16,7 +16,7 @@ Your kernel PR or plugin PR must meet these criteria:
   validation fails with `no_qualifying_workload`.
 - At run time, AKLR uses the kernel only for workloads that are 5% or more faster. Other workloads run the
   original code.
-- The baseline is defined in the op's `baseline.py`. For ops in `aklr/ops/`, it is usually the AITER op. For plugin
+- The baseline is defined in the op's `baseline.py`. For ops in `aklr/plugins/aiter/`, it is usually the AITER op. For plugin
   ops, it is the original SGLang or vLLM code.
 
 ## End-to-end criterion: 2%
@@ -28,10 +28,10 @@ measure the gain on the whole model and report it in the PR.
 
 | PR | End-to-end data |
 |---|---|
-| Adds a route (`@sglang_route`, `@vllm_route` or `@sglang_call_route`) | required |
+| Adds a route (`plugin.provide`, `plugin.wrap` or `plugin.intercept`) | required |
 | Makes an existing route handle more cases, such as a new branch or a new serving configuration | required |
 | Adds or changes kernels or workloads of an existing op or route | recommended, not required |
-| Adds an op to `aklr/ops/` | recommended, not required |
+| Adds an op to `aklr/plugins/aiter/` | recommended, not required |
 
 ### What to report
 

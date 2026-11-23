@@ -17,7 +17,7 @@ if [[ ${#reports[@]} == 0 ]]; then
   echo 'committed=false' >> "$GITHUB_OUTPUT"
   exit 0
 fi
-schema_path='^aklr/(ops|plugins(/[^/]+)+)/[^/]+/impls/[^/]+/[^/]+/[0-9a-f]{16}\.json$'
+schema_path='^aklr/plugins(/[^/]+)+/[^/]+/impls/[^/]+/[^/]+/[0-9a-f]{16}\.json$'
 authored='del(.workloads[] | .speedup, .accuracy, .microseconds)'
 # Every workload measured; speedup absent only on a failed one, microseconds wherever no baseline was timed.
 shape='(.workloads | length > 0) and all(.workloads[];
@@ -87,8 +87,8 @@ git config user.email "$bot_id+$BOT_LOGIN@users.noreply.github.com"
   # The subject is the bot PR's title, at most 256 characters: the images, pinned by digest, go in the body.
   echo "perf: measurements on $hardware (run $GITHUB_RUN_ID)"
   echo
-  echo "aklr/ops: $AITER_IMAGE"
-  echo "aklr/plugins: $SGLANG_IMAGE"
+  echo "aklr/plugins/aiter: $AITER_IMAGE"
+  echo "aklr/plugins/sglang and aklr/plugins/aiter/situv2_a4w4_moe: $SGLANG_IMAGE"
   echo "aklr/plugins/vllm: $VLLM_IMAGE"
   echo
   echo "$published"

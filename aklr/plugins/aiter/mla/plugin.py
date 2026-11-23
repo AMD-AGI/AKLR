@@ -1,0 +1,1139 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+
+from __future__ import annotations
+
+import torch
+
+from aklr.core.contract.op import OpContract
+from aklr.core.contract.semantics import (
+    DTYPE_TRAITS,
+    BaselineRelativeBound,
+    BoundedCuSeqlensDistribution,
+    CuSeqlensDistribution,
+    Deepseekv4Fp8KvCacheDistribution,
+    Deepseekv4KvPages,
+    DeterminismLevel,
+    DType,
+    FiniteDistribution,
+    IntRangeDistribution,
+    LogUniformDistribution,
+    SqnrBound,
+    ToleranceBound,
+)
+from aklr.core.contract.spec import (
+    AttrSpec,
+    CompareSpec,
+    DTypeSpec,
+    LayoutFact,
+    LayoutVariant,
+    LayoutVariantsSpec,
+    ScalarSpec,
+    ShapeByAttrSpec,
+    TensorSpec,
+    attr,
+    axis,
+)
+from aklr.plugins import Plugin
+from aklr.plugins.aiter._candidate import offer, served
+from aklr.plugins.aiter._verify import note_target_verify
+
+__all__ = [
+    "FLASH_MLA_WITH_KVCACHE",
+    "FP8_PAGED_MQA_LOGITS",
+    "FP8_PAGED_MQA_LOGITS_VERIFY",
+    "MLA_DECODE_FWD",
+    "MLA_DECODE_FWD_CPRR",
+    "declare",
+    "family",
+    "flash_mla_with_kvcache",
+    "fp8_paged_mqa_logits",
+    "fp8_paged_mqa_logits_verify",
+    "mla_decode_fwd",
+    "mla_decode_fwd_cprr",
+    "note_target_verify",
+]
+
+
+_FINITE_DISTRIBUTION = FiniteDistribution()
+_INT32 = DTypeSpec(any_of=(DType.INT32,))
+_FLOAT32 = DTypeSpec(any_of=(DType.FLOAT32,))
+_POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
+_KV_CACHE_FORMATS = ("dsv4_fp8", "fp8_e4m3", "bf16")
+
+# Each sparse pool is pages of page_size slots: 576-byte payloads, then 8-byte scale slots.
+_PAGE_SIZE_CONSTRAINT = "{0} == 2 or {0} == 64 or {0} == 128 or {0} == 256"
+_SLOT_LIMIT = 2**31  # slots are int32 indices
+# The DSA models' context, 2^20 tokens, and room for the draft tokens sglang's tables add past it
+_MQA_CONTEXT_LIMIT = 2**20 + 4096
+_MQA_PAGE_SIZES = (
+    16,
+    32,
+    64,
+    128,
+    256,
+)  # aiter's preshuffled pages hold 16-token tiles
+
+
+def _by_format(sparse: tuple[str | int, ...], dense: tuple[str | int, ...]) -> ShapeByAttrSpec:
+    return ShapeByAttrSpec(
+        attr_name="kv_cache_format",
+        cases={"dsv4_fp8": sparse, "fp8_e4m3": dense, "bf16": dense},
+    )
+
+
+def _sparse_indices(description: str, n_indices: str, slots: str, present_when: str) -> TensorSpec:
+    return TensorSpec(
+        description=description,
+        shape=("batch", 1, n_indices),
+        dtype=_INT32,
+        present_when=present_when,
+        distribution=IntRangeDistribution(lo="-1", hi=f"{slots} - 1"),
+    )
+
+
+def _sparse_lens(description: str, n_indices: str, present_when: str) -> TensorSpec:
+    return TensorSpec(
+        description=description,
+        shape=("batch",),
+        dtype=_INT32,
+        present_when=present_when,
+        distribution=IntRangeDistribution(lo="0", hi=n_indices),
+    )
+
+
+def _kv_cache_layout_facts(value: str) -> tuple[LayoutFact, ...]:
+    return (LayoutFact(location="arg", name="kv_cache_layout", expected_value=value),)
+
+
+def _presence(tensor: str, abbrev: str | None = None) -> AttrSpec:
+    return attr(f"Whether {tensor} is passed.", False, True, default=False, abbrev=abbrev)
+
+
+FLASH_MLA_WITH_KVCACHE = OpContract(
+    contract_id="flash_mla_with_kvcache@1.0",
+    description=(
+        "MLA attention over a paged KV pool, FlashMLA's API. Sparse: each token "
+        "attends to the slots its indices name, in the pool and the optional extra "
+        "one; sinks join the normalisation only. Dense: each request attends to its "
+        "context rows; q's rope part is last, scores are q . row * sm_scale * "
+        "kv_scale and values row[:head_dim_v] * kv_scale. With causal, query i of a "
+        "request of length L reads its first L - query_length + i + 1 rows."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis(
+            "Rows: one token each (sparse) or one request each (dense).",
+            1,
+            65536,
+            is_var=True,
+        ),
+        "query_length": axis("Queries per row.", 1, 65536),
+        "n_heads": axis("Query heads.", 1, 128),
+        "n_pages": axis("Pages of the KV pool.", 1, _SLOT_LIMIT, is_var=True),
+        "page_size": axis("Slots per page of the KV pool.", 1, 256),
+        "n_indices": axis("Sparse indices per token.", 64, 65536, multiple_of=64),
+        "n_extra_pages": axis("Pages of the extra KV pool.", 1, _SLOT_LIMIT, is_var=True),
+        "extra_page_size": axis("Slots per page of the extra KV pool.", 2, 256),
+        "n_extra_indices": axis("Extra sparse indices per token.", 64, 65536, multiple_of=64),
+        "table_width": axis(
+            "Columns of the 2-D block_table, or length of the flat one.",
+            1,
+            _SLOT_LIMIT - 1,  # cu_seqlens_k holds it as an int32 offset
+            is_var=True,
+        ),
+        "n_offsets": axis("Offsets in cu_seqlens_k: batch + 1.", 2, 65537, is_var=True),
+    },
+    attrs={
+        "causal": attr(
+            "Whether query i of a request of length L reads only its first L - query_length + i + 1 rows.",
+            False,
+            True,
+            default=False,
+            param_name="causal",
+        ),
+        "kv_cache_format": attr(
+            "The pool rows: DeepSeek-V4's packed fp8 slots (sparse), or 576 fp8 or bf16 values (dense).",
+            *_KV_CACHE_FORMATS,
+            default="dsv4_fp8",
+            param_name="kv_cache_format",
+        ),
+        "return_lse": attr(
+            "Whether lse is returned too.",
+            False,
+            True,
+            default=False,
+            param_name="return_lse",
+            abbrev="lse",
+        ),
+        # short names keep the longest schema name a file name (<= 255 bytes)
+        "has_sparse_indices": _presence("sparse_indices", "sparse"),
+        "has_sparse_lens": _presence("sparse_lens", "lens"),
+        "has_extra_kv_cache": _presence("extra_kv_cache", "extra"),
+        "has_extra_sparse_indices": _presence("extra_sparse_indices", "extra_idx"),
+        "has_extra_sparse_lens": _presence("extra_sparse_lens", "extra_lens"),
+        "has_block_table": _presence("block_table"),
+        "has_cache_seqlens": _presence("cache_seqlens"),
+        "has_cu_seqlens_k": _presence("cu_seqlens_k"),
+        "has_sinks": _presence("sinks", "sinks"),
+    },
+    constraints=(
+        "return_lse",  # an output is never optional: output alone is not modelled
+        # sparse indices read the dsv4 pool, a block table a dense one
+        "has_sparse_indices == (kv_cache_format == 'dsv4_fp8')",
+        "has_sparse_indices != has_block_table",
+        "has_block_table == (has_cache_seqlens or has_cu_seqlens_k)",
+        "not (has_cache_seqlens and has_cu_seqlens_k)",
+        "has_sparse_indices or (not (has_sparse_lens or has_extra_kv_cache or has_sinks))",
+        # the extra pool and its indices come together; its lengths only with them
+        "has_extra_kv_cache == has_extra_sparse_indices",
+        "has_extra_kv_cache or (not has_extra_sparse_lens)",
+        "(kv_cache.dtype == 'bfloat16') == (kv_cache_format == 'bf16')",
+        "kv_cache_format != 'fp8_e4m3' or kv_cache.dtype == 'float8_e4m3fn'",
+        "has_sparse_indices or page_size == 1",  # a dense pool row is a page
+        f"(not has_sparse_indices) or ({_PAGE_SIZE_CONSTRAINT.format('page_size')})",
+        _PAGE_SIZE_CONSTRAINT.format("extra_page_size"),
+        f"n_pages * page_size <= {_SLOT_LIMIT}",
+        f"n_extra_pages * extra_page_size <= {_SLOT_LIMIT}",
+        # aiter's fp8 kernel takes 16-head blocks; 64 and 128 heads take a bf16-only path
+        "has_sparse_indices or (n_heads <= 96 and n_heads != 64)",
+        "(not has_sparse_indices) or n_heads == 64 or n_heads == 128",
+        # only a causal flat table takes several queries; fp8 decodes, bf16 verifies
+        "query_length == 1 or (causal and has_cu_seqlens_k)",
+        "not (causal and has_sparse_indices)",
+        "(kv_cache_format == 'bf16') == (query_length > 1)",
+        "(not has_cu_seqlens_k) or n_offsets == batch + 1",
+        "(not has_cu_seqlens_k) or table_width >= batch * query_length",
+        # sglang's dsv4 pool is padded; a dense pool row is a whole page
+        "(kv_cache_format == 'dsv4_fp8') == (layout_variant == 'padded_pages')",
+    ),
+    inputs={
+        "q": TensorSpec(
+            description="The queries of each row; dense: the rope part last.",
+            shape=_by_format(
+                ("batch", "query_length", "n_heads", 512),
+                ("batch", "query_length", "n_heads", 576),
+            ),
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_cache": TensorSpec(
+            description="The KV pool: packed dsv4 slots, or one 576-value row a page.",
+            shape=_by_format(("n_pages", "page_size", 1, 584), ("n_pages", "page_size", 1, 576)),
+            dtype=DTypeSpec(any_of=(DType.UINT8, DType.FLOAT8_E4M3FN, DType.BFLOAT16)),
+            # the import check takes a predicate reading an attr both ways, so the dtype-only items come first
+            distribution=(
+                ("kv_cache.dtype == 'uint8'", Deepseekv4Fp8KvCacheDistribution()),
+                ("kv_cache.dtype == 'bfloat16'", FiniteDistribution()),
+                ("kv_cache_format == 'dsv4_fp8'", Deepseekv4Fp8KvCacheDistribution()),
+                (None, FiniteDistribution()),
+            ),
+            lifetime="weight",
+        ),
+        "sparse_indices": _sparse_indices(
+            "Slots of the KV pool each token reads; negative: skipped.",
+            "n_indices",
+            "n_pages * page_size",
+            "has_sparse_indices",
+        ),
+        "sparse_lens": _sparse_lens(
+            "Leading sparse_indices each token reads; all when absent.",
+            "n_indices",
+            "has_sparse_lens",
+        ),
+        "extra_kv_cache": TensorSpec(
+            description="The extra KV pool, packed dsv4 slots.",
+            shape=("n_extra_pages", "extra_page_size", 1, 584),
+            dtype=DTypeSpec(any_of=(DType.UINT8, DType.FLOAT8_E4M3FN)),
+            present_when="has_extra_kv_cache",
+            distribution=Deepseekv4Fp8KvCacheDistribution(),
+            lifetime="weight",
+        ),
+        "extra_sparse_indices": _sparse_indices(
+            "Slots of the extra KV pool each token reads; negative: skipped.",
+            "n_extra_indices",
+            "n_extra_pages * extra_page_size",
+            "has_extra_sparse_indices",
+        ),
+        "extra_sparse_lens": _sparse_lens(
+            "Leading extra_sparse_indices each token reads; all when absent.",
+            "n_extra_indices",
+            "has_extra_sparse_lens",
+        ),
+        "block_table": TensorSpec(
+            description=(
+                "Pool rows of each request: a (batch, width) table read up to "
+                "cache_seqlens, or every request's rows back to back."
+            ),
+            shape=ShapeByAttrSpec(
+                attr_name="has_cache_seqlens",
+                cases={"true": ("batch", "table_width"), "false": ("table_width",)},
+            ),
+            dtype=_INT32,
+            present_when="has_block_table",
+            distribution=IntRangeDistribution(lo="0", hi="n_pages * page_size - 1"),
+        ),
+        "cache_seqlens": TensorSpec(
+            description="Leading block_table entries each request reads.",
+            shape=("batch",),
+            dtype=_INT32,
+            present_when="has_cache_seqlens",
+            # aiter assumes every request reads at least one row
+            distribution=IntRangeDistribution(lo="1", hi="table_width"),
+        ),
+        "cu_seqlens_k": TensorSpec(
+            description="Where each request's rows start in block_table, then its length.",
+            shape=("n_offsets",),
+            dtype=_INT32,
+            present_when="has_cu_seqlens_k",
+            distribution=CuSeqlensDistribution(min_seqlen="query_length", total="table_width"),
+        ),
+        "head_dim_v": ScalarSpec(
+            description="Values per output head: 512 dense, None sparse.",
+            dtype=DType.INT32,
+            values=(512,),
+            present_when="not has_sparse_indices",
+        ),
+        # always passed: present_when gives the api default None, which declines
+        "sm_scale": ScalarSpec(
+            description="Multiplies every logit.",
+            dtype=DType.FLOAT32,
+            interval=_POSITIVE_FLOAT32,
+            present_when="True",
+        ),
+        "sinks": TensorSpec(
+            description="Per-head logit added to the normalisation only, not to lse.",
+            shape=("n_heads",),
+            dtype=_FLOAT32,
+            present_when="has_sinks",
+            distribution=_FINITE_DISTRIBUTION,
+            lifetime="weight",
+        ),
+        "kv_scale": ScalarSpec(
+            description="Multiplies every KV value, in the logits and the values.",
+            dtype=DType.FLOAT32,
+            interval=_POSITIVE_FLOAT32,
+            default=1.0,
+        ),
+    },
+    outputs={
+        "output": TensorSpec(
+            description="Softmax-weighted sum of the read values; 0 for no row read.",
+            shape=("batch", "query_length", "n_heads", 512),
+            dtype=DTypeSpec(same_as_tensor="q"),
+            error_bounds=ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2),
+        ),
+        "lse": TensorSpec(
+            description=(
+                "Log-sum-exp of the scaled logits, sinks excluded; for no row read "
+                "+inf (sparse) or -inf (dense)."
+            ),
+            shape=("batch", "query_length", "n_heads"),
+            dtype=_FLOAT32,
+            error_bounds=ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(
+        by_name={
+            "row_major": LayoutVariant(detect_facts=_kv_cache_layout_facts("row_major")),
+            # sglang slices each pool page out of a row padded to 576 bytes
+            "padded_pages": LayoutVariant(
+                layouts={
+                    "kv_cache": Deepseekv4KvPages(),
+                    "extra_kv_cache": Deepseekv4KvPages(),
+                },
+                detect_facts=_kv_cache_layout_facts("padded_pages"),
+            ),
+        }
+    ),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+FP8_PAGED_MQA_LOGITS = OpContract(
+    contract_id="fp8_paged_mqa_logits@1.0",
+    description=(
+        "DeepSeek-V4 indexer logits: for each request and each cached token t, "
+        "sum over heads h of weights[h] * relu(q[h] . k_t) * scale_t, over a paged "
+        "pool of fp8 keys with an fp32 scale per token."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis("Requests, one decode query each.", 1, 65536, is_var=True),
+        "n_heads": axis("Indexer heads.", 1, 128),
+        "n_pages": axis("Pages of the key pool.", 1, _SLOT_LIMIT, is_var=True, any_size=True),
+        "max_blocks": axis(
+            "Pages per request in the block table.", 1, _MQA_CONTEXT_LIMIT, is_var=True, any_size=True
+        ),
+        "max_seq_len": axis(
+            "Logits per request: every token of its block table row.",
+            1,
+            _MQA_CONTEXT_LIMIT,
+            is_var=True,
+            any_size=True,
+        ),
+    },
+    attrs={
+        "page_size": attr("Tokens per page.", *_MQA_PAGE_SIZES, param_name="page_size"),
+        "preshuffled": attr(
+            "Whether each page's keys are in aiter's 16 x 16 preshuffled tiles.",
+            True,
+            default=True,
+            param_name="preshuffled",
+        ),
+    },
+    # aiter writes whole pages: a narrower row would spill into the next one
+    constraints=("max_seq_len == max_blocks * page_size",),
+    inputs={
+        "q": TensorSpec(
+            description="The decode query of each request.",
+            shape=("batch", 1, "n_heads", 128),
+            dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_cache": TensorSpec(
+            description=(
+                "The key pool, a page a row: page_size x 128 fp8 keys in 16 x 16 "
+                "tiles, then page_size fp32 scales."
+            ),
+            shape=ShapeByAttrSpec(
+                attr_name="page_size",
+                cases={str(p): ("n_pages", p, 1, 132) for p in _MQA_PAGE_SIZES},
+            ),
+            dtype=DTypeSpec(any_of=(DType.UINT8,)),
+            # shortcut: bytes below 0x40 keep keys and scales finite and at most 2;
+            # a packed-pool distribution if a kernel needs realistic magnitudes
+            distribution=IntRangeDistribution(lo="0", hi="63"),
+            lifetime="weight",
+        ),
+        "weights": TensorSpec(
+            description="Per-head weight of each request.",
+            shape=("batch", "n_heads"),
+            dtype=_FLOAT32,
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "context_lens": TensorSpec(
+            description="Cached tokens of each request.",
+            shape=("batch",),
+            dtype=_INT32,
+            # shortcut: full block tables only; past a context aiter leaves the logits unspecified
+            distribution=IntRangeDistribution(lo="max_seq_len", hi="max_seq_len"),
+        ),
+        "block_tables": TensorSpec(
+            description="The pages of each request, in context order.",
+            shape=("batch", "max_blocks"),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_pages - 1"),
+        ),
+    },
+    outputs={
+        "logits": TensorSpec(
+            description="The logits of each request's cached tokens.",
+            shape=("batch", "max_seq_len"),
+            dtype=_FLOAT32,
+            error_bounds=SqnrBound(min_sqnr_db=30.0),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+# the pool, its attrs and the logits' width are fp8_paged_mqa_logits'
+FP8_PAGED_MQA_LOGITS_VERIFY = OpContract(
+    contract_id="fp8_paged_mqa_logits_verify@1.0",
+    description=(
+        "DSA indexer logits of a speculative verify: request b's next_n query rows share its "
+        "block table row, and row (b, j) scores its first context_lens[b, j] cached tokens t with "
+        "the sum over heads h of weights[b, j, h] * relu(q[b, j, h] . k_t) * scale_t, over a paged "
+        "pool of fp8 keys with an fp32 scale per token."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis("Requests, next_n query rows each.", 1, 65536, is_var=True),
+        "next_n": axis("Query rows of each request: its tokens under verification.", 1, 1024),
+        "n_heads": FP8_PAGED_MQA_LOGITS.axes["n_heads"],
+        "n_pages": FP8_PAGED_MQA_LOGITS.axes["n_pages"],
+        "max_blocks": FP8_PAGED_MQA_LOGITS.axes["max_blocks"],
+        "max_seq_len": axis(
+            "Logits per query row: every token of its request's block table row.",
+            1,
+            _MQA_CONTEXT_LIMIT,
+            is_var=True,
+            any_size=True,
+        ),
+    },
+    attrs=FP8_PAGED_MQA_LOGITS.attrs,
+    constraints=FP8_PAGED_MQA_LOGITS.constraints,
+    inputs={
+        "q": TensorSpec(
+            description="The query rows of each request.",
+            shape=("batch", "next_n", "n_heads", 128),
+            dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_cache": FP8_PAGED_MQA_LOGITS.inputs["kv_cache"],
+        "weights": TensorSpec(
+            description="Per-head weight of each query row.",
+            shape=("batch", "next_n", "n_heads"),
+            dtype=_FLOAT32,
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "context_lens": TensorSpec(
+            description="Cached tokens each query row scores.",
+            shape=("batch", "next_n"),
+            dtype=_INT32,
+            # shortcut: full block tables only, as fp8_paged_mqa_logits; past a row's context
+            # aiter leaves its logits unspecified (sglang's top-k reads none of them)
+            distribution=IntRangeDistribution(lo="max_seq_len", hi="max_seq_len"),
+        ),
+        "block_tables": TensorSpec(
+            description="The pages of each request, in context order; its query rows share them.",
+            shape=("batch", "max_blocks"),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_pages - 1"),
+        ),
+    },
+    outputs={
+        "logits": TensorSpec(
+            description="The logits of each query row's cached tokens.",
+            shape=("batch", "next_n", "max_seq_len"),
+            dtype=_FLOAT32,
+            error_bounds=SqnrBound(min_sqnr_db=30.0),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+_FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
+
+
+def _scale(description: str) -> TensorSpec:
+    return TensorSpec(
+        description=description,
+        shape=(1,),
+        can_squeeze=True,
+        dtype=_FLOAT32,
+        distribution=LogUniformDistribution(log2_lo="-1", log2_hi="1"),
+    )
+
+
+MLA_DECODE_FWD = OpContract(
+    contract_id="mla_decode_fwd@1.0",
+    description=(
+        "aiter's MLA decode, one query per request, over a pool of 576-value fp8 rows "
+        "(aiter.mla.mla_decode_fwd): request b reads pool rows kv_indices[kv_indptr[b]:kv_indptr[b + 1]]; "
+        "logits are q . row * q_scale * kv_scale * sm_scale over the 576 values, the rope part last, "
+        "and values row[:512] * kv_scale. A request reading no row: o 0, lse -inf."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis("Requests, one query each.", 1, 65536, is_var=True),
+        "n_heads": axis(
+            "Query heads; under decode context parallelism, every rank's.", 16, 128, multiple_of=16
+        ),
+        "n_slots": axis("Rows of the KV pool.", 1, _SLOT_LIMIT - 1, is_var=True, any_size=True),
+        "n_indices": axis(
+            "Entries of kv_indices; the first kv_indptr[batch] are read.",
+            1,
+            _SLOT_LIMIT - 1,
+            is_var=True,
+            any_size=True,
+        ),
+        "n_offsets": axis("Entries of kv_indptr: batch + 1.", 2, 65537, is_var=True),
+    },
+    constraints=(
+        "n_offsets == batch + 1",
+        # the head counts aiter's fp8 kernels take whole; others it folds, which no framework sends
+        "n_heads == 16 or n_heads == 32 or n_heads == 64 or n_heads == 96 or n_heads == 128",
+    ),
+    inputs={
+        "q": TensorSpec(
+            description="Each request's query: the absorbed no-rope part, then the rope part.",
+            shape=("batch", "n_heads", 576),
+            dtype=_FP8,
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_buffer": TensorSpec(
+            description="The KV pool: a 576-value row a slot, the rope part last.",
+            shape=("n_slots", 1, 1, 576),
+            dtype=_FP8,
+            distribution=_FINITE_DISTRIBUTION,
+            lifetime="weight",
+        ),
+        "kv_indptr": TensorSpec(
+            description="Where each request's entries start in kv_indices, then where the last ends.",
+            shape=("n_offsets",),
+            dtype=_INT32,
+            # a request may read no row: under decode context parallelism a short one holds none on some ranks
+            distribution=CuSeqlensDistribution(min_seqlen=0, total="n_indices"),
+        ),
+        "kv_indices": TensorSpec(
+            description="Pool rows, each request's back to back.",
+            shape=("n_indices",),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_slots - 1"),
+        ),
+        "q_scale": _scale("Multiplies every q value."),
+        "kv_scale": _scale("Multiplies every KV value, in the logits and the values."),
+        # always passed: present_when gives the api default None, which declines
+        "sm_scale": ScalarSpec(
+            description="Multiplies every logit.",
+            dtype=DType.FLOAT32,
+            interval=_POSITIVE_FLOAT32,
+            present_when="True",
+        ),
+    },
+    outputs={
+        "o": TensorSpec(
+            description="Softmax-weighted sum of the read values.",
+            shape=("batch", "n_heads", 512),
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            # aiter rounds the softmax weights to fp8 before it sums the values
+            error_bounds=BaselineRelativeBound(),
+        ),
+        "lse": TensorSpec(
+            description="Natural log-sum-exp of the scaled logits.",
+            shape=("batch", "n_heads"),
+            dtype=_FLOAT32,
+            error_bounds=ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+# Bench draws every request the same shard of ceil_div(n_indices, batch) rows here and the
+# global length whose round robin puts exactly that many on rank 0, its last token included.
+_SHARD_ROWS = "ceil_div(n_indices, batch)"
+_GLOBAL_TOKENS = f"({_SHARD_ROWS} - 1) * cp_world_size + 1"
+
+MLA_DECODE_FWD_CPRR = OpContract(
+    contract_id="mla_decode_fwd_cprr@1.0",
+    description=(
+        "aiter's MLA decode of several causal queries a request on one rank of decode context "
+        "parallelism over a round-robin KV shard (aiter.mla.mla_decode_fwd with g_kv_indptr, "
+        "cp_world_size and cp_rank, as vLLM verifies draft tokens): request b reads pool rows "
+        "kv_indices[kv_indptr[b]:kv_indptr[b + 1]], its local row j holding global position "
+        "j * cp_world_size + cp_rank; of G = g_kv_indptr[b + 1] - g_kv_indptr[b] global tokens, "
+        "its query i sits at global position G - query_length + i and reads the local rows at or "
+        "before it. Logits are q . row * q_scale * kv_scale * sm_scale over the 576 values, the "
+        "rope part last, and values row[:512] * kv_scale. A query reading no row: o 0, lse -inf."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis("Requests.", 1, 65536, is_var=True),
+        "query_length": axis("Queries a request: the last token and its drafts.", 2, 16),
+        "n_heads": axis(
+            "Query heads: every rank's, gathered, as the caller pads them.", 16, 128, multiple_of=16
+        ),
+        "n_slots": axis("Rows of the KV pool.", 1, _SLOT_LIMIT - 1, is_var=True, any_size=True),
+        "n_indices": axis(
+            "Entries of kv_indices; the first kv_indptr[batch] are read.",
+            1,
+            _SLOT_LIMIT - 1,
+            is_var=True,
+            any_size=True,
+        ),
+        "n_offsets": axis("Entries of kv_indptr and g_kv_indptr: batch + 1.", 2, 65537, is_var=True),
+    },
+    attrs={
+        "cp_world_size": attr(
+            "Ranks of the decode context parallel group: global token t is on rank t % cp_world_size.",
+            8,
+            2,
+            4,
+            param_name="cp_world_size",
+            abbrev="cp",
+        ),
+    },
+    constraints=(
+        "n_offsets == batch + 1",
+        # aiter's round-robin kernels (vLLM's _NATIVE_CPRR_HEADS); vLLM pads other counts up to them
+        "n_heads == 16 or n_heads == 32 or n_heads == 64 or n_heads == 128",
+    ),
+    inputs={
+        "q": TensorSpec(
+            description="Each request's queries: the absorbed no-rope part, then the rope part.",
+            shape=("batch", "query_length", "n_heads", 576),
+            dtype=_FP8,
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_buffer": TensorSpec(
+            description="The KV pool: a 576-value row a slot, the rope part last.",
+            shape=("n_slots", 1, 1, 576),
+            dtype=_FP8,
+            distribution=_FINITE_DISTRIBUTION,
+            lifetime="weight",
+        ),
+        "kv_indptr": TensorSpec(
+            description=(
+                "Where each request's shard on this rank starts in kv_indices, then where the last "
+                "ends; a shard may run past the global length, its later rows read by no query."
+            ),
+            shape=("n_offsets",),
+            dtype=_INT32,
+            distribution=BoundedCuSeqlensDistribution(total="n_indices", max_seqlen=_SHARD_ROWS),
+        ),
+        "kv_indices": TensorSpec(
+            description="Pool rows, each request's shard back to back in global order.",
+            shape=("n_indices",),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_slots - 1"),
+        ),
+        "g_kv_indptr": TensorSpec(
+            description="Cumulative global token counts of the requests, the queries' tokens included.",
+            shape=("n_offsets",),
+            dtype=_INT32,
+            distribution=BoundedCuSeqlensDistribution(
+                total=f"batch * ({_GLOBAL_TOKENS})", max_seqlen=_GLOBAL_TOKENS
+            ),
+        ),
+        "q_scale": _scale("Multiplies every q value."),
+        "kv_scale": _scale("Multiplies every KV value, in the logits and the values."),
+        # always passed: present_when gives the api default None, which declines
+        "sm_scale": ScalarSpec(
+            description="Multiplies every logit.",
+            dtype=DType.FLOAT32,
+            interval=_POSITIVE_FLOAT32,
+            present_when="True",
+        ),
+        "cp_rank": ScalarSpec(
+            description="This rank in the decode context parallel group.",
+            dtype=DType.INT32,
+            interval=(0, 7),
+            default=0,
+        ),
+    },
+    outputs={
+        "o": TensorSpec(
+            description="Softmax-weighted sum of the read values.",
+            shape=("batch", "query_length", "n_heads", 512),
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            # aiter rounds the softmax weights to fp8 before it sums the values
+            error_bounds=BaselineRelativeBound(),
+        ),
+        "lse": TensorSpec(
+            description="Natural log-sum-exp of the scaled logits a query reads.",
+            shape=("batch", "query_length", "n_heads"),
+            dtype=_FLOAT32,
+            error_bounds=ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+
+family = Plugin("aiter")
+family.define(FLASH_MLA_WITH_KVCACHE)
+family.define(FP8_PAGED_MQA_LOGITS)
+family.define(MLA_DECODE_FWD)
+family.define(FP8_PAGED_MQA_LOGITS_VERIFY)
+family.define(MLA_DECODE_FWD_CPRR)
+family.build()
+
+
+@family.op
+def flash_mla_with_kvcache(
+    q,
+    kv_cache,
+    sparse_indices=None,
+    *,
+    sparse_lens=None,
+    extra_kv_cache=None,
+    extra_sparse_indices=None,
+    extra_sparse_lens=None,
+    block_table=None,
+    cache_seqlens=None,
+    cu_seqlens_k=None,
+    causal=False,
+    head_dim_v=None,
+    sm_scale=None,
+    sinks=None,
+    kv_cache_format="dsv4_fp8",
+    kv_scale=1.0,
+    return_lse=False,
+    kv_cache_layout="row_major",
+): ...
+
+
+@family.op
+def fp8_paged_mqa_logits(
+    q,
+    kv_cache,
+    weights,
+    context_lens,
+    block_tables,
+    logits,
+    *,
+    page_size,
+    preshuffled=True,
+): ...
+
+
+@family.op
+def fp8_paged_mqa_logits_verify(
+    q,
+    kv_cache,
+    weights,
+    context_lens,
+    block_tables,
+    logits,
+    *,
+    page_size,
+    preshuffled=True,
+): ...
+
+
+@family.op
+def mla_decode_fwd(
+    q,
+    kv_buffer,
+    kv_indptr,
+    kv_indices,
+    q_scale,
+    kv_scale,
+    sm_scale=None,
+    o=None,
+    lse=None,
+): ...
+
+
+@family.op
+def mla_decode_fwd_cprr(
+    q,
+    kv_buffer,
+    kv_indptr,
+    kv_indices,
+    g_kv_indptr,
+    q_scale,
+    kv_scale,
+    cp_world_size=None,
+    sm_scale=None,
+    cp_rank=0,
+    o=None,
+    lse=None,
+): ...
+
+
+_LATENT = 512  # the no-rope part of q and of a pool row: the values read
+_AITER_KV_CACHE_FORMATS = {torch.bfloat16: "bf16", torch.float8_e4m3fn: "fp8_e4m3"}
+
+
+def _sm_scale(q, sm_scale):
+    """aiter's default: one over the root of the 576 values a logit sums over."""
+    return q.shape[-1] ** -0.5 if sm_scale is None else float(sm_scale)
+
+
+# mla_decode_fwd's keyword-only parameters, which only its NVFP4 path takes
+_NVFP4 = ("q_aux", "kv_aux", "nvfp4_params", "nvfp4_lse")
+
+
+def _select_mla_decode_fwd(args, kwargs):
+    (
+        q,
+        kv_buffer,
+        o,
+        _qo_indptr,
+        kv_indptr,
+        kv_indices,
+        _kv_last_page_lens,
+        max_seqlen_q,
+        page_size,
+        nhead_kv,
+        sm_scale,
+        logit_cap,
+        _num_kv_splits,
+        num_kv_splits_indptr,
+        _work_meta_data,
+        _work_indptr,
+        _work_info_set,
+        _reduce_indptr,
+        _reduce_final_map,
+        _reduce_partial_map,
+        q_scale,
+        kv_scale,
+        _intra_batch_mode,
+        return_logits,
+        return_lse,
+        g_kv_indptr,
+        cp_world_size,
+        cp_rank,
+        causal,
+        kv_layout,
+        seq_lens,
+        page_table,
+        kv_csr_layout,
+        _fast_mode,
+    ) = args
+    # a page-size-1 pool of token-major rows, its lse returned. aiter's schedule (work and reduce maps,
+    # splits, batch and fast modes) only orders its own kernel's work. The keyword-only tensors are
+    # aiter's NVFP4 path
+    if (
+        any(kwargs[name] is not None for name in _NVFP4)
+        or page_size != 1
+        or nhead_kv != 1
+        or logit_cap > 0
+        or num_kv_splits_indptr is not None
+        or return_logits
+        or not return_lse
+        or q_scale is None
+        or kv_scale is None
+        or kv_layout != "token_major"
+        or seq_lens is not None
+        or page_table is not None
+        or kv_csr_layout != "page"
+        or q.dim() != 3
+    ):
+        return None
+    batch = kv_indptr.shape[0] - 1
+    sm_scale = _sm_scale(q, sm_scale)
+    # one query a request: causal has no effect on it, nor cp_rank without context parallelism
+    if g_kv_indptr is None and cp_world_size == 1:
+        if max_seqlen_q != 1 or q.shape[0] != batch:
+            return None
+        return offer(
+            mla_decode_fwd.serving(
+                q, kv_buffer, kv_indptr, kv_indices, q_scale, kv_scale, sm_scale=sm_scale, o=o
+            ),
+            _run_mla_decode_fwd,
+        )
+    # vLLM's verify of draft tokens under decode context parallelism: as many causal queries a request
+    # (rows of max_seqlen_q a request, so none fewer) over its round-robin shard of the pool
+    cprr = _cprr_call(
+        q,
+        kv_buffer,
+        o,
+        kv_indptr,
+        kv_indices,
+        max_seqlen_q,
+        sm_scale,
+        q_scale,
+        kv_scale,
+        g_kv_indptr,
+        cp_world_size,
+        cp_rank,
+        causal,
+    )
+    if cprr is None:
+        return None
+    call_args, call_kwargs = cprr
+    return offer(mla_decode_fwd_cprr.serving(*call_args, **call_kwargs), _run_mla_decode_fwd)
+
+
+def _cprr_call(
+    q,
+    kv_buffer,
+    o,
+    kv_indptr,
+    kv_indices,
+    max_seqlen_q,
+    sm_scale,
+    q_scale,
+    kv_scale,
+    g_kv_indptr,
+    cp_world_size,
+    cp_rank,
+    causal,
+):
+    """``mla_decode_fwd_cprr``'s (args, kwargs) for aiter's call, its q and o as [batch, queries, heads,
+    width]; ``None`` outside it."""
+    batch = kv_indptr.shape[0] - 1
+    if (
+        g_kv_indptr is None
+        or cp_world_size < 2
+        or not causal
+        or max_seqlen_q < 2
+        or q.shape[0] != batch * max_seqlen_q
+        or o.shape[0] != q.shape[0]
+    ):
+        return None
+    queries = (batch, max_seqlen_q)
+    return (q.unflatten(0, queries), kv_buffer, kv_indptr, kv_indices, g_kv_indptr, q_scale, kv_scale), {
+        "cp_world_size": cp_world_size,
+        "sm_scale": sm_scale,
+        "cp_rank": cp_rank,
+        "o": o.unflatten(0, queries),
+    }
+
+
+def _run_mla_decode_fwd(
+    q,
+    kv_buffer,
+    o,
+    qo_indptr,
+    kv_indptr,
+    kv_indices,
+    kv_last_page_lens,
+    max_seqlen_q,
+    page_size,
+    nhead_kv,
+    sm_scale,
+    logit_cap,
+    num_kv_splits,
+    num_kv_splits_indptr,
+    work_meta_data,
+    work_indptr,
+    work_info_set,
+    reduce_indptr,
+    reduce_final_map,
+    reduce_partial_map,
+    q_scale,
+    kv_scale,
+    intra_batch_mode,
+    return_logits,
+    return_lse,
+    g_kv_indptr,
+    cp_world_size,
+    cp_rank,
+    causal,
+    kv_layout,
+    seq_lens,
+    page_table,
+    kv_csr_layout,
+    fast_mode,
+    *,
+    q_aux=None,
+    kv_aux=None,
+    nvfp4_params=None,
+    nvfp4_lse=None,
+):
+    sm_scale = _sm_scale(q, sm_scale)
+    cprr = _cprr_call(
+        q,
+        kv_buffer,
+        o,
+        kv_indptr,
+        kv_indices,
+        max_seqlen_q,
+        sm_scale,
+        q_scale,
+        kv_scale,
+        g_kv_indptr,
+        cp_world_size,
+        cp_rank,
+        causal,
+    )
+    # (o, lse): aiter returns its split scratch first, which its callers do not read
+    if cprr is None:
+        return served(
+            mla_decode_fwd(q, kv_buffer, kv_indptr, kv_indices, q_scale, kv_scale, sm_scale=sm_scale, o=o)
+        )
+    call_args, call_kwargs = cprr
+    _, lse = served(mla_decode_fwd_cprr(*call_args, **call_kwargs))
+    # aiter's lse is a row's per head, as its q's rows
+    return o, lse.flatten(0, 1)
+
+
+def _whole_query(q_nope, q_pe):
+    """The q of rows of latent then rope values whose two adjacent views the caller passes as q_nope
+    and q_pe; ``None`` for two tensors apart."""
+    lead, latent = q_nope.shape[:-1], q_nope.shape[-1]
+    width = latent + q_pe.shape[-1]
+    strides, step = [1], width
+    for size in reversed(lead):
+        strides.insert(0, step)
+        step *= size
+    strides = tuple(strides)
+    if not (
+        q_pe.dtype == q_nope.dtype
+        and q_pe.shape[:-1] == lead
+        and q_nope.stride() == q_pe.stride() == strides
+        and q_pe.untyped_storage().data_ptr() == q_nope.untyped_storage().data_ptr()
+        and q_pe.storage_offset() == q_nope.storage_offset() + latent
+    ):
+        return None
+    return q_nope.as_strided((*lead, width), strides)
+
+
+def _flash_mla_call(
+    q_nope, q_pe, kv_c, page_table, seq_info, sm_scale, k_pe, kv_pe_offset, use_2d_view, kv_scale
+):
+    """AKLR's dense ``flash_mla_with_kvcache`` call for aiter's paged MLA decode, as (args, kwargs);
+    ``None`` outside it. aiter's 4-D q is several causal queries a request."""
+    kv_cache_format = _AITER_KV_CACHE_FORMATS.get(kv_c.dtype)
+    # the rope part in the pool rows themselves, right after the latent
+    if (
+        k_pe is not None
+        or kv_pe_offset != _LATENT
+        or q_nope.shape[-1] != _LATENT
+        or q_nope.dim() not in (3, 4)
+        or kv_c.dim() != 2
+        or kv_cache_format is None
+    ):
+        return None
+    q = _whole_query(q_nope, q_pe)
+    if q is None or kv_c.shape[-1] != q.shape[-1]:
+        return None
+    is_mtp = q.dim() == 4
+    return (q if is_mtp else q.unsqueeze(1), kv_c[:, None, None, :]), {
+        "block_table": page_table,
+        "cache_seqlens": seq_info if use_2d_view else None,
+        "cu_seqlens_k": None if use_2d_view else seq_info,
+        "causal": is_mtp,
+        "head_dim_v": _LATENT,
+        "sm_scale": sm_scale,
+        "kv_cache_format": kv_cache_format,
+        "kv_scale": kv_scale,
+        "return_lse": True,
+    }
+
+
+def _select_mla_paged_decode(args, kwargs):
+    # min_kv_seq_len only promises aiter's kernel a lower bound; return_lse only drops the lse
+    (
+        q_nope,
+        q_pe,
+        kv_c,
+        o,
+        page_table,
+        seq_info,
+        sm_scale,
+        k_pe,
+        kv_pe_offset,
+        use_2d_view,
+        kv_scale,
+        _min_kv_seq_len,
+        _return_lse,
+    ) = args
+    call = _flash_mla_call(
+        q_nope, q_pe, kv_c, page_table, seq_info, sm_scale, k_pe, kv_pe_offset, use_2d_view, kv_scale
+    )
+    # AKLR's output is copied into o: one shaped and typed as aiter would write it
+    if call is None or o.shape != q_nope.shape or o.dtype != q_nope.dtype:
+        return None
+    call_args, call_kwargs = call
+    return offer(flash_mla_with_kvcache.serving(*call_args, **call_kwargs), _run_mla_paged_decode)
+
+
+def _run_mla_paged_decode(
+    q_nope,
+    q_pe,
+    kv_c,
+    o,
+    page_table,
+    seq_info,
+    sm_scale,
+    k_pe,
+    kv_pe_offset,
+    use_2d_view,
+    kv_scale,
+    min_kv_seq_len,
+    return_lse,
+):
+    call_args, call_kwargs = _flash_mla_call(
+        q_nope, q_pe, kv_c, page_table, seq_info, sm_scale, k_pe, kv_pe_offset, use_2d_view, kv_scale
+    )
+    output, lse = served(flash_mla_with_kvcache(*call_args, **call_kwargs))
+    # AKLR's api takes no output: aiter's caller reads its o. aiter's op returns lse alone, an empty fp32
+    # tensor when return_lse is off (a custom op cannot return None for a tensor)
+    o.copy_(output.view(o.shape))
+    return lse if return_lse else torch.empty(0, dtype=torch.float32, device=o.device)
+
+
+def declare(plugin: Plugin) -> None:
+    from . import _paged_logits
+
+    plugin.provide("mla_decode_fwd", version=1, select=_select_mla_decode_fwd)
+    plugin.provide("mla_paged_decode", version=1, select=_select_mla_paged_decode)
+    plugin.provide("fp8_paged_mqa_logits", version=1, select=_paged_logits.select)

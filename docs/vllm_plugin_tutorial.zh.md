@@ -24,7 +24,7 @@ vLLM 在调用 `fused_moe` 之前，用 `fused_rmsnorm_expand` 单独执行第 2
 
 因此：
 
-- 只需让某一个算子更快时，在 `aklr/ops` 中写算子。
+- 只需让某一个算子更快时，在 `aklr/plugins/aiter` 中写算子。
 - 优化需要越过单个算子的边界时，写插件。
 
 ## 插件如何运行
@@ -52,36 +52,30 @@ def apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, activatio
 
 ### 2. 建包
 
-新建 `aklr/plugins/vllm/models/muse_spark/`，以 vLLM 的源目录 `models/muse_spark/` 命名。包内的文件与 `aklr/ops` 中的算子相同：`__init__.py`、`contract.py`、`reference.py`、`baseline.py`、`api.py` 和 `impls/`；另有 `_norm_expand.py`，是 vLLM norm kernel 的副本，让 baseline 不依赖 vLLM 也能运行。包名即算子的 `op_type`（`muse_spark`），在 `aklr/ops` 和 `aklr/plugins` 中都不能重名。
+新建 `aklr/plugins/vllm/models/muse_spark/`，以 vLLM 的源目录 `models/muse_spark/` 命名。包内的文件与 `aklr/plugins/aiter` 中的算子相同：`__init__.py`、`plugin.py`、`reference.py`、`baseline.py` 和 `impls/`；另有 `_norm_expand.py`，是 vLLM norm kernel 的副本，让 baseline 不依赖 vLLM 也能运行。包名即算子的 `op_type`（`muse_spark`），在 `aklr/plugins/aiter` 和 `aklr/plugins` 中都不能重名。
 
 ### 3. 编写算子
 
 做法同 ops 教程的 1. A。针对这个算子：
 
-- `contract.py` 定义 `MUSE_SPARK_MOE`（`muse_spark_moe@1.0`）：
+- `plugin.py` 定义 `MUSE_SPARK_MOE`（`muse_spark_moe@1.0`）：
   - 输入：尚未归一化的 pooled rows `hidden_states`；norm 的 `norm_weight`；每行的路由 `topk_ids`；本卡持有哪些专家的 `expert_mask`（最后一位是 vLLM 恒被屏蔽的槽位）；专家的 `w1`、`w1_scale`、`w2`、`w2_scale`；以及标量 `eps` 和 `gain_center`；
   - 布局：`row_major` 和 `shuffled_16x16`，后者即 vLLM 为 aiter 保存专家权重的方式；
   - 输出：`out`，形状 `[n_tokens, topk, model_dim]`，即每一路的专家输出，不乘 router 权重；本卡不持有的专家，其路写零。router 权重、post-expert norm 和各路求和由 vLLM 在之后完成。
 - `reference.py`：`muse_spark_moe_reference`，按 contract 的计算实现：RMSNorm 在 fp32 下计算，按 vLLM 的 `fused_rmsnorm_expand` 写出的方式舍入为 `hidden_states` 的 dtype，再让每一路以权重 1 经过 `fused_moe` 的 reference。
 - `baseline.py`：`muse_spark_moe_baseline`，即 vLLM 目前执行第 2–7 步的方式：`fused_rmsnorm_expand`，然后 `MuseSparkAiterExperts.apply` 调用的 aiter `fused_moe`（per_1x32）。
-- `api.py`：算子的入口函数 `@api(MUSE_SPARK_MOE)`，函数体为 `...`。
+- 在同一 `plugin.py` 中登记契约并构建 `family`，通过 `@family.op` 绑定 `muse_spark_moe`，函数体为 `...`。
 
 ### 4. 编写 route
 
-route 写在 `api.py` 中，放在算子入口函数 `muse_spark_moe` 旁边。两个 route 合起来，把 vLLM 的两次调用交给这一个算子：
+route 写在 `plugin.py` 中，放在算子入口函数 `muse_spark_moe` 旁边。两个 route 合起来，把 vLLM 的两次调用交给这一个算子：
 
 - contract 的输入是尚未归一化的行，以及 norm 的 `norm_weight`、`eps` 和 `gain_center`，norm 由算子计算。所以 `_defer_norm` 跳过 vLLM 的 norm，把 norm 的参数留给算子。
 - `_experts_apply` 把 vLLM 的参数整理为算子的参数，调用 `muse_spark_moe`。
 
-`@vllm_route` 的第一个参数是调用方，第二个是被替换的函数；两个 route 属于同一个 `group`。下面省略了部分参数和检查：
+`plugin.intercept` 的第一个参数是调用方，第二个是被替换的函数；两个 route 属于同一个 `group`。下面省略了部分参数和检查：
 
 ```python
-@vllm_route(
-    "vllm.models.muse_spark.amd.model.MuseSparkMoE._pool",
-    "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
-    versions=("0.34.0",),
-    group="muse_spark.norm_experts",
-)
 def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):  # 参数与被替换的函数完全一致
     # AKLR 不支持的输入
     if weight is None or input_scale or x.dtype != torch.bfloat16 or x.shape[0] == 0:
@@ -113,12 +107,6 @@ def _would_serve(x, weight, eps, gain_center, layer):
     return reason is None
 
 
-@vllm_route(
-    "vllm.model_executor.layers.fused_moe.modular_kernel.FusedMoEKernelModularImpl._fused_experts",
-    "vllm.models.muse_spark.amd.muse_moe_runner.MuseSparkAiterExperts.apply",
-    versions=("0.34.0",),
-    group="muse_spark.norm_experts",
-)
 def _experts_apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, ...):
     deferred = getattr(hidden_states, _DEFERRED_NORM, None)
     # 这一层的 norm 没有推迟：交回 vLLM
@@ -153,7 +141,26 @@ def _experts_apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, 
     # 把逐路的输出交给 vLLM 的后续步骤（第 8 步）
     self._park_route_output(route_output.view_as(output))
     return None
+
+
+def declare(plugin):
+    plugin.intercept(
+        "vllm.models.muse_spark.amd.model.MuseSparkMoE._pool",
+        "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
+        versions=("0.34.0",),
+        group="muse_spark.norm_experts",
+        replace=_defer_norm,
+    )
+    plugin.intercept(
+        "vllm.model_executor.layers.fused_moe.modular_kernel.FusedMoEKernelModularImpl._fused_experts",
+        "vllm.models.muse_spark.amd.muse_moe_runner.MuseSparkAiterExperts.apply",
+        versions=("0.34.0",),
+        group="muse_spark.norm_experts",
+        replace=_experts_apply,
+    )
 ```
+
+内置模块的 `declare` 由 `aklr.plugins.vllm` 在启动时组合。外部扩展在宿主首次启动前将 `aklr.plugins.vllm.plugin` 传入自己的 `declare`。
 
 算子接这次调用时，返回 `out`，即形状为 `[n_tokens, topk, model_dim]` 的逐路输出，route 按 `output` 的形状把它交给 `_park_route_output`，供 vLLM 的后续步骤（第 8 步）使用；不接时返回 `FallbackReason`，route 补做 norm 后交回 vLLM。
 
@@ -176,7 +183,7 @@ PointSpec(
 它的 baseline 只能在 gfx950 上运行，所以还要把它的 contract id 加入同一文件的 `GFX950_CONTRACT_IDS`。然后更新 `tests/plugins/vllm/names.txt`：
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
 `tests/plugins/vllm/test_hook.py` 会检查每个 route，确认它替换的函数在当前安装的 vLLM 中存在、参数一致，且没有其他 route 替换同一个函数。推迟 norm 是这两个 route 之间的约定，`test_hook.py` 检查不到，所以要在 `tests/plugins/vllm/test_muse_spark.py` 中单独测试：没有推迟标记的行交回 vLLM，推迟的 norm 在途中丢失时报错，baseline 所用的 norm 副本与 vLLM 的结果逐位一致。

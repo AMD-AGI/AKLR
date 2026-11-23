@@ -13,7 +13,7 @@ import pytest
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.sglang.models.qwen3_5 import api
+from aklr.plugins.sglang.models.qwen3_5 import plugin as api
 
 ROWS = 4
 

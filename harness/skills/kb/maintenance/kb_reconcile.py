@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Which FlyDSL kernels of a revision no case page covers.
 
-Lists every schema under `aklr/ops/*/impls/flydsl/` and `aklr/plugins/` at REV whose kernel carries source, and
+Lists every schema under `aklr/plugins/aiter/*/impls/flydsl/` and `aklr/plugins/` at REV whose kernel carries source, and
 matches it with the `sources:` of the pages in `cases/`:
 
 - covered: a case names the schema file;
@@ -26,7 +26,7 @@ from pathlib import Path
 from kb_lint import SKILL_ROOT, read_page
 
 REPO_ROOT = SKILL_ROOT.parents[2]
-ROOTS = ("aklr/ops", "aklr/plugins")
+ROOTS = ("aklr/plugins/aiter", "aklr/plugins")
 
 
 def _git(*args: str) -> str:

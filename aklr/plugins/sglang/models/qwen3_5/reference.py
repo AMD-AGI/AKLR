@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 
 from aklr.core.contract.semantics import to_float32
-from aklr.plugins.sglang.models.qwen3_5.contract import MROPE_SECTION, ROTARY_DIM
+from aklr.plugins.sglang.models.qwen3_5._specs import MROPE_SECTION, ROTARY_DIM
 
 
 def reference_prefill(

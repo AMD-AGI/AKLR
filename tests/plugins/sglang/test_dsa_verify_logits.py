@@ -5,17 +5,13 @@
 whether the logits asked next are a target verify's under DCP, so the provider scores those rows by
 request; a decode batch, or a verify without DCP, is noted as none."""
 
-import importlib
 import sys
 import types
 
 import pytest
 import torch
 
-from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.sglang.layers.dsa_backend import api
-
-mla = importlib.import_module("aklr.plugins.aiter.provider.mla")
+from aklr.plugins.sglang.layers.dsa_backend import plugin as api
 
 NEXT_N, BATCH, HEADS, DIM = 5, 2, 4, 8
 ROWS = BATCH * NEXT_N
@@ -29,29 +25,30 @@ def context(monkeypatch):
     module.get_parallel = lambda: parallel
     module.get_spec = lambda: types.SimpleNamespace(speculative_num_draft_tokens=NEXT_N)
     monkeypatch.setitem(sys.modules, "sglang.srt.runtime_context", module)
-    monkeypatch.setattr(mla, "_TARGET_VERIFY", [(1, 1)])
     return parallel
 
 
-def paged_topk(rows, is_target_verify):
+def paged_topk(rows, is_target_verify, orig):
+    class Observer:
+        def wrap(self, target, *, versions, around=None, replace=None):
+            if around is not None:
+                self.paged = around
+
+    observer = Observer()
+    api.declare(observer)
     batch = types.SimpleNamespace(
         forward_mode=types.SimpleNamespace(is_target_verify=lambda: is_target_verify)
     )
     q = torch.zeros(rows, HEADS, DIM, dtype=torch.float8_e4m3fn)
-    return api._get_topk_paged(object(), batch, 0, q, None, None)
+    return observer.paged(orig, object(), batch, 0, q, marker=17)
 
 
-def test_a_verify_under_dcp_is_noted_for_the_provider_and_sglang_runs_its_top_k(context):
-    assert paged_topk(ROWS, True) is FallbackReason.OUT_OF_CONTRACT
-    assert mla._TARGET_VERIFY[0] == (ROWS, NEXT_N)
+@pytest.mark.parametrize(("verify", "dcp"), [(True, 2), (False, 2), (True, 1)])
+def test_indexer_receives_its_arguments_and_returns_its_own_result(context, verify, dcp):
+    context.attn_dcp_size = dcp
 
+    def orig(indexer, batch, layer_id, q, *, marker):
+        assert batch.forward_mode.is_target_verify() == verify
+        return (layer_id, q.shape[0], marker)
 
-def test_a_decode_batch_clears_the_note(context):
-    assert paged_topk(ROWS, False) is FallbackReason.OUT_OF_CONTRACT
-    assert mla._TARGET_VERIFY[0] is None
-
-
-def test_a_verify_without_dcp_clears_the_note(context):
-    context.attn_dcp_size = 1
-    paged_topk(ROWS, True)
-    assert mla._TARGET_VERIFY[0] is None
+    assert paged_topk(ROWS, verify, orig) == (0, ROWS, 17)

@@ -25,7 +25,7 @@ SGLang 在调用 `fused_moe` 之前，把第 1–3 步作为单独的调用执�
 
 因此：
 
-- 只需让某一个算子更快时，在 `aklr/ops` 中写算子。
+- 只需让某一个算子更快时，在 `aklr/plugins/aiter` 中写算子。
 - 优化需要越过单个算子的边界时，写插件。
 
 ## 插件如何运行
@@ -46,26 +46,25 @@ def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_i
 
 ### 2. 建包
 
-新建 `aklr/plugins/sglang/models/deepseek_v2/`，以 SGLang 的源文件命名。包内的文件与 `aklr/ops` 中的算子相同：`__init__.py`、`contract.py`、`reference.py`、`baseline.py`、`api.py` 和 `impls/`。包名即算子的 `op_type`，在 `aklr/ops` 和 `aklr/plugins` 中都不能重名。
+新建 `aklr/plugins/sglang/models/deepseek_v2/`，以 SGLang 的源文件命名。包内的文件与 `aklr/plugins/aiter` 中的算子相同：`__init__.py`、`plugin.py`、`reference.py`、`baseline.py` 和 `impls/`。包名即算子的 `op_type`，在 `aklr/plugins/aiter` 和 `aklr/plugins` 中都不能重名。
 
 ### 3. 编写算子
 
 做法同 ops 教程的 1. A。针对这个算子：
 
-- `contract.py` 定义 `DEEPSEEK_V2_MXFP4_MOE`（`deepseek_v2_mxfp4_moe@1.0`）：
+- `plugin.py` 定义 `DEEPSEEK_V2_MXFP4_MOE`（`deepseek_v2_mxfp4_moe@1.0`）：
   - 输入：`forward_normal` 读取的内容，即 `hidden_states`；路由的 `router_weight` 和 `correction_bias`；专家的 `w1`、`w1_scale`、`w2`、`w2_scale`，共享专家放在最后一个位置（`n_experts = n_routed + 1`）；以及标量 `routed_scaling_factor`；
   - attr：路由设置 `topk`、`num_expert_group`、`topk_group`、`renormalize` 和 `scoring_func`；
   - 输出：`out`，即这一层在本卡上的输出，也就是多卡归约之前的结果。
 - `reference.py`：`deepseek_v2_mxfp4_moe_reference`，按 contract 的计算在 fp32 下实现。
 - `baseline.py`：`deepseek_v2_mxfp4_moe_baseline`，即 SGLang 目前执行第 1–9 步的方式：路由 GEMM、AITER 的分组 top-k、SGLang 追加共享专家、AITER 的 `fused_moe`。kernel 要快过的是这整条路径，而不只是 `fused_moe`。
-- `api.py`：算子的入口函数 `@api(DEEPSEEK_V2_MXFP4_MOE)`，函数体为 `...`。
+- 在同一 `plugin.py` 中登记契约并构建 `family`，通过 `@family.op` 绑定 `deepseek_v2_mxfp4_moe`，函数体为 `...`。
 
 ### 4. 编写 route
 
-route 写在 `api.py` 中，放在算子入口函数旁边。下面省略了部分参数：
+route 写在 `plugin.py` 中，放在算子入口函数旁边。下面省略了部分参数：
 
 ```python
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
 def _moe_forward_normal(self, hidden_states, ...):  # 参数与被替换的函数完全一致
     # AKLR 不支持的 SGLang 配置
     if _forward_normal_falls_back(self, ...):
@@ -80,7 +79,16 @@ def _moe_forward_normal(self, hidden_states, ...):  # 参数与被替换的函�
     from sglang.srt.layers.moe import post_experts_all_reduce
 
     return post_experts_all_reduce(out)
+
+
+def declare(plugin):
+    plugin.wrap(
+        "sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal",
+        versions=("0.5.23",), replace=_moe_forward_normal,
+    )
 ```
+
+内置模块的 `declare` 由 `aklr.plugins.sglang` 在启动时组合。外部扩展在宿主首次启动前将 `aklr.plugins.sglang.plugin` 传入自己的 `declare`。
 
 它调用两个辅助函数：
 
@@ -108,7 +116,7 @@ PointSpec(
 它的 baseline 只能在 gfx950 上运行，所以还要把它的 contract id 加入同一文件的 `GFX950_CONTRACT_IDS`。然后更新 `tests/plugins/sglang/names.txt`：
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
 route 不需要单独写测试：`tests/plugins/sglang/test_hook.py` 会检查每个 route，确认它替换的函数在当前安装的 SGLang 中存在、参数一致，且没有其他 route 替换同一个函数。

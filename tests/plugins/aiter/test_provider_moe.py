@@ -20,11 +20,10 @@ from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.aiter.situv2_a4w4_moe.api import situv2_a4w4_moe
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
-base = importlib.import_module("aklr.plugins.aiter.provider._base")
-moe = importlib.import_module("aklr.plugins.aiter.provider.moe")
-topk = importlib.import_module("aklr.plugins.aiter.provider.topk")
-moe_mapping = importlib.import_module("aklr.plugins.aiter.fused_moe")
-aklr_fused_moe = importlib.import_module("aklr.ops.fused_moe.api").fused_moe
+moe = importlib.import_module("aklr.plugins.aiter.fused_moe.plugin")
+topk = importlib.import_module("aklr.plugins.aiter.topk.plugin")
+moe_mapping = importlib.import_module("aklr.plugins.aiter.fused_moe._arguments")
+aklr_fused_moe = moe.fused_moe
 
 BF16, F32, FP8 = torch.bfloat16, torch.float32, torch.float8_e4m3fn
 FP4 = getattr(torch, "float4_e2m1fn_x2", torch.uint8)
@@ -196,7 +195,9 @@ def _args(op: str, **changes):
 
 
 def _select(op: str, **changes):
-    return base.SELECTORS[op][1](_args(op, **changes), {})
+    return provider.provider.select(
+        SimpleNamespace(name=op, version=AITER_CONTRACTS[op][0]), _args(op, **changes), {}
+    )
 
 
 def _api(fn):
@@ -246,6 +247,7 @@ def stand_in_aiter(monkeypatch):
 @pytest.fixture
 def aklr_serves(monkeypatch, stand_in_aiter):
     """Every AKLR api the selectors ask answers with KERNEL; a candidate is (kernel, run)."""
+    monkeypatch.setattr(provider, "ready", lambda: True)
     for module in (moe, topk):
         monkeypatch.setattr(
             module,
@@ -260,7 +262,6 @@ def aklr_serves(monkeypatch, stand_in_aiter):
 
 def test_each_selector_serves_its_aiter_contract_at_its_version():
     for op, (version, _) in AITER_CONTRACTS.items():
-        assert base.SELECTORS[op][0] == version
         assert provider.provider.op_versions[op] == {version}
 
 
@@ -318,6 +319,52 @@ DECLINED = [
 )
 def test_a_call_outside_aklrs_contract_is_declined_before_aklr_is_asked(aklr_serves, op, changes):
     assert _select(op, **changes) is None
+
+
+@pytest.mark.parametrize(
+    ("rows", "picked", "served"), [(255, BF16, True), (256, FP4, True), (255, FP4, False), (256, BF16, False)]
+)
+def test_swiglu_only_serves_matching_activation_rounding(aklr_serves, rows, picked, served):
+    aklr_serves.picked = picked
+    candidate = _select(
+        "fused_moe", activation=ActivationType.Swiglu.value, hidden_states=torch.empty(rows, 256)
+    )
+    assert (candidate is not None) == served
+
+
+@pytest.mark.parametrize(("bound", "served"), [(256, True), (512, False)])
+def test_swiglu_uses_the_host_bound_without_a_resolver(aklr_serves, monkeypatch, bound, served):
+    host = sys.modules["aiter.fused_moe"]
+    monkeypatch.delattr(host, "resolve_activation_dtype")
+    monkeypatch.setattr(host, "_SWIGLU_MXFP4_BF16_BOUND", bound, raising=False)
+    candidate = _select(
+        "fused_moe", activation=ActivationType.Swiglu.value, hidden_states=torch.empty(300, 256)
+    )
+    assert (candidate is not None) == served
+
+
+def test_interleaved_swiglu_keeps_activations_unrounded(aklr_serves, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("interleaved SwiGLU queried the activation resolver")
+
+    monkeypatch.setattr(sys.modules["aiter.fused_moe"], "resolve_activation_dtype", unexpected)
+    assert _select("fused_moe", activation=ActivationType.Swiglu.value, gate_mode="interleave") is not None
+
+
+@pytest.mark.parametrize("interleave", [True, False, None])
+def test_situv2_passes_the_weight_layout_to_a_host_that_accepts_it(aklr_serves, monkeypatch, interleave):
+    seen = []
+
+    def resolve(quant_type, q_dtype_w, *, gate_up_interleave, **kwargs):
+        seen.append(gate_up_interleave)
+        return FP8
+
+    monkeypatch.setattr(sys.modules["aiter.fused_moe"], "resolve_activation_dtype", resolve)
+    w1 = _served_calls()["fused_moe"]["w1"]
+    if interleave is not None:
+        w1.gate_up_interleave = interleave
+    assert _select("fused_moe", activation=ActivationType.Situv2.value, w1=w1) is not None
+    assert seen and all(value is interleave for value in seen)
 
 
 def test_situv2_is_declined_where_aiter_keeps_its_activations_in_bf16(aklr_serves):
