@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "commit": "684ca8b7849cc6d7629bb55e3e0c652a97d37896",
- "generated_at": "2026-11-23T08:58:03Z",
+ "commit": "b8b1fff5fe88f6c782d59e01d469744fca330887",
+ "generated_at": "2026-11-23T09:27:02Z",
  "contracts": [
   {
    "contract_id": "add_attn_res@1.0",
@@ -80943,8 +80943,8 @@
   },
   {
    "contract_id": "mla_kc_rope_cache@1.0",
-   "op_type": "deepseek_common",
-   "op_package": "aklr.plugins.sglang.models.deepseek_common",
+   "op_type": "mla_absorb",
+   "op_package": "aklr.ops.mla_absorb",
    "baseline": "_fused_bmm_rope_cat_and_cache as forward_absorb_rocm_core calls it in a DSA decode: aiter's fused fp8 BMM, RoPE and KV write, q in fp8 for the fp8 pool, no k_scale (the layer has none)",
    "min_speedup": 1.05,
    "kernels": 1,
@@ -80966,16 +80966,11 @@
     "kv_cache.dtype": "float8_e4m3fn",
     "q_cat.dtype": "float8_e4m3fn"
    },
-   "measured": {
-    "run_id": "44448099566",
-    "measured_at": "2026-11-19T09:18:14Z",
-    "commit": "aeca4234f792787244cdd313cf6df207d737223c",
-    "hardware": "MI355X"
-   },
-   "group": "sglang.models.deepseek_common",
-   "status": "ok",
-   "served": 1,
-   "geomean": 2.065,
+   "measured": null,
+   "group": "ops.mla_absorb",
+   "status": "not-measured",
+   "served": 0,
+   "geomean": null,
    "points": [
     {
      "dims": {
@@ -80983,15 +80978,13 @@
       "n_slots": "*",
       "n_positions": "*"
      },
-     "reason": "served",
-     "kernel": "mla_kc_rope_cache_n_heads16_qk_nope_dim192_kv_lora_rank512_kv_dim576_latent_dim2624",
-     "language": "triton",
-     "path": "aklr/plugins/sglang/models/deepseek_common/impls/triton/mla_kc_rope_cache_n_heads16_qk_nope_dim192_kv_lora_rank512_kv_dim576_latent_dim2624/1c359c8bb38dc14d.json",
-     "speedup": 2.065,
-     "microseconds": 10.5,
-     "requires": {
-      "triton": ">=3.8"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 1
     }
    ]
@@ -81407,8 +81400,8 @@
   },
   {
    "contract_id": "mla_vc@1.0",
-   "op_type": "deepseek_common",
-   "op_package": "aklr.plugins.sglang.models.deepseek_common",
+   "op_type": "mla_absorb",
+   "op_package": "aklr.ops.mla_absorb",
    "baseline": "rocm_absorb_v_bmm for fp8 w_vc and a bf16 o_proj: aiter's a8w8 batched GEMM with per-token-group prequant into [tokens, heads, v_head_dim], at sglang's decode tile config, then flattened",
    "min_speedup": 1.05,
    "kernels": 6,
@@ -81420,31 +81413,24 @@
     "w_scale.dtype": "float32",
     "attn_bmm_output.dtype": "bfloat16"
    },
-   "measured": {
-    "run_id": "44448099566",
-    "measured_at": "2026-11-19T09:18:14Z",
-    "commit": "aeca4234f792787244cdd313cf6df207d737223c",
-    "hardware": "MI355X"
-   },
-   "group": "sglang.models.deepseek_common",
-   "status": "partial",
-   "served": 6,
-   "geomean": 1.1356168657477432,
+   "measured": null,
+   "group": "ops.mla_absorb",
+   "status": "not-measured",
+   "served": 0,
+   "geomean": null,
    "points": [
     {
      "dims": {
       "n_tokens": "128",
       "n_heads": "16"
      },
-     "reason": "served",
-     "kernel": "mla_vc_n_heads16_kv_lora_rank512_v_head_dim256",
-     "language": "triton",
-     "path": "aklr/plugins/sglang/models/deepseek_common/impls/triton/mla_vc_n_heads16_kv_lora_rank512_v_head_dim256/1cd8ae22c3acef3c.json",
-     "speedup": 1.145,
-     "microseconds": 4.53,
-     "requires": {
-      "triton": ">=3.8"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 1
     },
     {
@@ -81452,15 +81438,13 @@
       "n_tokens": "8",
       "n_heads": "16"
      },
-     "reason": "served",
-     "kernel": "mla_vc_n_heads16_kv_lora_rank512_v_head_dim256",
-     "language": "triton",
-     "path": "aklr/plugins/sglang/models/deepseek_common/impls/triton/mla_vc_n_heads16_kv_lora_rank512_v_head_dim256/34ba62a3705d0c1e.json",
-     "speedup": 1.073,
-     "microseconds": 4.46,
-     "requires": {
-      "triton": ">=3.8"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 1
     },
     {
@@ -81468,15 +81452,13 @@
       "n_tokens": "4",
       "n_heads": "16"
      },
-     "reason": "served",
-     "kernel": "mla_vc_n_heads16_kv_lora_rank512_v_head_dim256",
-     "language": "triton",
-     "path": "aklr/plugins/sglang/models/deepseek_common/impls/triton/mla_vc_n_heads16_kv_lora_rank512_v_head_dim256/40cc2f0e672e1c1d.json",
-     "speedup": 1.056,
-     "microseconds": 4.42,
-     "requires": {
-      "triton": ">=3.8"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 1
     },
     {
@@ -81484,15 +81466,13 @@
       "n_tokens": "256",
       "n_heads": "16"
      },
-     "reason": "served",
-     "kernel": "mla_vc_n_heads16_kv_lora_rank512_v_head_dim256",
-     "language": "triton",
-     "path": "aklr/plugins/sglang/models/deepseek_common/impls/triton/mla_vc_n_heads16_kv_lora_rank512_v_head_dim256/5f79e894bad5a839.json",
-     "speedup": 1.333,
-     "microseconds": 4.33,
-     "requires": {
-      "triton": ">=3.8"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 1
     },
     {
@@ -81500,15 +81480,13 @@
       "n_tokens": "256",
       "n_heads": "8"
      },
-     "reason": "served",
-     "kernel": "mla_vc_n_heads8_kv_lora_rank512_v_head_dim256",
-     "language": "triton",
-     "path": "aklr/plugins/sglang/models/deepseek_common/impls/triton/mla_vc_n_heads8_kv_lora_rank512_v_head_dim256/345ba5728058fb4e.json",
-     "speedup": 1.17,
-     "microseconds": 4.44,
-     "requires": {
-      "triton": ">=3.8"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 1
     },
     {
@@ -81516,7 +81494,7 @@
       "n_tokens": "2",
       "n_heads": "8"
      },
-     "reason": "not_qualified",
+     "reason": "not_measured",
      "kernel": null,
      "language": null,
      "path": null,
@@ -81530,15 +81508,13 @@
       "n_tokens": "4",
       "n_heads": "8"
      },
-     "reason": "served",
-     "kernel": "mla_vc_n_heads8_kv_lora_rank512_v_head_dim256",
-     "language": "triton",
-     "path": "aklr/plugins/sglang/models/deepseek_common/impls/triton/mla_vc_n_heads8_kv_lora_rank512_v_head_dim256/ef12e9879424fba0.json",
-     "speedup": 1.06,
-     "microseconds": 4.44,
-     "requires": {
-      "triton": ">=3.8"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 1
     }
    ]
@@ -90116,7 +90092,7 @@
   {
    "contract_id": "situv2_a4w4_moe@1.0",
    "op_type": "situv2_a4w4_moe",
-   "op_package": "aklr.plugins.aiter.situv2_a4w4_moe",
+   "op_package": "aklr.ops.situv2_a4w4_moe",
    "baseline": "situv2_a4w4_moe_baseline",
    "min_speedup": 1.05,
    "kernels": 3,
@@ -90135,37 +90111,30 @@
     "out.dtype": "bfloat16",
     "layout": "a16w4_shuffled"
    },
-   "measured": {
-    "run_id": "44448099566",
-    "measured_at": "2026-11-19T09:18:14Z",
-    "commit": "aeca4234f792787244cdd313cf6df207d737223c",
-    "hardware": "MI355X"
-   },
-   "group": "aiter.situv2_a4w4_moe",
-   "status": "partial",
-   "served": 7,
-   "geomean": 1.066903177639087,
+   "measured": null,
+   "group": "ops.situv2_a4w4_moe",
+   "status": "not-measured",
+   "served": 0,
+   "geomean": null,
    "points": [
     {
      "dims": {
       "n_tokens": "14"
      },
-     "reason": "served",
-     "kernel": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/plugins/aiter/situv2_a4w4_moe/impls/flydsl/situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384/82bc1d2e4bc611d7.json",
-     "speedup": 1.066,
-     "microseconds": 78.1,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 1
     },
     {
      "dims": {
       "n_tokens": "16"
      },
-     "reason": "not_qualified",
+     "reason": "not_measured",
      "kernel": null,
      "language": null,
      "path": null,
@@ -90178,7 +90147,7 @@
      "dims": {
       "n_tokens": "18"
      },
-     "reason": "not_qualified",
+     "reason": "not_measured",
      "kernel": null,
      "language": null,
      "path": null,
@@ -90191,90 +90160,78 @@
      "dims": {
       "n_tokens": "8"
      },
-     "reason": "served",
-     "kernel": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/plugins/aiter/situv2_a4w4_moe/impls/flydsl/situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384/89e5806fb5c9b638.json",
-     "speedup": 1.099,
-     "microseconds": 49.5,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 2
     },
     {
      "dims": {
       "n_tokens": "10"
      },
-     "reason": "served",
-     "kernel": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/plugins/aiter/situv2_a4w4_moe/impls/flydsl/situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384/89e5806fb5c9b638.json",
-     "speedup": 1.056,
-     "microseconds": 58.6,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 2
     },
     {
      "dims": {
       "n_tokens": "20"
      },
-     "reason": "served",
-     "kernel": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/plugins/aiter/situv2_a4w4_moe/impls/flydsl/situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384/89e5806fb5c9b638.json",
-     "speedup": 1.055,
-     "microseconds": 103.0,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 2
     },
     {
      "dims": {
       "n_tokens": "30"
      },
-     "reason": "served",
-     "kernel": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/plugins/aiter/situv2_a4w4_moe/impls/flydsl/situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384/89e5806fb5c9b638.json",
-     "speedup": 1.062,
-     "microseconds": 135.0,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 2
     },
     {
      "dims": {
       "n_tokens": "40"
      },
-     "reason": "served",
-     "kernel": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/plugins/aiter/situv2_a4w4_moe/impls/flydsl/situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384/f8de5671c6c7caf5.json",
-     "speedup": 1.057,
-     "microseconds": 168.0,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 2
     },
     {
      "dims": {
       "n_tokens": "60"
      },
-     "reason": "served",
-     "kernel": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/plugins/aiter/situv2_a4w4_moe/impls/flydsl/situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384/f8de5671c6c7caf5.json",
-     "speedup": 1.074,
-     "microseconds": 213.0,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
      "candidates": 2
     }
    ]
