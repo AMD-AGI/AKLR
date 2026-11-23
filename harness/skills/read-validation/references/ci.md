@@ -6,7 +6,7 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 ## Scope
 
 - GPU jobs run on a PR labelled `ci:gpu`: the Primus-SaFE runner `aklr-safe` submits each as a
-  workload on one GPU node (`.github/scripts/safe_job.sh`). An external contributor's run waits
+  workload on one GPU node (`.github/scripts/safe_gpu_job.py`). An external contributor's run waits
   for a maintainer's approval.
 - `python -m aklr validate --base <base>` with no schema paths, as CI runs it, picks:
   - the changed schemas, when every changed path is a schema file or a document (`docs/`, `*.md`);
@@ -25,7 +25,7 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
   in each image, no timing, no `schemas/`): `report.md` (one row per Point: verdict,
   `graph/baseline`, `graph/incumbent`, then the findings), `report.json`, `schemas/` (the schemas
   with the measured fields) and `baseline/` (what each Point was timed against).
-- Nothing else is kept: the job deletes its GPU workload and that workload's files when it ends.
+- Nothing else is kept: the job deletes its GPU workload when it ends.
   Use the artifact. A job cancelled or timed out before its tests ended has no reports, only its
   step log.
 
