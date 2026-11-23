@@ -6,10 +6,10 @@ nothing rounded or quantized in between but what the contract rounds."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from aklr.core.contract.semantics import rounded_to_bfloat16
+from aklr.core.contract.semantics import rounded_to_bfloat16, to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -44,23 +44,19 @@ def _mxfp8(x: Tensor) -> Tensor:
 def kimi_k3_latent_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
-    """The two outputs, latent then shared. Rounding points: the front projection, exact
-    products summed in float64, rounds once to bf16; each routed linear's input goes to MXFP8
-    per 1 x 32 and the routed SiTU product to bf16, as aiter's a8w4 experts take them."""
+    """The two outputs, latent then shared. Rounding points: the front projection rounds to
+    bf16; each routed linear's input goes to MXFP8 per 1 x 32 and the routed SiTU product to
+    bf16, as aiter's a8w4 experts take them."""
     import torch
 
     args, axes = row_major_args, point.axes
 
     def f(name: str, index: Any = None) -> Tensor:
         tensor = args[name] if index is None else args[name][index]
-        return decode(tensor, point.dtypes[name]).float()
+        return to_float32(tensor, point.dtypes[name])
 
-    front = rounded_to_bfloat16(
-        decode(args["hidden_states"], point.dtypes["hidden_states"]).double()
-        @ decode(args["front_weight"], point.dtypes["front_weight"]).double().T
-    ).float()
+    front = rounded_to_bfloat16(f("hidden_states") @ f("front_weight").T)
     si, routed = axes["shared_inter_dim"], axes["n_routed"]
     gate, up, logits, z = front.split((si, si, routed, axes["latent_dim"]), dim=-1)
 
@@ -87,32 +83,30 @@ def kimi_k3_latent_moe_reference(
 def kimi_k3_mla_vc_output_gate_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Rounding points: the value projection and the sigmoid each round to bf16 before their
     product."""
     import torch
 
     args = row_major_args
-    latent = decode(args["latent"], point.dtypes["latent"]).double()
-    weight = decode(args["vc_weight"], point.dtypes["vc_weight"]).double()
-    gate = decode(args["gate"], point.dtypes["gate"]).double()
+    latent = to_float32(args["latent"], point.dtypes["latent"])
+    weight = to_float32(args["vc_weight"], point.dtypes["vc_weight"])
+    gate = to_float32(args["gate"], point.dtypes["gate"])
     values = rounded_to_bfloat16(torch.einsum("thk,hvk->thv", latent, weight)).flatten(1)
-    return (values * rounded_to_bfloat16(torch.sigmoid(gate))).float()
+    return values * rounded_to_bfloat16(torch.sigmoid(gate))
 
 
 def kimi_k3_mla_prefill_gate_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Rounding points: the attention output and the sigmoid each round to bf16 before their
     product."""
     import torch
 
     args = row_major_args
-    q, k, v = (decode(args[n], point.dtypes[n]).float() for n in ("q", "k", "v"))
-    gate = decode(args["gate"], point.dtypes["gate"]).float()
+    q, k, v = (to_float32(args[n], point.dtypes[n]) for n in ("q", "k", "v"))
+    gate = to_float32(args["gate"], point.dtypes["gate"])
     attention = torch.empty_like(v)
     bounds = args["qo_indptr"].long().tolist()
     for start, end in zip(bounds[:-1], bounds[1:]):

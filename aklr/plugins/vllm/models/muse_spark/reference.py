@@ -7,9 +7,11 @@ as vLLM's fused_rmsnorm_expand writes it, then each route through fused_moe's re
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -20,7 +22,6 @@ __all__ = ["muse_spark_moe_reference"]
 def muse_spark_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each row normalized, then each of its routes through its expert, unweighted."""
     import torch
@@ -28,8 +29,8 @@ def muse_spark_moe_reference(
     from aklr.ops.fused_moe.reference import fused_moe_reference
 
     hidden = row_major_args["hidden_states"]
-    x = decode(hidden, point.dtypes["hidden_states"])
-    gain = decode(row_major_args["norm_weight"], point.dtypes["norm_weight"])
+    x = to_float32(hidden, point.dtypes["hidden_states"])
+    gain = to_float32(row_major_args["norm_weight"], point.dtypes["norm_weight"])
     gain = gain + row_major_args["gain_center"]
     rstd = torch.rsqrt(x.square().mean(dim=-1, keepdim=True) + row_major_args["eps"])
     normalized = (x * rstd * gain).to(hidden.dtype)
@@ -54,5 +55,5 @@ def muse_spark_moe_reference(
         "topk_weights": torch.ones(ids.shape, dtype=torch.float32, device=ids.device),
         **{k: row_major_args[k] for k in ("expert_mask", "w1", "w1_scale", "w2", "w2_scale")},
     }
-    out = fused_moe_reference(route_point, route_args, decode)
+    out = fused_moe_reference(route_point, route_args)
     return out.view(n_tokens, topk, -1)

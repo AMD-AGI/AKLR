@@ -6,9 +6,10 @@ exactly, nothing rounded in between (the kernels' bf16 and fp8 steps are theirs)
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from aklr.core.contract.semantics import to_float32, torch_dtypes
 from aklr.plugins.sglang.layers.dsa_backend.contract import ROPE_DIM
 
 if TYPE_CHECKING:
@@ -27,7 +28,6 @@ _CHUNK_TOKENS = 16
 def dsa_sparse_mla_decode_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each head's softmax over the scores q . row * sm_scale of the rows its token's
     top-k slots name (-1: none, never a weight), weighing the rows' latent parts; 0 for a
@@ -36,7 +36,7 @@ def dsa_sparse_mla_decode_reference(
 
     args = row_major_args
     latent = point.axes["kv_dim"] - ROPE_DIM
-    q = decode(args["q"], point.dtypes["q"]).float()
+    q = to_float32(args["q"], point.dtypes["q"])
     # gathered as bytes: the fp8 rows decode only where a token reads them
     pool = args["kv_cache"].view(torch.uint8)
     slots = args["topk_indices"].long()
@@ -45,7 +45,7 @@ def dsa_sparse_mla_decode_reference(
         chunk = slice(start, start + _CHUNK_TOKENS)
         picked = slots[chunk]
         rows = pool[picked.clamp(min=0)].view(args["kv_cache"].dtype)
-        rows = decode(rows, point.dtypes["kv_cache"]).float()
+        rows = to_float32(rows, point.dtypes["kv_cache"])
         scores = torch.einsum("thc,tkc->thk", q[chunk], rows) * args["sm_scale"]
         scores = scores.masked_fill((picked < 0)[:, None], -torch.inf)
         # a token that reads no row gets 0
@@ -57,16 +57,14 @@ def dsa_sparse_mla_decode_reference(
 def dsa_sparse_mla_prefill_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """The decode's computation."""
-    return dsa_sparse_mla_decode_reference(point, row_major_args, decode)
+    return dsa_sparse_mla_decode_reference(point, row_major_args)
 
 
 def dsa_topk_transform_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each row's top-k positions, or all of them in order for a short row, through its
     sequence's page table."""
@@ -77,7 +75,7 @@ def dsa_topk_transform_reference(
     width = min(topk, scores.shape[-1])
     lengths = args["lengths"].long().unsqueeze(-1)
     positions = torch.arange(scores.shape[-1], device=scores.device)
-    # float32 compares exactly: ranking needs no decode.
+    # float32 compares exactly: the scores rank as stored.
     ranked = scores.masked_fill(positions >= lengths, -torch.inf).argsort(
         dim=-1, descending=True, stable=True
     )[:, :width]
@@ -87,4 +85,5 @@ def dsa_topk_transform_reference(
     sequences = torch.searchsorted(args["cu_seqlens_q"][1:].long(), rows, right=True)
     table = args["page_table_size_1"]
     slots = table[sequences[:, None], selected.clamp(max=table.shape[1] - 1)].long()
-    return torch.nn.functional.pad(torch.where(is_selected, slots, -1), (0, topk - width), value=-1).double()
+    out = torch.nn.functional.pad(torch.where(is_selected, slots, -1), (0, topk - width), value=-1)
+    return out.to(torch_dtypes(point.dtypes["out_page_indices"])[0])
