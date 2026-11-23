@@ -269,10 +269,16 @@ class _CompileTripwire(NamedTuple):
         import flydsl.compiler.jit_function as flydsl_jit
         import triton.runtime.jit as triton_jit
 
-        hooks = (
-            (triton_jit.JITFunction, "_do_compile"),
-            (flydsl_jit, "_build_call_state"),
-        )
+        from aklr.core.jit import flydsl_cache
+
+        hooks: tuple[tuple[object, str], ...] = ((triton_jit.JITFunction, "_do_compile"),)
+        if flydsl_cache.is_needed():
+            # from FlyDSL 0.5 every JitFunction call traces again: the first call of a specialization in the
+            # process is the cache's miss for AKLR's kernels, and a compile for any other
+            hooks += ((flydsl_cache, "_compile"), (flydsl_jit.MlirCompiler, "compile"))
+        else:
+            # before 0.5 FlyDSL builds a specialization's call state on its first call in the process only
+            hooks += ((flydsl_jit, "_build_call_state"),)
         for owner, name in hooks:
             getattr(owner, name)
         return cls(hooks)

@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# probe-cluster HOST — read what a new cluster's manifest (templates/cluster.env) needs from its
-# login node over ssh: scheduler, login environment, partitions and node hardware, the user's
-# accounts and QOS, and the network filesystems that hold a directory of the user's. Read-only:
-# it submits nothing. Prints `KEY=value` lines and `== section` blocks of raw scheduler output.
 set -uo pipefail
-HOST=${1:?usage: probe-cluster HOST (an ssh destination of the login node)}
+HOST=${1:?usage: probe-cluster HOST [slurm | spur | safe URL NAME] (HOST: an ssh destination of the login node)}
 SSH=(ssh -T -o BatchMode=yes -o ConnectTimeout=15 -o LogLevel=ERROR "$HOST")
 
 read -r -d '' BODY <<'EOF'
@@ -12,8 +8,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 echo "LOGIN_HOSTNAME=$(hostname -s)"
 echo "LOGIN_SHELL=$(getent passwd "$USER" | cut -d: -f7 | xargs -r basename)"
 echo "HOME_FS=$(df --output=target "$HOME" | tail -1) HOME_AVAIL=$(df -h --output=avail "$HOME" | tail -1 | xargs) HOME_USED=$(df --output=pcent "$HOME" | tail -1 | xargs)"
-for c in rsync git python3 docker findmnt; do printf 'HAVE_%s=%s\n' "$c" "$(have "$c" && echo 1 || echo 0)"; done
-if have spur; then S=spur; elif have sinfo; then S=slurm; elif have qsub; then S=pbs; elif have flux; then S=flux; else S=unknown; fi
+for c in rsync git python3 docker findmnt curl jq; do printf 'HAVE_%s=%s\n' "$c" "$(have "$c" && echo 1 || echo 0)"; done
+if [[ -n ${S:-} ]]; then :; elif have spur; then S=spur; elif have sinfo; then S=slurm; elif have qsub; then S=pbs; elif have flux; then S=flux; else S=unknown; fi
 echo "SCHEDULER=$S"
 echo "LOGIN_PROFILE_NEEDED=${NEED_PROFILE:-0}"
 case $S in
@@ -45,15 +41,22 @@ case $S in
     sacctmgr -P show qos format=name,priority,maxwall,maxtrespu,maxjobspu,maxsubmitpu,grptres,preempt,preemptmode 2>/dev/null | sed 's/^/  /'
     echo "== preemption and job_submit"
     scontrol show config 2>/dev/null | grep -E '^(PreemptType|PreemptMode|PreemptExemptTime|JobSubmitPlugins|MinJobAge) ' | sed 's/^/  /' ;;
-  *) echo "== no Slurm or spur here: templates/slurm.sh does not fit; write cluster.sh by its structure" ;;
+  safe)
+    safe() { curl -sS --max-time 30 -K <(printf 'header = "Authorization: Bearer %s"\n' "$(<"$HOME/.remote-gpu/$SAFE_NAME.key")") "$SAFE_URL/api/v1$1"; }
+    echo "== SaFE workspaces (id | cluster | scopes | flavor | nodes | preempt | volumes as type:mountPath)"
+    safe /workspaces | jq -r '.items[]? | "  \(.workspaceId) | \(.clusterId) | \(.scopes | join(",")) | \(.flavorId) | \(.currentNodeCount) | \(.enablePreempt) | \([.volumes[]? | "\(.type):\(.mountPath)"] | join(","))"'
+    echo "== SaFE flavors (id | cpu | memory | gpu)"
+    safe /nodeflavors | jq -r '.items[]? | "  \(.flavorId) | \(.cpu.quantity) | \(.memory) | \(.gpu.product // "-") x \(.gpu.quantity // 0)"' ;;
+  *) echo "== no scheduler remote-gpu has an adapter for (schedulers/): write every hook in cluster.sh" ;;
 esac
 echo "== network filesystems holding a writable dir named \$USER owned by \$USER (mount | size | avail)"
 findmnt -rn -t nfs,nfs4,lustre,gpfs,beegfs,cifs -o TARGET,SIZE,AVAIL 2>/dev/null | while read -r m sz av; do
   [[ $m != */.snapshot* && -d $m/$USER && -O $m/$USER && -w $m/$USER ]] && echo "  $m $sz $av"
 done
 EOF
+printf -v BODY 'S=%q SAFE_URL=%q SAFE_NAME=%q\n%s' "${2:-}" "${3:-}" "${4:-}" "$BODY"
+[[ ${2:-} != safe || $# == 4 ]] || { echo "ERR usage: probe-cluster HOST safe URL NAME" >&2; exit 200; }
 
-# A scheduler command that only a login shell finds means LOGIN_PROFILE=1.
 plain=$("${SSH[@]}" 'exec env -u BASH_ENV bash --noprofile --norc -s' <<<'command -v spur || command -v sinfo || echo none') || {
   echo "ERR cannot ssh to $HOST (check ~/.ssh/config and keys)" >&2; exit 255; }
 need=0; [[ $plain == none ]] && need=1

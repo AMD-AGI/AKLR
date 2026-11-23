@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.plugins.aiter.provider._base import is_declining
 from aklr.plugins.sglang.layers import aiter_backend_mla_prefill as route
 
 HEADS, QK, V_DIM = 12, 192, 128
@@ -48,7 +49,7 @@ def flash(monkeypatch):
     calls = []
 
     def flash_attn_varlen_func(q, k, v, cu_q, cu_k, max_q, max_k, softmax_scale, causal, return_lse):
-        calls.append(dict(causal=causal, return_lse=return_lse, max_k=max_k))
+        calls.append(dict(causal=causal, return_lse=return_lse, max_k=max_k, aklr_declines=is_declining()))
         lse = torch.arange(q.shape[0] * HEADS, dtype=torch.float32).view(q.shape[0], HEADS).t().contiguous()
         return torch.ones(q.shape[0], HEADS, V_DIM), lse, None
 
@@ -120,7 +121,10 @@ def test_a_declined_lse_pass_runs_on_bf16_flash_attention_never_sglangs_fp8_path
     ops.lse.reason = FallbackReason.DISABLED
     q, k, v = tensors()
     output, lse = route._mla_fp8_prefill_attn_ps(None, q, k, v, LAYER, ps_of())
-    assert flash == [dict(causal=True, return_lse=True, max_k=300)] and ops.lse.calls == []
+    # offered to AKLR once: aiter's provider declines the bf16 pass instead of taking it in fp8
+    assert (
+        flash == [dict(causal=True, return_lse=True, max_k=300, aklr_declines=True)] and ops.lse.calls == []
+    )
     # merge_state reads the lse as [tokens, heads]
     assert lse.shape == (300, HEADS) and lse.is_contiguous() and lse[2, 3].item() == 2 * HEADS + 3
 

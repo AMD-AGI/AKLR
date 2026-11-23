@@ -160,7 +160,14 @@ def test_only_main_schedules_and_manual_runs_publish():
     job = jobs["publish"]
     assert "github.ref == 'refs/heads/main'" in job["if"]
     assert "pull_request" not in job["if"]
-    assert job["environment"] == "bot"
+    assert job["environment"] == "agentx-bot"
+    token = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/create-github-app-token")
+    )
+    assert token["with"]["app-id"] == "${{ secrets.AKLR_AGENTX_BOT_APP_ID }}"
+    assert token["with"]["private-key"] == "${{ secrets.AKLR_AGENTX_BOT_PRIVATE_KEY }}"
+    publish = next(step for step in job["steps"] if "commit_site_data.sh agentx" in step.get("run", ""))
+    assert publish["env"]["BOT_LOGIN"] == "${{ vars.AKLR_AGENTX_BOT_LOGIN }}"
     assert job["concurrency"] == {"group": "site-data", "cancel-in-progress": False}
     runs = [step.get("run", "") for step in job["steps"]]
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout"))

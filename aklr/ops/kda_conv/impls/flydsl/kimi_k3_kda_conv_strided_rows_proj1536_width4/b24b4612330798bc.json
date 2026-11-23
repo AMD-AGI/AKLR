@@ -1,0 +1,313 @@
+{
+  "schema_version": 5,
+  "name": "kimi_k3_kda_conv_strided_rows_proj1536_width4",
+  "contract_id": "kimi_k3_kda_conv@1.0",
+  "description": "Kimi-K3's KDA short convolution, every sequence's tokens back to back: sequence s owns rows cu_seqlens[s]:cu_seqlens[s + 1] of x and slot state_indices[s] of conv_state. Per channel c of the packed q|k|v (c = part * proj + j for x[:, part, j]), the window is conv_state[slot, :, c] (when has_initial_state[s], else width - 1 zeros) then the sequence's inputs; token t's y[t, c] = silu(sum_j weight[c, j] * window[t + j]) in float32, rounded to x's dtype; the window's last width - 1 entries are written back to conv_state[slot, :, c]. q = y[:, :proj], k = y[:, proj:2 * proj], v = y[:, 2 * proj:]. Slots no sequence names are left unchanged.",
+  "op_type": "kda_conv",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens of every sequence, back to back."
+    },
+    "n_seqs": {
+      "type": "var",
+      "description": "Sequences."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Sequence offsets: sequences + 1."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Slots of the convolution state."
+    },
+    "proj": {
+      "type": "const",
+      "value": 1536,
+      "description": "Channels of each of q, k and v on this rank."
+    },
+    "width": {
+      "type": "const",
+      "value": 4,
+      "description": "The convolution's taps."
+    },
+    "dim": {
+      "type": "const",
+      "value": 4608,
+      "description": "Channels of the packed q|k|v."
+    },
+    "state_len": {
+      "type": "const",
+      "value": 3,
+      "description": "Inputs a slot keeps."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        3,
+        "proj"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The packed q|k|v projection before the convolution: x[t, 0] is q's, x[t, 1] k's, x[t, 2] v's."
+    },
+    "weight": {
+      "shape": [
+        "dim",
+        "width"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4
+      },
+      "description": "Each packed channel's taps, the oldest input's first; float32, as vLLM keeps Kimi-K3's."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "state_len",
+        "dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The paged convolution state, vLLM's SD layout: per slot, its last width - 1 inputs, oldest first, each a row of every packed channel (vLLM's slot may hold more rows, for speculative decoding: the first width - 1 are these)."
+    },
+    "state_indices": {
+      "shape": [
+        "n_seqs"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each sequence's slot, distinct."
+    },
+    "has_initial_state": {
+      "shape": [
+        "n_seqs"
+      ],
+      "dtype": "bool",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Whether each sequence resumes from its slot's state, else from zeros."
+    },
+    "cu_seqlens": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_tokens"
+      },
+      "description": "Where each sequence's tokens start, then where the last ends."
+    }
+  },
+  "outputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "proj"
+      ],
+      "dtype": "bfloat16",
+      "description": "Queries after the convolution."
+    },
+    "k": {
+      "shape": [
+        "n_tokens",
+        "proj"
+      ],
+      "dtype": "bfloat16",
+      "description": "Keys after the convolution."
+    },
+    "v": {
+      "shape": [
+        "n_tokens",
+        "proj"
+      ],
+      "dtype": "bfloat16",
+      "description": "Values after the convolution."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 4096,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4632,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4632,
+        "n_seqs": 3,
+        "n_offsets": 4,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4632,
+        "n_seqs": 4,
+        "n_offsets": 5,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4712,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4712,
+        "n_seqs": 3,
+        "n_offsets": 4,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4712,
+        "n_seqs": 4,
+        "n_offsets": 5,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6144,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6240,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7680,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7680,
+        "n_seqs": 2,
+        "n_offsets": 3,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7680,
+        "n_seqs": 3,
+        "n_offsets": 4,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7680,
+        "n_seqs": 4,
+        "n_offsets": 5,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7688,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8192,
+        "n_seqs": 1,
+        "n_offsets": 2,
+        "n_slots": 64
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "strided_rows": {
+        "layouts": {
+          "x": {
+            "kind": "strided_rows"
+          },
+          "conv_state": {
+            "kind": "strided_rows"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "storage",
+            "expected_value": "strided_rows"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.4",
+      "aiter": ">=0.1.21"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"KDA causal conv1d (width 4) in FlyDSL, one launch.\n\nEach workgroup is one 64-lane wave covering 512 channels (8 contiguous bf16 channels per lane, 16-byte loads and\nstores along the channel axis). With few sequences (n_seqs <= MAXS) the grid is n_seqs head blocks then token-aligned\nbody blocks: body block b loads x rows 8b-3 .. 8b+7 at entry (no dependence on cu_seqlens) and stores every token that\nis not among the first 3 of its sequence; head block s computes its sequence's first min(3, seqlen) tokens from the\nconv_state slot (or zeros) and writes the state back, so each slot has one owner. With more sequences, chunks are\naligned to sequences (block f(s) + k, f(s) = s + cu[s] // BT, found by binary search) and chunk 0 owns the slot.\nThe window is kept in registers; y = silu(sum_j w[c, j] * window[t + j]) in fp32, rounded to bf16 (nearest-even).\nThe taps w are float32, as vLLM keeps Kimi-K3's conv1d weight: each lane reads its 8 channels' 4 taps as 8 x dwordx4.\n\"\"\"\n\nimport functools\n\nimport torch\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nfrom flydsl.expr.typing import Int32, T\n\nfrom aiter.ops.flydsl.kernels import buffer_ops\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as _arith\nfrom flydsl._mlir.dialects import rocdl\n\nRANGE_SAFE = True\n\nBT = 8  # tokens per workgroup\nLOG2_BT = 3\nMAXS = 16  # sequences resolved by the unrolled search\nBSEARCH_STEPS = 24  # binary search depth beyond MAXS (up to 2**24 sequences)\nLANES = 64\nVEC = 8  # bf16 channels per lane\nSTRIP = LANES * VEC  # 512 channels per workgroup\nSL = 3  # state_len\nW = 4\n_LOG2E = 1.4426950408889634\n\n\ndef _search_big(cu_r, n_seqs, g):\n    i32 = T.i32\n    # many sequences: unrolled binary search (f is strictly increasing)\n    lo = fx.Int32(0)\n    hi = n_seqs\n    for _ in fx.range_constexpr(BSEARCH_STEPS):\n        mid = (lo + hi) >> 1\n        cm = fx.Int32(buffer_ops.buffer_load(cu_r, mid, vec_width=1, dtype=i32))\n        live = (hi - lo) > 1\n        take = live & (((cm >> LOG2_BT) + mid) <= g)\n        drop = live & (((cm >> LOG2_BT) + mid) > g)\n        lo = take.select(mid, lo)\n        hi = drop.select(mid, hi)\n    s = lo\n    cs_start = fx.Int32(buffer_ops.buffer_load(cu_r, s, vec_width=1, dtype=i32))\n    cs_end = fx.Int32(buffer_ops.buffer_load(cu_r, s + 1, vec_width=1, dtype=i32))\n    return s, cs_start, cs_end\n\n\ndef _search_small(cu_r, n_seqs, g):\n    i32 = T.i32\n    # few sequences: unrolled, independent loads\n    cus = []\n    for i in fx.range_constexpr(MAXS + 1):\n        idx = (n_seqs < i).select(n_seqs, fx.Int32(i)) if i > 0 else fx.Int32(0)\n        cus.append(fx.Int32(buffer_ops.buffer_load(cu_r, idx, vec_width=1, dtype=i32)))\n    s = fx.Int32(0)\n    cs_start = cus[0]\n    cs_end = cus[1]\n    for i in fx.range_constexpr(1, MAXS):\n        fi = (cus[i] >> LOG2_BT) + i\n        take = (fx.Int32(i) < n_seqs) & (fi <= g)\n        s = take.select(fx.Int32(i), s)\n        cs_start = take.select(cus[i], cs_start)\n        cs_end = take.select(cus[i + 1], cs_end)\n    return s, cs_start, cs_end\n\n\n@functools.cache\ndef _launcher(big):\n    Vec = fx.Vector\n\n    @flyc.kernel\n    def conv_kernel(\n        x_ptr: fx.Tensor,\n        w_ptr: fx.Tensor,\n        cs_ptr: fx.Tensor,\n        si_ptr: fx.Tensor,\n        hi_ptr: fx.Tensor,\n        cu_ptr: fx.Tensor,\n        q_ptr: fx.Tensor,\n        k_ptr: fx.Tensor,\n        v_ptr: fx.Tensor,\n        n_seqs: Int32,\n        proj_h: Int32,\n        sx0: Int32,\n        sx1: Int32,\n        scs0: Int32,\n        scs1: Int32,\n        qs0: Int32,\n        ks0: Int32,\n        vs0: Int32,\n        n_tok: Int32,\n    ):\n        # all *_h offsets/strides are in i32 units (2 bf16)\n        i32 = T.i32\n\n        def _rsrc(p):\n            return buffer_ops.create_buffer_resource(p, max_size=True)\n\n        x_r = _rsrc(x_ptr)\n        w_r = _rsrc(w_ptr)\n        cs_r = _rsrc(cs_ptr)\n        si_r = _rsrc(si_ptr)\n        hi_r = _rsrc(hi_ptr)\n        cu_r = _rsrc(cu_ptr)\n        q_r = _rsrc(q_ptr)\n        k_r = _rsrc(k_ptr)\n        v_r = _rsrc(v_ptr)\n\n        tid = fx.thread_idx.x\n        g = fx.Int32(fx.block_idx.x)\n        py = fx.Int32(fx.block_idx.y)\n        part = py // 3\n        sub = py - part * 3\n\n        c_in_part_h = sub * (STRIP // 2) + tid * (VEC // 2)  # i32 units inside the part\n        c_glob_h = part * proj_h + c_in_part_h  # packed channel, i32 units\n\n        # weights: 8 channels x 4 taps = 32 float32 = 8 x dwordx4 (one channel each; channel 2 * c_glob_h starts at\n        # dword 8 * c_glob_h), issued before the search (always in bounds)\n        w_raw = []\n        for i in fx.range_constexpr(8):\n            w_raw.append(buffer_ops.buffer_load(w_r, c_glob_h * 8 + i * 4, vec_width=4, dtype=i32))\n\n        if big:\n            # speculative rows -3..BT-1 of chunk g assuming one sequence starting at token 0 (clamped in bounds);\n            # used only when that guess is exactly the chunk's window (checked after the search)\n            pbase = part * sx1 + c_in_part_h\n            spec = []\n            for r in fx.range_constexpr(-SL, BT):\n                tr = g * BT + r\n                tr = (tr < 0).select(fx.Int32(0), tr)\n                tr = (tr >= n_tok).select(n_tok - 1, tr)\n                spec.append(buffer_ops.buffer_load(x_r, tr * sx0 + pbase, vec_width=4, dtype=i32))\n\n            # ---- find the sequence of virtual block g: the largest s < n_seqs with f(s) = cu[s] // BT + s <= g\n            s, cs_start, cs_end = (_search_big if big else _search_small)(cu_r, n_seqs, g)\n            f_s = (cs_start >> LOG2_BT) + s\n            kch = g - f_s\n            seqlen = cs_end - cs_start\n            w0 = kch * BT\n            active = w0 < seqlen\n\n            is0 = kch == 0\n            full = (w0 + BT) <= seqlen\n\n            # weights pre-scaled by -log2(e): the tap sum is then y = -a * log2(e), the exp2 argument\n            wf = []\n            for i in fx.range_constexpr(8):\n                vf = Vec(w_raw[i]).bitcast(fx.Float32)\n                for e in fx.range_constexpr(4):\n                    wf.append(vf[e] * fx.Float32(-_LOG2E))\n            # wf[ch*4 + j]\n\n            xbase = cs_start * sx0 + part * sx1 + c_in_part_h\n            row0 = (cs_start + w0) * sx0 + part * sx1 + c_in_part_h\n\n            def _sel(c, a, b):\n                return _arith.SelectOp(buffer_ops._unwrap_value(c), buffer_ops._unwrap_value(a),\n                                       buffer_ops._unwrap_value(b)).result\n\n            _i32t = ir.IntegerType.get_signless(32)\n            _v4t = ir.VectorType.get([4], _i32t)\n\n            out_r = _sel(part == 0, q_r, _sel(part == 1, k_r, v_r))\n            os0 = (part == 0).select(qs0, (part == 1).select(ks0, vs0))\n            obase = (cs_start + w0) * os0 + c_in_part_h\n\n            def _unpack(raw):\n                vx = Vec(raw).bitcast(fx.BFloat16).to(fx.Float32)\n                return [vx[e] for e in range(8)]\n\n            def _store_u(val, t):\n                buffer_ops.buffer_store(val, out_r, obase + t * os0)\n\n            def _store_g(val, t):\n                okt = (w0 + t) < seqlen\n                if okt:\n                    buffer_ops.buffer_store(val, out_r, obase + t * os0)\n\n            _f32t = ir.F32Type.get()\n\n            _cl = fx.Float32(-_LOG2E)\n\n            def _silu(y):\n                # y = -a * log2(e); silu(a) = a / (1 + 2^y) = y / (-(1 + 2^y) * log2(e)), native exp2 and rcp.\n                # a << 0: 2^y = inf, rcp(-inf) = -0, result -0 (no NaN); a >> 0: 2^y = 0, result y / C = a\n                ex = fx.Float32(rocdl.exp2(_f32t, fx.math.as_ir_value(y)))\n                dn = fx.math.fma(ex, _cl, _cl)\n                return y * fx.Float32(rocdl.rcp(_f32t, fx.math.as_ir_value(dn)))\n\n            def _load_rows(guarded):\n                raws = []\n                for r in fx.range_constexpr(BT):\n                    off = ((w0 + r) < seqlen).select(row0 + r * sx0, xbase) if guarded else row0 + r * sx0\n                    raws.append(buffer_ops.buffer_load(x_r, off, vec_width=4, dtype=i32))\n                return raws\n\n            def _tokens(heads, raws, guarded):\n                win = [_unpack(heads[0]), _unpack(heads[1]), _unpack(heads[2])]\n                for t in fx.range_constexpr(BT):\n                    win.append(_unpack(raws[t]))\n                    ys = []\n                    for e in fx.range_constexpr(8):\n                        a = win[0][e] * wf[e * 4 + 0]\n                        a = fx.math.fma(win[1][e], wf[e * 4 + 1], a)\n                        a = fx.math.fma(win[2][e], wf[e * 4 + 2], a)\n                        a = fx.math.fma(win[3][e], wf[e * 4 + 3], a)\n                        ys.append(_silu(a))\n                    win = win[1:]\n                    ov = Vec.from_elements(ys, dtype=fx.Float32).to(fx.BFloat16).bitcast(fx.Int32)\n                    (_store_g if guarded else _store_u)(ov.ir_value(), t)\n\n            fast = (kch != 0) & full & ((cs_start + w0) == g * BT)\n            if fast:\n                _tokens(spec[0:SL], spec[SL:], False)\n            else:\n              if active:\n                  def _rest(guarded):\n                      # chunk k >= 1: the head is the 3 x rows before the chunk (inside the sequence)\n                      heads = []\n                      for r in fx.range_constexpr(SL):\n                          heads.append(buffer_ops.buffer_load(x_r, row0 - (SL - r) * sx0, vec_width=4, dtype=i32))\n                      raws = _load_rows(guarded)\n                      _tokens(heads, raws, guarded)\n\n                  if is0:\n                      # chunk 0: head is the conv_state slot (or zeros), then write the state back\n                      slot = fx.Int32(buffer_ops.buffer_load(si_r, s, vec_width=1, dtype=i32))\n                      hi8 = fx.Int8(buffer_ops.buffer_load(hi_r, s, vec_width=1, dtype=T.i8))\n                      hi_nz = hi8 != 0\n                      cs_base = slot * scs0 + c_glob_h\n                      zero_v = _arith.ConstantOp(_v4t, ir.DenseElementsAttr.get_splat(\n                          _v4t, ir.IntegerAttr.get(_i32t, 0))).result\n                      raws = _load_rows(True)\n                      heads = []\n                      for r in fx.range_constexpr(SL):\n                          hs = buffer_ops.buffer_load(cs_r, cs_base + r * scs1, vec_width=4, dtype=i32)\n                          heads.append(_sel(hi_nz, hs, zero_v))\n                      _tokens(heads, raws, True)\n\n                      # ---- state writeback: window positions seqlen .. seqlen+2\n                      for i in fx.range_constexpr(SL):\n                          wpos = seqlen + i  # window position (window = [3 head | inputs])\n                          from_x = wpos >= SL\n                          offx = from_x.select(xbase + (wpos - SL) * sx0, xbase)\n                          xv = buffer_ops.buffer_load(x_r, offx, vec_width=4, dtype=i32)\n                          hv = heads[0]\n                          hv = _sel(wpos == 1, heads[1], hv)\n                          hv = _sel(wpos == 2, heads[2], hv)\n                          nv = _sel(from_x, xv, hv)\n                          buffer_ops.buffer_store(nv, cs_r, cs_base + i * scs1)\n                  else:\n                      if full:\n                          _rest(False)\n                      else:\n                          _rest(True)\n\n        else:\n\n            def _sel(c, a, b):\n                return _arith.SelectOp(buffer_ops._unwrap_value(c), buffer_ops._unwrap_value(a),\n                                       buffer_ops._unwrap_value(b)).result\n\n            _i32t = ir.IntegerType.get_signless(32)\n            _v4t = ir.VectorType.get([4], _i32t)\n            _f32t = ir.F32Type.get()\n            _cl = fx.Float32(-_LOG2E)\n\n            out_r = _sel(part == 0, q_r, _sel(part == 1, k_r, v_r))\n            os0 = (part == 0).select(qs0, (part == 1).select(ks0, vs0))\n            pbase = part * sx1 + c_in_part_h\n\n            def _wf():\n                wf = []\n                for i in fx.range_constexpr(8):\n                    vf = Vec(w_raw[i]).bitcast(fx.Float32)\n                    for e in fx.range_constexpr(4):\n                        wf.append(vf[e] * fx.Float32(-_LOG2E))\n                return wf\n\n            def _unpack(raw):\n                vx = Vec(raw).bitcast(fx.BFloat16).to(fx.Float32)\n                return [vx[e] for e in range(8)]\n\n            def _silu(y):\n                ex = fx.Float32(rocdl.exp2(_f32t, fx.math.as_ir_value(y)))\n                dn = fx.math.fma(ex, _cl, _cl)\n                return y * fx.Float32(rocdl.rcp(_f32t, fx.math.as_ir_value(dn)))\n\n            def _tokens(wf, heads, raws, nt, obase, oks):\n                win = [_unpack(heads[0]), _unpack(heads[1]), _unpack(heads[2])]\n                for t in fx.range_constexpr(nt):\n                    win.append(_unpack(raws[t]))\n                    ys = []\n                    for e in fx.range_constexpr(8):\n                        a = win[0][e] * wf[e * 4 + 0]\n                        a = fx.math.fma(win[1][e], wf[e * 4 + 1], a)\n                        a = fx.math.fma(win[2][e], wf[e * 4 + 2], a)\n                        a = fx.math.fma(win[3][e], wf[e * 4 + 3], a)\n                        ys.append(_silu(a))\n                    win = win[1:]\n                    ov = Vec.from_elements(ys, dtype=fx.Float32).to(fx.BFloat16).bitcast(fx.Int32).ir_value()\n                    if oks is None:\n                        buffer_ops.buffer_store(ov, out_r, obase + t * os0)\n                    else:\n                        okt = oks[t]\n                        if okt:\n                            buffer_ops.buffer_store(ov, out_r, obase + t * os0)\n\n            is_head = g < n_seqs\n            if is_head:\n                # head block of sequence s = g: its first min(3, seqlen) tokens and the conv_state writeback\n                s = g\n                cs_start = fx.Int32(buffer_ops.buffer_load(cu_r, s, vec_width=1, dtype=i32))\n                cs_end = fx.Int32(buffer_ops.buffer_load(cu_r, s + 1, vec_width=1, dtype=i32))\n                seqlen = cs_end - cs_start\n                if seqlen > 0:\n                    wf = _wf()\n                    slot = fx.Int32(buffer_ops.buffer_load(si_r, s, vec_width=1, dtype=i32))\n                    hi8 = fx.Int8(buffer_ops.buffer_load(hi_r, s, vec_width=1, dtype=T.i8))\n                    hi_nz = hi8 != 0\n                    cs_base = slot * scs0 + c_glob_h\n                    xbase = cs_start * sx0 + pbase\n                    zero_v = _arith.ConstantOp(_v4t, ir.DenseElementsAttr.get_splat(\n                        _v4t, ir.IntegerAttr.get(_i32t, 0))).result\n                    raws = []\n                    oks = []\n                    for r in fx.range_constexpr(SL):\n                        okr = fx.Int32(r) < seqlen\n                        oks.append(okr)\n                        raws.append(buffer_ops.buffer_load(x_r, okr.select(xbase + r * sx0, xbase), vec_width=4, dtype=i32))\n                    heads = []\n                    for r in fx.range_constexpr(SL):\n                        hs = buffer_ops.buffer_load(cs_r, cs_base + r * scs1, vec_width=4, dtype=i32)\n                        heads.append(_sel(hi_nz, hs, zero_v))\n                    _tokens(wf, heads, raws, SL, cs_start * os0 + c_in_part_h, oks)\n                    # ---- state writeback: window positions seqlen .. seqlen+2\n                    for i in fx.range_constexpr(SL):\n                        wpos = seqlen + i\n                        from_x = wpos >= SL\n                        offx = from_x.select(xbase + (wpos - SL) * sx0, xbase)\n                        xv = buffer_ops.buffer_load(x_r, offx, vec_width=4, dtype=i32)\n                        hv = heads[0]\n                        hv = _sel(wpos == 1, heads[1], hv)\n                        hv = _sel(wpos == 2, heads[2], hv)\n                        nv = _sel(from_x, xv, hv)\n                        buffer_ops.buffer_store(nv, cs_r, cs_base + i * scs1)\n            else:\n                # body block: global tokens t0 .. t0+BT-1; stores skip each sequence's first 3 tokens (head blocks own them)\n                t0 = (g - n_seqs) * BT\n                cus = []\n                for i in fx.range_constexpr(MAXS + 1):\n                    idx = (n_seqs < i).select(n_seqs, fx.Int32(i)) if i > 0 else fx.Int32(0)\n                    cus.append(fx.Int32(buffer_ops.buffer_load(cu_r, idx, vec_width=1, dtype=i32)))\n                rows = []\n                for r in fx.range_constexpr(-SL, BT):\n                    tr = t0 + r\n                    tr = (tr < 0).select(fx.Int32(0), tr)\n                    tr = (tr >= n_tok).select(n_tok - 1, tr)\n                    rows.append(buffer_ops.buffer_load(x_r, tr * sx0 + pbase, vec_width=4, dtype=i32))\n                wf = _wf()\n                cu0 = cus[0]\n                cun = cus[MAXS]\n                nh = fx.Int32(0)\n                for i in fx.range_constexpr(MAXS):\n                    hit = (fx.Int32(i) < n_seqs) & (cus[i] >= t0 - 2) & (cus[i] <= t0 + (BT - 1))\n                    nh = nh + hit.select(fx.Int32(1), fx.Int32(0))\n                clean = (nh == 0) & (t0 >= cu0) & ((t0 + BT) <= cun)\n                obase = t0 * os0 + c_in_part_h\n                if clean:\n                    _tokens(wf, rows[0:SL], rows[SL:], BT, obase, None)\n                else:\n                    oks = []\n                    for t in fx.range_constexpr(BT):\n                        tt = t0 + t\n                        nt = fx.Int32(0)\n                        for i in fx.range_constexpr(MAXS):\n                            hit = (fx.Int32(i) < n_seqs) & (cus[i] >= tt - 2) & (cus[i] <= tt)\n                            nt = nt + hit.select(fx.Int32(1), fx.Int32(0))\n                        oks.append((nt == 0) & (tt >= cu0) & (tt < cun))\n                    _tokens(wf, rows[0:SL], rows[SL:], BT, obase, oks)\n\n    @flyc.jit\n    def launch(\n        x_ptr: fx.Tensor,\n        w_ptr: fx.Tensor,\n        cs_ptr: fx.Tensor,\n        si_ptr: fx.Tensor,\n        hi_ptr: fx.Tensor,\n        cu_ptr: fx.Tensor,\n        q_ptr: fx.Tensor,\n        k_ptr: fx.Tensor,\n        v_ptr: fx.Tensor,\n        n_seqs: Int32,\n        proj_h: Int32,\n        sx0: Int32,\n        sx1: Int32,\n        scs0: Int32,\n        scs1: Int32,\n        qs0: Int32,\n        ks0: Int32,\n        vs0: Int32,\n        n_tok: Int32,\n        gx: Int32,\n        gy: Int32,\n        stream: fx.Stream,\n    ):\n        conv_kernel(\n            x_ptr, w_ptr, cs_ptr, si_ptr, hi_ptr, cu_ptr, q_ptr, k_ptr, v_ptr,\n            n_seqs, proj_h, sx0, sx1, scs0, scs1, qs0, ks0, vs0, n_tok,\n        ).launch(grid=(fx.Int64(gx), fx.Int64(gy), 1), block=(LANES, 1, 1), stream=stream)\n\n    return launch\n\n\ndef run(*, x, weight, conv_state, state_indices, has_initial_state, cu_seqlens, storage, q, k, v):\n    n_tokens, _, proj = x.shape\n    n_seqs = state_indices.shape[0]\n    assert proj % STRIP == 0\n    gx = (n_tokens + BT - 1) // BT + n_seqs\n    gy = 3 * (proj // STRIP)\n    # flat 1-D views (no copy): the kernel addresses them with the strides passed below\n    xf = torch.as_strided(x, ((n_tokens - 1) * x.stride(0) + 3 * proj,), (1,))\n    n_slots = conv_state.shape[0]\n    csf = torch.as_strided(conv_state, ((n_slots - 1) * conv_state.stride(0) + 3 * conv_state.stride(1),), (1,))\n    _launcher(n_seqs > MAXS)(\n        xf, weight, csf, state_indices, has_initial_state, cu_seqlens, q, k, v,\n        int(n_seqs), proj // 2,\n        x.stride(0) // 2, x.stride(1) // 2,\n        conv_state.stride(0) // 2, conv_state.stride(1) // 2,\n        q.stride(0) // 2, k.stride(0) // 2, v.stride(0) // 2, int(n_tokens),\n        int(gx), int(gy), torch.cuda.current_stream(),\n    )\n\n\ndef warm_up(device):\n    proj = 1536\n    n = 8192\n    x = torch.zeros(n, 3, proj, dtype=torch.bfloat16, device=device)\n    w = torch.zeros(3 * proj, 4, dtype=torch.float32, device=device)\n    cs = torch.zeros(2, 3, 3 * proj, dtype=torch.bfloat16, device=device)\n    q = torch.empty(n, proj, dtype=torch.bfloat16, device=device)\n    k = torch.empty_like(q)\n    v = torch.empty_like(q)\n    # both variants: the unrolled search (n_seqs <= MAXS) and the binary search (more sequences)\n    for ns in (1, MAXS + 1):\n        si = torch.zeros(ns, dtype=torch.int32, device=device)\n        hi = torch.zeros(ns, dtype=torch.bool, device=device)\n        cu = torch.arange(ns + 1, dtype=torch.int32, device=device) * (n // ns)\n        cu[-1] = n\n        run(x=x, weight=w, conv_state=cs, state_indices=si, has_initial_state=hi, cu_seqlens=cu, storage=None,\n            q=q, k=k, v=v)\n"
+      }
+    ]
+  }
+}
