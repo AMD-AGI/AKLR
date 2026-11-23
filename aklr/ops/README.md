@@ -20,8 +20,8 @@ aklr/ops/
   at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its
   own inputs. Its reference is a `DistOpReference`, whose `reference(calls, rank)` takes every rank's call in rank
   order, each on its rank's device (`cuda:<rank>`), and returns rank `rank`'s outputs. Its baseline is a
-  `DistOpBaseline`, whose `setup()` sets up on each rank what the calls take for granted (as an engine does before
-  the first, e.g. mori shmem) and `teardown()` undoes it.
+  `DistOpBaseline`, whose `profile` starts every rank's call together; its `setup()` runs once each rank's process
+  is in the group.
 
 - `<language>` equals the schema's `kernel.language` (`flydsl`, `hip`, `hsaco` or `triton`, `Language` in
   `aklr/core/contract/spec/_kernel.py`). `impls/` is not a Python package: it holds language directories, they hold
@@ -151,6 +151,8 @@ is the contract's `baseline`; every contract has exactly one:
 - Takes the kernel's call by keyword, imports the engine inside the method, returns the outputs by name (a mutable
   input it writes is read from the call), and raises `NotImplementedError` for a call the engine does not serve
   (bench: `baseline_failed`).
+- `setup()` sets up what the calls take for granted beyond their arguments, as the engine does before its first
+  (mega_moe's mori heap), and `teardown()` undoes it; nothing by default.
 - `profile(fn)` times one call, the kernel's and the baseline's alike (a CUDA graph, cache flushes taken out);
   validation computes the speedup.
 - Is for timing only: kernels are checked against the reference.
@@ -318,7 +320,7 @@ def run(*, a, b, trans_b, bias, out_dtype, out):
   arguments, laid out as the code object expects; HIP fills in the hidden arguments.
 - The launcher only supports regular launches through `hipModuleLaunchKernel`. Cooperative launches, cluster
   launches, and memory shared between ranks are not supported; kernels that need them require changes to
-  `aklr/core/jit/hsaco.py`, or for shared memory, to the op's `DistOpBaseline.setup`.
+  `aklr/core/jit/hsaco.py`, or for shared memory, to the op's `OpBaseline.setup`.
 - `requires` pins the HIP that loads the code objects, such as `{"hip": ">=7.15"}`.
 - Sources are audited like other Python kernels (SA0–SA5), then by SC1–SC2
   (`aklr/core/validation/stages/_audit/_hsaco.py`), so that kernel code reaches the GPU only through the launcher.

@@ -181,8 +181,9 @@ def run_candidate(
                     world_size=requests[0].n_ranks,
                     device_id=None if device == "cpu" else torch.device(device),
                 )
-                requests[0].contract.baseline.setup()
-                is_set_up = True
+        with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "baseline setup: "):
+            requests[0].contract.baseline.setup()
+        is_set_up = True
         run = CandidateRun(device, tripwire, _measure.bind_clock(requests[0].contract.baseline), rank or 0)
         flush_l2_cache()
         run.clock.synchronize()

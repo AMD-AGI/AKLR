@@ -280,10 +280,10 @@ class OpCase:
         declares one. Other bounds are the kernels', per element; the backend is held to 20 dB."""
         args = self.inputs()
         call = self.call(args, "cuda")
-        outputs = {
-            **self.contract.baseline.baseline(**call),
-            **{n: call[n] for n in self.contract.mutable_inputs},
-        }
+        baseline = self.contract.baseline
+        baseline.setup()
+        outputs = {**baseline.baseline(**call), **{n: call[n] for n in self.contract.mutable_inputs}}
+        baseline.teardown()
         results = self.compare(outputs, args)
         output_specs = semantics.mutable_tensor_declarations(self.request.schema_json)
         integral = {

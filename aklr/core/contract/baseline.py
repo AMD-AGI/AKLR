@@ -21,6 +21,13 @@ GRAPH_BUDGET_MILLISECONDS = 20.0
 
 
 class OpBaseline(ABC):
+    def setup(self) -> None:  # noqa: B027 - optional
+        """Before a process's first call: what the calls take for granted beyond their arguments,
+        set up as the engine does before its first (mega_moe's mori heap). Nothing by default."""
+
+    def teardown(self) -> None:  # noqa: B027 - optional
+        """After a process's last call: undoes ``setup``."""
+
     @abstractmethod
     def baseline(self, **call: Any) -> Mapping[str, Tensor]:
         """The outputs, by name, of what the engine runs without AKLR on the kernel's call ``call``;
@@ -35,14 +42,7 @@ class OpBaseline(ABC):
 
 class DistOpBaseline(OpBaseline):
     """An op that ranks call together. ``baseline`` runs in each rank's process on that rank's
-    call."""
-
-    def setup(self) -> None:
-        """Before a rank's first call: what the op's calls need over the group beyond
-        torch.distributed's default group, such as mega_moe's mori heap. Nothing by default."""
-
-    def teardown(self) -> None:
-        """After a rank's last call: undoes ``setup``."""
+    call, ``setup`` once the process is in torch.distributed's default group."""
 
     def profile(self, fn: Callable[[], object]) -> float:
         """Every rank starts each call of ``fn`` together; the slowest rank's milliseconds."""

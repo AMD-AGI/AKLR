@@ -20,8 +20,9 @@ each file are in `aklr/ops/README.md`; this is the order and the traps.
    `baseline_failed`). Example: `aklr/ops/gemm/baseline.py`.
    An op every rank of a group calls together (expert parallelism, collectives) sets the contract's
    `ranks` to the attr holding the group size; its reference is a `DistOpReference`, whose
-   `reference(calls, rank)` takes every rank's call, and its baseline a `DistOpBaseline`, whose
-   `setup()` sets up what an engine would before the first call.
+   `reference(calls, rank)` takes every rank's call, and its baseline a `DistOpBaseline`, which
+   times the ranks together. A baseline's `setup()` sets up what an engine would before the first
+   call (mega_moe's mori heap), `teardown()` undoes it.
    See `aklr/ops/README.md`.
 5. **`__init__.py`**: export the api functions.
 6. **Tests**: add the contract's base Point, small, to `_SMALL_POINTS` in `tests/op_case.py` (contract
