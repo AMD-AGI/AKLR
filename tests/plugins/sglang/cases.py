@@ -825,6 +825,24 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # DeepSeek-V4's sqrtsoftplus router shrunk to aiter topk_gating's smallest expert count:
+    # three routed experts and the fused shared one, then with padded rows (DP attention)
+    *(
+        PointSpec(
+            contract_id="deepseek_v4_router@1.0",
+            axes={"n_tokens": 5, "n_experts": 64, "n_slots": 4},
+            dtypes={
+                "router_logits": "bfloat16",
+                "correction_bias": "bfloat16",
+                "num_token_non_padded": "int32" if padded else None,
+                "topk_weights": "float32",
+                "topk_ids": "int32",
+            },
+            attrs={"n_shared": 1, "renormalize": True, "has_num_token_non_padded": padded},
+            layout_variant_name="row_major",
+        )
+        for padded in (False, True)
+    ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
 # tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
@@ -871,5 +889,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "mla_qkv_a_norm@1.0",
         "mla_vc@1.0",
         "kda_chain_verify_ring@1.0",
+        "deepseek_v4_router@1.0",
     }
 )
