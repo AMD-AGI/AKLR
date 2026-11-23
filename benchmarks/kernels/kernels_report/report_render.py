@@ -11,7 +11,7 @@ from dataclasses import asdict
 from html import escape
 from pathlib import Path
 
-from kernels_report.collect import SERVED, STATUSES, Context, ContractReport, PointReport
+from kernels_report.data_collect import SERVED, STATUSES, Context, ContractReport, PointReport
 
 LANGS = ("en", "zh")
 TITLE = {"en": "Kernels", "zh": "Kernel"}

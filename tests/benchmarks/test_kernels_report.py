@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from kernels_report.collect import (
+from kernels_report.data_collect import (
     Context,
     Measurement,
     baseline_summary,
@@ -14,7 +14,7 @@ from kernels_report.collect import (
     parse_measurements,
     summarize,
 )
-from kernels_report.render import write_section
+from kernels_report.report_render import write_section
 
 from aklr.core.contract import locate
 from aklr.core.contract.registry import ContractRegistry

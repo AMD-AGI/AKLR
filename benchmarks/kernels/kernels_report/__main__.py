@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from aklr.core.platform.env import RuntimeEnv
-from kernels_report.collect import Context, SchemaErrors, collect, read_measurements
-from kernels_report.render import write_section
+from kernels_report.data_collect import Context, SchemaErrors, collect, read_measurements
+from kernels_report.report_render import write_section
 
 
 def main(argv: list[str] | None = None) -> int:
