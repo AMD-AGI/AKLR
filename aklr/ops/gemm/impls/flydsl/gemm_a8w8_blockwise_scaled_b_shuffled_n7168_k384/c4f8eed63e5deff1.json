@@ -101,16 +101,16 @@
         "m": 64
       },
       "accuracy": "passed",
-      "speedup": 1.045,
-      "microseconds": 4.46
+      "speedup": 1.041,
+      "microseconds": 4.62
     },
     {
       "axes": {
         "m": 128
       },
       "accuracy": "passed",
-      "speedup": 1.091,
-      "microseconds": 4.47
+      "speedup": 1.06,
+      "microseconds": 4.64
     }
   ],
   "layout_variants": {

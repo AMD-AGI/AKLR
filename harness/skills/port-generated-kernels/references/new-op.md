@@ -8,19 +8,21 @@ each file are in `aklr/ops/README.md`; this is the order and the traps.
    names none of them `out` (`outputs are 'out' alone, or names other than 'out'`); give each output
    its `error_bounds` and the contract its `determinism` (`bitwise` unless the op's kernels need
    atomics).
-2. **`reference.py`**: one `<contract>_reference(point, row_major_args, decode)` per contract,
-   in the dtype `decode` returns (float32 in validation), returning the outputs in contract order.
-   Any rounding every correct kernel must do belongs here.
+2. **`reference.py`**: one `<contract>_reference(point, row_major_args)` per contract, in the op's
+   dtypes or else float32 (for now float32, each input read through `semantics.to_float32`),
+   returning the outputs in contract order. Only the roundings every correct kernel makes belong
+   here ("Reference and baseline" in `aklr/ops/README.md`).
 3. **`api.py`**: one `@api(<CONTRACT>)` stub per contract. Example: `aklr/ops/gemm/api.py`.
-4. **`baseline.py`**: what kernels are timed against, one `<contract>_baseline` per contract that
-   has one. It takes the api's params (called with the call's keyword arguments), imports AITER or
-   SGLang inside the function and returns the outputs as the api does; a call it does not serve
-   raises `NotImplementedError` (bench: `baseline_failed`). Example: `aklr/ops/gemm/baseline.py`.
-   Without one the op is its own baseline: a kernel has nothing to beat.
+4. **`baseline.py`**: what kernels are timed against, the engine's own call for the op, one
+   `<contract>_baseline` per contract that has one. It takes the api's params (called with the
+   call's keyword arguments), imports AITER or SGLang inside the function and returns the outputs
+   as the api does; a call it does not serve raises `NotImplementedError` (bench:
+   `baseline_failed`). Example: `aklr/ops/gemm/baseline.py`. Without one the op is its own
+   baseline: a kernel has nothing to beat.
    An op every rank of a group calls together (expert parallelism, collectives) sets the contract's
-   `ranks` to the attr holding the group size; its reference takes `(point, group_args, rank,
-   decode)`, and `group.py`'s `<contract>_group_init()` sets up what an engine would before the
-   first call. See `aklr/ops/README.md`.
+   `ranks` to the attr holding the group size; its reference takes `(point, group_args, rank)`,
+   and `group.py`'s `<contract>_group_init()` sets up what an engine would before the first call.
+   See `aklr/ops/README.md`.
 5. **`__init__.py`**: export the api functions.
 6. **Tests**: add the contract's base Point, small, to `_SMALL_POINTS` in `tests/op_case.py` (contract
    order), so the contract and reference suites cover it, and regenerate the variant names with

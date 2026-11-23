@@ -2,5 +2,5 @@
   "sglang_image": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
   "vllm_image": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1",
   "aiter_image": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
-  "aiter": "a0c4b69c146d94e393984bbe553b704e8c89a5e4"
+  "aiter": "a6c759b1fc700cbe856ebc57770c549ac010ea3b"
 }
