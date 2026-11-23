@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -22,28 +24,25 @@ def _decoded(
     point: Any,
     row_major_args: Mapping[str, Any],
     name: str,
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor | None:
     t = row_major_args.get(name)
-    return None if t is None else decode(t, point.dtypes[name])
+    return None if t is None else to_float32(t, point.dtypes[name])
 
 
 def _weight(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    b = _decoded(point, row_major_args, "b", decode)
+    b = _decoded(point, row_major_args, "b")
     return b if point.attrs["trans_b"] else b.mT
 
 
 def _product(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    a = _decoded(point, row_major_args, "a", decode)
-    return a @ _weight(point, row_major_args, decode).mT
+    a = _decoded(point, row_major_args, "a")
+    return a @ _weight(point, row_major_args).mT
 
 
 def _out(product: Tensor, bias: Tensor | None) -> Tensor:
@@ -53,80 +52,83 @@ def _out(product: Tensor, bias: Tensor | None) -> Tensor:
 def gemm_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """``a @ b.T + bias``."""
     return _out(
-        _product(point, row_major_args, decode),
-        _decoded(point, row_major_args, "bias", decode),
+        _product(point, row_major_args),
+        _decoded(point, row_major_args, "bias"),
     )
+
+
+def _int8_product(a: Tensor, b: Tensor) -> Tensor:
+    """a b^T of int8 values, summed exactly: a float32 sum of 1024 products (each at most 2**14
+    in size) is an exact integer, and so is the int32 sum of those while k < 2**17."""
+    import torch
+
+    k = a.shape[-1]
+    parts = ((a[:, s : s + 1024] @ b[:, s : s + 1024].mT).to(torch.int32) for s in range(0, k, 1024))
+    return sum(parts).float()
 
 
 def gemm_a8w8_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    """Per-row scales; a squeezed ``(rows,)`` scale reads as ``(rows, 1)``. int8 operands
-    define an exact int32 sum the output rounds once: past float32's 24 bits, in float64."""
+    """Per-row scales; a squeezed ``(rows,)`` scale reads as ``(rows, 1)``. int8 operands sum
+    exactly in int32, then take the scales."""
+    a_scale = _decoded(point, row_major_args, "a_scale").reshape(-1, 1)
+    b_scale = _decoded(point, row_major_args, "b_scale").reshape(1, -1)
+    a = _decoded(point, row_major_args, "a")
+    b = _weight(point, row_major_args)
     if point.dtypes["a"] == "int8":
-        given_decode = decode
-
-        def decode(tensor: Tensor, dtype: str) -> Tensor:
-            return given_decode(tensor, dtype).double()
-
-    a_scale = _decoded(point, row_major_args, "a_scale", decode)
-    b_scale = _decoded(point, row_major_args, "b_scale", decode)
-    a = _decoded(point, row_major_args, "a", decode) * a_scale.reshape(-1, 1)
-    b = _weight(point, row_major_args, decode) * b_scale.reshape(-1, 1)
-    return _out(a @ b.mT, _decoded(point, row_major_args, "bias", decode))
+        product = _int8_product(a, b) * a_scale * b_scale
+    else:
+        product = (a * a_scale) @ (b * b_scale.mT).mT
+    return _out(product, _decoded(point, row_major_args, "bias"))
 
 
 def gemm_a8w8_blockwise_scaled_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """A scale per ``(1, 128)`` of ``a`` and ``(128, 128)`` of ``b``; tails partial."""
-    a = _decoded(point, row_major_args, "a", decode)
-    b = _weight(point, row_major_args, decode)
+    a = _decoded(point, row_major_args, "a")
+    b = _weight(point, row_major_args)
     (n, k), block = b.shape, 128
-    a_scale = _decoded(point, row_major_args, "a_scale", decode)
+    a_scale = _decoded(point, row_major_args, "a_scale")
     if point.attrs["scale_major_mode"] == "MN":
         a_scale = a_scale.mT
     a_scale = a_scale.repeat_interleave(block, dim=1)
-    b_scale = _decoded(point, row_major_args, "b_scale", decode)
+    b_scale = _decoded(point, row_major_args, "b_scale")
     b_scale = b_scale.repeat_interleave(block, dim=0).repeat_interleave(block, dim=1)
     out = (a * a_scale[:, :k]) @ (b * b_scale[:n, :k]).mT
-    return _out(out, _decoded(point, row_major_args, "bias", decode))
+    return _out(out, _decoded(point, row_major_args, "bias"))
 
 
 def gemm_a4w4_mxfp4_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """``alpha * (a @ b.T) + bias``, one e8m0 scale per 32 fp4 values along ``k``."""
 
     def scaled(x: str) -> Tensor:
-        scale = _decoded(point, row_major_args, f"{x}_scale", decode)
-        decoded = _decoded(point, row_major_args, x, decode)
+        scale = _decoded(point, row_major_args, f"{x}_scale")
+        decoded = _decoded(point, row_major_args, x)
         return decoded * scale.repeat_interleave(32, dim=-1)
 
     return _out(
         row_major_args["alpha"] * (scaled("a") @ scaled("b").mT),
-        _decoded(point, row_major_args, "bias", decode),
+        _decoded(point, row_major_args, "bias"),
     )
 
 
 def bmm_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """``bias`` is ``(batch, n)``, broadcast over ``m``."""
-    bias = _decoded(point, row_major_args, "bias", decode)
+    bias = _decoded(point, row_major_args, "bias")
     return _out(
-        _product(point, row_major_args, decode),
+        _product(point, row_major_args),
         None if bias is None else bias.unsqueeze(-2),
     )

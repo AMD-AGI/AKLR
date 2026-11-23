@@ -3,29 +3,30 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
 
 __all__ = ["paged_attention_decode_reference", "unified_attention_reference"]
 
-# Gathered KV elements per chunk of requests: 256 MiB in float32, 512 MiB in float64.
+# Gathered KV elements per chunk of requests: 256 MiB in float32.
 _CHUNK_ELEMENTS = 2**26
 
 
 def paged_attention_decode_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each head of a request's query attends over the tokens of its context."""
     import torch
 
-    q = decode(row_major_args["query"], point.dtypes["query"])
+    q = to_float32(row_major_args["query"], point.dtypes["query"])
     keys, values = (
-        decode(row_major_args[n], point.dtypes[n]).flatten(0, 1) for n in ("key_cache", "value_cache")
+        to_float32(row_major_args[n], point.dtypes[n]).flatten(0, 1) for n in ("key_cache", "value_cache")
     )
     block_size = point.axes["block_size"]
     table = row_major_args["block_tables"].long()
@@ -53,14 +54,13 @@ def paged_attention_decode_reference(
 def unified_attention_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each query row attends causally over its request's context, in a window when
     window_size[0] >= 0."""
     import torch
 
-    q = decode(row_major_args["q"], point.dtypes["q"])
-    keys, values = (decode(row_major_args[n], point.dtypes[n]).flatten(0, 1) for n in ("k", "v"))
+    q = to_float32(row_major_args["q"], point.dtypes["q"])
+    keys, values = (to_float32(row_major_args[n], point.dtypes[n]).flatten(0, 1) for n in ("k", "v"))
     block_size = point.axes["block_size"]
     n_kv_heads = point.axes["n_kv_heads"]
     group = point.axes["n_heads"] // n_kv_heads

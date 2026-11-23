@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from aklr.core.contract.semantics import rounded_to_bfloat16
+from aklr.core.contract.semantics import rounded_to_bfloat16, to_float32
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -26,7 +26,6 @@ _FP8_BLOCK = 128
 def _fp32(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Callable[..., Tensor]:
     """Tensor argument ``name`` (its ``index`` only, if given) in fp32."""
 
@@ -34,7 +33,7 @@ def _fp32(
         tensor = row_major_args[name]
         if index is not None:
             tensor = tensor[index]
-        return decode(tensor, point.dtypes[name]).float()
+        return to_float32(tensor, point.dtypes[name])
 
     return get
 
@@ -92,20 +91,14 @@ def _with_shared_slot(point: Any, ids: Tensor, weights: Tensor) -> tuple[Tensor,
 def deepseek_v2_mxfp4_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """On hidden_states, each token's routed experts and the shared one (the last slot) at
-    weight 1, the MXFP4 weights dequantized per 32 values. Rounding point: the router's logits,
-    exact products of hidden_states and router_weight summed in float64, round once to
-    hidden_states' dtype, bf16."""
-    args, f = row_major_args, _fp32(point, row_major_args, decode)
-    hidden = args["hidden_states"]
-    logits = (
-        decode(hidden, point.dtypes["hidden_states"]).double()
-        @ decode(args["router_weight"], point.dtypes["router_weight"]).double().T
-    )
+    weight 1, the MXFP4 weights dequantized per 32 values. Rounding point: the router's logits
+    round to hidden_states' dtype, bf16."""
+    args, f = row_major_args, _fp32(point, row_major_args)
     x = f("hidden_states")
-    ids, weights = _routed(point, args, rounded_to_bfloat16(logits).float(), f("correction_bias"))
+    logits = rounded_to_bfloat16(x @ f("router_weight").T)
+    ids, weights = _routed(point, args, logits, f("correction_bias"))
     ids, weights = _with_shared_slot(point, ids, weights)
 
     def weight(name: str, e: int) -> Tensor:
@@ -170,20 +163,15 @@ def _fp8_linear(x: Tensor, weight: Tensor, scale: Tensor) -> Tensor:
 def deepseek_v2_fp8_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """On hidden_states, each token's routed experts (_grouped_routed) and the shared one (the
     last slot) at weight 1, both linears of each expert an fp8 one. Rounding points: the
-    router's logits, exact products of hidden_states and router_weight summed in float64,
-    round once to hidden_states' dtype, bf16; each linear's input rounds to bf16, then to fp8
-    per 1 x 128 group (_fp8_linear)."""
-    args, f = row_major_args, _fp32(point, row_major_args, decode)
-    logits = (
-        decode(args["hidden_states"], point.dtypes["hidden_states"]).double()
-        @ decode(args["router_weight"], point.dtypes["router_weight"]).double().T
-    )
+    router's logits round to hidden_states' dtype, bf16; each linear's input rounds to bf16,
+    then to fp8 per 1 x 128 group (_fp8_linear)."""
+    args, f = row_major_args, _fp32(point, row_major_args)
     x = f("hidden_states")
-    ids, weights = _grouped_routed(point, args, rounded_to_bfloat16(logits).float(), f("correction_bias"))
+    logits = rounded_to_bfloat16(x @ f("router_weight").T)
+    ids, weights = _grouped_routed(point, args, logits, f("correction_bias"))
     ids, weights = _with_shared_slot(point, ids, weights)
 
     def mlp(rows: Tensor, e: int) -> Tensor:

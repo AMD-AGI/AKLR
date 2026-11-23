@@ -14,7 +14,7 @@ from pydantic import Field, TypeAdapter
 
 from aklr.core.contract import expr
 
-from ._dtypes import DTYPE_TRAITS, DType, to_float64, torch_dtypes
+from ._dtypes import DTYPE_TRAITS, DType, to_float32, torch_dtypes
 from ._frozen_model import FrozenModel
 
 if TYPE_CHECKING:
@@ -91,7 +91,7 @@ class FiniteDistribution(Distribution):
         return torch.randn(shape, generator=generator).to(storage_dtype)
 
     def contains(self, tensor, dtype):
-        return bool(to_float64(tensor, dtype).isfinite().all())
+        return bool(to_float32(tensor, dtype).isfinite().all())
 
 
 class LogUniformDistribution(Distribution):
@@ -136,7 +136,7 @@ class LogUniformDistribution(Distribution):
         return torch.exp2(exponents).to(storage_dtype)
 
     def contains(self, tensor, dtype):
-        decoded = to_float64(tensor, dtype)
+        decoded = to_float32(tensor, dtype)
         return bool((decoded.isfinite() & (decoded > 0)).all())
 
 
@@ -297,10 +297,10 @@ class CuSeqlensDistribution(Distribution):
         spare = self.total - parts * self.min_seqlen
         if spare < 0:
             raise ValueError(f"{self.total} rows hold no {parts} parts of {self.min_seqlen}")
-        # float64 keeps the split exact past 2**24 rows; the last offset is pinned
-        weights = torch.randn(parts, generator=generator, dtype=torch.float64)
+        # rounding is monotone, so the ends stay ordered; at most spare, the last one pinned
+        weights = torch.randn(parts, generator=generator)
         shares = weights.clamp(-2, 2).exp().cumsum(0)
-        ends = (shares / shares[-1:] * spare).floor().long()
+        ends = (shares / shares[-1:] * spare).floor().long().clamp(max=spare)
         ends[-1:] = spare
         ends += self.min_seqlen * torch.arange(1, parts + 1)
         offsets = torch.cat((ends.new_zeros(1), ends))
@@ -398,7 +398,7 @@ class PermutationDistribution(Distribution):
         n = shape[-1]
         draws = torch.rand((math.prod(shape[:-1]), n), generator=generator)
         permutations = draws.argsort(dim=-1).reshape(shape)
-        return (permutations.double() / n).to(torch_dtypes(dtype)[0])
+        return (permutations.float() / n).to(torch_dtypes(dtype)[0])
 
     # every decoded value is finite; rows need not be permutations
     contains = FiniteDistribution.contains
