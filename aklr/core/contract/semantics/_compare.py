@@ -7,7 +7,7 @@ import math
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, NamedTuple
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NamedTuple
 
 from pydantic import Field, TypeAdapter
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 class CompareResult(NamedTuple):
     is_passed: bool  # violations within the limit, non-finite values matched
     is_bound_exceeded: bool  # violation_fraction over max_violation_fraction
-    violation_fraction: float  # of the elements where the rounded reference is finite
+    violation_fraction: float  # of the elements where the reference is finite
     peak_bound_multiple: float  # max |error| / B
     n_nonfinite_mismatches: int
 
@@ -37,16 +37,16 @@ class CompareResult(NamedTuple):
     def of_measures(
         cls,
         a: Tensor,
-        rounded: Tensor,
+        y: Tensor,
         *,
         is_bound_exceeded: bool,
         violation_fraction: float,
         peak_bound_multiple: float,
     ) -> CompareResult:
-        """A bound's measures of output ``a``, with its non-finite mismatches against
-        ``rounded`` (both float32)."""
-        is_finite = rounded.isfinite()
-        is_same = (a == rounded) | (a.isnan() & rounded.isnan())
+        """A bound's measures of output ``a``, with its non-finite mismatches against the
+        reference ``y`` (both float32)."""
+        is_finite = y.isfinite()
+        is_same = (a == y) | (a.isnan() & y.isnan())
         n_nonfinite_mismatches = int((~is_finite & ~is_same).sum())
         n_nonfinite_mismatches += int((is_finite & ~a.isfinite()).sum())
         return cls(
@@ -153,27 +153,27 @@ class ErrorBound(FrozenModel):
     """One ``error_bounds`` item of a mutable tensor: how it is compared with the reference."""
 
     kind: str
-    expr_fields: ClassVar[tuple[str, ...]] = ()  # expression fields, in order
 
     @abstractmethod
     def compare(self, actual: Tensor, expected: Tensor, *, max_violation_fraction: float) -> CompareResult:
         """Output ``actual`` against ``expected``, the reference's, both in the output's dtype."""
 
 
-class ElementwiseBound(ErrorBound):
-    """B, the largest |actual - y| allowed per element: at most
-    ``max_violation_fraction`` of the elements where y is finite exceed it."""
+class ToleranceBound(ErrorBound):
+    """B = absolute_tolerance + relative_tolerance * |y|, the largest |actual - y| allowed per
+    element, y the reference (both 0: equal): at most ``max_violation_fraction`` of the elements
+    where y is finite exceed it."""
 
-    @abstractmethod
-    def allowed_error(self, expected: Tensor) -> Tensor:
-        """B at each element of the one output compared."""
+    kind: Literal["tolerance"] = "tolerance"
+    absolute_tolerance: Annotated[float, Field(ge=0.0)]
+    relative_tolerance: Annotated[float, Field(ge=0.0)]
 
     def compare(self, actual, expected, *, max_violation_fraction):
         # integers as integers: float32 holds an int exactly only up to 2**24
         a, y = (t.float() if t.is_floating_point() else t.long() for t in (actual, expected))
         is_finite = y.isfinite()
         error = (a - y)[is_finite].abs()
-        limit = self.allowed_error(y)[is_finite]
+        limit = self.absolute_tolerance + self.relative_tolerance * y[is_finite].abs()
         violation_fraction = peak_bound_multiple = 0.0
         if error.numel():
             violation_fraction = _fraction(error > limit)
@@ -185,17 +185,6 @@ class ElementwiseBound(ErrorBound):
             violation_fraction=violation_fraction,
             peak_bound_multiple=peak_bound_multiple,
         )
-
-
-class ToleranceBound(ElementwiseBound):
-    """B = absolute_tolerance + relative_tolerance * |y|; both 0: equal."""
-
-    kind: Literal["tolerance"] = "tolerance"
-    absolute_tolerance: Annotated[float, Field(ge=0.0)]
-    relative_tolerance: Annotated[float, Field(ge=0.0)]
-
-    def allowed_error(self, expected):
-        return self.absolute_tolerance + self.relative_tolerance * expected.abs()
 
 
 class SqnrBound(ErrorBound):
@@ -218,7 +207,7 @@ class SqnrBound(ErrorBound):
         if not noise:
             peak_bound_multiple = 0.0
         else:
-            # an all-zero reference allows no noise: main's -inf dB
+            # an all-zero reference allows no noise: -inf dB
             peak_bound_multiple = noise / allowed if allowed else math.inf
         is_bound_exceeded = peak_bound_multiple > 1
         return CompareResult.of_measures(

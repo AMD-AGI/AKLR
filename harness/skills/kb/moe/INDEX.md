@@ -37,7 +37,7 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
   8 to fp8 (SiTUv2 only); gate mode interleave keeps bf16 activations, and so does swiglu below 256 tokens.
 - The var axis is `n_tokens`; model dim, experts, top-k and inter dim are fixed per schema name.
 - Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, and one whole-output SQNR bound against the
-  reference (float32 in validation) rounded to the output dtype: 20 dB with MXFP8 activations (`act_quant` 8), 10 dB
+  reference in the output dtype: 20 dB with MXFP8 activations (`act_quant` 8), 10 dB
   with MXFP4 (`out`'s `error_bounds` in `aklr/ops/fused_moe/contract.py`). Atomic accumulation passes
   the SQNR bound, and so do fp8 partial rows and bf16 truncation
   ([fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md), Counter-signals).

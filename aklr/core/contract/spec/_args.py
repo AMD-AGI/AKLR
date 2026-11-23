@@ -108,7 +108,8 @@ class TensorSpec(FrozenModel):
         update: dict[str, Any] = {"shape": shape}
         if dtype is not None:
             update["dtype"] = DTypeSpec(any_of=(DType(dtype),))
-            update["distribution"] = self._decide_branches(self.distribution, symbols)
+            distribution = self._decide_branches(self.distribution, symbols)
+            update["distribution"] = tuple((p, _fields_decided(d, symbols)) for p, d in distribution)
             update["error_bounds"] = self._decide_branches(self.error_bounds, symbols)
         return type(self)(**{**dict(self), **update})
 
@@ -125,18 +126,10 @@ class TensorSpec(FrozenModel):
                 is_true = bool(closure(symbols)) if reads <= symbols.keys() else None
             if is_true is False and not decided:
                 continue
-            values = {}
-            for field_name in type(item).expr_fields:
-                text = getattr(item, field_name)
-                if isinstance(text, str):
-                    closure, reads = expr.compile(text)
-                    if reads <= symbols.keys() and type(value := closure(symbols)) is int:
-                        values[field_name] = value
-            kept = item.model_copy(update=values) if values else item
             if is_true:
-                decided.append((None, kept))
+                decided.append((None, item))
                 break
-            decided.append((predicate, kept))
+            decided.append((predicate, item))
         return tuple(decided)
 
 
@@ -205,7 +198,20 @@ class CompareSpec(FrozenModel):
     element_order: ElementOrder = ElementOrder.FIXED
 
 
-def evaluated_json(value: Distribution | ErrorBound, symbols: Mapping[str, Any]) -> dict[str, Any]:
+def _fields_decided(distribution: Distribution, symbols: Mapping[str, Any]) -> Distribution:
+    """``distribution`` with each ``expr_fields`` text that ``symbols`` decide to an int
+    replaced by it."""
+    values = {}
+    for field_name in type(distribution).expr_fields:
+        text = getattr(distribution, field_name)
+        if isinstance(text, str):
+            closure, reads = expr.compile(text)
+            if reads <= symbols.keys() and type(value := closure(symbols)) is int:
+                values[field_name] = value
+    return distribution.model_copy(update=values) if values else distribution
+
+
+def evaluated_json(value: Distribution, symbols: Mapping[str, Any]) -> dict[str, Any]:
     """The json of ``value`` (defaults included) with ``expr_fields`` texts evaluated."""
     evaluated = value.model_dump(mode="json")
     for field_name in type(value).expr_fields:

@@ -105,12 +105,8 @@ class OpContract(FrozenModel):
             raise ValueError("a schema has non-empty workloads and a kernel")
         tensors = self.tensors()
         for name in self.mutable_tensors:
-            spec = tensors[name]
-            if len(spec.error_bounds) != 1 or any(
-                isinstance(getattr(spec.error_bounds[0][1], f), str)
-                for f in type(spec.error_bounds[0][1]).expr_fields
-            ):
-                raise ValueError(f"{name}: a schema's mutable tensor has one bound, its expressions decided")
+            if len(tensors[name].error_bounds) != 1:
+                raise ValueError(f"{name}: a schema's mutable tensor has one bound")
         return self
 
     @model_validator(mode="after")
@@ -157,11 +153,9 @@ class OpContract(FrozenModel):
             if spec.present_when is not None:
                 check(spec.present_when, const)
         for spec in self.tensors().values():  # error bounds read point.symbols()
-            for predicate, bound in spec.error_bounds:
+            for predicate, _ in spec.error_bounds:
                 if predicate is not None:
                     check(predicate, const_no_derived)
-                for field_name in type(bound).expr_fields:
-                    check(getattr(bound, field_name), const_no_derived)
         return self
 
     @model_validator(mode="after")
