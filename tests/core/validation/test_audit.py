@@ -243,6 +243,18 @@ class TestCheckKernel:
                 "SA4",
                 id="extra_kwargs",
             ),
+            pytest.param(
+                '"""K."""\nfrom aklr.ops.gemm.baseline import GemmBaseline\n\n\n'
+                + _SIGNATURE
+                + "\n    out.copy_(a @ b.mT)\n",
+                "SA5",
+                id="imports_the_baseline",
+            ),
+            pytest.param(
+                '"""K."""\n' + _SIGNATURE + "\n    import aklr.ops.gemm.reference\n    out.copy_(a @ b.mT)\n",
+                "SA5",
+                id="imports_aklr_in_launch",
+            ),
         ],
     )
     def test_rejects_rule_violation(self, source: str, rule: str) -> None:
@@ -482,7 +494,7 @@ class TestAuditStage:
         assert {f.code.value for f in report.findings} == codes
 
     def test_hip_kernel_takes_the_sh_rules(self, tmp_path: Path) -> None:
-        """A hip schema's kernel is audited by SH0-SH5, not SA0-SA4."""
+        """A hip schema's kernel is audited by SH0-SH5, not SA0-SA5."""
         case = OpCase.of("gemm@1.0")
         source = HIP_GEMM_KERNEL_SOURCE.replace(_LAUNCH, '    (void)getenv("X");\n' + _LAUNCH)
         schema = case.schema(source, language="hip")
@@ -495,7 +507,7 @@ class TestAuditStage:
         assert finding.detail.startswith("SH3 kernel.hip:")
 
     def test_hsaco_kernel_takes_the_sa_and_sc_rules(self, tmp_path: Path) -> None:
-        """An hsaco schema's kernel is audited by SA0-SA4, then SC1-SC2."""
+        """An hsaco schema's kernel is audited by SA0-SA5, then SC1-SC2."""
         case = OpCase.of("gemm@1.0")
         source = HSACO_GEMM_KERNEL_SOURCE.replace(
             "import struct\n", "import ctypes\nimport struct\n"
