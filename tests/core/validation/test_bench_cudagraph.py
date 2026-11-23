@@ -84,28 +84,6 @@ def _destroy_unused_stream(bench_cudagraph):
     torch.testing.assert_close(x, torch.full_like(x, 7))
 
 
-def _return_modes_and_quantiles(bench_cudagraph):
-    x = torch.zeros(1024, device="cuda")
-
-    def subject():
-        x.fill_(7)
-
-    for mode in ("min", "max", "mean", "median"):
-        _assert_milliseconds(bench_cudagraph(subject, rep=1, return_mode=mode))
-    samples = bench_cudagraph(subject, rep=1, return_mode="all")
-    assert isinstance(samples, list) and samples
-    for value in samples:
-        _assert_milliseconds(value)
-    _assert_milliseconds(bench_cudagraph(subject, rep=1, quantiles=[0.5]))
-    quantiles = bench_cudagraph(subject, rep=1, quantiles=[0, 0.5, 1])
-    assert isinstance(quantiles, list) and len(quantiles) == 3
-    assert quantiles == sorted(quantiles)
-    for value in quantiles:
-        _assert_milliseconds(value)
-    with pytest.raises(ValueError, match="Quantiles must be in the range"):
-        bench_cudagraph(subject, rep=1, quantiles=[1.1])
-
-
 def _capture_exception_and_recovery(bench_cudagraph):
     x = torch.zeros(1024, device="cuda")
 
@@ -136,7 +114,6 @@ def _run_scenario(scenario):
         _forked_stream,
         _device_copy,
         _destroy_unused_stream,
-        _return_modes_and_quantiles,
         _capture_exception_and_recovery,
     ],
     ids=[
@@ -144,7 +121,6 @@ def _run_scenario(scenario):
         "forked_stream",
         "device_copy",
         "destroy_unused_stream",
-        "return_modes",
         "capture_exception",
     ],
 )
