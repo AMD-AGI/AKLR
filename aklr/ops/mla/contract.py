@@ -17,7 +17,6 @@ from aklr.core.contract.semantics import (
     LogUniformDistribution,
     SqnrBound,
     ToleranceBound,
-    tolerance,
 )
 from aklr.core.contract.spec import (
     AttrSpec,
@@ -323,7 +322,9 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
             description="Softmax-weighted sum of the read values; 0 for no row read.",
             shape=("batch", "query_length", "n_heads", 512),
             dtype=DTypeSpec(same_as_tensor="q"),
-            error_bounds=tolerance(DType.BFLOAT16),
+            # bf16's common tolerance, its rtol widened by one more bf16 rounding (2**-7): the
+            # reference rounds its output to bf16 too, and fp8 values leave the kernels little room
+            error_bounds=ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2 + 2**-7),
         ),
         "lse": TensorSpec(
             description=(
