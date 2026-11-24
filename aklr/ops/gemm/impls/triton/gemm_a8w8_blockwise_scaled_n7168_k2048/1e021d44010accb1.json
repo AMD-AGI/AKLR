@@ -101,8 +101,8 @@
         "m": 8
       },
       "accuracy": "passed",
-      "speedup": 1.778,
-      "microseconds": 4.5
+      "speedup": 1.866,
+      "microseconds": 4.3
     }
   ],
   "layout_variants": {

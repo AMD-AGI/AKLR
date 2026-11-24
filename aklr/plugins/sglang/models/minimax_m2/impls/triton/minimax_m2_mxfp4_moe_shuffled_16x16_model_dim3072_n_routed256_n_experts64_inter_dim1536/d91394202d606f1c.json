@@ -159,7 +159,10 @@
       },
       "scalars": {
         "expert_offset": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.64,
+      "microseconds": 305.0
     }
   ],
   "layout_variants": {
