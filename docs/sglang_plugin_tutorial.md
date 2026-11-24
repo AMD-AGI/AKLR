@@ -1,6 +1,6 @@
 # Plugin tutorial: replacing an SGLang function
 
-When an optimization has to cover more than one op, a plugin replaces a whole SGLang function with an AKLR op. This tutorial's example is `deepseek_v2_mxfp4_moe`, which takes GLM-5's whole MoE layer; `fused_moe` in `aklr/ops` covers only that layer's experts.
+When an optimization has to cover more than one op, a plugin replaces a whole SGLang function with an AKLR op. This tutorial's example is `deepseek_v2_mxfp4_moe`, which takes GLM-5's whole MoE layer; `fused_moe` in `aklr/plugins/aiter` covers only that layer's experts.
 
 Before you start, read the [ops tutorial](ops_tutorial.md): a plugin's op is written the same way. The plugin's layout and rules are in [aklr/plugins/README.md](../aklr/plugins/README.md).
 
@@ -25,7 +25,7 @@ SGLang runs steps 1–3 as separate calls before `fused_moe`. In decode, where a
 
 So:
 
-- To make one op faster, write an op in `aklr/ops`.
+- To make one op faster, write an op in `aklr/plugins/aiter`.
 - When the optimization crosses one op's boundary, write a plugin.
 
 ## How the plugin runs
@@ -46,7 +46,7 @@ def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_i
 
 ### 2. Create the package
 
-Create `aklr/plugins/sglang/models/deepseek_v2/`, named after SGLang's source file. It holds the same files as an op in `aklr/ops`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`. The package name is the op's `op_type` and must be unique across `aklr/ops` and `aklr/plugins`.
+Create `aklr/plugins/sglang/models/deepseek_v2/`, named after SGLang's source file. It holds the same files as an op in `aklr/plugins/aiter`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`. The package name is the op's `op_type` and must be unique across `aklr/plugins/aiter` and `aklr/plugins`.
 
 ### 3. Write the op
 
@@ -108,7 +108,7 @@ PointSpec(
 Its baseline runs only on gfx950, so its contract id also goes into `GFX950_CONTRACT_IDS` in the same file. Then update `tests/plugins/sglang/names.txt`:
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
 The route needs no test of its own: `tests/plugins/sglang/test_hook.py` checks every route, that its target exists in the installed SGLang with the same parameters and that no other route replaces it.

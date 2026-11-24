@@ -13,9 +13,9 @@ measured:
   - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point, of the predecessor (the GPU code of 15ab9c1502094957 at m 1–64)", value: "1.081–3.808; 7 of 7 Points ≥ 1.03 (m 1, 2, 4, 8, 16, 32, 64); also 1.030 at m 128, which 15ab9c1502094957 does not list", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384, m 1, 2, 4, 8, 16, 32, 64, 128", run_ref: "base 0e02a81", date: "2026-11-09"}
   - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point, of the predecessor (the GPU code of 99a7b2a5e2ed6119)", value: "1.151–3.295; 6 of 6 Points ≥ 1.03 (m 1, 2, 4, 16, 32, 64)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim768, m 1, 2, 4, 16, 32, 64", run_ref: "base 0e02a81", date: "2026-11-09"}
 sources:
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts96_topk6_inter_dim3072_global_experts384/d2b807e1d9f19a38.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384/15ab9c1502094957.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim768/99a7b2a5e2ed6119.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts96_topk6_inter_dim3072_global_experts384/d2b807e1d9f19a38.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384/15ab9c1502094957.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim768/99a7b2a5e2ed6119.json
 ---
 
 # MXFP4 fused MoE with clamped SwiGLU, gate/up-interleaved weights, hidden 7168, top-6
@@ -42,23 +42,23 @@ names and kernels.
 
 - Contract `fused_moe@1.0`, layout variant `gate_up_interleaved`: `w1` (experts, 2 × inter, 7168) with gate and up
   rows interleaved in 16-row tiles, `w2` (experts, 7168, inter), fp4 e2m1 with E8M0 scales per 1×32 stored 2-D
-  (`aklr/ops/fused_moe/contract.py`). `gate_mode` interleave with `swiglu_limit`, bf16 `hidden_states` and `out`,
+  (`aklr/plugins/aiter/fused_moe/contract.py`). `gate_mode` interleave with `swiglu_limit`, bf16 `hidden_states` and `out`,
   fp32 `topk_weights`, int32 `topk_ids`, routing weight in stage 2. Every workload passes `swiglu_limit` 10.0.
 - Expert parallel (`d2b807e1…`): `expert_mask` over 384 global experts, 96 local; ids are global. No kernel here
   takes `num_local_tokens`: the `has_num_local_tokens` names of this shape (m 1024 and 2048) have no kernel.
 - A token's expert ids are distinct (the `topk_ids` contract), and `99a7b2a5…` relies on it when it ORs a token's bit
   into each of its experts' bitmaps.
 - Compare: `determinism: bounded`, whole-output SQNR ≥ 13 dB. The reference keeps the
-  activations unrounded in this gate mode (`aklr/ops/fused_moe/reference.py`, its docstring); all three kernels
+  activations unrounded in this gate mode (`aklr/plugins/aiter/fused_moe/reference.py`, its docstring); all three kernels
   quantize them to MX-fp8 (Counter-signals).
 - Points listed, one kernel file per name: m 1, 2, 4, 8, 16, 32, 64 (inter 384, `15ab9c15…`); m 1, 2, 4, 16, 32,
   64 (inter 768, `99a7b2a5…`); m 1, 2, 16, 32 (96 local, `d2b807e1…`). They are served once CI records a speedup
   ≥ 1.05 for them (Result): the files carry no `speedup` yet, so dispatch serves none of them before that. Each
   name's other file (`5587cccd…`, `3cd667a8…`, `1a61a10a…`) has empty `sources`, a definition that is not served
-  (`aklr/ops/README.md` § Schema fields), so the yardstick is aiter; it defines the same Points, and `5587cccd…`
+  (`aklr/plugins/aiter/README.md` § Schema fields), so the yardstick is aiter; it defines the same Points, and `5587cccd…`
   also m 128 and 256. Not covered: m 128 and 256 at inter 384 (Counter-signals), the expert-parallel name with 48
   local experts (`a6c17379…`, m 1–128) and the `has_num_local_tokens` names, which have no kernel.
-- The baseline is aiter's `fused_moe` with `AITER_BF16_FP8_MOE_BOUND=16` (`aklr/ops/fused_moe/baseline.py`):
+- The baseline is aiter's `fused_moe` with `AITER_BF16_FP8_MOE_BOUND=16` (`aklr/plugins/aiter/fused_moe/baseline.py`):
   bf16 activations below 16 rows, fp8 from 16.
 
 ## Counter-signals
@@ -81,7 +81,7 @@ names and kernels.
   all-zero intermediate, and at limit 1000 most values from the bench's own inputs round to zero (estimated). The
   predecessors passed every listed Point with a worst violation fraction of 0 in four runs, all at limit 10, the
   only limit the workloads pass *(field, E1, E2, E3, E4, E9, E10)*; the SQNR itself is not recorded.
-- **Scratch cached per shape is shared by concurrent calls.** `aklr/ops/README.md:312–313` allows scratch allocated
+- **Scratch cached per shape is shared by concurrent calls.** `aklr/plugins/aiter/README.md:312–313` allows scratch allocated
   once per shape in a compile function if every call rewrites it before reading it; that is safe only while one
   stream calls a Point at a time, since the buffer belongs to every call of that shape and two calls at once on two
   streams overwrite each other's intermediates. The earlier predecessors did this: two concurrent calls with
@@ -193,7 +193,7 @@ is `gpu_duration_sum`: the summed durations of the GPU kernels it launches, not 
 0.1.21.dev66+gdbd8bf5bd, torch 2.11.0+rocm10.0.0; audit and bench passed with no finding. The shipped files are not
 measured yet: `15ab9c15…` and `99a7b2a5…` differ from these predecessors only in host code, and `d2b807e1…` keeps
 its predecessor's GPU code at m 16 and 32 but not at m 1 and 2. CI writes `speedup` into the shipped files once they
-merge; dispatch serves a Point from 1.05 of that number (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment
+merge; dispatch serves a Point from 1.05 of that number (`AKLR_MIN_SPEEDUP`, `aklr/plugins/aiter/README.md` § Environment
 variables).
 
 | Predecessor (of the shipped file) | 1 | 2 | 4 | 8 | 16 | 32 | 64 |
@@ -219,14 +219,14 @@ shows 2.0000 where the published, unclamped bound is above 2.
 On an MI355X, from the repository root, one schema file at a time:
 
 ```
-python -m aklr validate aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384/15ab9c1502094957.json
+python -m aklr validate aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384/15ab9c1502094957.json
 ```
 
 and the same for the other two paths under `sources`. Each runs the audit and bench stages and writes
 `aklr_validation/report.md` with the per-Point speedup, and `report.json` beside it with every round
-(`aklr/ops/README.md` § Commands). Add `--base origin/main` only on a branch that edits the file: with the base set,
+(`aklr/plugins/aiter/README.md` § Commands). Add `--base origin/main` only on a branch that edits the file: with the base set,
 bench measures only schemas that are not at the base (`aklr/core/validation/stages/validation_scope.py`,
-`of_working_tree`). The local result does not count; CI's measurement is the one dispatch reads (`aklr/ops/README.md`
+`of_working_tree`). The local result does not count; CI's measurement is the one dispatch reads (`aklr/plugins/aiter/README.md`
 § Workflow).
 
 ## Rollback

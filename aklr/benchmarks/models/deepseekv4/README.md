@@ -112,7 +112,7 @@ export AKLR_EXPORT_DIR=/tmp/aklr_export   # default: ./aklr_export, relative to 
 python -m aklr export --language flydsl   # from the repository root, after the run
 ```
 
-See the workflow in `aklr/ops/README.md`. Native SGLang/AITER calls are not recorded.
+See the workflow in `aklr/plugins/aiter/README.md`. Native SGLang/AITER calls are not recorded.
 
 ## Decode sweep
 

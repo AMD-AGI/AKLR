@@ -6,8 +6,8 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
 sources:
-  - "aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_causal_bf16_lse_has_block_table_has_cu_seqlens_k_kv_cache_bfloat16_query_length8_n_heads96_page_size1/f6f727be6a8dd6e8.json"
-  - "aklr/ops/mla/contract.py:268"
+  - "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_causal_bf16_lse_has_block_table_has_cu_seqlens_k_kv_cache_bfloat16_query_length8_n_heads96_page_size1/f6f727be6a8dd6e8.json"
+  - "aklr/plugins/aiter/mla/contract.py:268"
   - "aklr/core/contract/semantics/_distributions.py:297"
 ---
 
@@ -31,7 +31,7 @@ per request it was 4.6–8.7× slower, and both were within the contract's bound
   gives each request `min_seqlen` rows and spreads only the spare rows, `total − requests · min_seqlen`, which is 0
   here (S3). So the Points time only the fast path, and accuracy holds because the slow path is right too.
 - **Where it runs.** `n_pages` and `table_width` are var axes without `any_size`, so the file is served only at its
-  listed Points (`aklr/ops/README.md` § Inputs and workloads), pools of 8–112 one-row pages; a serving KV pool is
+  listed Points (`aklr/plugins/aiter/README.md` § Inputs and workloads), pools of 8–112 one-row pages; a serving KV pool is
   far larger, so dispatch does not pick this file there. What misleads is the stored speedup, and any page or
   decision that quotes it.
 
@@ -48,7 +48,7 @@ per request it was 4.6–8.7× slower, and both were within the contract's bound
 ## Fix or workaround
 
 - Give the Points realistic pool sizes and per-request lengths: the workload and its distribution decide what is
-  timed (`aklr/ops/README.md` § Inputs and workloads).
+  timed (`aklr/plugins/aiter/README.md` § Inputs and workloads).
 - A case page does not cite a speedup measured only on degenerate Points; it states the input condition, and the
   time on realistic inputs if measured.
 
@@ -62,6 +62,6 @@ per request it was 4.6–8.7× slower, and both were within the contract's bound
 
 - E1 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=60 rounds per batch, the kernel and the contract's baseline (aiter's `mla_gluon`) alternating every round with the order swapped on odd rounds, a 1 GiB write before each call, CUDA-event time per call, median; both checked against the contract's reference under its bounds (output 1e-2, lse 1e-3)] f6f727be6a8dd6e8: at a Point's inputs (8 KV rows per request), batch 4 / 8: kernel 7.6 / 9.6 µs, baseline 10.3 / 15.2; at the same batches with each request's length drawn uniformly from 512–8192 rows (2.9K–7.3K per request), batch 4 / 8: kernel 1690.5 / 1710.5 µs, baseline 195.2 / 373.3; both passed in both arms (bf16 FlashMLA decode, 96 heads, 8 query tokens, page size 1)
 - E2 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI, stored speedup per Point] f6f727be6a8dd6e8 at batch 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14 (n_pages = table_width = 8 × batch): 2.556, 2.435, 1.250, 1.262, 1.248, 1.680, 1.666, 1.666, 1.651, 1.893, 1.860 (AMD-AGI/AKLR@e193b1d9, CI run 44081029964)
-- S1 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_causal_bf16_lse_has_block_table_has_cu_seqlens_k_kv_cache_bfloat16_query_length8_n_heads96_page_size1/f6f727be6a8dd6e8.json#kernel.py:114 `slow = (rt != b * CH) | (ln != fx.Int32(CH))`; the 8-row result stored first at :189; the serial 8-row chunks under `if slow:` at :190-198
-- S2 aklr/ops/mla/contract.py:268 `cu_seqlens_k` drawn by `CuSeqlensDistribution(min_seqlen="query_length", total="table_width")`; `n_pages` (:112) and `table_width` (:118) are var axes without `any_size`
+- S1 aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_causal_bf16_lse_has_block_table_has_cu_seqlens_k_kv_cache_bfloat16_query_length8_n_heads96_page_size1/f6f727be6a8dd6e8.json#kernel.py:114 `slow = (rt != b * CH) | (ln != fx.Int32(CH))`; the 8-row result stored first at :189; the serial 8-row chunks under `if slow:` at :190-198
+- S2 aklr/plugins/aiter/mla/contract.py:268 `cu_seqlens_k` drawn by `CuSeqlensDistribution(min_seqlen="query_length", total="table_width")`; `n_pages` (:112) and `table_width` (:118) are var axes without `any_size`
 - S3 aklr/core/contract/semantics/_distributions.py:297 `spare = self.total - parts * self.min_seqlen`; each part gets `min_seqlen` plus its share of the spare (:305)

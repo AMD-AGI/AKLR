@@ -7,7 +7,7 @@ exactly, nothing rounded in between (the kernels' bf16 and fp8 steps are theirs)
 import torch
 
 from aklr.core.contract.reference import OpReference
-from aklr.ops.topk.reference import AnyOrderInFullRowsReference
+from aklr.plugins.aiter.topk.reference import AnyOrderInFullRowsReference
 
 __all__ = [
     "ROPE_DIM",

@@ -19,7 +19,7 @@ sources:
 
 One FlyDSL file, `6e2fcc9582a2ebc7`, lists three Points of `dsa_sparse_mla_decode@1.0`, the decode attention of
 GLM-5.2 at 8 heads per rank (TP8). Its workloads carry no `speedup` yet, so dispatch serves them only once CI has
-written one that qualifies (`aklr/ops/README.md` § Environment variables). It embeds its source as
+written one that qualifies (`aklr/plugins/aiter/README.md` § Environment variables). It embeds its source as
 `kernel.sources[0].content` (`kernel.py`); function names below are in it. The padded DeepSeek-V4 pool of
 `flash_mla_with_kvcache@1.0` is a different contract, served by a two-launch kernel for 64 heads:
 [mla_sparse_fp8_kv_pool.md](mla_sparse_fp8_kv_pool.md).
@@ -33,7 +33,7 @@ written one that qualifies (`aklr/ops/README.md` § Environment variables). It e
   output SQNR ≥ 20 dB against the reference (S9).
 - Points, three pairs and nothing between them: (n_tokens, n_slots) = (32, 65536), (128, 262144) and (256,
   524288), each with `sm_scale` 0.0625. Dispatch matches `n_tokens` exactly. `n_slots` is `any_size`, so once a
-  Point is served, its token count is served at every pool size (`aklr/ops/README.md` § Inputs and workloads);
+  Point is served, its token count is served at every pool size (`aklr/plugins/aiter/README.md` § Inputs and workloads);
   bench times only pools of tokens × 2048 rows (36, 144 and 288 MiB).
 - Not covered: the other 33 decode sizes sglang pads TP8 batches to and the 16-head schema name (#66's files, and
   [dsa_sparse_mla_16_heads.md](dsa_sparse_mla_16_heads.md)); another top-k or head count; draft steps of speculative decoding and a q that is not one contiguous
@@ -258,7 +258,7 @@ python -m aklr validate aklr/plugins/sglang/layers/dsa_backend/impls/flydsl/dsa_
 ```
 
 It runs validate's two stages, times the kernel against the baseline and against the file main serves at each
-Point, and writes `aklr_validation/report.json` and `aklr_validation/report.md` (`aklr/ops/README.md` §
+Point, and writes `aklr_validation/report.json` and `aklr_validation/report.md` (`aklr/plugins/aiter/README.md` §
 Commands). Once the file is on the base, bench skips it with `--base` set, and without `--base` it is timed
 against the baseline alone (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). On main from
 6d7cfec on, the files it is paired with are PR #66's at 32 and 128 tokens and `fbe6ddab5dac5958` at 256. E1's
@@ -272,7 +272,7 @@ local result does not count; CI's measurement is the one dispatch reads. To read
 Delete the file in a PR: once served, its three Points fall back to the files main serves there (since 6d7cfec,
 PR #66's at 32 and 128 tokens and `fbe6ddab5dac5958` at 256). Dispatch
 stops serving a Point whose measured speedup falls under `AKLR_MIN_SPEEDUP` without a rollback
-(`aklr/ops/README.md` § Environment variables). `AKLR_DISABLE=dsa_sparse_mla_decode@1.0` sends every head count
+(`aklr/plugins/aiter/README.md` § Environment variables). `AKLR_DISABLE=dsa_sparse_mla_decode@1.0` sends every head count
 of the contract back to sglang's own kernel. Roll back for a wrong output CI does not catch: the workspace written
 by other kernels inside a model's graph, a flag buffer shared between queues, more concurrent calls than the two
 tested or other kernels resident beside it (§ Counter-signals), or a FlyDSL or LLVM upgrade.

@@ -7,7 +7,7 @@ flydsl: 0.3.2
 basis: single-observation
 sources:
   - "aklr/core/validation/stages/_bench/_evaluation/_candidate.py:315"
-  - "aklr/ops/gemm/contract.py:306"
+  - "aklr/plugins/aiter/gemm/contract.py:306"
 ---
 
 # A wrong baseline
@@ -38,7 +38,7 @@ called directly, not through AKLR:
   MX result against an fp32 reference.
 - AKLR's bench calls the contract's baseline once; one that raises `NotImplementedError` gives
   `baseline_failed`, but the baseline's output is compared with nothing (S1). The candidate is checked against
-  the reference (`aklr/ops/README.md` § Schema fields), so a wrong baseline does not fail a correct
+  the reference (`aklr/plugins/aiter/README.md` § Schema fields), so a wrong baseline does not fail a correct
   candidate: it becomes the denominator of the Point's `speedup`.
 
 ## How to detect
@@ -68,7 +68,7 @@ called directly, not through AKLR:
   `dbd8bf5`, AKLR's baseline aiter, with scales padded `0x7F` (E5, E6). Not re-checked through AKLR's bench.
 - No `gemm_a4w4_mxfp4` schema is committed, so no recorded AKLR Point is known to be affected. Since #130
   `E8M0Scales` pads with `0x00` and does not reach the a4w4 item; scales padded with `0x7F` elsewhere still do.
-  `torch._scaled_mm` is not one of AKLR's baselines (`aklr/ops/gemm/baseline.py`); the hipBLASLt items matter
+  `torch._scaled_mm` is not one of AKLR's baselines (`aklr/plugins/aiter/gemm/baseline.py`); the hipBLASLt items matter
   when you build your own vendor column or reference.
 
 ## Evidence
@@ -83,6 +83,6 @@ kept. E3 is in the run's own records.
 - E5 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0 aiter dbd8bf5, N=3 calls per cell, SNR against the fp64 product of the dequantized operands] `gemm_a4w4` as `GemmA4w4Mxfp4Baseline` calls it (`bpreshuffle=True`), M×N 1024×1024 and 256×3072: with the scale padding at `0x7F`, 5.93–10.88 dB at K = 2880, 2944 and 3008 and 7.41–7.54 dB at K = 4160, none raising; with it at `0x00` or with aiter's own `dynamic_mxfp4_quant(shuffle=True)` scales, 55.59–55.62 dB; the CK path `gemm_a4w4_blockscale` raised `This GEMM is not supported!` at those K (MXFP4 dense GEMM)
 - E6 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0 (HIP 7.15) hipBLASLt, N=8 calls per shape, SNR against the fp64 product of the dequantized operands, each call compared bitwise with the first] `torch._scaled_mm` MXFP8 with bf16 output: 49.60 dB at 4096×4096×2944, 8192×5120×4224 and three more shapes with K % 256 == 128, every call bit-identical and none raising, as at K % 256 == 0 (49.59–49.61 dB) (MX dense GEMM)
 - S1 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:323 `run_baseline` calls `request.contract.baseline.baseline(...)` (:333) and discards its output; only `NotImplementedError` becomes `baseline_failed` (:194-195)
-- S3 aklr/ops/gemm/contract.py:312: `k` axis 64..65536, `multiple_of=64`; `GemmA4w4Mxfp4Baseline` calls `aiter.ops.gemm_op_a4w4.gemm_a4w4` at aklr/ops/gemm/baseline.py:82
+- S3 aklr/plugins/aiter/gemm/contract.py:312: `k` axis 64..65536, `multiple_of=64`; `GemmA4w4Mxfp4Baseline` calls `aiter.ops.gemm_op_a4w4.gemm_a4w4` at aklr/plugins/aiter/gemm/baseline.py:82
 - S4 the adapter's K padding (data 0, scale 127) and its extra-work percentage
-- S5 aklr/core/contract/semantics/_layouts.py:145 at 6b6b34e: `E8M0Scales` fills the padding of the scales with `0x7F` (e8m0 1.0); the `gemm_a4w4_mxfp4` contract stores its scales as `E8M0Scales(block_size=32, pad_to=(256, 8), shuffled=True)` (aklr/ops/gemm/contract.py:302)
+- S5 aklr/core/contract/semantics/_layouts.py:145 at 6b6b34e: `E8M0Scales` fills the padding of the scales with `0x7F` (e8m0 1.0); the `gemm_a4w4_mxfp4` contract stores its scales as `E8M0Scales(block_size=32, pad_to=(256, 8), shuffled=True)` (aklr/plugins/aiter/gemm/contract.py:302)

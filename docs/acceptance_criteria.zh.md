@@ -15,7 +15,7 @@
 - 一个 kernel 文件至少有一个 workload 结果正确、且快 5% 或以上，才能合入。否则 validation 报
   `no_qualifying_workload`，不通过。
 - 运行时，AKLR 只在快 5% 或以上的 workload 上使用这个 kernel，其他 workload 运行原来的代码。
-- baseline 写在算子的 `baseline.py` 里。`aklr/ops/` 下的算子，baseline 通常是 AITER 的算子；插件算子的 baseline 是
+- baseline 写在算子的 `baseline.py` 里。`aklr/plugins/aiter/` 下的算子，baseline 通常是 AITER 的算子；插件算子的 baseline 是
   SGLang 或 vLLM 原来的代码。
 
 ## 端到端标准：2%
@@ -30,7 +30,7 @@
 | 新增 route（`@sglang_route`、`@vllm_route` 或 `@sglang_call_route`） | 必须 |
 | 让已有 route 处理更多情况，比如新增一个分支，或支持一种新的 serving 配置 | 必须 |
 | 给已有算子或 route 新增、修改 kernel 或 workload | 建议提供，非必须 |
-| 在 `aklr/ops/` 新增算子 | 建议提供，非必须 |
+| 在 `aklr/plugins/aiter/` 新增算子 | 建议提供，非必须 |
 
 ### 报告什么
 

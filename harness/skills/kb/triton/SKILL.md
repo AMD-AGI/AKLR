@@ -39,7 +39,7 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
 |Split-KV attention|[attention](attention.md) §1–§2, §5, §10|
 |GDN, 1 token/step or chunks (schedule per Point: §8)|[GDN](gdn.md)|
 |Ruler|`harness/skills/read-validation/references/ruler.md`|
-|SA0–SA5, ABI|`aklr/ops/README.md` § The kernel section and ABI|
+|SA0–SA5, ABI|`aklr/plugins/aiter/README.md` § The kernel section and ABI|
 |Cross-language|[KB](../SKILL.md)|
 
 ## Rules for every Triton or Gluon kernel in AKLR

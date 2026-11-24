@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
-from aklr.ops.rms_norm.api import add_rms_norm, rms_norm
 from aklr.plugins.aiter.provider._base import offer, selector, served
+from aklr.plugins.aiter.rms_norm.api import add_rms_norm, rms_norm
 
 
 @selector("rmsnorm", version=2)
