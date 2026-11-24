@@ -37,7 +37,7 @@ Install it separately in each agent you use. Inside an AKLR checkout you need no
 /plugin install aklr@amd-aklr
 ```
 
-Skills run as `/aklr:<skill>`, for example `/aklr:kb`, and subagents
+Skills run as `/aklr:<skill>`, for example `/aklr:kernel-optimization-book`, and subagents
 as `aklr:<name>`. Update with `claude plugin update aklr@amd-aklr`, then `/reload-plugins`.
 On a machine without a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` first.
 

@@ -38,6 +38,21 @@ repos:
         additional_dependencies: [pyyaml==6.0.3, jsonschema==4.25.1]
         files: ^benchmarks/agentx/(recipes/|agentx\.yaml$)
         pass_filenames: false
+      # Checks the whole book, not only the changed pages: an edit can break another page's link or section number.
+      - id: kernel-optimization-book
+        name: lint the kernel optimization book
+        entry: python harness/skills/kernel-optimization-book/maintenance/kb_lint.py --errors-only
+        language: python
+        additional_dependencies: [pyyaml==6.0.3]
+        files: ^harness/skills/kernel-optimization-book/
+        pass_filenames: false
+      - id: kernel-optimization-book-indexes
+        name: check the generated indexes of the kernel optimization book
+        entry: python harness/skills/kernel-optimization-book/maintenance/kb_index.py --check
+        language: python
+        additional_dependencies: [pyyaml==6.0.3]
+        files: ^harness/skills/kernel-optimization-book/
+        pass_filenames: false
       - id: tests-layout
         name: tests layout (tests/AGENTS.md)
         entry: python3 tests/check_layout.py

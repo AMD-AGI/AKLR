@@ -23,7 +23,7 @@ def reference_contracts(base: str, head: str) -> set[str]:
         if status not in (b"A", b"M", b"D") or {old_mode, new_mode} - {b"000000", b"100644"}:
             return set()
         # Kernel PRs may also update a case note; these Markdown files are not test inputs.
-        if re.fullmatch(r"harness/skills/kb/cases/[a-zA-Z0-9_-]+\.md", path):
+        if re.fullmatch(r"harness/skills/kernel-optimization-book/cases/[a-zA-Z0-9_-]+\.md", path):
             continue
         if not path.startswith("aklr/plugins/aiter/") or ValidationScope.path_kind(path) != "schema_data":
             return set()

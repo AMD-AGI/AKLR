@@ -42,7 +42,8 @@ For a Triton or Gluon kernel, finalize without `--review-guide` and skip distill
 Start long steps as remote background tasks and return their handle. KernelForge has no spending limit of
 its own, so the model bound holds only through time: every model-calling step gets a `timeout` whose
 hours times `campaign.model_usd_per_hour` fit in the model USD the campaign has left. For kernel
-reasoning read `harness/skills/kb/SKILL.md`.
+reasoning read `harness/skills/kernel-optimization-book/SKILL.md`, and `harness/skills/aklr-kernel-rules/SKILL.md` for
+what AKLR requires of a kernel.
 
 ## Cleanup
 

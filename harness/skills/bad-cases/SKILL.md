@@ -29,4 +29,4 @@ Add one file under `cases/` with these sections, a few lines each:
 - **Check**: questions that spot it in a code change.
 
 Then add a row to the table above. Only add mistakes that really happened. Kernel performance tips and
-measurement traps go to `kb` instead.
+measurement traps go to `kernel-optimization-book` instead.

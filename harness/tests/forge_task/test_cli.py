@@ -62,8 +62,9 @@ def test_prepare_writes_the_task_and_prints_kernelforges_command(aklr_root: Path
     assert command[command.index("--driver") + 1] == str(workspace_dir / "driver.py")
     assert command[command.index("--baseline-json") + 1] == str(run_dir.resolve() / "baseline.json")
     assert _skill_dirs(command) == [
-        str(aklr_root / "harness" / "skills" / "kb"),
-        str(aklr_root / "harness" / "skills" / "kb" / "flydsl"),
+        str(aklr_root / "harness" / "skills" / "kernel-optimization-book"),
+        str(aklr_root / "harness" / "skills" / "kernel-optimization-book" / "flydsl"),
+        str(aklr_root / "harness" / "skills" / "aklr-kernel-rules"),
     ]
     assert {"--paired-keep", "--early-stop"} <= set(command)
 
@@ -118,14 +119,15 @@ def _skill_dirs(command: list[str]) -> list[str]:
     ("backend", "skill"),
     [("triton", "triton"), ("gluon", "triton")],
 )
-def test_the_agents_read_the_wiki_and_the_skill_of_the_language(
+def test_the_agents_read_the_book_the_skill_of_the_language_and_the_kernel_rules(
     aklr_root: Path, tmp_path: Path, capsys, backend, skill
 ):
     assert _prepare(aklr_root, tmp_path, "--kernel-backend", backend) == 0
     command = _printed_command(capsys.readouterr().out)
     assert _skill_dirs(command) == [
-        str(aklr_root / "harness" / "skills" / "kb"),
-        str(aklr_root / "harness" / "skills" / "kb" / skill),
+        str(aklr_root / "harness" / "skills" / "kernel-optimization-book"),
+        str(aklr_root / "harness" / "skills" / "kernel-optimization-book" / skill),
+        str(aklr_root / "harness" / "skills" / "aklr-kernel-rules"),
     ]
 
 
