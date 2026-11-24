@@ -753,48 +753,6 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"n_valid_rows": 2, "write_bank": False},
         layout_variant_name="row_major",
     ),
-    # GLM-5.2's absorbed MLA shrunk: its 192-wide position-free query part (a full and a
-    # half fp8 group) and 64-wide RoPE part, four heads, a 128-wide latent
-    PointSpec(
-        contract_id="mla_kc_rope_cache@1.0",
-        axes={
-            "n_tokens": 4,
-            "n_heads": 4,
-            "qk_nope_dim": 192,
-            "kv_lora_rank": 128,
-            "kv_dim": 192,
-            "latent_dim": 448,
-            "n_slots": 64,
-            "n_positions": 128,
-        },
-        dtypes={
-            "q": "bfloat16",
-            "qkv_latent": "bfloat16",
-            "kv_latent": "bfloat16",
-            "w_kc": "float8_e4m3fn",
-            "w_scale": "float32",
-            "cos_cache": "bfloat16",
-            "sin_cache": "bfloat16",
-            "positions": "int64",
-            "out_cache_loc": "int64",
-            "kv_cache": "float8_e4m3fn",
-            "q_cat": "float8_e4m3fn",
-        },
-        attrs={},
-        layout_variant_name="row_major",
-    ),
-    PointSpec(
-        contract_id="mla_vc@1.0",
-        axes={"n_tokens": 4, "n_heads": 4, "kv_lora_rank": 256, "v_head_dim": 64},
-        dtypes={
-            "attn_output": "bfloat16",
-            "w_vc": "float8_e4m3fn",
-            "w_scale": "float32",
-            "attn_bmm_output": "bfloat16",
-        },
-        attrs={},
-        layout_variant_name="row_major",
-    ),
     # GLM-5.2's qkv_a projection shrunk: a 512-wide hidden state into a 512-wide q latent, a
     # 128-wide KV latent and its 64-wide RoPE key
     PointSpec(
@@ -824,6 +782,24 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         dtypes={"attn_output": "bfloat16", "w_vc": "bfloat16", "output": "bfloat16"},
         attrs={},
         layout_variant_name="row_major",
+    ),
+    # DeepSeek-V4's sqrtsoftplus router shrunk to aiter topk_gating's smallest expert count:
+    # three routed experts and the fused shared one, then with padded rows (DP attention)
+    *(
+        PointSpec(
+            contract_id="deepseek_v4_router@1.0",
+            axes={"n_tokens": 5, "n_experts": 64, "n_slots": 4},
+            dtypes={
+                "router_logits": "bfloat16",
+                "correction_bias": "bfloat16",
+                "num_token_non_padded": "int32" if padded else None,
+                "topk_weights": "float32",
+                "topk_ids": "int32",
+            },
+            attrs={"n_shared": 1, "renormalize": True, "has_num_token_non_padded": padded},
+            layout_variant_name="row_major",
+        )
+        for padded in (False, True)
     ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
@@ -867,9 +843,8 @@ GFX950_CONTRACT_IDS = frozenset(
         "gated_attention_decode@1.0",
         "gated_attention_prefill_group_fp8_quant@1.0",
         "gated_attention_prefill@1.0",
-        "mla_kc_rope_cache@1.0",
         "mla_qkv_a_norm@1.0",
-        "mla_vc@1.0",
         "kda_chain_verify_ring@1.0",
+        "deepseek_v4_router@1.0",
     }
 )

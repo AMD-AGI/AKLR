@@ -57,8 +57,8 @@ run, after the lint/audit job passes:
 | Push to `main` | `aklr-safe` (existing default) |
 | Manual run | Choose `aklr-safe` or `aklr-gpu` in the `gpu_runner` dropdown; defaults to SaFE |
 
-Selection is defined in `.github/workflows/ci.yaml`; no repository Actions variable is
-needed. Adding or removing a label restarts the PR workflow and cancels its previous run.
+Selection is defined in `.github/workflows/ci.yaml`. Adding or removing a label restarts the PR
+workflow and cancels its previous run.
 To switch a direct PR run back to SaFE, remove `ci:gpu-direct` and keep `ci:gpu`.
 
 SaFE workloads carry a priority; `aklr-gpu` has none:

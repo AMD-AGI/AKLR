@@ -522,6 +522,7 @@ mla_decode_fwd_n_heads#
 mla_decode_fwd_cprr_query_length#_n_heads#
 mla_decode_fwd_cprr_cp2_query_length#_n_heads#
 mla_decode_fwd_cprr_cp4_query_length#_n_heads#
+mla_kc_rope_cache_n_heads#_qk_nope_dim#_kv_lora_rank#_kv_dim#_latent_dim#
 mla_prefill_varlen_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_no_fp8_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_prefix_n_heads#_qk_head_dim#_v_head_dim#
@@ -534,6 +535,7 @@ mla_prefill_varlen_lse_prefix_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_lse_prefix_no_causal_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_lse_prefix_no_fp8_n_heads#_qk_head_dim#_v_head_dim#
 mla_prefill_varlen_lse_prefix_no_fp8_no_causal_n_heads#_qk_head_dim#_v_head_dim#
+mla_vc_n_heads#_kv_lora_rank#_v_head_dim#
 paged_attention_decode_n_heads#_n_kv_heads#_head_dim#_block_size#
 paged_attention_decode_kv_split_pages_n_heads#_n_kv_heads#_head_dim#_block_size#
 paged_attention_decode_query_float16_n_heads#_n_kv_heads#_head_dim#_block_size#
@@ -542,6 +544,8 @@ per_group_quant_fp8_hidden_size#
 per_group_quant_mxfp8_hidden_size#
 rms_norm_hidden_size#
 rms_norm_x_float16_hidden_size#
+situv2_a4w4_moe_model_dim#_n_experts#_topk#_inter_dim#
+situv2_a4w4_moe_a16w4_shuffled_model_dim#_n_experts#_topk#_inter_dim#
 sparse_prefill_mxfp8_n_heads#
 topk_transform_paged_topk#
 topk_transform_paged_has_page_tables_topk#

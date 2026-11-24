@@ -17,13 +17,12 @@ import torch
 
 from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.aiter.situv2_a4w4_moe.api import situv2_a4w4_moe
+from aklr.ops.situv2_a4w4_moe.api import situv2_a4w4_moe
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
 moe = importlib.import_module("aklr.plugins.aiter.provider.moe")
 topk = importlib.import_module("aklr.plugins.aiter.provider.topk")
-moe_mapping = importlib.import_module("aklr.plugins.aiter.fused_moe")
 aklr_fused_moe = importlib.import_module("aklr.ops.fused_moe.api").fused_moe
 
 BF16, F32, FP8 = torch.bfloat16, torch.float32, torch.float8_e4m3fn
@@ -238,9 +237,9 @@ def stand_in_aiter(monkeypatch):
     monkeypatch.setitem(sys.modules, "aiter.fused_moe", fused_moe)
     monkeypatch.setitem(sys.modules, "aiter.presorted_moe", presorted_moe)
     monkeypatch.delenv(HERD, raising=False)
-    moe_mapping._takes_gate_up_interleave.cache_clear()
+    moe._takes_gate_up_interleave.cache_clear()
     yield state
-    moe_mapping._takes_gate_up_interleave.cache_clear()
+    moe._takes_gate_up_interleave.cache_clear()
 
 
 @pytest.fixture

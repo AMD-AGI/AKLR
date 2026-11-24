@@ -30,6 +30,10 @@ env:
     from aklr.core.validation.stages.validation_scope import ValidationScope
     scope = ValidationScope.of_working_tree(sys.argv[1], None)
     sys.exit("core" in map(scope.path_kind, scope.changed_paths()))
+  AKLR_SAFE_API_URL: ${{ vars.AKLR_SAFE_API_URL }}
+  AKLR_SAFE_WORKSPACE: ${{ vars.AKLR_SAFE_WORKSPACE }}
+  AKLR_SAFE_RESOURCES: ${{ vars.AKLR_SAFE_RESOURCES }}
+  AKLR_SAFE_CA_URLS: ${{ vars.AKLR_SAFE_CA_URLS }}
 
 on:
   workflow_dispatch:
@@ -296,7 +300,7 @@ jobs:
           echo "::group::Run unit tests ($TESTS)"
           tests=0
           # shellcheck disable=SC2086 # TESTS is a list of paths
-          timeout -k 60s 25m python3 -m coverage run -m pytest -v $TESTS \
+          timeout -k 60s 45m python3 -m coverage run -m pytest -v $TESTS \
             --timeout=600 --timeout-method=thread \
             --junitxml="$reports/test-reports/aklr.xml" \
             2>&1 | tee "$reports/test-reports/aklr.log" || tests=$?
@@ -313,11 +317,7 @@ jobs:
           [[ ${MEASURED_BY_BOT:-} != true ]] || flags+=(--allow-measured-edits)
           if [[ -n ${AKLR_BASELINE_AITER:-} ]]; then
             echo '::group::Validate aklr/ops'
-            # FIXME: mega_moe's baseline JIT-builds mori's device bitcode, which misses TheRock's
-            # <libdrm/drm.h> (mori/jit/core.py::_collect_include_dirs, ROCm/mori 29e0c086); measure
-            # mega_moe again once the image ships a mori that finds it.
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --exclude aklr/ops/mega_moe \
-              --out "$reports/validation-report"
+            python3 -m aklr validate "${flags[@]}" --under aklr/ops --out "$reports/validation-report"
           else
             : "${PLUGINS:?}"
             echo "::group::Validate plugins ($PLUGINS), check aklr/ops"
@@ -616,3 +616,48 @@ jobs:
           else
             echo '::warning::Bot PR checks did not pass; left open for review'
           fi
+
+  # Rebuilds site-data/kernels from main's tip after every main push run, after publish-measurement
+  # (a bot squash merged there is on main by then; its [skip ci] starts no run of its own) and with
+  # nothing measured too: a PR may add or withdraw kernels. Reads only main's committed schemas.
+  publish-kernels:
+    needs: publish-measurement
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AKLR_BOT_LOGIN != ''
+    runs-on: ubuntu-latest
+    environment: bot
+    timeout-minutes: 15
+    # Writes use the App token, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    # Every CI that writes site-data shares this group.
+    concurrency:
+      group: site-data
+      cancel-in-progress: false
+    steps:
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      # main's tip, not this run's commit; the history holds the bot's measurement commits.
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - *setup_python
+      - *install_cpu_deps
+      - name: Rebuild site-data/kernels
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          PYTHONPATH=benchmarks/kernels bash .github/scripts/commit_site_data.sh kernels \
+            "kernels: main ${sha::12} (run $GITHUB_RUN_ID)" \
+            python3 -m kernels_report --run-id "$GITHUB_RUN_ID" --run-url "$RUN_URL"

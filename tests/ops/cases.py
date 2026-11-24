@@ -725,6 +725,65 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
             ("row_major", 5, 4, (2047, 0), 8, 1, 128, 32, 96),
         )
     ),
+    # Kimi-K3's a4w4 experts shrunk, laid out as vLLM holds them for aiter
+    PointSpec(
+        contract_id="situv2_a4w4_moe@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_experts": 4, "topk": 2, "inter_dim": 128},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "w1": "float4_e2m1",
+            "w2": "float4_e2m1",
+            "topk_weights": "float32",
+            "topk_ids": "int32",
+            "w1_scale": "float8_e8m0",
+            "w2_scale": "float8_e8m0",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="a16w4_shuffled",
+    ),
+    # GLM-5.2's absorbed MLA shrunk: its 192-wide position-free query part (a full and a
+    # half fp8 group) and 64-wide RoPE part, four heads, a 128-wide latent
+    PointSpec(
+        contract_id="mla_kc_rope_cache@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_heads": 4,
+            "qk_nope_dim": 192,
+            "kv_lora_rank": 128,
+            "kv_dim": 192,
+            "latent_dim": 448,
+            "n_slots": 64,
+            "n_positions": 128,
+        },
+        dtypes={
+            "q": "bfloat16",
+            "qkv_latent": "bfloat16",
+            "kv_latent": "bfloat16",
+            "w_kc": "float8_e4m3fn",
+            "w_scale": "float32",
+            "cos_cache": "bfloat16",
+            "sin_cache": "bfloat16",
+            "positions": "int64",
+            "out_cache_loc": "int64",
+            "kv_cache": "float8_e4m3fn",
+            "q_cat": "float8_e4m3fn",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="mla_vc@1.0",
+        axes={"n_tokens": 4, "n_heads": 4, "kv_lora_rank": 256, "v_head_dim": 64},
+        dtypes={
+            "attn_output": "bfloat16",
+            "w_vc": "float8_e4m3fn",
+            "w_scale": "float32",
+            "attn_bmm_output": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose backend runs only on gfx950 (fp4, dsv4 MLA, e4m3fn bytes)
 SMALL_POINTS += (
@@ -813,6 +872,8 @@ GFX950_CONTRACT_IDS = frozenset(
         "mega_moe@1.0",
         "flash_mla_with_kvcache@1.0",
         "mla_decode_fwd@1.0",  # aiter's ASM MLA
+        "mla_kc_rope_cache@1.0",
+        "mla_vc@1.0",
         "mla_decode_fwd_cprr@1.0",
         "mla_prefill_varlen@1.0",
         "mla_prefill_varlen_lse@1.0",
@@ -820,6 +881,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "fp8_paged_mqa_logits_verify@1.0",
         "per_group_quant_fp8@1.0",
         "per_group_quant_mxfp8@1.0",
+        "situv2_a4w4_moe@1.0",
         "sparse_prefill_mxfp8@1.0",
     }
 )
