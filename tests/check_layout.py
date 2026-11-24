@@ -16,7 +16,9 @@ def main() -> int:
             errors.append(f"{directory}/: no __init__.py")
     for path in paths:
         is_test = path.name.startswith("test_")
-        package = Path("aklr", *path.parts[1:-1])
+        # tests/benchmarks/ tests benchmarks/ at the repository root, outside aklr/
+        root = Path() if path.parts[1] == "benchmarks" else Path("aklr")
+        package = root.joinpath(*path.parts[1:-1])
         if is_test and not package.is_dir():
             errors.append(f"{path}: no {package}/ to test; a test's directory mirrors aklr/")
         for node in ast.walk(ast.parse(path.read_text(), str(path))):
