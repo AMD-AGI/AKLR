@@ -214,7 +214,10 @@
       "scalars": {
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.482,
+      "microseconds": 14.1
     }
   ],
   "layout_variants": {
