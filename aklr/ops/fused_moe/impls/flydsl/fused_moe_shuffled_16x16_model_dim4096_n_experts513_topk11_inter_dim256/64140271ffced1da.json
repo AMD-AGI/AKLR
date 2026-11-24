@@ -159,23 +159,23 @@
         "n_tokens": 48
       },
       "accuracy": "passed",
-      "speedup": 1.267,
-      "microseconds": 91.7
+      "speedup": 1.09,
+      "microseconds": 92.4
     },
     {
       "axes": {
         "n_tokens": 56
       },
       "accuracy": "passed",
-      "speedup": 1.284,
-      "microseconds": 100.0
+      "speedup": 1.09,
+      "microseconds": 102.0
     },
     {
       "axes": {
         "n_tokens": 64
       },
       "accuracy": "passed",
-      "speedup": 1.256,
+      "speedup": 1.112,
       "microseconds": 104.0
     },
     {
@@ -183,7 +183,7 @@
         "n_tokens": 72
       },
       "accuracy": "passed",
-      "speedup": 1.225,
+      "speedup": 1.232,
       "microseconds": 115.0
     },
     {
@@ -191,7 +191,7 @@
         "n_tokens": 80
       },
       "accuracy": "passed",
-      "speedup": 1.237,
+      "speedup": 1.242,
       "microseconds": 117.0
     },
     {
@@ -199,48 +199,48 @@
         "n_tokens": 88
       },
       "accuracy": "passed",
-      "speedup": 1.249,
-      "microseconds": 120.0
+      "speedup": 1.241,
+      "microseconds": 119.0
     },
     {
       "axes": {
         "n_tokens": 96
       },
       "accuracy": "passed",
-      "speedup": 1.263,
-      "microseconds": 124.0
+      "speedup": 1.26,
+      "microseconds": 125.0
     },
     {
       "axes": {
         "n_tokens": 104
       },
       "accuracy": "passed",
-      "speedup": 1.254,
-      "microseconds": 127.0
+      "speedup": 1.263,
+      "microseconds": 126.0
     },
     {
       "axes": {
         "n_tokens": 112
       },
       "accuracy": "passed",
-      "speedup": 1.249,
-      "microseconds": 128.0
+      "speedup": 1.263,
+      "microseconds": 126.0
     },
     {
       "axes": {
         "n_tokens": 120
       },
       "accuracy": "passed",
-      "speedup": 1.287,
-      "microseconds": 130.0
+      "speedup": 1.278,
+      "microseconds": 129.0
     },
     {
       "axes": {
         "n_tokens": 128
       },
       "accuracy": "passed",
-      "speedup": 1.263,
-      "microseconds": 133.0
+      "speedup": 1.272,
+      "microseconds": 131.0
     }
   ],
   "layout_variants": {
