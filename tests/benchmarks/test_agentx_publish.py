@@ -179,8 +179,13 @@ def test_only_main_schedules_and_manual_runs_publish():
 def test_the_site_workflow_deploys_only_after_main_runs():
     site = workflow("site.yaml")
     run = site[True]["workflow_run"]
-    assert (run["workflows"], run["types"], run["branches"]) == (["AKLR-agentx-ci"], ["completed"], ["main"])
+    assert (run["workflows"], run["types"], run["branches"]) == (
+        ["AKLR-agentx-ci", "AKLR-CI"],
+        ["completed"],
+        ["main"],
+    )
     assert workflow("agentx-ci.yaml")["name"] == "AKLR-agentx-ci"
+    assert workflow("ci.yaml")["name"] == "AKLR-CI"
     assert site["jobs"]["deploy"]["permissions"]["pages"] == "write"
     assert "github.event.workflow_run.event" in site["jobs"]["deploy"]["if"]
     data = next(step for step in site["jobs"]["deploy"]["steps"] if step.get("id") == "data")

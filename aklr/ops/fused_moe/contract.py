@@ -158,9 +158,11 @@ FUSED_MOE = OpContract(
         # aiter's bf16 swiglu splits model_dim in two, each half whole 256-wide tiles
         "activation != 'swiglu' or model_dim % 512 == 0",
         "(not has_num_local_tokens) or (has_expert_mask and gate_mode == 'interleave')",
-        # Legacy's unpadded-scale check; it makes aiter's scale padding a no-op.
+        # SwiGLU also occurs at inter_dim=384 (MiniMax TP8). Its shuffled scale
+        # layout pads the 12 down-projection blocks to 16; the other legacy
+        # activation paths still require padding to be a no-op.
         (
-            "activation == 'situv2' or gate_mode == 'interleave'"
+            "activation == 'situv2' or activation == 'swiglu' or gate_mode == 'interleave'"
             " or (model_dim % 256 == 0 and inter_dim % 256 == 0)"
         ),
     ),
