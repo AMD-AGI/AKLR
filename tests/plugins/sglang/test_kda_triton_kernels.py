@@ -115,3 +115,21 @@ def test_a_committed_prefill_kernel_runs_padded_sequences_from_a_zero_state(buil
         args["track_chunk_idx"] = torch.tensor([1, 3, -1, 0][: axes["n_seqs"]], dtype=torch.int32)
     outputs = _run(builder_registry, case, kernel, args)
     _untouched(args, outputs, slots)
+
+
+@pytest.mark.gfx950
+@pytest.mark.parametrize("path", _schemas("kimi_k3_sgl_kda_decode"), ids=_schema_id)
+@pytest.mark.parametrize("n_tokens", [8, 48, 128], ids=["narrow", "mid", "wide"])
+@pytest.mark.parametrize("state", ["zero", "drawn"])
+def test_a_committed_decode_kernel_normalizes_past_float32s_squares(builder_registry, path, n_tokens, state):
+    """q and k channels of 2**64: their squares pass float32, so q and k normalize to 0 (x / sqrt(inf)), as the
+    reference computes them; the out is 0 and the state only decays, where the raw q k cross term times the norms'
+    reciprocals would be inf * 0."""
+    case, kernel = _case(path, {"n_tokens": n_tokens, "n_slots": n_tokens + 1})
+    args = case.inputs()
+    heads = case.point.axes["n_heads"]
+    args["qkv"][:, : 2 * heads] = 2.0**64
+    if state == "zero":
+        args["state_cache"].zero_()
+    outputs = _run(builder_registry, case, kernel, args)
+    assert not outputs["out"].any()
