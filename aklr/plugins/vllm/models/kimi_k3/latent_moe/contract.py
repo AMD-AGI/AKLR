@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    GEMM_BF16_SNR,
     DType,
     FiniteDistribution,
     LecunNormalDistribution,
-    ToleranceBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -38,9 +38,6 @@ __all__ = ["CONTRACTS", "KIMI_K3_LATENT_MOE_TAIL"]
 
 _SAME_AS_ROUTED = DTypeSpec(same_as_tensor="routed")
 _FINITE = FiniteDistribution()
-# a kernel's bf16 rounding where the reference's differs (see each use), plus one bf16 rounding (2**-7): the
-# reference rounds its outputs to bf16 too, and the compare no longer adds the output's own
-_ONE_ROUNDING = ToleranceBound(absolute_tolerance=2.0**-5, relative_tolerance=2.0**-8 + 2.0**-7)
 
 KIMI_K3_LATENT_MOE_TAIL = OpContract(
     contract_id="kimi_k3_latent_moe_tail@1.0",
@@ -61,10 +58,10 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
     },
     attrs={
         "tp_size": attr(
-            "Ranks of the tensor-parallel group.", 8, 1, default=8, param_name="tp_size", abbrev="tp"
+            "Ranks of the tensor-parallel group.", 8, 1, 2, 4, default=8, param_name="tp_size", abbrev="tp"
         ),
     },
-    constraints=("hidden_size % tp_size == 0", "latent_size % tp_size == 0"),
+    constraints=("hidden_size % tp_size == 0",),
     inputs={
         "routed": TensorSpec(
             description="This rank's partial of the routed experts' latent output (vLLM's fused_output).",
@@ -79,9 +76,10 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
             dtype=_SAME_AS_ROUTED,
             distribution=_FINITE,
             mutable=True,
-            # one bf16 rounding of shared_r + n_r @ up_weight_r.T in its own columns, float32 sums in another order:
-            # one bf16 unit apart at a tie, below 2**-7 |s_r|; the rest unchanged
-            error_bounds=_ONE_ROUNDING,
+            # its own columns one bf16 rounding of shared_r + n_r @ up_weight_r.T, whose normalized latent a kernel
+            # may round apart from the reference's at a tie: an element carries that difference of the projection in
+            # full where the sum cancels; the GEMM's common SQNR bound (bf16) holds it whatever the terms' size
+            error_bounds=GEMM_BF16_SNR,
         ),
         "up_weight": TensorSpec(
             description="This rank's rows of the routed up-projection: hidden columns r * hidden_shard .. on.",
@@ -109,9 +107,10 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
             description="The layer's MoE output, bitwise the same on every rank.",
             shape=("n_tokens", "hidden_size"),
             dtype=_SAME_AS_ROUTED,
-            # vLLM rounds a rank's own columns twice (its addmm, then the all-reduce); a kernel may round once: half
-            # a bf16 unit of shared_r + n_r @ up_weight_r.T apart, below 2**-5 for |values| < 16 (the draws: ~N(0, 2))
-            error_bounds=_ONE_ROUNDING,
+            # vLLM rounds a rank's own columns twice (its addmm, then the all-reduce), a kernel may round them once:
+            # half a bf16 unit of shared_r + n_r @ up_weight_r.T apart, which an element can carry in full where the
+            # sum over ranks cancels; the GEMM's common SQNR bound (bf16) holds that whatever the partials' size
+            error_bounds=GEMM_BF16_SNR,
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
