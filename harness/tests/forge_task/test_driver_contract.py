@@ -229,6 +229,22 @@ def test_the_published_candidate_leaves_the_checkout(run, aklr_root: Path):
     assert published == []
 
 
+def test_validating_a_committed_kernel_leaves_its_file_as_it_was(run, aklr_root: Path):
+    """A candidate whose schema text names a file the checkout holds (the starting kernel, or a candidate published
+    before) is validated in that file's place, which is then put back as it was, CI's measurements included, not
+    deleted."""
+    driver = _import_driver(run)
+    text, uuid = driver._candidate_text()
+    raw = json.loads(text)
+    raw["workloads"][0].update(accuracy="passed", speedup=1.3, microseconds=4.2)
+    committed = aklr_root / "aklr" / "ops" / "gemm" / "impls" / "flydsl" / SCHEMA_NAME / f"{uuid}.json"
+    committed.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    before = committed.read_text(encoding="utf-8")
+    _run_driver(run)
+    assert _validate_calls(aklr_root) == 1
+    assert committed.read_text(encoding="utf-8") == before
+
+
 def test_publish_keeps_the_kernel_in_the_checkout_to_commit(run, aklr_root: Path, capsys):
     from forge_task import cli
 
