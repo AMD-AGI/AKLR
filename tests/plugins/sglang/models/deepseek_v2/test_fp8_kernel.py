@@ -17,7 +17,7 @@ from tests.plugins.sglang.cases import SMALL_POINTS
 @pytest.mark.parametrize("rows", [1, 2, 4, 8])
 @pytest.mark.parametrize("inter_dim", [256, 512], ids=["tp8", "tp4"])
 @pytest.mark.parametrize("bias_dtype", ["bfloat16", "float32"])
-def test_glm_fp8_decode_rows_match_native(rows, inter_dim, bias_dtype, builder_registry):
+def test_glm_fp8_decode_rows_match_reference(rows, inter_dim, bias_dtype, builder_registry):
     point = next(
         p
         for p in SMALL_POINTS
@@ -48,10 +48,7 @@ def test_glm_fp8_decode_rows_match_native(rows, inter_dim, bias_dtype, builder_r
         arguments["correction_bias"] = torch.linspace(7.94, 8.06, point.axes["n_routed"], dtype=torch.float32)
     call = case.call(arguments, "cuda")
     call["out"] = torch.full_like(call["hidden_states"], float("nan"))
-    native = DEEPSEEK_V2_FP8_MOE.baseline.baseline(**call)
-    expected = {name: value.clone() for name, value in native.items()}
-    call["out"].fill_(float("nan"))
     BuilderRegistry.get_instance().build(matching[0])(**call)
     torch.cuda.synchronize()
-    compared = DEEPSEEK_V2_FP8_MOE.reference.check({"out": call["out"]}, expected, case.request.schema)
+    compared = case.compare({"out": call["out"]}, arguments)
     assert compared == {}, compared
