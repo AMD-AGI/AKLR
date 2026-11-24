@@ -58,7 +58,6 @@ KIMI_K3_ATTN_RES = OpContract(
     ),
     op_type="attn_res",
     axes={
-        # one workgroup per token: vLLM's batch sizes are matched by power-of-two range
         "n_tokens": axis("Tokens.", 1, 65536, is_var=True),
         "hidden_size": axis("Width of the residual stream.", 256, 8192, multiple_of=256),
         "n_bank_rows": axis("Rows the bank holds per token.", 1, 16),
@@ -192,10 +191,10 @@ def _with_fp8_out(contract: OpContract) -> OpContract:
                 description="The bf16 out of kimi_k3_attn_res@1.0 quantized per token to float8_e4m3fn.",
                 shape=_ROWS,
                 dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
-                # an element off by one fp8 step where its bf16 out (last bit free under kimi_k3_attn_res@1.0) or its
-                # row's scale crosses an fp8 rounding boundary: a step is 2**-3 relative for normals, 2**-9 below them;
-                # plus one fp8 rounding (2**-3), the output's own, which the compare no longer adds
-                error_bounds=ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-3 + 2**-3),
+                # one fp8 code apart where its bf16 out (last bit free under kimi_k3_attn_res@1.0) or its row's scale
+                # moves the value across an fp8 rounding boundary: both sides are fp8 values, and the next code is
+                # at most 2**-3 of the value away for normals, 2**-9 below them
+                error_bounds=ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-3),
             ),
             "scale": TensorSpec(
                 description="Each token's dequantization scale.",

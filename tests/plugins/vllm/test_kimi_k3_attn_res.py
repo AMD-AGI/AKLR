@@ -17,7 +17,7 @@ from aklr.core.contract.locate import committed_schema_paths, op_dir
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.vllm.models.kimi_k3.attn_res import api
-from aklr.plugins.vllm.models.kimi_k3.attn_res.contract import KIMI_K3_ATTN_RES
+from aklr.plugins.vllm.models.kimi_k3.attn_res.contract import FP8_MAX, KIMI_K3_ATTN_RES
 from tests.op_case import OpCase
 
 TOKENS, HIDDEN, ROWS = 4, 256, 4
@@ -93,11 +93,13 @@ def test_a_supported_call_hands_every_operand_over(op, write_idx, with_optionals
 
 
 @pytest.mark.gfx950
+@pytest.mark.parametrize("quant_dtype", [None, torch.float8_e4m3fn], ids=["bf16", "fp8"])
 @pytest.mark.parametrize("n_tokens", [1, 255, 256, 300])
 @pytest.mark.parametrize("n_rows", [0, 1, 3])
 @pytest.mark.parametrize("variant", ["addend_write_norm", "plain"])
-def test_the_baselines_kernel_is_vllms(n_tokens, n_rows, variant):
-    """The copy of vLLM's Triton kernel the baseline runs writes vLLM's bits: output, updated prefix and bank."""
+def test_the_baselines_kernel_is_vllms(n_tokens, n_rows, variant, quant_dtype):
+    """The copy of vLLM's Triton kernel the baseline runs writes vLLM's bits: output (with quant_dtype, the fp8
+    values and each token's scale), updated prefix and bank."""
     linear = pytest.importorskip("vllm.models.kimi_k3.amd.linear")
     from aklr.plugins.vllm.models.kimi_k3.attn_res._triton import attn_res
 
@@ -118,10 +120,39 @@ def test_the_baselines_kernel_is_vllms(n_tokens, n_rows, variant):
 
     write = n_rows if full else -1
     ours, theirs = make(), make()
-    out = attn_res(*ours, n_rows, write, 1e-6, 1e-5)
-    expected = linear.attn_res(*theirs, n_rows, write, 1e-6, 1e-5)
-    assert torch.equal(out, expected)
+    if quant_dtype is None:
+        out = attn_res(*ours, n_rows, write, 1e-6, 1e-5)
+        expected = linear.attn_res(*theirs, n_rows, write, 1e-6, 1e-5)
+        assert torch.equal(out, expected)
+    else:
+        (out, scale), (expected, expected_scale) = (
+            attn_res(*ours, n_rows, write, 1e-6, 1e-5, quant_dtype=quant_dtype, quant_max=FP8_MAX),
+            linear.attn_res(*theirs, n_rows, write, 1e-6, 1e-5, quant_dtype=quant_dtype),
+        )
+        assert torch.equal(out.view(torch.uint8), expected.view(torch.uint8))
+        assert torch.equal(scale, expected_scale)
     assert torch.equal(ours[0], theirs[0]) and torch.equal(ours[2], theirs[2])
+
+
+def test_the_reference_normalizes_rows_whose_squares_pass_float32():
+    """Rows of 2**60 with a norm: their mean square passes float32's range, the normalized mix does not (it is the
+    norm weight); the reference scales them first, as a kernel may."""
+    n, bf16 = 2, torch.bfloat16
+    rows = torch.full((n, 7168), 2.0**60, dtype=bf16)
+    call = dict(
+        prefix=rows.clone(),
+        bank=rows[:, None].repeat(1, ROWS, 1),
+        score_norm_weight=torch.zeros(7168, dtype=bf16),
+        score_proj_weight=torch.ones(7168, dtype=bf16),
+        n_valid_rows=2,
+        write_bank=False,
+        score_eps=1e-5,
+        norm_eps=1e-5,
+        addend=torch.zeros(n, 7168, dtype=bf16),
+        norm_weight=torch.full((7168,), 0.5, dtype=bf16),
+    )
+    out = KIMI_K3_ATTN_RES.reference.reference(**call)["out"]
+    assert torch.equal(out, torch.full_like(out, 0.5))
 
 
 # ---------------------------------------------------------------- the committed kernels

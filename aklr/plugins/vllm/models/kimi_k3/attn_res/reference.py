@@ -13,6 +13,15 @@ __all__ = ["KimiK3AttnResFp8Reference", "KimiK3AttnResReference"]
 _CHUNK_TOKENS = 2048  # float32 rows of 9 x 8192 per token: about 0.6 GB a chunk
 
 
+def _rsqrt_mean_square(x, eps):
+    """rsqrt(mean(x**2) + eps) over the last dim, kept dim, where squares of large rows pass float32's range: each row
+    scaled down by a power of two first (exact), its eps alike."""
+    shift = torch.frexp(x.abs().amax(-1, keepdim=True)).exponent.clamp_min(0)
+    scaled = torch.ldexp(x, -shift)
+    eps = torch.ldexp(torch.full_like(shift, eps, dtype=x.dtype), -2 * shift)
+    return torch.ldexp((scaled.square().mean(-1, keepdim=True) + eps).rsqrt(), -shift)
+
+
 class KimiK3AttnResReference(OpReference):
     def reference(
         self,
@@ -44,10 +53,10 @@ class KimiK3AttnResReference(OpReference):
                 mix = p[tokens]
             else:
                 rows = torch.cat((bank[tokens, :n_valid_rows], p[tokens, None]), dim=1)
-                scores = (rows @ score_weight) * (rows.square().mean(dim=-1) + score_eps).rsqrt()
+                scores = (rows @ score_weight) * _rsqrt_mean_square(rows, score_eps)[..., 0]
                 mix = (torch.softmax(scores, dim=-1)[..., None] * rows).sum(dim=1)
             if norm_weight is not None:
-                mix = mix * (mix.square().mean(dim=-1, keepdim=True) + norm_eps).rsqrt() * norm_weight
+                mix = mix * _rsqrt_mean_square(mix, norm_eps) * norm_weight
             out[tokens] = mix
         if write_bank:
             bank[:, n_valid_rows] = p
