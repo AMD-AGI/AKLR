@@ -4,7 +4,7 @@
 """The generated ``fast_key(call)`` closure: a call read as a Point's FastKey.
 
 Locals are the contract's names, ``_dt_<t>`` (dtypes), ``_s_<t>`` (shapes),
-``_ptr_<t>`` (data pointers), ``_bytes_<o>`` (a written tensor's storage extent), ``_r_<a>`` (raw attrs),
+``_ptr_<t>`` (data pointers), ``_bytes_<o>`` (output sizes), ``_r_<a>`` (raw attrs),
 ``_v<i>`` (variant facts) and ``_layout_variant_idx``.
 
 Like ``alloc_outputs``, it may write into ``call``: a strided view of a layout's
@@ -49,31 +49,6 @@ _DECLINE = (
 )
 
 
-def _span(t: torch.Tensor) -> int:
-    """Bytes from ``t``'s first element to the end of its last: its extent in storage, which a strided view's gaps
-    make larger than ``nbytes`` (torch's strides are never negative)."""
-    if not t.numel():
-        return 0
-    return (sum((n - 1) * s for n, s in zip(t.shape, t.stride(), strict=True)) + 1) * t.element_size()
-
-
-def _apart_in_pages(a: torch.Tensor, b: torch.Tensor, a_ptr: int, b_ptr: int) -> bool:
-    """Whether ``a`` and ``b``, whose spans meet, are rows of one page grid that never share a byte: the same row
-    stride in bytes, each row's elements dense, ``b``'s row in every page between the end of ``a``'s and the start of
-    the next (vLLM's Mamba pages: a slot's convolution state, then its recurrent state)."""
-    if a.dim() < 2 or b.dim() < 2 or not a.shape[0] or not b.shape[0]:
-        return False
-    page = a.stride(0) * a.element_size()
-    if (
-        page <= 0
-        or b.stride(0) * b.element_size() != page
-        or not (a[0].is_contiguous() and b[0].is_contiguous())
-    ):
-        return False
-    offset = (b_ptr - a_ptr) % page
-    return a[0].numel() * a.element_size() <= offset and offset + b[0].numel() * b.element_size() <= page
-
-
 class FastKeyFnGenerator(ClosureGenerator):
     """Generates ``fast_key(call)``; ``body`` grows by one ``_emit_*`` per step.
     ``read_tensors`` (tensor inputs, then required outputs) carry the axes."""
@@ -94,8 +69,6 @@ class FastKeyFnGenerator(ClosureGenerator):
             "_type": type,
             "_getattr": getattr,
             "_strided": torch.strided,
-            "_apart_in_pages": _apart_in_pages,
-            "_span": _span,
         }
         super().__init__(codec, device, scope)
         self.body: list[ast.stmt] = []
@@ -266,19 +239,16 @@ class FastKeyFnGenerator(ClosureGenerator):
 
     def _overlap_checks(self, written: str, others: list[str]) -> list[ast.stmt]:  # structure: allow S4 long caller  # fmt: skip
         """Decline when the tensor the kernel writes, ``written``, shares a byte with
-        any of ``others``: their storage extents meet (``_span``, not ``nbytes``: a strided
-        view reaches past its logical size), and they are not rows of one page grid kept
-        apart in every page."""
+        any of ``others``."""
         size, tests = f"_bytes_{written}", []
         for name in others:
             spec = self.read_tensors.get(name)  # None: an allocated output
             test = fill_expr(
-                "P < Q + _span(T) and Q < P + B and not _apart_in_pages(O, T, P, Q)",
+                "P < Q + T.nbytes and Q < P + B",
                 P=f"_ptr_{written}",
                 Q=f"_ptr_{name}",
                 T=name,
                 B=size,
-                O=written,
             )
             if spec is None or spec.present_when is not None:
                 test = fill_expr("T is not None and X", T=name, X=test)
@@ -286,7 +256,7 @@ class FastKeyFnGenerator(ClosureGenerator):
         if not tests:
             return []
         overlaps = join_tests(ast.Or(), tests)
-        return fill_statements("B = _span(O)\nif X:\n    return None", B=size, O=written, X=overlaps)
+        return fill_statements("B = O.nbytes\nif X:\n    return None", B=size, O=written, X=overlaps)
 
     def _emit_scalars(self) -> None:  # structure: allow S4 a generate() step
         for name, spec in self.contract.inputs.items():
