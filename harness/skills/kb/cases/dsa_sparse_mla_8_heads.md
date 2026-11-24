@@ -30,7 +30,7 @@ written one that qualifies (`aklr/ops/README.md` § Environment variables). It e
   `row_major`: q (tokens, 8, 576) and the pool (n_slots, 576) float8_e4m3fn, unscaled, a row being 512 latent
   values then 64 RoPE values; top-k (tokens, 2048) int32, distinct, −1 for none; `sm_scale` fp32; output (tokens,
   8, 512) bf16, 0 for a token that reads no row. `compare`: `determinism: bitwise` (two runs bit-identical),
-  `max_violation_fraction` 0, output SQNR ≥ 20 dB against the reference (S9).
+  output SQNR ≥ 20 dB against the reference (S9).
 - Points, three pairs and nothing between them: (n_tokens, n_slots) = (32, 65536), (128, 262144) and (256,
   524288), each with `sm_scale` 0.0625. Dispatch matches `n_tokens` exactly. `n_slots` is `any_size`, so once a
   Point is served, its token count is served at every pool size (`aklr/ops/README.md` § Inputs and workloads);
@@ -38,7 +38,7 @@ written one that qualifies (`aklr/ops/README.md` § Environment variables). It e
 - Not covered: the other 33 decode sizes sglang pads TP8 batches to and the 16-head schema name (#66's files, and
   [dsa_sparse_mla_16_heads.md](dsa_sparse_mla_16_heads.md)); another top-k or head count; draft steps of speculative decoding and a q that is not one contiguous
   (tokens, heads, 576) view, which the api sends back to sglang (S11).
-- Yardstick at each Point: the faster of the baseline, `dsa_sparse_mla_decode_baseline` (sglang 0.5.22's
+- Yardstick at each Point: the faster of the baseline, `DsaSparseMlaDecodeBaseline` (sglang 0.5.22's
   `triton_sparse_mla_decode_splitk`, S10), and the file main serves there (S12). All are Gluon files (schema
   language `triton`). Since 6d7cfec (#102, CI run 42549655045, measurement profile 19) main serves PR #66's
   `a9d172eb1a6783bf` at 32 tokens and `04c92e850fb6e62f` at 128, with CI speedups over the baseline of 1.226 and
@@ -206,7 +206,7 @@ read flush before each call, every participant timed once per round in a seeded 
 A speedup is the published one-sided Student-t lower bound, α 0.025 per look, of the geometric mean of the
 per-round time ratios (the bound is on the mean of their logarithms; `TimingRecord.speedup_bounds` in
 `aklr/core/validation/stages/_measure.py`); times are medians of the 16 rounds. The "baseline" participant is the
-contract's baseline function; the `baseline` path the report prints is the served file it exports (S12). One
+contract's baseline class (S12). One
 session on one GPU timed this file's predecessor (§ Counter-signals), and PR #66's two files,
 with a base that lacks those two, so the file paired with it as served was the older Gluon file at each Point, the
 one main served at 0e02a81. "This kernel" in the two tables below is that predecessor.
@@ -296,7 +296,7 @@ tested or other kernels resident beside it (§ Counter-signals), or a FlyDSL or 
 - S7 aklr/plugins/sglang/layers/dsa_backend/impls/flydsl/dsa_sparse_mla_decode_n_heads8_kv_dim576_topk2048/6e2fcc9582a2ebc7.json#kernel.py:619 the tag's multiply-add; odd `TAG_H1`, `TAG_H2` at :34–35; `dispatch.id` at :616 and `queue.ptr` at :617; `tag_lo` and `tag_hi` at :622–623; arrival word load at :635; `merge` at :657, its loads in one batch at :695; `arrive_or` at :723; fast path at :736; `vmcnt(0)` at :740; compare-swap at :747
 - S8 aklr/plugins/sglang/layers/dsa_backend/impls/flydsl/dsa_sparse_mla_decode_n_heads8_kv_dim576_topk2048/6e2fcc9582a2ebc7.json#kernel.py:794 partials, maxima and sums, and arrival words (:801) from `torch.empty` per call
 - S9 aklr/plugins/sglang/layers/dsa_backend/contract.py:60 `n_slots` `any_size`; distinct indices from −1 at :91; `SqnrBound(min_sqnr_db=20.0)` at :110
-- S10 aklr/plugins/sglang/layers/dsa_backend/baseline.py:14 `dsa_sparse_mla_decode_baseline` calls `triton_sparse_mla_decode_splitk` (:23)
+- S10 aklr/plugins/sglang/layers/dsa_backend/baseline.py:14 `DsaSparseMlaDecodeBaseline` calls `triton_sparse_mla_decode_splitk` (:23)
 - S11 aklr/plugins/sglang/layers/dsa_backend/api.py:35 speculative decoding falls back; `_whole_query` at :89
-- S12 aklr/core/validation/stages/_bench/_stage.py:232 `_incumbents`: the qualifying base file with the highest published speedup; the record's `baseline` path is the served file (:217); aklr/core/validation/stages/_bench/_evaluation/_candidate.py:414 the baseline participant is `contract.baseline()`
+- S12 aklr/core/validation/stages/_bench/_stage.py:226 `_incumbents`: the qualifying base file with the highest published speedup; aklr/core/validation/stages/_bench/_evaluation/_candidate.py:421 the baseline participant is `contract.baseline.baseline(**call)`
 - S13 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads8_kv_dim576_topk2048/43ffd5e3e5b67298.json#kernel.py:376 16 splits at 32 tokens, merge launch at :406, q copied to bf16 at :416; ae32cc132679692c.json#kernel.py:385 2 splits, merge at :401, q copied to bf16 at :409; fbe6ddab5dac5958.json#kernel.py:709 one workgroup per token at 256 tokens, q copied to bf16 at :762; a9d172eb1a6783bf.json#kernel.py:216 8 splits, merge launch at :227; 04c92e850fb6e62f.json#kernel.py:22 512 and 1024 keys per split at 128 and 256 tokens, `_finish` launch at :114; PR #66's a9d172eb1a6783bf.json#kernel.py:233 and 04c92e850fb6e62f.json#kernel.py:122 pass the fp8 `q` to `sparse_paged_mla` with `quantize_query=True`, which keeps its fp8 values (a9d172eb1a6783bf.json#kernel.py:231-232)

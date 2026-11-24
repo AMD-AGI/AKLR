@@ -14,14 +14,14 @@ Read the harness [rules](../../rules.md), [gates](../../gates.md), and current
 [gate configuration](../../gate-config.md). Read
 [references/workflow.md](references/workflow.md) before changing code,
 [references/porting-notes.md](references/porting-notes.md) while porting, and
-[references/new-op.md](references/new-op.md) when AKLR has no contract for the op.
+[docs/ops_tutorial.md](../../../docs/ops_tutorial.md) § 6 when AKLR has no contract for the op.
 `aklr/ops/README.md` is the authority on the schema format and the audit.
 
 ## Responsibilities
 
 - Pin and record the exact source revision, generator context, and provenance.
 - Map the implementation to a AKLR contract and schema name, or add the op with
-  its `<contract>_baseline`.
+  its reference and baseline classes.
 - Deliver the kernel as one schema JSON whose `kernel.sources` are
   self-contained and pass the audit, with `kernel.author` naming the generator.
 - Replace numeric or opaque artifact names with meaningful operator, variant,

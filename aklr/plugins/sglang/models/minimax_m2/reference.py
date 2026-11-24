@@ -8,74 +8,43 @@ experts' activations stay unquantized: the scale rounding of their blocks is the
 (aiter rounds a block's maximum to nearest even, others up), its error left to the bound.
 """
 
-from __future__ import annotations
+import torch
 
-from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
+from aklr.core.contract.reference import OpReference
+from aklr.ops.fused_moe.reference import mxfp4_weight
 
-from aklr.core.contract.semantics import to_float32
-
-if TYPE_CHECKING:
-    from torch import Tensor
-
-__all__ = ["minimax_m2_fp8_moe_reference", "minimax_m2_mxfp4_moe_reference"]
+__all__ = ["MinimaxM2Fp8MoeReference", "MinimaxM2Mxfp4MoeReference"]
 
 _FP8_BLOCK = 128
-_MXFP4_BLOCK = 32
 
 
-def _fp32(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-) -> Callable[..., Tensor]:
-    """Tensor argument ``name`` (its ``index`` only, if given) in fp32."""
-
-    def get(name: str, index: Any = None) -> Tensor:
-        tensor = row_major_args[name]
-        if index is not None:
-            tensor = tensor[index]
-        return to_float32(tensor, point.dtypes[name])
-
-    return get
-
-
-def _routed(point: Any, x: Tensor, router: Tensor, bias: Tensor) -> tuple[Tensor, Tensor]:
+def _routed(x, router, bias, topk):
     """Each token's topk experts by sigmoid score plus correction_bias, and their weights:
     the unbiased scores renormalized to sum 1."""
     scores = (x @ router.T).sigmoid()
-    ids = (scores + bias).topk(point.attrs["topk"], dim=-1).indices
+    ids = (scores + bias).topk(topk, dim=-1).indices
     weights = scores.gather(-1, ids)
     return ids, weights / weights.sum(dim=-1, keepdim=True)
 
 
-def _held_experts(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-    x: Tensor,
-    ids: Tensor,
-    weights: Tensor,
-    mlp: Callable[[Tensor, int], Tensor],
-) -> Tensor:
-    """The routes to the experts this rank holds, ``mlp(rows, e)`` held expert e (w1's
-    index) on its rows, weighed and summed; the routes to the others add nothing."""
-    import torch
-
-    local = ids - row_major_args["expert_offset"]
+def _held_experts(x, ids, weights, mlp, expert_offset, n_held):
+    """The routes to the ``n_held`` experts this rank holds, from ``expert_offset`` on,
+    ``mlp(rows, e)`` held expert e (w1's index) on its rows, weighed and summed; the routes to
+    the others add nothing."""
+    local = ids - expert_offset
     out = torch.zeros_like(x)
     for e in local.unique().tolist():
-        if not 0 <= e < point.axes["n_experts"]:
+        if not 0 <= e < n_held:
             continue
         tokens, slots = (local == e).nonzero(as_tuple=True)
         out.index_add_(0, tokens, weights[tokens, slots, None] * mlp(x[tokens], e))
     return out
 
 
-def _fp8_linear(x: Tensor, weight: Tensor, scale: Tensor) -> Tensor:
+def _fp8_linear(x, weight, scale):
     """x weight^T of an fp8 weight [n, k] with its scale per 128 x 128 block, x taken as the
     checkpoint's FP8 scheme quantizes it (sglang's fp8 MoE on aiter, per_128x128): in bf16,
     then each 1 x 128 group in fp8 at a scale of its amax / 448."""
-    import torch
-
     n, k = weight.shape
     block_scale = scale.repeat_interleave(_FP8_BLOCK, 0)[:n]
     weight = weight * block_scale.repeat_interleave(_FP8_BLOCK, 1)[:, :k]
@@ -87,46 +56,64 @@ def _fp8_linear(x: Tensor, weight: Tensor, scale: Tensor) -> Tensor:
     return x @ weight.T
 
 
-def _silu_and_mul(gate_up: Tensor) -> Tensor:
-    import torch
-
+def _silu_and_mul(gate_up):
     gate, up = gate_up.chunk(2, dim=-1)
     return torch.nn.functional.silu(gate) * up
 
 
-def minimax_m2_fp8_moe_reference(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-) -> Tensor:
-    """Each token's routed experts this rank holds, both linears of each an fp8 one
-    (_fp8_linear), weighed by the renormalized scores and summed."""
-    f = _fp32(point, row_major_args)
-    x = f("hidden_states")
-    ids, weights = _routed(point, x, f("router_weight"), f("correction_bias"))
+class MinimaxM2Fp8MoeReference(OpReference):
+    def reference(
+        self,
+        *,
+        hidden_states,
+        router_weight,
+        correction_bias,
+        w1,
+        w1_scale,
+        w2,
+        w2_scale,
+        topk,
+        expert_offset,
+        **_,
+    ):
+        """Each token's routed experts this rank holds, both linears of each an fp8 one
+        (_fp8_linear), weighed by the renormalized scores and summed."""
+        x = hidden_states.float()
+        ids, weights = _routed(x, router_weight.float(), correction_bias.float(), topk)
 
-    def mlp(rows: Tensor, e: int) -> Tensor:
-        gate_up = _fp8_linear(rows, f("w1", e), f("w1_scale", e))
-        return _fp8_linear(_silu_and_mul(gate_up), f("w2", e), f("w2_scale", e))
+        def mlp(rows, e):
+            gate_up = _fp8_linear(rows, w1[e].float(), w1_scale[e].float())
+            return _fp8_linear(_silu_and_mul(gate_up), w2[e].float(), w2_scale[e].float())
 
-    return _held_experts(point, row_major_args, x, ids, weights, mlp)
+        return {
+            "out": _held_experts(x, ids, weights, mlp, expert_offset, w1.shape[0]).to(hidden_states.dtype)
+        }
 
 
-def minimax_m2_mxfp4_moe_reference(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-) -> Tensor:
-    """Each token's routed experts this rank holds, their MXFP4 weights dequantized per 32
-    values, weighed by the renormalized scores and summed."""
-    f = _fp32(point, row_major_args)
-    x = f("hidden_states")
-    ids, weights = _routed(point, x, f("router_weight"), f("correction_bias"))
+class MinimaxM2Mxfp4MoeReference(OpReference):
+    def reference(
+        self,
+        *,
+        hidden_states,
+        router_weight,
+        correction_bias,
+        w1,
+        w1_scale,
+        w2,
+        w2_scale,
+        topk,
+        expert_offset,
+        **_,
+    ):
+        """Each token's routed experts this rank holds, their MXFP4 weights dequantized per 32
+        values, weighed by the renormalized scores and summed."""
+        x = hidden_states.float()
+        ids, weights = _routed(x, router_weight.float(), correction_bias.float(), topk)
 
-    def weight(name: str, e: int) -> Tensor:
-        scale = f(f"{name}_scale", e).repeat_interleave(_MXFP4_BLOCK, dim=-1)
-        return f(name, e) * scale
+        def mlp(rows, e):
+            gate_up = rows @ mxfp4_weight(w1[e], w1_scale[e]).T
+            return _silu_and_mul(gate_up) @ mxfp4_weight(w2[e], w2_scale[e]).T
 
-    def mlp(rows: Tensor, e: int) -> Tensor:
-        gate_up = rows @ weight("w1", e).T
-        return _silu_and_mul(gate_up) @ weight("w2", e).T
-
-    return _held_experts(point, row_major_args, x, ids, weights, mlp)
+        return {
+            "out": _held_experts(x, ids, weights, mlp, expert_offset, w1.shape[0]).to(hidden_states.dtype)
+        }

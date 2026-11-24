@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""SC1-SC2, the audit of an hsaco kernel after SA0-SA4: its Python reaches the GPU only
+"""SC1-SC2, the audit of an hsaco kernel after SA0-SA5: its Python reaches the GPU only
 through ``aklr.core.jit.hsaco``, which loads code objects and launches them on torch's
 current stream. Lexical, on each parsed source; what the code objects do is caught by bench,
 and reflection by review."""

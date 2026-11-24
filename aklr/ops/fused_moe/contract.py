@@ -6,8 +6,8 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    BaselineRelativeBound,
-    DeterminismLevel,
+    MOE_MXFP4_SNR,
+    MOE_MXFP8_SNR,
     Distribution,
     DType,
     E8M0Scales,
@@ -18,10 +18,10 @@ from aklr.core.contract.semantics import (
     IntRangeDistribution,
     LogUniformDistribution,
     Preshuffle,
-    SqnrBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -32,6 +32,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.ops.fused_moe.baseline import FusedMoeBaseline
+from aklr.ops.fused_moe.reference import FusedMoeReference
 
 __all__ = ["CONTRACTS", "FUSED_MOE"]
 
@@ -264,14 +266,7 @@ FUSED_MOE = OpContract(
             ),
             shape=("n_tokens", "model_dim"),
             dtype=DTypeSpec(same_as_tensor="hidden_states"),
-            error_bounds=(
-                # aiter's a16 and a4 swiglu errors differ by orders of magnitude: the
-                # bound follows the baseline's
-                ("activation == 'swiglu'", BaselineRelativeBound()),
-                # FIXME(main-kernels): main gates fused_moe on output-dtype SQNR >= 13
-                # dB; its e33/e65 kernels keep fp8/MXFP4 partials, far off aiter's error.
-                (None, SqnrBound(min_sqnr_db=13.0)),
-            ),
+            error_bounds=(("act_quant == 8", MOE_MXFP8_SNR), (None, MOE_MXFP4_SNR)),
         )
     },
     layout_variants=LayoutVariantsSpec(
@@ -298,7 +293,9 @@ FUSED_MOE = OpContract(
         }
     ),
     # Bounded, not bitwise: stage 2 often combines top-k with atomics (design §5.4).
-    compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=FusedMoeReference(),
+    baseline=FusedMoeBaseline(),
 )
 
 CONTRACTS = (FUSED_MOE,)

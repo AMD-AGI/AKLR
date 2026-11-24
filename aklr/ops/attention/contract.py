@@ -7,16 +7,16 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
     BoundedCuSeqlensDistribution,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
     KvSplitPages,
     StridedRows,
-    ToleranceBound,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -25,6 +25,14 @@ from aklr.core.contract.spec import (
     TensorSpec,
     attr,
     axis,
+)
+from aklr.ops.attention.baseline import (
+    PagedAttentionDecodeBaseline,
+    UnifiedAttentionBaseline,
+)
+from aklr.ops.attention.reference import (
+    PagedAttentionDecodeReference,
+    UnifiedAttentionReference,
 )
 
 __all__ = ["CONTRACTS", "PAGED_ATTENTION_DECODE", "UNIFIED_ATTENTION"]
@@ -146,7 +154,7 @@ PAGED_ATTENTION_DECODE = OpContract(
             description="Softmax-weighted sum of the read values.",
             shape=("batch", "n_heads", "head_dim"),
             dtype=DTypeSpec(same_as_tensor="query"),
-            error_bounds=ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2),
+            error_bounds=tolerance(DType.BFLOAT16, DType.FLOAT16),
         ),
     },
     layout_variants=LayoutVariantsSpec(
@@ -164,6 +172,8 @@ PAGED_ATTENTION_DECODE = OpContract(
         }
     ),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=PagedAttentionDecodeReference(),
+    baseline=PagedAttentionDecodeBaseline(),
 )
 
 UNIFIED_ATTENTION = OpContract(
@@ -285,7 +295,7 @@ UNIFIED_ATTENTION = OpContract(
             description="Softmax-weighted sum of the read values, per query row.",
             shape=("total_q", "n_heads", "head_dim"),
             dtype=DTypeSpec(same_as_tensor="q"),
-            error_bounds=ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2),
+            error_bounds=tolerance(DType.BFLOAT16, DType.FLOAT16),
         ),
     },
     layout_variants=LayoutVariantsSpec(
@@ -299,6 +309,8 @@ UNIFIED_ATTENTION = OpContract(
         }
     ),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=UnifiedAttentionReference(),
+    baseline=UnifiedAttentionBaseline(),
 )
 
 CONTRACTS = (PAGED_ATTENTION_DECODE, UNIFIED_ATTENTION)

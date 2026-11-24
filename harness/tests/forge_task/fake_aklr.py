@@ -33,20 +33,11 @@ class _Narrowed:
         return json.dumps(self.raw, indent=2) + "\\n"
 
 
-def gemm_scaled_baseline(**params):
-    return params["out"]
-
-
 class _Contract:
     def __init__(self, raw):
         self.raw = raw
         inputs = [name for name in raw["inputs"] if name not in ("a", "b")]
         self.api_params = [_Param(name) for name in ("a", "b", *inputs, "trans_b", "bias", "out_dtype", "out")]
-        self.outputs = {"out": None}
-
-    def baseline(self):
-        has_baseline = "a_scale" in self.raw["inputs"] or self.raw["op_type"] == "mla"
-        return gemm_scaled_baseline if has_baseline else None
 
     def point_from_json(self, raw, axes):
         return axes
@@ -99,15 +90,14 @@ findings, demotions, records = [], [], []
 for index, workload in enumerate(candidate["workloads"]):
     if aborted:
         findings.append({{"code": "platform_failure", "axes": workload["axes"], "detail": "timing: rocprofiler-sdk"}})
-        records.append({{"axes": workload["axes"], "worst_violation_fraction": None, "timings": []}})
+        records.append({{"axes": workload["axes"], "is_compared": False, "timings": []}})
         continue
     if not passing:
         demotions.append({{"code": "numeric_mismatch", "axes": workload["axes"], "detail": "off"}})
     timing = {{"mode": "graph", "versus": "baseline", "ratio_lower_bound": 0.9,
                "candidate_milliseconds": [0.01 * (index + 1)] * 3, "versus_milliseconds": [0.009 * (index + 1)] * 3}}
     timings = [timing] if {timed_baseline} else []
-    violation = 0.0 if passing else 0.5
-    records.append({{"axes": workload["axes"], "worst_violation_fraction": violation, "timings": timings}})
+    records.append({{"axes": workload["axes"], "is_compared": True, "timings": timings}})
 if demotions and not aborted:
     findings.append({{"code": "no_qualifying_workload", "axes": None, "detail": "no workload passes"}})
 out.mkdir(parents=True, exist_ok=True)
@@ -178,9 +168,7 @@ def schema_payload(
         "outputs": {"out": {"shape": [*batch, "m", 32], "dtype": "bfloat16"}},
         "workloads": [{"axes": {"m": int(case.split("=")[1])}} for case in CASES],
         "compare": {
-            "max_violation_fraction": 0.0,
             "determinism": "bitwise",
-            "element_order": "fixed",
         },
         "kernel": {
             "language": "flydsl",

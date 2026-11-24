@@ -428,22 +428,9 @@ class TestDispatcherRegistry:
             FallbackReason.DISABLED
         }
 
-    def test_unimportable_baseline_is_a_load_error(
-        self, default_dispatchers: DispatcherRegistry, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """An op's ``baseline.py`` that fails to import fails the init as a
-        ``LoadError``, the error a host catches."""
-
-        def baseline(contract: OpContract) -> None:
-            raise ModuleNotFoundError("No module named 'sglang'", name="sglang")
-
-        monkeypatch.setattr(OpContract, "baseline", baseline)
-        with pytest.raises(LoadError, match="its baseline"):
-            default_dispatchers.init()
-
     @staticmethod
     def _schema_alone(monkeypatch: pytest.MonkeyPatch, schema: OpContract) -> None:
-        """``init`` reads ``schema`` alone and serves it on the CPU, as on its target."""
+        """``init`` reads ``schema`` alone and serves it on the CPU, as on its target, unmeasured."""
         op_package = ContractRegistry.default().get(schema.contract_id).op_package
         monkeypatch.setattr(
             ContractRegistry,
@@ -453,7 +440,7 @@ class TestDispatcherRegistry:
                 [],
             ),
         )
-        monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
+        monkeypatch.setenv(ENV_MIN_SPEEDUP, "0")
         target = DeviceTarget.from_names(**KERNEL_TARGET)
         monkeypatch.setattr(
             DispatcherRegistry,
@@ -495,20 +482,11 @@ class TestDispatcherRegistry:
             default_dispatchers.init()
 
     @pytest.mark.gfx950
-    @pytest.mark.parametrize("has_baseline", [True, False])
     def test_init_serves_committed_schema(
-        self,
-        default_dispatchers: DispatcherRegistry,
-        monkeypatch: pytest.MonkeyPatch,
-        has_baseline: bool,
+        self, default_dispatchers: DispatcherRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An unmeasured workload is served at min speedup 0; with no defined baseline
-        that is the default too (nothing to beat)."""
-        if has_baseline:
-            monkeypatch.setenv(ENV_MIN_SPEEDUP, "0")
-        else:
-            monkeypatch.delenv(ENV_MIN_SPEEDUP, raising=False)
-            monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
+        """An unmeasured workload is served at min speedup 0."""
+        monkeypatch.setenv(ENV_MIN_SPEEDUP, "0")
         default_dispatchers.init()
         contract = OpCase.of("gemm@1.0").contract
         schemas, errors = ContractRegistry.default().read_schemas(contract.op_package)
@@ -525,7 +503,7 @@ class TestDispatcherRegistry:
         result = aklr.ops.gemm.gemm(**case.call(args, "cuda"))
         assert not isinstance(result, FallbackReason)
         comparisons = case.compare(case.contract.outputs_by_name(result), args)
-        assert {o: c.is_passed for o, c in comparisons.items()} == dict.fromkeys(case.contract.outputs, True)
+        assert comparisons == {}
 
 
 class TestVllmPlugin:

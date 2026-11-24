@@ -1,8 +1,8 @@
 # 插件教程：替换 SGLang 的函数
 
-当一项优化需要覆盖不止一个算子时，插件会把 SGLang 的整个函数替换为 AKLR 的一个算子。本教程的示例是 `deepseek_v2_mxfp4_moe`，它接管 GLM-5 的整个 MoE 层；[Ops 教程](ops_tutorial.zh.md) 用 `fused_moe` 优化的，正是这一层的专家计算部分。
+当一项优化需要覆盖不止一个算子时，插件会把 SGLang 的整个函数替换为 AKLR 的一个算子。本教程的示例是 `deepseek_v2_mxfp4_moe`，它接管 GLM-5 的整个 MoE 层；`aklr/ops` 里的 `fused_moe` 只覆盖这一层的专家计算部分。
 
-开始之前，请先阅读 ops 教程：插件里的算子写法与之相同。插件的结构和规范见 [aklr/plugins/README.md](../aklr/plugins/README.md)。
+开始之前，请先阅读 [ops 教程](ops_tutorial.zh.md)：插件里的算子写法与之相同。插件的结构和规范见 [aklr/plugins/README.md](../aklr/plugins/README.md)。
 
 ## 为什么需要插件
 
@@ -50,14 +50,14 @@ def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_i
 
 ### 3. 编写算子
 
-做法同 ops 教程的 1. A。针对这个算子：
+做法同 [ops 教程](ops_tutorial.zh.md)的第 6 节。针对这个算子：
 
 - `contract.py` 定义 `DEEPSEEK_V2_MXFP4_MOE`（`deepseek_v2_mxfp4_moe@1.0`）：
   - 输入：`forward_normal` 读取的内容，即 `hidden_states`；路由的 `router_weight` 和 `correction_bias`；专家的 `w1`、`w1_scale`、`w2`、`w2_scale`，共享专家放在最后一个位置（`n_experts = n_routed + 1`）；以及标量 `routed_scaling_factor`；
   - attr：路由设置 `topk`、`num_expert_group`、`topk_group`、`renormalize` 和 `scoring_func`；
   - 输出：`out`，即这一层在本卡上的输出，也就是多卡归约之前的结果。
-- `reference.py`：`deepseek_v2_mxfp4_moe_reference`，按 contract 的计算在 fp32 下实现。
-- `baseline.py`：`deepseek_v2_mxfp4_moe_baseline`，即 SGLang 目前执行第 1–9 步的方式：路由 GEMM、AITER 的分组 top-k、SGLang 追加共享专家、AITER 的 `fused_moe`。kernel 要快过的是这整条路径，而不只是 `fused_moe`。
+- `reference.py`：`DeepseekV2Mxfp4MoeReference`，按 contract 的计算在 float32 下实现，`out` 转成 contract 声明的 dtype 再返回。
+- `baseline.py`：`DeepseekV2Mxfp4MoeBaseline`，即 SGLang 目前执行第 1–9 步的方式：路由 GEMM、AITER 的分组 top-k、SGLang 追加共享专家、AITER 的 `fused_moe`。kernel 要快过的是这整条路径，而不只是 `fused_moe`。
 - `api.py`：算子的入口函数 `@api(DEEPSEEK_V2_MXFP4_MOE)`，函数体为 `...`。
 
 ### 4. 编写 route
@@ -115,11 +115,11 @@ route 不需要单独写测试：`tests/plugins/sglang/test_hook.py` 会检查�
 
 ### 6. 编写 kernel 并验证
 
-按 ops 教程的 1. B 到第 4 步进行，场景换成这个算子的：GLM-5 MXFP4 MoE 层在 TP8 下的形状。脚本中 contract、Point 和 workload 不同，其中 `routed_scaling_factor` 是标量，随每个 workload 给出；这个算子已提交的 kernel 用 Triton 编写：
+按 [ops 教程](ops_tutorial.zh.md)的第 2 到第 5 节进行，场景换成这个算子的：GLM-5 MXFP4 MoE 层在 TP8 下的形状。脚本中 contract、Point 和 workload 不同，其中 `routed_scaling_factor` 是标量，随每个 workload 给出；这个算子已提交的 kernel 用 Triton 编写（脚本里 `language` 写 `triton`）：
 
 ```python
 contract = ContractRegistry.default().get("deepseek_v2_mxfp4_moe@1.0")
-base = PointSpec(
+point = PointSpec(
     contract_id="deepseek_v2_mxfp4_moe@1.0",
     axes={"n_tokens": 1, "model_dim": 6144, "n_routed": 256, "inter_dim": 256},
     dtypes={"hidden_states": "bfloat16", "router_weight": "bfloat16", "correction_bias": "float32",
@@ -127,10 +127,8 @@ base = PointSpec(
             "out": "bfloat16"},
     attrs={"topk": 8, "num_expert_group": 1, "topk_group": 1, "renormalize": True, "scoring_func": "sigmoid"},
     layout_variant_name="shuffled_16x16")
-workloads = [contract.workload_for(base.model_copy(update={"axes": {**base.axes, "n_tokens": t}}),
+workloads = [contract.workload_for(point.model_copy(update={"axes": {**point.axes, "n_tokens": t}}),
                                    {"routed_scaling_factor": 2.5}) for t in (32, 128, 256)]
-kernel = {"language": "triton", "targets": [{"arch": "gfx950", "hardware": "MI355X"}],
-          "entry_point": "kernel.py::run", "sources": []}
 ```
 
 schema 会写到这个场景已提交的 kernel 旁边，即 `aklr/plugins/sglang/models/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim256/`。验证和提 PR 的做法同 ops 教程。

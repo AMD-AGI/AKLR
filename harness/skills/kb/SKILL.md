@@ -38,7 +38,7 @@ wins. Check a plan against this table before writing code.
 
 | Rule | What it rules out here |
 |---|---|
-| Outputs pass the definition's `compare` block; under `determinism: bitwise`, the default, two runs are byte-identical (`runs_agree`, `aklr/core/contract/semantics/_compare.py`) | Reducing in arrival order (atomic split-K, stream-K fix-ups): reduce in a fixed order (`gemm/correctness.md` §8, `gemm/grid_pricing.md` §2) |
+| Outputs pass the definition's `compare` block; under `determinism: bitwise`, the default, two runs are byte-identical (`find_nondeterminism`, `aklr/core/validation/stages/_bench/_evaluation/_comparison.py`) | Reducing in arrival order (atomic split-K, stream-K fix-ups): reduce in a fixed order (`gemm/correctness.md` §8, `gemm/grid_pricing.md` §2) |
 | A Point is served by the file with the best measured `speedup` over the baseline, and only from `AKLR_MIN_SPEEDUP` (1.05) | Judging on a mean: compare each Point with the faster of the kernel AKLR serves there and the baseline |
 | Launch code (`run` and what it calls) does not synchronize, call `.item()` / `.cpu()`, print, read a clock or the environment, or change torch state (SA3) | Timing or racing configurations in `run` |
 | Compilation and the choice of configuration happen in a module-level `@functools.cache` function on a Point's first call; later calls may be inside a CUDA graph capture | The first-call race of `gemm/autotune.md` §1 as written: choose from the shape, with a table raced offline |
@@ -106,7 +106,7 @@ wins. Check a plan against this table before writing code.
 
 - **The aiter these cards describe is the baseline**, ROCm/aiter at the commit `aiter`
   in `stack.json`: AKLR does not ship, patch or fall back to it, so its `aiter/` paths are that
-  revision's, read as reference code. Price aiter through the op's `<contract>_baseline`
+  revision's, read as reference code. Price aiter through the contract's baseline class
   (`aklr/ops/<op>/baseline.py`), the call bench times. At a Point no kernel serves, the api returns a
   `FallbackReason` and its caller runs its own path. AKLR's plugins route a model to plugin ops and to some
   `aklr/ops` ops (vLLM's GEMM and MoE layers, sglang's DSA paged MQA logits; `aklr/plugins/README.md`), so an

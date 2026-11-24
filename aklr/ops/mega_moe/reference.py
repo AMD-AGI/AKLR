@@ -1,48 +1,37 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
 
-from __future__ import annotations
+import torch.nn.functional as F
 
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from aklr.core.contract.reference import DistOpReference
+from aklr.ops.fused_moe.reference import mxfp4_weight, mxfp8
 
-from aklr.core.contract.semantics import to_float32
-from aklr.ops.fused_moe.reference import _mxfp8, _weight
-
-if TYPE_CHECKING:
-    from torch import Tensor
-
-__all__ = ["mega_moe_reference"]
+__all__ = ["MegaMoeReference"]
 
 
-def mega_moe_reference(
-    point: Any,
-    group_args: Sequence[Mapping[str, Any]],
-    rank: int,
-) -> Tensor:
-    """Each token of ``rank`` through its top-k experts of the whole group, weighted, summed.
+class MegaMoeReference(DistOpReference):
+    def reference(self, calls, rank):
+        """Each token of ``rank`` through its top-k experts of the whole group, weighted, summed.
 
-    Global expert ``e`` is local expert ``e % n_experts`` of rank ``e // n_experts``.
-    Rounding points: the input of each linear in MXFP8, the gated activation in the
-    input's dtype before it.
-    """
-    import torch.nn.functional as F
-
-    args, n_experts = group_args[rank], point.axes["n_experts"]
-    hidden, ids = args["hidden_states"], args["topk_ids"].long()
-    limit = float(args["swiglu_limit"])
-    x = _mxfp8(to_float32(hidden, point.dtypes["hidden_states"]))
-    weights = to_float32(args["topk_weights"], point.dtypes["topk_weights"])
-    out = x.new_zeros((*ids.shape, x.shape[-1]))
-    for expert in ids.unique().tolist():
-        owner, local = divmod(expert, n_experts)
-        routed = ids == expert
-        tokens = routed.nonzero(as_tuple=True)[0]  # topk_ids rows are distinct
-        w1 = _weight(group_args[owner], "w1", local).to(x.device)
-        projected = x[tokens] @ w1.mT
-        gate, up = projected.chunk(2, dim=-1)  # w1 stores [gate | up] along its rows
-        gate, up = gate.clamp(max=limit), up.clamp(-limit, limit)
-        gated = (F.silu(gate) * up).to(hidden.dtype).to(x.dtype)
-        w2 = _weight(group_args[owner], "w2", local).to(x.device)
-        out[routed] = _mxfp8(gated) @ w2.mT
-    return (out * weights.unsqueeze(-1)).sum(dim=1)
+        Global expert ``e`` is local expert ``e % n_experts`` of rank ``e // n_experts``.
+        Rounding points: the input of each linear in MXFP8, the gated activation in the input's
+        dtype before it.
+        """
+        call = calls[rank]
+        hidden_states, n_experts = call["hidden_states"], call["w1"].shape[0]
+        ids, limit = call["topk_ids"].long(), float(call["swiglu_limit"])
+        x = mxfp8(hidden_states.float())
+        out = x.new_zeros((*ids.shape, x.shape[-1]))
+        for expert in ids.unique().tolist():
+            owner, local = divmod(expert, n_experts)
+            owner_call = calls[owner]
+            routed = ids == expert
+            tokens = routed.nonzero(as_tuple=True)[0]  # topk_ids rows are distinct
+            w1 = mxfp4_weight(owner_call["w1"][local], owner_call["w1_scale"][local]).to(x.device)
+            gate, up = (x[tokens] @ w1.mT).chunk(2, dim=-1)  # w1: [gate | up]
+            gate, up = gate.clamp(max=limit), up.clamp(-limit, limit)
+            gated = (F.silu(gate) * up).to(hidden_states.dtype).float()
+            w2 = mxfp4_weight(owner_call["w2"][local], owner_call["w2_scale"][local]).to(x.device)
+            out[routed] = mxfp8(gated) @ w2.mT
+        out = (out * call["topk_weights"].float().unsqueeze(-1)).sum(dim=1)
+        return {"out": out.to(hidden_states.dtype)}

@@ -51,7 +51,7 @@ sources:
   (`aklr/core/contract/spec/_workloads.py:38`; `aklr/ops/README.md` § Environment variables): 77 of the 104 Points
   of the eight CI-measured files on main as of #102, and all 12 of the three newer files' Points since CI measured
   them in #115 (Result).
-- Compare: each schema's `compare` block is `determinism: bounded`, `max_violation_fraction: 0.0`, against the
+- Compare: each schema's `compare` block is `determinism: bounded`, against the
   contract's tolerance (atol = rtol = 1e-2 for bf16 out; `aklr/ops/gemm/contract.py`). One file's split-K
   depends on it (Counter-signals).
 - Read the file for your shape before reusing a design: the eleven files are eleven different kernels, not one

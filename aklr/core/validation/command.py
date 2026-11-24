@@ -83,11 +83,9 @@ def main(argv: Sequence[str]) -> int:
         parser.error(str(error))
     report = pipeline.run(scope)
     report.write(args.out)
-    if args.no_timing:  # nothing measured: no earlier run's rewrites or baselines stay beside this report
-        for export in ("schemas", "baseline"):
-            shutil.rmtree(args.out / export, ignore_errors=True)
+    if args.no_timing:  # nothing measured: no earlier run's rewrites stay beside this report
+        shutil.rmtree(args.out / "schemas", ignore_errors=True)
     else:
         report.write_schemas(scope.root, args.out / "schemas")
-        report.write_baselines(scope, args.out / "baseline")
     print(f"validation {report.conclusion}: {args.out / 'report.md'}")
     return report.exit_code

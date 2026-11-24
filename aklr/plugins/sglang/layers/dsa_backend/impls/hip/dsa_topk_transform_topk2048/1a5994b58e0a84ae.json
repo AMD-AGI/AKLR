@@ -285,9 +285,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "any_in_full_rows"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "hip",

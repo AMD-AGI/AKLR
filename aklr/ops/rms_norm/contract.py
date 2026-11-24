@@ -9,7 +9,7 @@ from aklr.core.contract.semantics import (
     DType,
     FiniteDistribution,
     LogUniformDistribution,
-    OutputRoundingBound,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     DTypeSpec,
@@ -19,6 +19,8 @@ from aklr.core.contract.spec import (
     TensorSpec,
     axis,
 )
+from aklr.ops.rms_norm.baseline import AddRmsNormBaseline, RmsNormBaseline
+from aklr.ops.rms_norm.reference import AddRmsNormReference, RmsNormReference
 
 __all__ = ["ADD_RMS_NORM", "CONTRACTS", "RMS_NORM"]
 
@@ -48,7 +50,7 @@ _EPSILON = ScalarSpec(
 
 def _output(description: str) -> TensorSpec:
     return TensorSpec(
-        description=description, shape=_ROWS, dtype=_SAME_AS_X, error_bounds=OutputRoundingBound()
+        description=description, shape=_ROWS, dtype=_SAME_AS_X, error_bounds=tolerance(*_X_DTYPE.any_of)
     )
 
 
@@ -78,6 +80,8 @@ ADD_RMS_NORM = OpContract(
         "residual_out": _output("x + residual."),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=AddRmsNormReference(),
+    baseline=AddRmsNormBaseline(),
 )
 
 RMS_NORM = OpContract(
@@ -94,6 +98,8 @@ RMS_NORM = OpContract(
     },
     outputs={"normalized": _output("The normalized rows, scaled by weight.")},
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=RmsNormReference(),
+    baseline=RmsNormBaseline(),
 )
 
 CONTRACTS = (ADD_RMS_NORM, RMS_NORM)

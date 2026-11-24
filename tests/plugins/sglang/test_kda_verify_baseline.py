@@ -8,7 +8,7 @@ bit for bit, at both batch sizes the copy picks a tile width for and both gates.
 import pytest
 import torch
 
-from aklr.plugins.sglang.layers.kda_backend_hip.baseline import kda_chain_verify_ring_baseline
+from aklr.plugins.sglang.layers.kda_backend_hip.baseline import KdaChainVerifyRingBaseline
 from tests.op_case import OpCase
 
 HEAD_DIM = 128
@@ -99,7 +99,7 @@ def test_the_baselines_kernel_is_sglangs(n_requests, has_lower_bound):
     args["cache_indices"].copy_(torch.randperm(2 * n_requests, dtype=torch.int32)[:n_requests])
     ours, theirs = dict(case.call(args, "cuda")), dict(case.call(args, "cuda"))
     ours.pop("output"), theirs.pop("output")
-    out = kda_chain_verify_ring_baseline(**ours)
+    out = KdaChainVerifyRingBaseline().baseline(**ours)["output"]
     expected = _sglangs(theirs)
     torch.cuda.synchronize()
     assert torch.equal(out, expected)

@@ -6,7 +6,6 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     GateUpInterleavedScales,
@@ -17,6 +16,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -26,6 +26,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.ops.situv2_a4w4_moe.baseline import Situv2A4w4MoeBaseline
+from aklr.ops.situv2_a4w4_moe.reference import Situv2A4w4MoeReference
 
 __all__ = ["CONTRACTS", "SITUV2_A4W4_MOE"]
 
@@ -129,8 +131,8 @@ SITUV2_A4W4_MOE = OpContract(
             description="Routing-weighted sum of the chosen experts' outputs.",
             shape=("n_tokens", "model_dim"),
             dtype=DTypeSpec(same_as_tensor="hidden_states"),
-            # aiter's own SiTUv2 A4W4 reaches 28-31 dB on Kimi-K3's calls (MI355X, aiter a6c759b1f); fused_moe's
-            # 13 dB let through kernels 12 dB short of it
+            # aiter's own SiTUv2 A4W4 reaches 28-31 dB on Kimi-K3's calls (MI355X, aiter a6c759b1f); the MXFP4
+            # MoE floor, 10 dB, would let through kernels far short of it
             error_bounds=SqnrBound(min_sqnr_db=25.0),
         )
     },
@@ -151,7 +153,9 @@ SITUV2_A4W4_MOE = OpContract(
         }
     ),
     # stage 2 combines with atomics
-    compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=Situv2A4w4MoeReference(),
+    baseline=Situv2A4w4MoeBaseline(),
 )
 
 CONTRACTS = (SITUV2_A4W4_MOE,)

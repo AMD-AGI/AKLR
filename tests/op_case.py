@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import functools
 import subprocess
 import tempfile
@@ -16,11 +17,11 @@ import pytest
 import torch
 
 from aklr.core.contract import semantics
+from aklr.core.contract.baseline import DistOpBaseline
 from aklr.core.contract.fastkey import CallArgs
 from aklr.core.contract.locate import op_dir
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
-from aklr.core.contract.semantics import CompareResult
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
 from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
 from tests.ops import cases as ops_cases
@@ -126,6 +127,29 @@ def hsaco_gemm_sources() -> dict[str, str]:
     """codeobjects.py, holding hsaco_gemm_code_object as GEMM, for HSACO_GEMM_KERNEL_SOURCE."""
     encoded = base64.b64encode(hsaco_gemm_code_object()).decode()
     return {"codeobjects.py": f'"""The gemm."""\n\nimport base64\n\nGEMM = base64.b64decode("{encoded}")\n'}
+
+
+@contextlib.contextmanager
+def _one_rank_group(is_needed: bool):
+    """A torch.distributed group of this process alone while the block runs, as validation puts a ranks
+    contract's one rank in, where ``is_needed`` and no group is up yet."""
+    import torch.distributed as dist
+
+    if not is_needed or dist.is_initialized():
+        yield
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        dist.init_process_group(
+            "cpu:gloo,cuda:nccl",
+            init_method=f"file://{tmp}/rendezvous",
+            rank=0,
+            world_size=1,
+            device_id=torch.device("cuda", torch.cuda.current_device()),
+        )
+        try:
+            yield
+        finally:
+            dist.destroy_process_group()
 
 
 _NO_OP_KERNEL_SOURCE = "def run(**call): ...\n"  # a schema's kernel no test runs
@@ -234,7 +258,6 @@ class OpCase:
             schema.workloads[0],
             thresholds={},
             incumbent=None,
-            baseline=None,
         )
 
     def inputs(self, input_set: str = "numeric/0") -> dict[str, Any]:
@@ -253,41 +276,26 @@ class OpCase:
         return self.request.assemble_call(row_major_args, device)
 
     def reference_outputs(self, row_major_args: Mapping[str, Any]) -> dict[str, Any]:
-        """The op's reference of ``row_major_args``, by name in ``contract.mutable_tensors``: one
-        rank's call."""
+        """The op's reference of ``row_major_args``, by name: one rank's call."""
         # shortcut: one rank's inputs only, so no group of more; draw every rank's (rank= of
         # row_major_inputs) when a ranks contract gets a Small Point
         if (n_ranks := self.contract.ranks_at(self.point)) > 1:
             raise NotImplementedError(f"{self.contract.contract_id}: a group of {n_ranks} ranks")
-        return self.contract.reference_outputs(self.point, [row_major_args], 0)
+        call = self.request.reference_call(row_major_args, "cpu")
+        if self.contract.ranks is None:
+            return dict(self.contract.reference.reference(**call))
+        return dict(self.contract.reference.reference([call], 0))
 
     def compare(
         self,
         actual_outputs: Mapping[str, Any],
         row_major_args: Mapping[str, Any],
-        *,
-        baseline_outputs: Mapping[str, Any] | None = None,
-    ) -> dict[str, CompareResult]:
-        """``compare_outputs`` of ``actual_outputs`` against the reference of ``row_major_args``, on the CPU."""
-        compare_kwargs = {"reference_outputs": self.reference_outputs(row_major_args)}
-        if self.request.has_error_bound("dot_product"):
-            magnitudes = {
-                n: semantics.absolute_value(v, self.point.dtypes[n])
-                for n, v in row_major_args.items()
-                if torch.is_tensor(v)
-            }
-            compare_kwargs["magnitude_outputs"] = self.reference_outputs({**row_major_args, **magnitudes})
-        if baseline_outputs is not None:
-            compare_kwargs["baseline_outputs"] = baseline_outputs
-        compare_kwargs = {
-            kind: {o: t.cpu() for o, t in tensors.items()} for kind, tensors in compare_kwargs.items()
-        }
-        id_scores = self.contract.id_scores(self.point, [row_major_args], 0)
-        return semantics.compare_outputs(
-            self.request.schema_json,
+    ) -> dict[str, str]:
+        """The reference's check of ``actual_outputs`` against its outputs of ``row_major_args``, on the CPU."""
+        return self.contract.reference.check(
             {o: t.cpu() for o, t in actual_outputs.items()},
-            **compare_kwargs,
-            id_scores={o: s.cpu() for o, s in id_scores.items()},
+            {o: t.cpu() for o, t in self.reference_outputs(row_major_args).items()},
+            self.request.schema,
         )
 
     def check_backend_matches_reference(self) -> None:
@@ -296,20 +304,25 @@ class OpCase:
         declares one. Other bounds are the kernels', per element; the backend is held to 20 dB."""
         args = self.inputs()
         call = self.call(args, "cuda")
-        outputs = self.contract.call_mutable_tensors(self.contract.baseline()(**call), call)
-        results = self.compare(outputs, args, baseline_outputs=outputs)
-        output_specs = semantics.mutable_tensor_declarations(self.request.schema_json)
+        baseline = self.contract.baseline
+        with _one_rank_group(isinstance(baseline, DistOpBaseline)):
+            baseline.setup()
+            try:
+                outputs = {**baseline.baseline(**call), **{n: call[n] for n in self.contract.mutable_inputs}}
+            finally:
+                baseline.teardown()
+        results = self.compare(outputs, args)
+        schema = self.request.schema
         integral = {
-            o
-            for o, spec in output_specs.items()
-            if semantics.DTYPE_TRAITS[spec["dtype"]["any_of"][0]].is_integral
+            o for o in schema.mutable_tensors if semantics.DTYPE_TRAITS[self.point.dtypes[o]].is_integral
         }
-        assert {o: results[o].detail for o in integral if not results[o].is_passed} == {}
-        reference = self.reference_outputs(args)
-        for o in output_specs.keys() - integral:
-            bound = output_specs[o]["error_bounds"][0][1]
+        assert {o: why for o, why in results.items() if o in integral} == {}
+        reference = {o: t.float() for o, t in self.reference_outputs(args).items()}
+        tensors = schema.tensors()
+        for o in set(schema.mutable_tensors) - integral:
+            bound = tensors[o].error_bounds[0][1]
             # shortcut: 20 dB uncalibrated (MI300X skips), set from the gfx950 SQNRs once measured
-            min_sqnr_db = bound["min_sqnr_db"] if bound["kind"] == "sqnr" else 20.0
+            min_sqnr_db = bound.min_sqnr_db if isinstance(bound, semantics.SqnrBound) else 20.0
             error = (outputs[o].cpu().float() - reference[o]).norm()
             assert error <= 10 ** (-min_sqnr_db / 20) * reference[o].norm(), (
                 o,

@@ -4,7 +4,7 @@
 """Dynamic group quantization with explicit scale storage order."""
 
 from aklr.core.contract.op import OpContract
-from aklr.core.contract.semantics import DType, FiniteDistribution, OutputRoundingBound
+from aklr.core.contract.semantics import DType, FiniteDistribution, ToleranceBound, tolerance
 from aklr.core.contract.spec import (
     DTypeSpec,
     LayoutVariant,
@@ -12,6 +12,14 @@ from aklr.core.contract.spec import (
     TensorSpec,
     axis,
     derived_axis,
+)
+from aklr.ops.quant.baseline import (
+    PerGroupQuantFp8Baseline,
+    PerGroupQuantMxfp8Baseline,
+)
+from aklr.ops.quant.reference import (
+    PerGroupQuantFp8Reference,
+    PerGroupQuantMxfp8Reference,
 )
 
 PER_GROUP_QUANT_FP8 = OpContract(
@@ -39,16 +47,18 @@ PER_GROUP_QUANT_FP8 = OpContract(
             description="E4M3FN quantized activations.",
             shape=("n_tokens", "hidden_size"),
             dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
-            error_bounds=OutputRoundingBound(),
+            error_bounds=tolerance(DType.FLOAT8_E4M3FN),
         ),
         "scales": TensorSpec(
             description="Dequantization scale at [group, row], with rows contiguous.",
             shape=("n_groups", "n_tokens"),
             dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
-            error_bounds=OutputRoundingBound(),
+            error_bounds=tolerance(DType.FLOAT32),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=PerGroupQuantFp8Reference(),
+    baseline=PerGroupQuantFp8Baseline(),
 )
 
 PER_GROUP_QUANT_MXFP8 = OpContract(
@@ -70,9 +80,12 @@ PER_GROUP_QUANT_MXFP8 = OpContract(
             description="E8M0 exponent bytes at [row, group]; scale is 2**(byte - 127).",
             shape=("n_tokens", "n_groups"),
             dtype=DTypeSpec(any_of=(DType.UINT8,)),
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=PerGroupQuantMxfp8Reference(),
+    baseline=PerGroupQuantMxfp8Baseline(),
 )
 
 CONTRACTS = (PER_GROUP_QUANT_FP8, PER_GROUP_QUANT_MXFP8)

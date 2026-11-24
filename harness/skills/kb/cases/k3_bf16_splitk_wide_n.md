@@ -33,7 +33,7 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0,
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`,
   the `CompareSpec` defaults), with the fp32 dot-product error bound of `_dot_k()` (`max_split_k` 16; `GEMM` in
   `aklr/ops/gemm/contract.py`). Every fold these kernels run adds its terms in an order fixed by index, or adds
   two terms.

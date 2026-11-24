@@ -5,21 +5,24 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    GEMM_BF16_SNR,
+    GEMM_FP4_SNR,
+    GEMM_FP8_E4M3_SNR,
+    GEMM_FP8_E5M2_SNR,
+    GEMM_FP16_SNR,
     ColumnMajor,
-    DeterminismLevel,
     Distribution,
-    DotProductBound,
     DType,
     E8M0Scales,
     ErrorBound,
     FiniteDistribution,
     LogUniformDistribution,
-    OutputRoundingBound,
     Preshuffle,
-    ToleranceBound,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -30,6 +33,20 @@ from aklr.core.contract.spec import (
     attr,
     axis,
     derived_axis,
+)
+from aklr.ops.gemm.baseline import (
+    BmmBaseline,
+    GemmA4w4Mxfp4Baseline,
+    GemmA8w8Baseline,
+    GemmA8w8BlockwiseScaledBaseline,
+    GemmBaseline,
+)
+from aklr.ops.gemm.reference import (
+    BmmReference,
+    GemmA4w4Mxfp4Reference,
+    GemmA8w8BlockwiseScaledReference,
+    GemmA8w8Reference,
+    GemmReference,
 )
 
 __all__ = [
@@ -88,12 +105,8 @@ def _bias(description: str, shape: tuple[str, ...], dtype_spec: DTypeSpec) -> Te
     )
 
 
-def _dot_k(max_split_k: int = 16) -> DotProductBound:
-    return DotProductBound(
-        length="k",
-        accumulate_dtype=DType.FLOAT32,
-        max_split_k=max_split_k,
-    )
+_GEMM_SNR = (("out.dtype == 'bfloat16'", GEMM_BF16_SNR), (None, GEMM_FP16_SNR))
+_GEMM_FP8_SNR = (("a.dtype == 'float8_e5m2'", GEMM_FP8_E5M2_SNR), (None, GEMM_FP8_E4M3_SNR))
 
 
 def _out(
@@ -102,7 +115,7 @@ def _out(
     any_of: tuple[DType, ...] | None = None,
     default: DType | None = None,
     same_as_tensor: str | None = None,
-    error_bounds: tuple[tuple[str | None, ErrorBound], ...] = ((None, _dot_k()),),
+    error_bounds: tuple[tuple[str | None, ErrorBound], ...] = _GEMM_SNR,
 ) -> dict[str, TensorSpec]:
     dtype = DTypeSpec(any_of=any_of, default=default, same_as_tensor=same_as_tensor)
     out = TensorSpec(description=description, shape=shape, dtype=dtype, error_bounds=error_bounds)
@@ -133,6 +146,8 @@ GEMM = OpContract(
     },
     outputs=_out("a @ b.T + bias.", ("m", "n"), any_of=(*_F16, DType.FLOAT32), same_as_tensor="a"),
     layout_variants=_UNSHUFFLED_VARIANTS,
+    reference=GemmReference(),
+    baseline=GemmBaseline(),
 )
 
 GEMM_A8W8 = OpContract(
@@ -172,7 +187,10 @@ GEMM_A8W8 = OpContract(
         ("m", "n"),
         any_of=_F16,
         default=DType.BFLOAT16,
-        error_bounds=(("a.dtype == 'int8'", OutputRoundingBound()), (None, _dot_k())),
+        error_bounds=(
+            ("a.dtype == 'int8'", tolerance(*_F16)),
+            *_GEMM_FP8_SNR,
+        ),
     ),
     # vLLM's per-token fp8 linears for aiter's gemm_a8w8_bpreshuffle hold b as (n, k) in shuffle_weight's 16 x 16
     # tiles
@@ -185,6 +203,8 @@ GEMM_A8W8 = OpContract(
             ),
         }
     ),
+    reference=GemmA8w8Reference(),
+    baseline=GemmA8w8Baseline(),
 )
 
 
@@ -193,20 +213,10 @@ def _operand_format_facts(value: str) -> tuple[LayoutFact, ...]:
 
 
 # Fixed 128 x 128 blocks, K-major scales: all aiter passes.
-# FIXME(main-kernels): main's compare_gemm_outputs (atol=rtol 1e-3 fp16, 1e-2 bf16, every
-# element) and no determinism check; gfx950 fp8 MFMA accumulates below _dot_k()'s IEEE
-# fp32 model (aiter is bit-identical) and k8192's split-K order follows CTA arrival.
+# FIXME(main-kernels): no determinism check, as main's: k8192's split-K order follows CTA arrival.
 # FIXME(main-kernels): main draws these scales from U(0.125, 1); 2**U[-3, 0] keeps that
-# range, log-uniform. On 2**U[-1, 1] a k1024 fp8 MFMA tail element breaks main's
-# tolerance.
+# range, log-uniform.
 _MAIN_SCALE_DISTRIBUTION = LogUniformDistribution(log2_lo="-3", log2_hi="0")
-_MAIN_GEMM_TOLERANCE = (
-    (
-        "out.dtype == 'float16'",
-        ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
-    ),
-    (None, ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)),
-)
 
 GEMM_A8W8_BLOCKWISE_SCALED = OpContract(
     contract_id="gemm_a8w8_blockwise_scaled@1.0",
@@ -274,7 +284,7 @@ GEMM_A8W8_BLOCKWISE_SCALED = OpContract(
         ("m", "n"),
         any_of=_F16,
         default=DType.BFLOAT16,
-        error_bounds=_MAIN_GEMM_TOLERANCE,
+        error_bounds=_GEMM_FP8_SNR,
     ),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),  # FIXME(main-kernels)
     layout_variants=LayoutVariantsSpec(
@@ -305,6 +315,8 @@ GEMM_A8W8_BLOCKWISE_SCALED = OpContract(
             ),
         }
     ),
+    reference=GemmA8w8BlockwiseScaledReference(),
+    baseline=GemmA8w8BlockwiseScaledBaseline(),
 )
 
 
@@ -372,7 +384,7 @@ GEMM_A4W4_MXFP4 = OpContract(
         ("m", "n"),
         any_of=_F16,
         default=DType.BFLOAT16,
-        error_bounds=((None, _dot_k(max_split_k=1)),),
+        error_bounds=GEMM_FP4_SNR,
     ),
     layout_variants=LayoutVariantsSpec(
         by_name={
@@ -387,6 +399,8 @@ GEMM_A4W4_MXFP4 = OpContract(
             ),
         }
     ),
+    reference=GemmA4w4Mxfp4Reference(),
+    baseline=GemmA4w4Mxfp4Baseline(),
 )
 
 BMM = OpContract(
@@ -417,6 +431,8 @@ BMM = OpContract(
     },
     outputs=_out("a[i] @ b[i].T + bias[i].", ("batch", "m", "n"), same_as_tensor="a"),
     layout_variants=_UNSHUFFLED_VARIANTS,
+    reference=BmmReference(),
+    baseline=BmmBaseline(),
 )
 
 CONTRACTS = (GEMM, GEMM_A8W8, GEMM_A8W8_BLOCKWISE_SCALED, GEMM_A4W4_MXFP4, BMM)

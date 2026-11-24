@@ -14,21 +14,20 @@ from functools import cached_property
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Final
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, InstanceOf, ValidationError, model_validator
 
 from aklr.core.contract import expr, semantics
+from aklr.core.contract.baseline import DistOpBaseline, OpBaseline
 from aklr.core.contract.locate import (
     OP_PACKAGE_PATTERN,
-    op_module,
     op_package_of,
     schema_relative_path,
     schema_uuid,
 )
+from aklr.core.contract.reference import DistOpReference, OpReference
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     DType,
-    ElementOrder,
     sorted_key_json,
 )
 from aklr.core.contract.spec import (
@@ -87,6 +86,10 @@ class OpContract(FrozenModel):
     kernel: KernelSpec | None = None
     # the attr whose value is how many ranks, one a device, call the op together; None: one
     ranks: str | None = None
+    # what the kernel is checked against and timed against: DistOpReference and DistOpBaseline
+    # exactly when ranks is set; never dumped, so in no schema file or schema json
+    reference: Annotated[InstanceOf[OpReference], Field(exclude=True)]
+    baseline: Annotated[InstanceOf[OpBaseline], Field(exclude=True)]
 
     @model_validator(mode="after")
     def _check_kind(self) -> OpContract:
@@ -100,18 +103,8 @@ class OpContract(FrozenModel):
             raise ValueError("a schema has non-empty workloads and a kernel")
         tensors = self.tensors()
         for name in self.mutable_tensors:
-            spec = tensors[name]
-            is_floating = not DTYPE_TRAITS[spec.dtype.any_of[0]].is_integral
-            if is_floating and (
-                len(spec.error_bounds) != 1
-                or any(
-                    isinstance(getattr(spec.error_bounds[0][1], f), str)
-                    for f in type(spec.error_bounds[0][1]).expr_fields
-                )
-            ):
-                raise ValueError(
-                    f"{name}: a schema's floating mutable tensor has one bound, its expressions decided"
-                )
+            if len(tensors[name].error_bounds) != 1:
+                raise ValueError(f"{name}: a schema's mutable tensor has one bound")
         return self
 
     @model_validator(mode="after")
@@ -158,11 +151,9 @@ class OpContract(FrozenModel):
             if spec.present_when is not None:
                 check(spec.present_when, const)
         for spec in self.tensors().values():  # error bounds read point.symbols()
-            for predicate, bound in spec.error_bounds:
+            for predicate, _ in spec.error_bounds:
                 if predicate is not None:
                     check(predicate, const_no_derived)
-                for field_name in type(bound).expr_fields:
-                    check(getattr(bound, field_name), const_no_derived)
         return self
 
     @model_validator(mode="after")
@@ -265,17 +256,12 @@ class OpContract(FrozenModel):
             if (name in self.outputs) == bool(spec.distribution):
                 raise ValueError(f"{name}: an input needs distribution, an output none")
             if name in self.outputs or spec.mutable:
-                integrality = {DTYPE_TRAITS[d].is_integral for d in self.dtypes_of(name)}
-                if len(integrality) > 1:
-                    raise ValueError(f"{name}: a mutable tensor is floating or integer, not both")
-                if bool(spec.error_bounds) == (True in integrality):
-                    raise ValueError(
-                        f"{name}: a floating mutable tensor needs error_bounds, an integer one none"
-                    )
+                if not spec.error_bounds:
+                    raise ValueError(f"{name}: a mutable tensor needs error_bounds")
                 if name in self.outputs:
                     continue
             elif spec.error_bounds:
-                raise ValueError(f"{name}: only a mutable input has error_bounds")
+                raise ValueError(f"{name}: only a mutable tensor has error_bounds")
             dtypes_read = {f"{name}.dtype"}
             for predicate, distribution in spec.distribution:
                 # so a schema's present input has one item: ``narrow`` decides it
@@ -308,24 +294,15 @@ class OpContract(FrozenModel):
         return self
 
     @model_validator(mode="after")
-    def _check_compare(self) -> OpContract:
-        # a mutable tensor's dtypes are all integer or none (_check_distributions_and_bounds)
-        integer_mutable = [o for o in self.mutable_tensors if DTYPE_TRAITS[self.dtypes_of(o)[0]].is_integral]
-        compare = self.compare
-        if integer_mutable and compare.max_violation_fraction:
-            raise ValueError("compare: an integer mutable tensor allows no violation")
-        if compare.element_order != ElementOrder.FIXED and (
-            len(integer_mutable) < len(self.mutable_tensors)
-            or compare.determinism == DeterminismLevel.BITWISE
+    def _check_ranks(self) -> OpContract:
+        is_group = self.ranks is not None
+        if (
+            isinstance(self.reference, DistOpReference) != is_group
+            or isinstance(self.baseline, DistOpBaseline) != is_group
         ):
             raise ValueError(
-                f"compare: element_order {compare.element_order.value!r} needs integer "
-                "mutable tensors and bounded determinism"
+                "ranks: a contract with ranks has a DistOpReference and a DistOpBaseline; one without has neither"
             )
-        return self
-
-    @model_validator(mode="after")
-    def _check_ranks(self) -> OpContract:
         if self.ranks is None:
             return self
         attr = self.attrs.get(self.ranks)
@@ -333,9 +310,6 @@ class OpContract(FrozenModel):
             isinstance(v, int) and not isinstance(v, bool) and v >= 1 for v in attr.values
         ):
             raise ValueError(f"ranks: {self.ranks!r} is not an attr of positive ints")
-        # the reference task runs on one device: it cannot call the group's baseline
-        if any(b.kind == "baseline_relative" for s in self.tensors().values() for _, b in s.error_bounds):
-            raise ValueError("ranks: a baseline_relative bound needs the baseline in the reference task")
         return self
 
     def _axis_dims(self, axis: str, name: str) -> tuple[int, ...] | None:
@@ -424,46 +398,12 @@ class OpContract(FrozenModel):
     @cached_property
     def mutable_tensors(self) -> tuple[str, ...]:
         """What the kernel writes, each checked against the reference after a call: the
-        outputs, then the mutable inputs; the reference returns them in this order."""
+        outputs, then the mutable inputs."""
         return (*self.outputs, *self.mutable_inputs)
-
-    def mutable_tensors_by_name(self, values: Any) -> dict[str, Any]:
-        """A reference's ``values`` (one tensor, else a tuple) by name in ``mutable_tensors``."""
-        return _by_name(self.mutable_tensors, values)
 
     def ranks_at(self, point: PointSpec) -> int:
         """How many ranks call the op together at ``point``."""
         return 1 if self.ranks is None else point.attrs[self.ranks]
-
-    def reference_outputs(
-        self,
-        point: PointSpec,
-        group_args: Sequence[Mapping[str, Any]],
-        rank: int,
-    ) -> dict[str, Any]:
-        """The reference of ``rank``'s call, by name in ``mutable_tensors``; ``group_args``
-        holds every rank's row-major args in rank order, each on its rank's device. A contract
-        with ``ranks`` has a reference of ``(point, group_args, rank)``, any other one of
-        ``(point, row_major_args)``."""
-        reference_fn = getattr(op_module(self.op_package, "reference"), self.reference_name)
-        if self.ranks is None:
-            return self.mutable_tensors_by_name(reference_fn(point, group_args[rank]))
-        return self.mutable_tensors_by_name(reference_fn(point, group_args, rank))
-
-    def id_scores(
-        self,
-        point: PointSpec,
-        group_args: Sequence[Mapping[str, Any]],
-        rank: int,
-    ) -> dict[str, Any]:
-        """``compare_outputs``' ``id_scores`` of ``rank``'s call, called as the reference is;
-        empty when the op's ``reference.py`` has no ``id_scores_name``."""
-        scores_fn = getattr(op_module(self.op_package, "reference"), self.id_scores_name, None)
-        if scores_fn is None:
-            return {}
-        if self.ranks is None:
-            return scores_fn(point, group_args[rank])
-        return scores_fn(point, group_args, rank)
 
     def call_mutable_tensors(self, result: Any, call: Mapping[str, Any]) -> dict[str, Any]:
         """A call's mutable tensors by name: its api ``result``'s outputs, then the mutable
@@ -555,47 +495,6 @@ class OpContract(FrozenModel):
             if s.present_when and expr.parse(s.present_when).symbols & hidden
         }
         return tuple(p.name for p in self.api_params if p.name not in left_out)
-
-    @property
-    def reference_name(self) -> str:
-        """The reference function's name in the op's ``reference.py``."""
-        return f"{contract_name(self.contract_id)}_reference"
-
-    @property
-    def id_scores_name(self) -> str:
-        """The optional id scores function's name in the op's ``reference.py``."""
-        return f"{contract_name(self.contract_id)}_id_scores"
-
-    @property
-    def group_init_name(self) -> str:
-        """The group set-up function's name in the op's ``group.py``."""
-        return f"{contract_name(self.contract_id)}_group_init"
-
-    def group_init(self) -> Callable | None:
-        """The op's ``group.py`` function ``group_init_name``, if it has one: each rank
-        of a ``ranks`` group calls it once, its torch.distributed group up, to set up
-        what the op's calls take for granted (as an engine does before the first)."""
-        return self._optional_function("group", self.group_init_name)
-
-    @property
-    def baseline_name(self) -> str:
-        """The baseline function's name in the op's ``baseline.py``."""
-        return f"{contract_name(self.contract_id)}_baseline"
-
-    def baseline(self) -> Callable | None:
-        """The op's ``baseline.py`` function ``baseline_name``, if it has one: it takes the
-        api's params and returns the outputs, as the api does, and raises
-        ``NotImplementedError`` for a call it does not serve."""
-        return self._optional_function("baseline", self.baseline_name)
-
-    def _optional_function(self, submodule: str, name: str) -> Callable | None:
-        try:
-            module = op_module(self.op_package, submodule)
-        except ModuleNotFoundError as e:
-            if e.name != f"{self.op_package}.{submodule}":  # the module exists but its own import failed
-                raise
-            return None
-        return getattr(module, name, None)
 
     def check_point(self, point: PointSpec) -> None:
         """Raise ``ValueError`` unless ``point`` names exactly this contract's keys (no

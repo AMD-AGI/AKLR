@@ -5,18 +5,19 @@
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
     CuSeqlensDistribution,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
     Mxfp8NopeRowsDistribution,
-    SqnrBound,
     ToleranceBound,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -24,6 +25,16 @@ from aklr.core.contract.spec import (
     TensorSpec,
     attr,
     axis,
+)
+from aklr.ops.mla_prefill.baseline import (
+    MlaPrefillVarlenBaseline,
+    MlaPrefillVarlenLseBaseline,
+    SparsePrefillMxfp8Baseline,
+)
+from aklr.ops.mla_prefill.reference import (
+    MlaPrefillVarlenLseReference,
+    MlaPrefillVarlenReference,
+    SparsePrefillMxfp8Reference,
 )
 
 
@@ -113,10 +124,12 @@ SPARSE_PREFILL_MXFP8 = OpContract(
             description="Weighted sum of 448 dequantized NoPE and 64 RoPE values.",
             shape=("n_tokens", "n_heads", 512),
             dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
-            error_bounds=ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2),
+            error_bounds=tolerance(DType.BFLOAT16),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=SparsePrefillMxfp8Reference(),
+    baseline=SparsePrefillMxfp8Baseline(),
 )
 
 _ROWS_LIMIT = 2**20  # one prefill's rows: sglang attends at most 131072 keys at once
@@ -217,13 +230,15 @@ MLA_PREFILL_VARLEN = OpContract(
             # with qkv_fp8 the reference attends over q, k and v rounded to fp8 too, as the kernels may: whatever
             # finite values they hold, the bound is on the attention itself
             error_bounds=(
-                ("qkv_fp8", SqnrBound(min_sqnr_db=20.0)),
-                (None, ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)),
+                ("qkv_fp8", ATTENTION_FP8_SNR),
+                (None, tolerance(DType.BFLOAT16, DType.FLOAT16)),
             ),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=MlaPrefillVarlenReference(),
+    baseline=MlaPrefillVarlenBaseline(),
 )
 
 MLA_PREFILL_VARLEN_LSE = OpContract(
@@ -330,8 +345,8 @@ MLA_PREFILL_VARLEN_LSE = OpContract(
             shape=("n_q", "n_heads", "v_head_dim"),
             dtype=_BF16_OR_SAME,
             error_bounds=(
-                ("qkv_fp8", SqnrBound(min_sqnr_db=20.0)),
-                (None, ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)),
+                ("qkv_fp8", ATTENTION_FP8_SNR),
+                (None, tolerance(DType.BFLOAT16, DType.FLOAT16)),
             ),
         ),
         "lse": TensorSpec(
@@ -348,6 +363,8 @@ MLA_PREFILL_VARLEN_LSE = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=MlaPrefillVarlenLseReference(),
+    baseline=MlaPrefillVarlenLseBaseline(),
 )
 
 CONTRACTS = (MLA_PREFILL_VARLEN, MLA_PREFILL_VARLEN_LSE, SPARSE_PREFILL_MXFP8)

@@ -32,7 +32,7 @@ qualifies (`aklr/ops/README.md` § Environment variables). It embeds its source 
   output (tokens, 16, 512) bf16. `compare`: bitwise determinism, violation fraction 0, SQNR ≥ 20 dB.
 - Points: (n_tokens, n_slots) with n_slots = max(65536, 2048 · n_tokens), `sm_scale` 0.0625: all 36, n_tokens 1, 2, 4, 8, 12, 16, 24, 32 and 40–256 in steps of 8.
   Dispatch matches `n_tokens` exactly; `n_slots` is `any_size`.
-- Yardstick at each Point: the faster of the baseline, `dsa_sparse_mla_decode_baseline` (sglang 0.5.22's
+- Yardstick at each Point: the faster of the baseline, `DsaSparseMlaDecodeBaseline` (sglang 0.5.22's
   `triton_sparse_mla_decode_splitk`), and the file main serves there: PR #66's Triton (Gluon) files, served at the
   Points where CI measured them at or above `AKLR_MIN_SPEEDUP` (`aklr/ops/README.md` § Environment variables): 27 of the 36, all but 12, 24, 56 and 136–176 tokens, as of
   #102.

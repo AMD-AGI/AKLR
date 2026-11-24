@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import functools
 import gc
-import math
 import os
 import statistics
 import tempfile
@@ -83,40 +82,6 @@ def flush_l2_cache() -> None:
     _flush_l2_cache_kernel[(blocks,)](cache, sums, cache.numel(), 4096)
 
 
-def _quantile(a, q):
-    n = len(a)
-    a = sorted(a)
-
-    def get_quantile(q):
-        if not (0 <= q <= 1):
-            raise ValueError("Quantiles must be in the range [0, 1]")
-        point = q * (n - 1)
-        lower = math.floor(point)
-        upper = math.ceil(point)
-        t = point - lower
-        return (1 - t) * a[lower] + t * a[upper]
-
-    return [get_quantile(qi) for qi in q]
-
-
-def _summarize_statistics(times, quantiles, return_mode):
-    if quantiles is not None:
-        ret = _quantile(times, quantiles)
-        if len(ret) == 1:
-            ret = ret[0]
-        return ret
-    if return_mode == "all":
-        return times
-    elif return_mode == "min":
-        return min(times)
-    elif return_mode == "max":
-        return max(times)
-    elif return_mode == "mean":
-        return statistics.mean(times)
-    elif return_mode == "median":
-        return statistics.median(times)
-
-
 @contextmanager
 def cuda_graph_without_gc(*args, **kwargs):
     # GC finalizing a Triton kernel unloads its module, which invalidates a capture
@@ -168,9 +133,9 @@ def _collect_scope_times(database, prefix):
     return [time for _, time in sorted(scope_times)]
 
 
-def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median", *, group=None):
-    """fn's kernel ms per call in a CUDA graph, minus cache flushes; with group, the slowest rank's."""
-    assert return_mode in ["min", "max", "mean", "median", "all"]
+def bench_cudagraph(fn, rep=20, *, group=None):
+    """fn's kernel ms per call in a CUDA graph, minus cache flushes, the median over the calls;
+    with group, the slowest rank's."""
     distributed = group is not None and dist.get_world_size(group) > 1
 
     kernel_tracer()
@@ -178,11 +143,6 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
     stream.wait_stream(torch.cuda.current_stream())  # the inputs are written on the caller's stream
     with torch.cuda.stream(stream):
         fn()
-        if grad_to_none is not None:
-            for x in grad_to_none:
-                x.detach_()
-                x.requires_grad_(True)
-                x.grad = None
 
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
@@ -207,27 +167,24 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
             # on the warmed stream, where fn's per-stream state exists
             with cuda_graph_without_gc(g, stream=stream):
                 for i in range(n_repeat):
-                    if grad_to_none is not None:
-                        for x in grad_to_none:
-                            x.grad = None
                     flush_l2_cache()
                     if distributed:
                         dist.all_reduce(ready, group=group)  # the ranks start each call together
                     with profiler.scope(f"{scope_prefix}{i:08d}"):
                         fn()
             torch.cuda.synchronize()
-            n_retries = 10
+            n_replays = 10
             error = None
             try:
                 try:
-                    for i in range(n_retries):
+                    for _ in range(n_replays):
                         g.replay()
                     torch.cuda.synchronize()
                 finally:
                     profiler.deactivate(session, flushing=True)
 
                 times = [
-                    t / n_retries for t in _collect_scope_times(profiler.get_data(session), scope_prefix)
+                    t / n_replays for t in _collect_scope_times(profiler.get_data(session), scope_prefix)
                 ]
                 if distributed and len(times) != n_repeat:
                     raise RuntimeError(f"bench_cudagraph: {len(times)} of {n_repeat} calls timed")
@@ -249,4 +206,4 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
         slowest = torch.tensor(times, dtype=torch.float32, device="cuda")
         dist.all_reduce(slowest, dist.ReduceOp.MAX, group=group)
         times = slowest.tolist()
-    return _summarize_statistics(times, quantiles, return_mode)
+    return statistics.median(times)

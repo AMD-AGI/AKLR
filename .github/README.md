@@ -73,8 +73,8 @@ SGLang loads AKLR at startup and, with `AKLR_SGLANG_PLUGIN=1`, runs AKLR's kerne
 
 Read in this order:
 
-1. [Ops tutorial](../docs/ops_tutorial.md) ([中文](../docs/ops_tutorial.zh.md)): add a kernel to an op in `aklr/ops/`. The example is `fused_moe`, the experts of GLM-5's MoE layer.
-2. [Plugin tutorial](../docs/plugin_tutorial.md) ([中文](../docs/plugin_tutorial.zh.md)): when an optimization crosses one op's boundary, replace a whole SGLang function. The example, `deepseek_v2_mxfp4_moe`, takes the same MoE layer whole.
+1. [Ops tutorial](../docs/ops_tutorial.md) ([中文](../docs/ops_tutorial.zh.md)): add a kernel to an op in `aklr/ops/`. The example is a bf16 gemm (`gemm@1.0` at n=1024, k=4096).
+2. [SGLang plugin tutorial](../docs/sglang_plugin_tutorial.md) ([中文](../docs/sglang_plugin_tutorial.zh.md)): when an optimization crosses one op's boundary, replace a whole SGLang function. The example, `deepseek_v2_mxfp4_moe`, takes GLM-5's whole MoE layer. The [vLLM plugin tutorial](../docs/vllm_plugin_tutorial.md) ([中文](../docs/vllm_plugin_tutorial.zh.md)) does the same for vLLM.
 3. [forge_task](../docs/forge_task.md): let agents write and tune a kernel.
 
 For reference: [aklr/ops/README.md](../aklr/ops/README.md) (schema fields, the kernel interface, names, commands), [aklr/plugins/README.md](../aklr/plugins/README.md) (the plugin layout, rules for routes, upgrading SGLang), [harness/README.md](../harness/README.md) (agent skills and the kernel lifecycle).

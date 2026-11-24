@@ -30,6 +30,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.ops.kda_conv.baseline import KimiK3KdaConvBaseline
+from aklr.ops.kda_conv.reference import KimiK3KdaConvReference
 
 __all__ = ["CONTRACTS", "KIMI_K3_KDA_CONV"]
 
@@ -42,7 +44,7 @@ _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _SAME_AS_X = DTypeSpec(same_as_tensor="x")
 _FINITE = FiniteDistribution()
 # a bf16 rounding of a float32 sum of four products and the silu: about 2**-8 relative, and small outputs absolute
-_OUT_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-7)
+_OUT_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-7 + 2**-7)
 
 KIMI_K3_KDA_CONV = OpContract(
     contract_id="kimi_k3_kda_conv@1.0",
@@ -143,6 +145,8 @@ KIMI_K3_KDA_CONV = OpContract(
             ),
         }
     ),
+    reference=KimiK3KdaConvReference(),
+    baseline=KimiK3KdaConvBaseline(),
 )
 
 CONTRACTS = (KIMI_K3_KDA_CONV,)

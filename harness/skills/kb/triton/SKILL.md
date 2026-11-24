@@ -39,7 +39,7 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
 |Split-KV attention|[attention](attention.md) §1–§2, §5, §10|
 |GDN, 1 token/step or chunks (schedule per Point: §8)|[GDN](gdn.md)|
 |Ruler|`harness/skills/read-validation/references/ruler.md`|
-|SA0–SA4, ABI|`aklr/ops/README.md` § The kernel section and ABI|
+|SA0–SA5, ABI|`aklr/ops/README.md` § The kernel section and ABI|
 |Cross-language|[KB](../SKILL.md)|
 
 ## Rules for every Triton or Gluon kernel in AKLR
@@ -129,4 +129,4 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
 - E14 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, `aklr validate` twice per variant, one input set] router `c3889614985b700a`, GDN decode `fc261961f0ad572d`: 2 of 2 failed; gated attention scale relative L2 0.003233 → 0.003269 (AKLR@43e112e)
 - E15 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, 1 GiB bf16 Gluon stream, 12 timing blocks] paired 95% intervals 0.8665–0.8692, 0.7437–0.7452, 0.8539–0.8546; A/A within ±1% (#89)
 - E16 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, capture probes and `aklr validate`] a capture-compiling variant failed bench without `capture_unsafe`; a new autotune key re-timed 3 configs, 0 compiles (AKLR@43e112e)
-- S1 aklr/core/utils/testing.py:206-224 each call captured after `flush_l2_cache()` (:70-75), timed as its kernels' summed durations
+- S1 aklr/core/utils/testing.py:169-188 each call captured after `flush_l2_cache()` (:70-82), timed as its kernels' summed durations

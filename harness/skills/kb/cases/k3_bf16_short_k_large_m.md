@@ -35,7 +35,7 @@ None of the four splits K across workgroups. n2304's `_build` and n3072's `_buil
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0,
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`,
   the `CompareSpec` defaults), with the fp32 dot-product error bound of `_dot_k()` (`GEMM` in
   `aklr/ops/gemm/contract.py`). Every output is one fp32 sum in a fixed order.
 - Shapes:
@@ -210,7 +210,7 @@ Counter-signals:
   0.1.21.dev66+gdbd8bf5bd, the commit CI pins as `aiter` in `stack.json`; the schema now
   carries the copies, so a later aiter changes neither its import nor its kernel, and a later fix to aiter's HGEMM
   reaches it only through a new copy.
-- **The baseline is aiter's own dispatch.** Its tuned `gemm_a16w16` (`gemm_baseline`) picks its own kernel at these
+- **The baseline is aiter's own dispatch.** Its tuned `gemm_a16w16` (`GemmBaseline`) picks its own kernel at these
   shapes; which one it ran was not recorded, so the gain is this tile choice against whatever aiter's dispatch chose.
 - **Near 4.2–4.4 µs the profile-19 reading stops moving with m; the N 7168 kernel does not.** N 7168 read
   4.22–4.30 µs per round at every listed m from 2 to 64 while aiter went from 4.64 to 5.77, 0.41–0.58 µs above the

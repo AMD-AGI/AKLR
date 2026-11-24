@@ -36,7 +36,7 @@ N 28672 × K 512 the `_build` and `_plan` of `gemm_n3072_k512`
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16, `trans_b`,
-  no bias, bf16 `out`. The schema's `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0).
+  no bias, bf16 `out`. The schema's `compare` is bitwise (`determinism: bitwise`).
   Each output is one MFMA chain over K in a fixed order (at N 2048 × K 2048, m 256, plus a fixed-order fold of four
   K waves); no split-K across workgroups, no atomics.
 - Weights: N 2048 × K 2048 (8 MiB), N 3584 × K 512 (3.5 MiB), N 7168 × K 512 (7 MiB), N 28672 × K 512 (28 MiB),
@@ -170,7 +170,7 @@ time; every stage barrier also waits `lgkmcnt(0)`:
 
 `speedup` here is AKLR validate's one-sided lower bound of the aiter / kernel time ratio (measurement profile 19,
 `MEASUREMENT_PROFILE` in `aklr/core/validation/stages/_measure.py`; aiter's tuned `gemm_a16w16` through
-`gemm_baseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. Dispatch reads the `speedup` CI writes
+`GemmBaseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. Dispatch reads the `speedup` CI writes
 (`aklr/ops/README.md` § Workflow): 1.034–1.798 over the 23 Points (#125), each passing accuracy.
 
 | File | Points | Speedup over aiter | Highest |

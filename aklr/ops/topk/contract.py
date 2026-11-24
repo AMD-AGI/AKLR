@@ -6,17 +6,17 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     DType,
-    ElementOrder,
     FiniteDistribution,
     IntRangeDistribution,
     PermutationDistribution,
     ToleranceBound,
     TopkStaticPlanDistribution,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -24,6 +24,14 @@ from aklr.core.contract.spec import (
     TensorSpec,
     attr,
     axis,
+)
+from aklr.ops.topk.baseline import (
+    BiasedGroupedTopkBaseline,
+    TopkTransformPagedBaseline,
+)
+from aklr.ops.topk.reference import (
+    BiasedGroupedTopkReference,
+    TopkTransformPagedReference,
 )
 
 __all__ = ["BIASED_GROUPED_TOPK", "CONTRACTS", "TOPK_TRANSFORM_PAGED"]
@@ -97,15 +105,18 @@ BIASED_GROUPED_TOPK = OpContract(
             description=("Unbiased sigmoid scores of the chosen experts, renormalized and scaled."),
             shape=("n_tokens", "topk"),
             dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
-            error_bounds=ToleranceBound(absolute_tolerance=1e-4, relative_tolerance=1e-4),
+            error_bounds=tolerance(DType.FLOAT32),
         ),
         "topk_ids": TensorSpec(
             description="Chosen experts, by descending biased score.",
             shape=("n_tokens", "topk"),
             dtype=DTypeSpec(any_of=(DType.INT32,)),
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=BiasedGroupedTopkReference(),
+    baseline=BiasedGroupedTopkBaseline(),
 )
 
 TOPK_TRANSFORM_PAGED = OpContract(
@@ -176,14 +187,14 @@ TOPK_TRANSFORM_PAGED = OpContract(
             ),
             shape=("n_tokens", "topk"),
             dtype=_INT32,
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
-    # Ties and a full row's order are the kernel's choice.
-    compare=CompareSpec(
-        determinism=DeterminismLevel.BOUNDED,
-        element_order=ElementOrder.ANY_IN_FULL_ROWS,
-    ),
+    # Ties and a full row's order are the kernel's choice (the reference's check).
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=TopkTransformPagedReference(),
+    baseline=TopkTransformPagedBaseline(),
 )
 
 CONTRACTS = (BIASED_GROUPED_TOPK, TOPK_TRANSFORM_PAGED)

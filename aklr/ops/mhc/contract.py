@@ -6,15 +6,16 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     LecunNormalDistribution,
     LogUniformDistribution,
     ToleranceBound,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -23,6 +24,16 @@ from aklr.core.contract.spec import (
     attr,
     axis,
     derived_axis,
+)
+from aklr.ops.mhc.baseline import (
+    MhcFusedPostPreBaseline,
+    MhcPostBaseline,
+    MhcPreBaseline,
+)
+from aklr.ops.mhc.reference import (
+    MhcFusedPostPreReference,
+    MhcPostReference,
+    MhcPreReference,
 )
 
 __all__ = ["CONTRACTS", "MHC_FUSED_POST_PRE", "MHC_POST", "MHC_PRE"]
@@ -35,7 +46,7 @@ _FLOAT32_LARGEST = DTYPE_TRAITS["float32"].largest_finite_value
 _FINITE_DISTRIBUTION = FiniteDistribution()
 # about [0.1, 0.9]
 _FRACTION_DISTRIBUTION = LogUniformDistribution(log2_lo="-3.32", log2_hi="-0.15")
-# as aiter's mHC tests: allclose(atol=1e-2, rtol=1e-2)
+# the float32 mixes as aiter's mHC tests: allclose(atol=1e-2, rtol=1e-2)
 _TOLERANCE_BOUND = ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)
 
 _POST_AXES = {
@@ -142,13 +153,13 @@ _LAYER_INPUT = TensorSpec(
     description="The streams summed under the pre mix.",
     shape=("n_tokens", "hidden_size"),
     dtype=_SAME_AS_RESIDUAL,
-    error_bounds=_TOLERANCE_BOUND,
+    error_bounds=tolerance(DType.BFLOAT16),
 )
 _NEXT_STREAMS = TensorSpec(
     description="The new streams.",
     shape=("n_tokens", 4, "hidden_size"),
     dtype=_SAME_AS_RESIDUAL,
-    error_bounds=_TOLERANCE_BOUND,
+    error_bounds=tolerance(DType.BFLOAT16),
 )
 _POST_MIX = TensorSpec(
     description="Post mix of the next mHC post.",
@@ -179,6 +190,8 @@ MHC_PRE = OpContract(
     },
     layout_variants=_ROW_MAJOR_VARIANTS,
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=MhcPreReference(),
+    baseline=MhcPreBaseline(),
 )
 
 MHC_POST = OpContract(
@@ -190,6 +203,8 @@ MHC_POST = OpContract(
     outputs={"out": _NEXT_STREAMS},
     layout_variants=_ROW_MAJOR_VARIANTS,
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=MhcPostReference(),
+    baseline=MhcPostBaseline(),
 )
 
 MHC_FUSED_POST_PRE = OpContract(
@@ -218,6 +233,8 @@ MHC_FUSED_POST_PRE = OpContract(
     },
     layout_variants=_ROW_MAJOR_VARIANTS,
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=MhcFusedPostPreReference(),
+    baseline=MhcFusedPostPreBaseline(),
 )
 
 CONTRACTS = (MHC_PRE, MHC_POST, MHC_FUSED_POST_PRE)

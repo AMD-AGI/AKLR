@@ -6,13 +6,10 @@ import inspect
 import itertools
 import os
 import re
-import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-import pytest
-
-from aklr.core.contract import export, expr, op
+from aklr.core.contract import export, expr
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import AxisSpec, PointSpec
@@ -21,7 +18,7 @@ from tests.op_case import OpCase
 
 
 class TestOpRegistration:
-    """Every registered contract has an ``OpCase`` and an api; a baseline is optional."""
+    """Every registered contract has an ``OpCase``, an api and a baseline."""
 
     def test_every_contract_has_an_op_case(self) -> None:
         """``OpCase.all()``'s distinct contract ids are exactly
@@ -30,33 +27,11 @@ class TestOpRegistration:
             c.contract_id for c in ContractRegistry.default().contracts()
         ]
 
-    def test_baseline_is_the_baseline_py_function(self) -> None:
-        baseline = OpCase.of("topk_transform_paged@1.0").contract.baseline()
-        assert f"{baseline.__module__}.{baseline.__qualname__}" == (
-            "aklr.ops.topk.baseline.topk_transform_paged_baseline"
-        )
-
     def test_every_baseline_takes_the_api_params(self) -> None:
         """Bench calls a baseline with its contract's inputs and outputs by name."""
         for contract in ContractRegistry.default().contracts():
-            baseline = contract.baseline()
-            if baseline is not None:
-                names = {**contract.inputs, **contract.outputs}
-                inspect.signature(baseline).bind_partial(**dict.fromkeys(names))
-
-    def test_no_baseline_py_is_no_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A new op may have no ``baseline.py`` (it is its own baseline); one whose own
-        import fails raises."""
-        contract = OpCase.of("gemm@1.0").contract
-        monkeypatch.setitem(sys.modules, "aklr.ops.gemm.baseline", None)  # import raises
-        assert contract.baseline() is None
-
-        def unimportable(op_package: str, submodule: str) -> None:
-            raise ModuleNotFoundError("No module named 'aiter'", name="aiter")
-
-        monkeypatch.setattr(op, "op_module", unimportable)
-        with pytest.raises(ModuleNotFoundError, match="aiter"):
-            contract.baseline()
+            names = {**contract.inputs, **contract.outputs}
+            inspect.signature(contract.baseline.baseline).bind_partial(**dict.fromkeys(names))
 
     def test_committed_schemas_have_no_errors(self) -> None:
         """``export.repository_errors()`` (``python -m aklr export check``) is ``[]``."""

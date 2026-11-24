@@ -52,8 +52,9 @@ Inside the ROCm container you run AKLR in:
 Every command runs from the clone's root. The example optimizes `bmm_n128_k512`.
 
 **1. Prepare** (minutes, no agent yet). It checks the starting kernel with AKLR, records AKLR's baseline time per
-workload in `$RUN/baseline.json`, and writes the task. A plain GEMM starts from torch; any other schema starts from its contract's AKLR baseline. A contract without a
-baseline needs `--starting-kernel <kernel.py or a directory of *.py>`.
+workload in `$RUN/baseline.json`, and writes the task. A plain GEMM starts from torch. Any other schema needs
+`--starting-kernel <kernel.py or a directory of *.py>`: a kernel calling AKLR's baseline fails the audit (SA5: a
+kernel imports nothing of aklr but `aklr.core.jit`).
 
 ```bash
 RUN=~/aklr-runs/bmm_n128_k512

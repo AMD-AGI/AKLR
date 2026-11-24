@@ -36,9 +36,9 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
   `gate_up_interleaved` (gate and up rows interleaved, 2-D scales). `act_quant` 4 quantizes the activations to MXFP4,
   8 to fp8 (SiTUv2 only); gate mode interleave keeps bf16 activations, and so does swiglu below 256 tokens.
 - The var axis is `n_tokens`; model dim, experts, top-k and inter dim are fixed per schema name.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, and for every activation but swiglu one whole-output
-  SQNR ≥ 13 dB bound against the reference (float32 in validation) rounded to the output dtype, with no bias test;
-  swiglu is bounded per element relative to aiter's own error (`BaselineRelativeBound`). Atomic accumulation passes
+- Compare: `determinism: bounded`, and one whole-output SQNR bound against the
+  reference in the output dtype: 20 dB with MXFP8 activations (`act_quant` 8), 10 dB
+  with MXFP4 (`out`'s `error_bounds` in `aklr/ops/fused_moe/contract.py`). Atomic accumulation passes
   the SQNR bound, and so do fp8 partial rows and bf16 truncation
   ([fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md), Counter-signals).
 - Every AKLR kernel computes it in two GEMM stages. How the routes reach their expert's rows is the main choice at a
@@ -132,7 +132,7 @@ tokens per call. Reuse the mechanism and re-derive the number.
     (m ≥ 256) run at served Points.
   - `5d5b47d0…`: one stage-2 binary serves all four token counts; stage 1 compiles per count.
 - **aiter's FlyDSL MoE families** and their knobs: `../flydsl/kernels/flydsl_kernel_library.md` § Other
-  FlyDSL families in the baseline aiter (MoE). aiter is the baseline; price it through `fused_moe_baseline`, which
+  FlyDSL families in the baseline aiter (MoE). aiter is the baseline; price it through `FusedMoeBaseline`, which
   calls `aiter.fused_moe.fused_moe` (`grouped_sorted_tokens.md` §8).
 - **FlyDSL v0.3.2's `kernels/moe/`** and how aiter's copies differ: `../flydsl/moe.md` § grouped_sorted_tokens
   §1.
@@ -280,4 +280,4 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Kernel map.
 - E8 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, AKLR bench_cudagraph or graph wall clock, 1 GiB flush per call] touched experts' weight bytes over the call time: delivered kernels 6.09–6.31 TB/s (TP, m 40–112) and 6.22–6.48 (EP8, m 32–112); aiter 4.91–5.89; a 2 GiB Triton read-only stream 6.87 TB/s at its best configuration, 6.53 with uint8 loads; left 8.2–11.3% (TP) and 5.6–9.4% (EP8) (TP e0678268dac4bef6; EP8 b4c655c5220c02de and a22cc342a6677a10)
 - E9 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, eager, torch.profiler kernel times after a 1 GiB flush] at 9397 and 16384 tokens, stage 1 and stage 2 useful TF/s over 4921 TF/s (a HIP microbenchmark's fp8 × MXFP4 MFMA rate) 0.32–0.44; touched weights, activations read once and output written once over the stage time, against a 6.66 TB/s Triton read-only stream, 0.31–0.48, and 0.70–0.89 at 2732 tokens (TP ae24d42e524edf7d, EP8 84181fb6b00938c6; eea13e61bb2a6241 and 6dba52d6b5e138ae at 2732)
 - E10 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6 rounds (TP measured twice), eager, torch.profiler kernel times after a 1 GiB flush; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, delivered against aiter: TP stage 1 2168 / 2099 TF/s (aiter 1369), stage 2 1703 / 1679 (922), reduce 105.0 / 99.6 µs of 1260.7 / 1290.0 µs for all kernels; EP8 stage 1 2140 (1409), stage 2 1834 (1235) (TP ae24d42e524edf7d, EP8 84181fb6b00938c6)
-- S1 aklr/ops/README.md:83 a schema file with empty `sources` is a definition: loaded and audited, not served or benched
+- S1 aklr/ops/README.md:174 a schema file with empty `sources` is a definition: loaded and audited, not served or benched

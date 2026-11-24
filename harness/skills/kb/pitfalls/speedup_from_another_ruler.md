@@ -7,7 +7,7 @@ flydsl: 0.3.2
 basis: single-observation
 sources:
   - "aklr/core/validation/stages/_bench/_report.py:85"
-  - "aklr/core/utils/testing.py:164"
+  - "aklr/core/utils/testing.py:136"
 ---
 
 # A speedup from another ruler
@@ -43,7 +43,7 @@ The two numbers come from different rulers, and the description's number is a me
   to candidate time over 32 rounds (S2). Each round's reading is the median of 10 graph replays of the per-call
   GPU kernel time recorded by Kineto, every call preceded by a 1 GiB read that flushes L2 and MALL (S3); the arms
   run in a seeded random order each round (S4).
-- **The baseline is the contract's `<contract>_baseline`**, here `gemm_a8w8_blockwise_scaled_baseline`, which calls
+- **The baseline is the contract's baseline class**, here `GemmA8w8BlockwiseScaledBaseline`, which calls
   aiter's `gemm_a8w8_blockscale_bpreshuffle`; for the `b_shuffled_row_major_a_scale` variant, the timed baseline
   call also relayouts `a_scale` (S5).
 - **The CI of these runs used FlyDSL 0.3.2** (in the repository before this one): the GPU job installed the
@@ -63,7 +63,7 @@ The two numbers come from different rulers, and the description's number is a me
 ## How to detect
 
 - Read your result per Point from AKLR's ruler before you trust it: `bench_cudagraph` (S3), arms in random order,
-  against the contract's `<contract>_baseline`. `python -m aklr validate --base origin/main` runs that ruler
+  against the contract's baseline. `python -m aklr validate --base origin/main` runs that ruler
   locally; the local result does not count, CI decides (`aklr/ops/README.md` § Workflow).
 - A number that is a mean over shapes says nothing about any one Point; compare Point by Point
   (`../CONTRIBUTING.md` § Evidence).
@@ -97,8 +97,8 @@ The two numbers come from different rulers, and the description's number is a me
 - E4 [2026-10, gfx950, FlyDSL 0.3.2, N=3–5 pairs, KernelForge paired keep (round and best timed alternately on one card, AKLR graph timer)] after the run moved from one MI355X node to another, rounds 15 and 16 scored 1.5287 and 1.5266 against the best 1.4451 of round 13; paired against it: mean 1.0006 (n_tokens 893 1.0000, 2732 1.0013) and 1.0013 (893 1.0002, 2732 1.0024), lower bounds 1.0004 and 1.0007 under the keep bar 1.0011; both REVERT_PERF (fp8 × MXFP4 SiTUv2 fused MoE, EP8, 112 local experts, inter 3072, n_tokens 893 and 2732)
 - S1 the predecessor repository's `b_shuffled_row_major_a_scale_n512_k4096` schema file (2026-10): against the PR's version only `launch` takes `out` and `run` takes keyword arguments; the sources have not changed since main's kernels were imported unedited, and the four later commits to that schema file wrote measurements only
 - S2 aklr/core/validation/stages/_bench/_report.py:85: `speedup` is the graph ratio lower bound against the baseline, `ratio_lower_bound` at aklr/core/validation/stages/_measure.py:144, 32 rounds
-- S3 aklr/core/utils/testing.py:164: `bench_cudagraph`, the flush at :70-75, the median of 10 replays
+- S3 aklr/core/utils/testing.py:136: `bench_cudagraph`, the flush at :70-82, the median of 10 replays
 - S4 aklr/core/validation/stages/_measure.py:286: a seeded shuffle of the participants every round
-- S5 aklr/ops/gemm/baseline.py:58 `gemm_a8w8_blockwise_scaled_baseline` relays out a row-major `a_scale` (`a_scale.T.contiguous().T`, :59) inside the timed call
+- S5 aklr/ops/gemm/baseline.py:58 `GemmA8w8BlockwiseScaledBaseline` relays out a row-major `a_scale` (`a_scale.T.contiguous().T`, :59) inside the timed call
 - S6 `pip install --no-build-isolation --no-deps -e .` in the image `AKLR_CI_IMAGE`
 - S7 setup.py, in the repository before this one: an editable install (`is_develop_mode`) without `AITER_TRITON_ONLY` runs `pip install flydsl==0.3.2` (`FLYDSL_VERSION`) whenever another FlyDSL version is installed; the parents of the four runs of E1 carry the same block and pin and install the checkout as S6 does
