@@ -48,6 +48,10 @@ def _chunk_kda(qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indices, 
     from sglang.kernels.ops.attention.fla.kda import chunk_kda
 
     q, k, v, g, beta, A_log, dt_bias, ssm_states = _views(qkv, raw_g, raw_beta, a_log, g_bias, state_cache)
+    if v.is_contiguous():
+        # one token's view of its packed row: chunk_kda's v.contiguous() would be the view itself, and 0.5.23's
+        # writes its output there (o = v), into qkv; a longer view is copied there by sglang already
+        v = v.clone()
     track = track_state is not None
     result = chunk_kda(
         q=q,

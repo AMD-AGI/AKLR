@@ -533,6 +533,33 @@ def test_the_prefill_baseline_calls_chunk_kda_as_sglang_does(sglang_kernels):
     }
 
 
+@pytest.mark.parametrize(
+    "baseline_class", [baseline.KimiK3SglKdaPrefillBaseline, baseline.KimiK3SglKdaPrefillTrackBaseline]
+)
+def test_a_one_token_prefill_baseline_leaves_qkv_as_it_was(monkeypatch, baseline_class):
+    """One token's v view of the packed row is contiguous, so chunk_kda's ``v.contiguous()`` is that view, and sglang
+    0.5.23's chunk_kda writes its output there (``o = v``): the baseline hands it a copy, qkv stays read-only."""
+
+    def chunk_kda(**kwargs):
+        o = kwargs["v"].contiguous()
+        o.fill_(7.0)
+        return (o, None) if kwargs["output_intermediate_states"] else o
+
+    stand_in = ModuleType("sglang.kernels.ops.attention.fla.kda")
+    stand_in.chunk_kda = chunk_kda
+    monkeypatch.setitem(sys.modules, stand_in.__name__, stand_in)
+    args = op_operands(1, n_seqs=1) | {"cu_seqlens": torch.tensor([0, 1], dtype=torch.int32)}
+    if baseline_class is baseline.KimiK3SglKdaPrefillTrackBaseline:
+        args |= {
+            "track_chunk_idx": torch.tensor([-1], dtype=torch.int32),
+            "track_state": torch.zeros(1, HEADS * DIM, DIM),
+        }
+    qkv = args["qkv"].clone()
+    out = baseline_class().baseline(**args)["out"]
+    assert torch.equal(args["qkv"], qkv)
+    assert out.shape == (1, HEADS, DIM) and bool((out == 7.0).all())
+
+
 def test_the_track_baseline_asks_chunk_kda_for_the_snapshots(sglang_kernels):
     snapshot = torch.zeros(2, HEADS * DIM, DIM)
     chunks = torch.tensor([1, -1], dtype=torch.int32)
