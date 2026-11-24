@@ -17,13 +17,13 @@ Kimi-K3 的 attention residual 在 vLLM 里是一个 Triton kernel，即 `attn_r
 | 5 | 对 mix 做该层的 RMSNorm：attention 前用 `input_layernorm`，MLP 前用 `post_attention_layernorm`，最后的 norm 之前不做 | ✓ | ✓ |
 | 6 | 下一个 linear 吃 fp8 输入时，把输出按 token 量化为 fp8 | ✓ | — |
 
-这几步在 vLLM 里本来就是一个 kernel，但这是模型自己的 kernel，放在 Kimi-K3 的模型目录里，不在 aiter 里。aiter 没有对应的算子，AKLR 的 aiter provider 也就碰不到这次调用；`aklr/ops` 里也没有做这个计算的算子。想换上更快的 kernel，只能由插件替换模型自己的这个函数，也就是 `_apply_attn_res` 调用的 `attn_res`。算子接管第 1–5 步；第 6 步的 fp8 输出没有 contract 描述，遇到时 route 把调用交回 vLLM 的 kernel。
+这几步在 vLLM 里本来就是一个 kernel，但这是模型自己的 kernel，放在 Kimi-K3 的模型目录里，不在 aiter 里。aiter 没有对应的算子，AKLR 的 aiter provider 也就碰不到这次调用；`aklr/plugins/aiter` 里也没有做这个计算的算子。想换上更快的 kernel，只能由插件替换模型自己的这个函数，也就是 `_apply_attn_res` 调用的 `attn_res`。算子接管第 1–5 步；第 6 步的 fp8 输出没有 contract 描述，遇到时 route 把调用交回 vLLM 的 kernel。
 
 插件能替换什么：route 不替换 aiter 的函数，也不替换只是给一次 aiter 调用包了层壳的框架函数，比如 vLLM `_aiter_ops.py` 里的 `_rocm_aiter_fused_moe_impl`，它只是调用 aiter 的 `fused_moe`。aiter 算子的调用，走 aiter 自己的插件接口进入 AKLR，AKLR 在那边的 provider 是 `aklr/plugins/aiter/provider`（见 [aiter 的 kernel 插件接口](../aklr/plugins/README.md#aiters-kernel-plugin-interface)）。route 只做两种事：要么替换模型自己的函数，本例就是这种；要么把框架里连同 aiter 调用在内的一整段计算融成一个算子。
 
 因此：
 
-- 只需让某一个算子更快时，在 `aklr/ops` 中写算子；如果 aiter 对这个算子做了路由，它的调用会经 aiter provider 交给 AKLR。
+- 只需让某一个算子更快时，在 `aklr/plugins/aiter` 中写算子；如果 aiter 对这个算子做了路由，它的调用会经 aiter provider 交给 AKLR。
 - 要替换的是模型自己的函数，或者优化要把框架里跨越多个算子的一段计算融到一起时，写插件。
 
 ## 插件如何运行
@@ -47,7 +47,7 @@ def attn_res(prefix, delta, blocks, norm_weight, qk_weight, output_norm_weight, 
 
 ### 2. 建包
 
-新建 `aklr/plugins/vllm/models/kimi_k3/attn_res/`：`kimi_k3/` 对应 vLLM 的源目录 `models/kimi_k3/`，`attn_res/` 对应 kernel 所在的文件 `ops/attn_res.py`。包内的文件与 `aklr/ops` 中的算子相同：`__init__.py`、`contract.py`、`reference.py`、`baseline.py`、`api.py` 和 `impls/`；另有 `_triton.py`，是 vLLM 这个 Triton kernel 及其启动函数的副本（去掉了 fp8 输出），让 baseline 不依赖 vLLM 也能运行。包名即算子的 `op_type`（`attn_res`），在 `aklr/ops` 和 `aklr/plugins` 中都不能重名。
+新建 `aklr/plugins/vllm/models/kimi_k3/attn_res/`：`kimi_k3/` 对应 vLLM 的源目录 `models/kimi_k3/`，`attn_res/` 对应 kernel 所在的文件 `ops/attn_res.py`。包内的文件与 `aklr/plugins/aiter` 中的算子相同：`__init__.py`、`contract.py`、`reference.py`、`baseline.py`、`api.py` 和 `impls/`；另有 `_triton.py`，是 vLLM 这个 Triton kernel 及其启动函数的副本（去掉了 fp8 输出），让 baseline 不依赖 vLLM 也能运行。包名即算子的 `op_type`（`attn_res`），在 `aklr/plugins/aiter` 和 `aklr/plugins` 中都不能重名。
 
 ### 3. 编写算子
 
@@ -138,7 +138,7 @@ PointSpec(
 同一文件里的 `GFX950_CONTRACT_IDS` 列的是 baseline 只能在 gfx950 上运行的 contract；vLLM 的这个 Triton kernel 不属于这种情况，所以不用加。然后更新 `tests/plugins/vllm/names.txt`：
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
 `tests/plugins/vllm/test_hook.py` 会检查每个 route，确认它替换的函数在当前安装的 vLLM 中存在、参数一致，且没有其他 route 替换同一个函数。route 怎样把 vLLM 的参数对到算子上，`test_hook.py` 检查不到，所以要在 `tests/plugins/vllm/test_kimi_k3_attn_res.py` 中单独测试：要求 fp8 输出、或者在最后一行之前写 bank 的调用，不经过算子就交回 vLLM；受支持的调用，每个操作数都按名字交给算子；baseline 所用的 Triton kernel 副本，输出、更新后的 prefix 和 bank 都与 vLLM 逐位一致。

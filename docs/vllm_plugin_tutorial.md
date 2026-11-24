@@ -17,13 +17,13 @@ vLLM computes Kimi-K3's attention residual in one Triton kernel, `attn_res` (`mo
 | 5 | The layer's RMSNorm on the mix: `input_layernorm` before attention, `post_attention_layernorm` before the MLP, none before the final norm | ✓ | ✓ |
 | 6 | The output quantized to fp8 per token, when the next linear takes fp8 input | ✓ | — |
 
-vLLM already runs these steps as one kernel, but the kernel is the model's own: it lives in Kimi-K3's model directory, not in aiter. No aiter op covers it, so AKLR's aiter provider never sees the call, and no op in `aklr/ops` has its computation. To run a faster kernel in its place, the plugin replaces the model's function: the `attn_res` that `_apply_attn_res` calls. The op takes steps 1–5; the fp8 output of step 6 is in no contract, so there the route falls back to vLLM's kernel.
+vLLM already runs these steps as one kernel, but the kernel is the model's own: it lives in Kimi-K3's model directory, not in aiter. No aiter op covers it, so AKLR's aiter provider never sees the call, and no op in `aklr/plugins/aiter` has its computation. To run a faster kernel in its place, the plugin replaces the model's function: the `attn_res` that `_apply_attn_res` calls. The op takes steps 1–5; the fp8 output of step 6 is in no contract, so there the route falls back to vLLM's kernel.
 
 What a plugin may replace: a route never replaces an aiter function, nor a framework function that only wraps one aiter call, such as vLLM's `_rocm_aiter_fused_moe_impl` (`_aiter_ops.py`) around aiter's `fused_moe`. Calls of aiter's ops reach AKLR through aiter's own plugin interface, whose AKLR provider is `aklr/plugins/aiter/provider` ([aiter's kernel plugin interface](../aklr/plugins/README.md#aiters-kernel-plugin-interface)). A route does one of two things: it replaces a model's own function, as here, or it fuses a whole stretch of the framework's computation, aiter calls included, into one op.
 
 So:
 
-- To make one op faster, write an op in `aklr/ops`; if aiter routes that op, the aiter provider hands its calls to AKLR.
+- To make one op faster, write an op in `aklr/plugins/aiter`; if aiter routes that op, the aiter provider hands its calls to AKLR.
 - When the function is the model's own, or the optimization fuses a stretch of the framework's computation across ops, write a plugin.
 
 ## How the plugin runs
@@ -47,7 +47,7 @@ def attn_res(prefix, delta, blocks, norm_weight, qk_weight, output_norm_weight, 
 
 ### 2. Create the package
 
-Create `aklr/plugins/vllm/models/kimi_k3/attn_res/`: `kimi_k3/` is named after vLLM's source directory `models/kimi_k3/`, `attn_res/` after the kernel's file `ops/attn_res.py`. It holds the same files as an op in `aklr/ops`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`; and `_triton.py`, a copy of vLLM's Triton kernel and its launcher without the fp8 output, so that the baseline runs without vLLM. The package name is the op's `op_type` (`attn_res`) and must be unique across `aklr/ops` and `aklr/plugins`.
+Create `aklr/plugins/vllm/models/kimi_k3/attn_res/`: `kimi_k3/` is named after vLLM's source directory `models/kimi_k3/`, `attn_res/` after the kernel's file `ops/attn_res.py`. It holds the same files as an op in `aklr/plugins/aiter`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`; and `_triton.py`, a copy of vLLM's Triton kernel and its launcher without the fp8 output, so that the baseline runs without vLLM. The package name is the op's `op_type` (`attn_res`) and must be unique across `aklr/plugins/aiter` and `aklr/plugins`.
 
 ### 3. Write the op
 
@@ -138,7 +138,7 @@ PointSpec(
 `GFX950_CONTRACT_IDS` in the same file lists the contracts whose baseline runs only on gfx950; vLLM's Triton kernel is not one of them, so this contract is not listed. Then update `tests/plugins/vllm/names.txt`:
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
 `tests/plugins/vllm/test_hook.py` checks every route: that the function it replaces exists in the installed vLLM with the same parameters, and that no other route replaces it. How the route maps vLLM's arguments `test_hook.py` cannot check, so it is tested on its own in `tests/plugins/vllm/test_kimi_k3_attn_res.py`: the fp8 output and a bank write before the last row go back to vLLM without the op called, a supported call hands each operand to the op under its name, and the baseline's copy of vLLM's Triton kernel gives vLLM's bits for the output, the updated prefix and the bank.

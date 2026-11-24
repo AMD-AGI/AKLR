@@ -1,6 +1,6 @@
 # 插件教程：替换 SGLang 的函数
 
-当一项优化需要覆盖不止一个算子时，插件会把 SGLang 的整个函数替换为 AKLR 的一个算子。本教程的示例是 `deepseek_v2_mxfp4_moe`，它接管 GLM-5 的整个 MoE 层；`aklr/ops` 里的 `fused_moe` 只覆盖这一层的专家计算部分。
+当一项优化需要覆盖不止一个算子时，插件会把 SGLang 的整个函数替换为 AKLR 的一个算子。本教程的示例是 `deepseek_v2_mxfp4_moe`，它接管 GLM-5 的整个 MoE 层；`aklr/plugins/aiter` 里的 `fused_moe` 只覆盖这一层的专家计算部分。
 
 开始之前，请先阅读 [ops 教程](ops_tutorial.zh.md)：插件里的算子写法与之相同。插件的结构和规范见 [aklr/plugins/README.md](../aklr/plugins/README.md)。
 
@@ -25,7 +25,7 @@ SGLang 在调用 `fused_moe` 之前，把第 1–3 步作为单独的调用执�
 
 因此：
 
-- 只需让某一个算子更快时，在 `aklr/ops` 中写算子。
+- 只需让某一个算子更快时，在 `aklr/plugins/aiter` 中写算子。
 - 优化需要越过单个算子的边界时，写插件。
 
 ## 插件如何运行
@@ -46,7 +46,7 @@ def forward_normal(self, hidden_states, gemm_output_zero_allocator=None, input_i
 
 ### 2. 建包
 
-新建 `aklr/plugins/sglang/models/deepseek_v2/`，以 SGLang 的源文件命名。包内的文件与 `aklr/ops` 中的算子相同：`__init__.py`、`contract.py`、`reference.py`、`baseline.py`、`api.py` 和 `impls/`。包名即算子的 `op_type`，在 `aklr/ops` 和 `aklr/plugins` 中都不能重名。
+新建 `aklr/plugins/sglang/models/deepseek_v2/`，以 SGLang 的源文件命名。包内的文件与 `aklr/plugins/aiter` 中的算子相同：`__init__.py`、`contract.py`、`reference.py`、`baseline.py`、`api.py` 和 `impls/`。包名即算子的 `op_type`，在 `aklr/plugins/aiter` 和 `aklr/plugins` 中都不能重名。
 
 ### 3. 编写算子
 
@@ -108,7 +108,7 @@ PointSpec(
 它的 baseline 只能在 gfx950 上运行，所以还要把它的 contract id 加入同一文件的 `GFX950_CONTRACT_IDS`。然后更新 `tests/plugins/sglang/names.txt`：
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
 route 不需要单独写测试：`tests/plugins/sglang/test_hook.py` 会检查每个 route，确认它替换的函数在当前安装的 SGLang 中存在、参数一致，且没有其他 route 替换同一个函数。

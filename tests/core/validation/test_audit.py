@@ -244,14 +244,16 @@ class TestCheckKernel:
                 id="extra_kwargs",
             ),
             pytest.param(
-                '"""K."""\nfrom aklr.ops.gemm.baseline import GemmBaseline\n\n\n'
+                '"""K."""\nfrom aklr.plugins.aiter.gemm.baseline import GemmBaseline\n\n\n'
                 + _SIGNATURE
                 + "\n    out.copy_(a @ b.mT)\n",
                 "SA5",
                 id="imports_the_baseline",
             ),
             pytest.param(
-                '"""K."""\n' + _SIGNATURE + "\n    import aklr.ops.gemm.reference\n    out.copy_(a @ b.mT)\n",
+                '"""K."""\n'
+                + _SIGNATURE
+                + "\n    import aklr.plugins.aiter.gemm.reference\n    out.copy_(a @ b.mT)\n",
                 "SA5",
                 id="imports_aklr_in_launch",
             ),
@@ -397,9 +399,9 @@ class TestCheckHsacoKernel:
 
 
 _BAD_SOURCE = '"""K."""\n' + _SIGNATURE + "\n    a.zero_()\n"
-_OLD_FORMAT_PATH = "aklr/ops/gemm/kernels/gemm.py"  # a base that predates the format
+_OLD_FORMAT_PATH = "aklr/plugins/aiter/gemm/kernels/gemm.py"  # a base that predates the format
 # origin/main's solution file layout: under impls/, but its stem is not a schema uuid
-_LEGACY_SOLUTION_PATH = "aklr/ops/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
+_LEGACY_SOLUTION_PATH = "aklr/plugins/aiter/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
 
 
 class TestAuditStage:
@@ -466,7 +468,7 @@ class TestAuditStage:
                 workloads=[{"axes": {"m": m}, **measurement} for m in ms],
                 kernel=case.schema(source).kernel.model_copy(update={"author": author}),
             )
-            return f"aklr/ops/{op_type}/{schema.relative_path()}", schema.schema_text()
+            return f"aklr/plugins/aiter/{op_type}/{schema.relative_path()}", schema.schema_text()
 
         head_path, head_text = schema_at(head_source, head_ms, head_author)
         (tmp_path / head_path).parent.mkdir(parents=True)
@@ -498,7 +500,7 @@ class TestAuditStage:
         case = OpCase.of("gemm@1.0")
         source = HIP_GEMM_KERNEL_SOURCE.replace(_LAUNCH, '    (void)getenv("X");\n' + _LAUNCH)
         schema = case.schema(source, language="hip")
-        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path = tmp_path / "aklr/plugins/aiter" / case.contract.op_type / schema.relative_path()
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
@@ -513,7 +515,7 @@ class TestAuditStage:
             "import struct\n", "import ctypes\nimport struct\n"
         ).replace(_HSACO_LAUNCH, "    a.zero_()\n" + _HSACO_LAUNCH)
         schema = case.schema(source, language="hsaco", other_sources=_CODE_OBJECTS)
-        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path = tmp_path / "aklr/plugins/aiter" / case.contract.op_type / schema.relative_path()
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())

@@ -8,7 +8,7 @@ as vLLM's fused_rmsnorm_expand writes it, then each route through fused_moe's re
 import torch
 
 from aklr.core.contract.reference import OpReference
-from aklr.ops.fused_moe.reference import FusedMoeReference
+from aklr.plugins.aiter.fused_moe.reference import FusedMoeReference
 
 __all__ = ["MuseSparkMoeReference"]
 

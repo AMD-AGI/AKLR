@@ -74,7 +74,7 @@ class OpContract(FrozenModel):
     name: Annotated[str, Field(min_length=1)] | None = None
     contract_id: ContractId
     description: str
-    op_type: str  # the op family: "gemm" for aklr/ops/gemm/
+    op_type: str  # the op family: "gemm" for aklr/plugins/aiter/gemm/
     workloads: tuple[WorkloadSpec, ...] = ()
     axes: dict[str, AxisSpec]
     attrs: dict[str, AttrSpec] = {}  # noqa: RUF012 -- pydantic copies defaults
@@ -359,8 +359,7 @@ class OpContract(FrozenModel):
 
     @property
     def op_package(self) -> str:
-        """``"aklr.ops.gemm"`` for ``op_type`` ``"gemm"``; a plugin op's package
-        under ``aklr.plugins``."""
+        """``"aklr.plugins.aiter.gemm"`` for ``op_type`` ``"gemm"``."""
         return op_package_of(self.op_type)
 
     @property

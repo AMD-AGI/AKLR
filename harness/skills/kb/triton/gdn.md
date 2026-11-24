@@ -85,7 +85,7 @@ token's decay to the chunk end, G(last, j), W and U solve the triangular system,
   64 KiB state no other row reads, 0.875 flop per byte (estimated). All 26 prefill files use both the BF16 and the
   fp32 MFMA *(field, E2)*. No file uses atomics. Bitwise determinism is required (S2); five calls on fresh copies of the inputs were byte-identical at each file's first and last listed Point (61 file-Points, 305 calls; the 13 Points between them not run) *(field, E6)*.
 - The 20 Qwen3-Next files store no speedup at 43e112e, so dispatch there served none of them at the default
-  `AKLR_MIN_SPEEDUP` (`aklr/ops/README.md` § Environment variables); their numbers below are from the CI run recorded
+  `AKLR_MIN_SPEEDUP` (`aklr/plugins/aiter/README.md` § Environment variables); their numbers below are from the CI run recorded
   in d908d01, 43e112e's child. A later validate of each read its speedup within 4.7% of that run at the schema's lowest
   Point, but none of the 20 passed: each failed accuracy or exited nonzero *(field, E2)*.
 - Files are named by their uuid's leading hex digits: `<model package>/impls/triton/<scenario>/<uuid>.json`, sources
@@ -303,7 +303,7 @@ Every prefill file runs, in launch order (`010e`, `70f4`, `11f6` add a conv-hist
 - Ragged batches without host reads: grids come from shapes only *(field, E17)*; a chunk program finds its sequence by
   binary search over `cu_seqlens`, the slot formula `begin // BT + sequence` "reserves enough space for every ragged
   tail", and programs past the device-written chunk count do nothing (S28).
-- Scratch is `torch.empty` per call (`aklr/ops/README.md` § The kernel section and ABI) and large: 173–294 MB of fp32 at
+- Scratch is `torch.empty` per call (`aklr/plugins/aiter/README.md` § The kernel section and ABI) and large: 173–294 MB of fp32 at
   8–16K tokens in the summary designs (MAP at 10000 tokens: 246 MB of factors, 36 MB of maps) *(field, E17)*; buffers
   with disjoint live ranges are aliased. Write every element a later launch reads in the same call, padding rows and
   ragged tails included: a NaN left in old memory survives a zero β or a decay of 1 (0 × NaN is NaN). `98af` zeroes each
@@ -327,7 +327,7 @@ summaries of runs of chunks. The last column times another design's kernel, or t
   chunks and produces the outputs; BV makes sequences × 16 heads × 128/BV = 256, one program per CU: SEQ32L at 2
   sequences (BV 16), SEQ32G at 3–4 (BV 32), SEQ16 at 5–8 (BV 64) (S27, S30, S31). The Points that fill 256 programs
   measure 1.374–1.475; the two with fewer sequences than their file assumes (160 and 192 programs) 0.997 and 1.029,
-  below the default `AKLR_MIN_SPEEDUP` (`aklr/ops/README.md` § Environment variables), so sglang serves them. Their
+  below the default `AKLR_MIN_SPEEDUP` (`aklr/plugins/aiter/README.md` § Environment variables), so sglang serves them. Their
   longest sequence is 2048 tokens, as at the full Points, and the time does not follow the work: about half the work
   took 0.97× (`2ece`) and 0.85–0.86× (`c53b`) the full Point's time, 2 runs *(field, E19)*, which does not separate the
   serial chain from the program count; the other strip was slower (table).

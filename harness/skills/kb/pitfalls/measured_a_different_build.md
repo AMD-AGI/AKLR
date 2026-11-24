@@ -6,7 +6,7 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
 sources:
-  - "aklr/ops/README.md"
+  - "aklr/plugins/aiter/README.md"
   - "aklr/core/runtime/dispatch/_dispatcher.py:51"
   - "ROCm/aiter@e7d2453f2:requirements.txt:24"
 ---
@@ -36,7 +36,7 @@ Each channel puts a different build under the ruler.
 3. **The compile cache returns an earlier binary.** What FlyDSL's cache key does and does not see is in
    `../flydsl/debug-flydsl-kernel.md` § What the cache key sees.
 4. **Another venv or FlyDSL version.** Several changes between versions alter the result without an error
-   (`../flydsl/language/version_notes.md` § Behaviour that changes without an error). AKLR's CI times `aklr/ops`
+   (`../flydsl/language/version_notes.md` § Behaviour that changes without an error). AKLR's CI times `aklr/plugins/aiter`
    with the baseline aiter (`aiter` in `stack.json`) installed over its image's, on the FlyDSL that aiter pins, and
    plugins on the image's own (S9, S10; read from the workflow, not checked in a run's log), neither
    necessarily the `flydsl>=0.3.2` of `pyproject.toml`. From this
@@ -49,12 +49,12 @@ Each channel puts a different build under the ruler.
    does not stop a `setup.py` that installs a package itself. The `speedup` CI writes into a schema was measured
    on the FlyDSL of its run, and the run's commit message names the image, not the version.
 5. **AKLR runs the schema, not your file.** Validation and dispatch run the `content` strings of the schema's
-   `kernel.sources`, imported as a package `_aklr_<hash16>` (`aklr/ops/README.md` § Workflow and § The kernel
-   section and ABI). A model reaches an `aklr/ops` kernel only where the engine calls the op's api: AKLR's plugins
+   `kernel.sources`, imported as a package `_aklr_<hash16>` (`aklr/plugins/aiter/README.md` § Workflow and § The kernel
+   section and ABI). A model reaches an `aklr/plugins/aiter` kernel only where the engine calls the op's api: AKLR's plugins
    route models to plugin ops (`aklr/plugins/README.md`). The api returns a reason instead of running the kernel
    (S3) when for example AKLR is disabled, the Point has no workload or no qualifying measured speedup, or it is
    first called inside a graph capture; a toolchain outside the schema's `requires` skips the schema with an INFO
-   log (`aklr/ops/README.md` § The kernel section and ABI). A schema you just edited has no `speedup` until CI
+   log (`aklr/plugins/aiter/README.md` § The kernel section and ABI). A schema you just edited has no `speedup` until CI
    writes one (§ Workflow), so it is not served at its Points unless `AKLR_MIN_SPEEDUP` allows unmeasured
    workloads (§ Environment variables).
 

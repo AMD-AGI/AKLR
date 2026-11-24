@@ -116,7 +116,7 @@ class ContractReport:
 
     @property
     def group(self) -> str:
-        """The op package without ``aklr.`` and ``plugins.``: ops.gemm, sglang.models.qwen3_5."""
+        """The op package without ``aklr.`` and ``plugins.``: aiter.gemm, sglang.models.qwen3_5."""
         return re.sub(r"^aklr\.(plugins\.)?", "", self.op_package)
 
 
