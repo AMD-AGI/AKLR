@@ -1,8 +1,8 @@
 {
   "schema_version": 5,
-  "name": "kimi_k3_sgl_kda_prefill_strided_beta_n_heads12_head_dim128",
-  "contract_id": "kimi_k3_sgl_kda_prefill@1.0",
-  "description": "Kimi-K3's KDA prefill (chunked gated delta rule) as sglang's chunk_kda computes it, every sequence's tokens back to back: sequence s owns tokens cu_seqlens[s]:cu_seqlens[s + 1] and slot state_indices[s] of state_cache. token t's q, k and v are heads h, n_heads + h and 2 * n_heads + h of qkv[t]. Per head, q and k are L2-normalized (x / sqrt(sum(x**2) + 1e-6)) and q multiplied by scale; the gate g = lower_bound * sigmoid(exp(a_log[h]) * (raw_g + g_bias[h])) per key channel; beta = sigmoid(raw_beta). A step of the state S[v, k] (head h of a slot is S = state_cache[slot, h * head_dim + v, k]): S = S * exp(g)[None, :], S = S + beta * (v - S @ k)[:, None] * k[None, :], out = S @ q. Token by token from the slot's state (a zero state where the slot is -1), the sequence's last S is written back to its slot (nowhere where it is -1). Slots no sequence names are left unchanged. sglang's snapshots of a state mid-prefill (its track_state, under the mamba radix cache's extra buffer) are not part of it.",
+  "name": "kimi_k3_sgl_kda_prefill_track_strided_beta_n_heads12_head_dim128",
+  "contract_id": "kimi_k3_sgl_kda_prefill_track@1.0",
+  "description": "Kimi-K3's KDA prefill (chunked gated delta rule) as sglang's chunk_kda computes it, every sequence's tokens back to back: sequence s owns tokens cu_seqlens[s]:cu_seqlens[s + 1] and slot state_indices[s] of state_cache. token t's q, k and v are heads h, n_heads + h and 2 * n_heads + h of qkv[t]. Per head, q and k are L2-normalized (x / sqrt(sum(x**2) + 1e-6)) and q multiplied by scale; the gate g = lower_bound * sigmoid(exp(a_log[h]) * (raw_g + g_bias[h])) per key channel; beta = sigmoid(raw_beta). A step of the state S[v, k] (head h of a slot is S = state_cache[slot, h * head_dim + v, k]): S = S * exp(g)[None, :], S = S + beta * (v - S @ k)[:, None] * k[None, :], out = S @ q. Token by token from the slot's state (a zero state where the slot is -1), the sequence's last S is written back to its slot (nowhere where it is -1). Slots no sequence names are left unchanged. Besides, as sglang snapshots a state for its prefix cache: where 0 <= c = track_chunk_idx[s] and 64 * c < sequence s's length, its state after its first 64 * c tokens (the state it starts from where c = 0) is written to track_state[s]; else track_state[s] is left as it was.",
   "op_type": "kda_triton",
   "axes": {
     "n_tokens": {
@@ -138,6 +138,31 @@
         "total": "n_tokens"
       },
       "description": "Where each sequence's tokens start, then where the last ends (sglang's query_start_loc)."
+    },
+    "track_chunk_idx": {
+      "shape": [
+        "n_seqs"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_tokens // 64",
+        "distinct": false
+      },
+      "description": "Each sequence's snapshot point in chunks of 64 tokens of its own (sglang's track_chunk_idx); -1, or one at or past the sequence's end, asks for none."
+    },
+    "track_state": {
+      "shape": [
+        "n_seqs",
+        "state_rows",
+        "head_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each sequence's snapshot, in float32: its heads' (v, k) states, as a slot of state_cache holds them."
     },
     "scale": {
       "shape": null,
@@ -301,9 +326,9 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.3.2"
+      "flydsl": ">=0.3.4.1"
     },
-    "entry_point": "kernel.py::run",
+    "entry_point": "kernel.py::run_track",
     "sources": [
       {
         "path": "kda_chunk.py",

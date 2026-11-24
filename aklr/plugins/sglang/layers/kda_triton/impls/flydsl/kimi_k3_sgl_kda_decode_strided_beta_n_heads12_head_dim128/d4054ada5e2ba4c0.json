@@ -373,7 +373,7 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.3.2"
+      "flydsl": ">=0.4.0"
     },
     "entry_point": "kernel.py::run",
     "sources": [
