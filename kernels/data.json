@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "commit": "2e6015ddb69ba5bbaaf1d78a387b24e0f97ab800",
- "generated_at": "2026-11-24T10:59:26Z",
+ "commit": "1173a6fc1b8c9a9790ddcd04a79b602c860e2044",
+ "generated_at": "2026-11-24T12:47:20Z",
  "contracts": [
   {
    "contract_id": "add_attn_res@1.0",
@@ -25783,7 +25783,7 @@
    "op_package": "aklr.ops.fused_moe",
    "baseline": "aiter's fused_moe, in the environment sglang runs it with",
    "min_speedup": 1.05,
-   "kernels": 41,
+   "kernels": 40,
    "fixed": {
     "hidden_states.dtype": "bfloat16",
     "w1.dtype": "float4_e2m1",
@@ -25804,8 +25804,8 @@
    },
    "group": "ops.fused_moe",
    "status": "partial",
-   "served": 274,
-   "geomean": 1.287176289962335,
+   "served": 271,
+   "geomean": 1.289875557355831,
    "points": [
     {
      "dims": {
@@ -33412,187 +33412,6 @@
     },
     {
      "dims": {
-      "n_tokens": "80",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "100",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "served",
-     "kernel": "fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/ops/fused_moe/impls/flydsl/fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384/127f0d140084d2a4.json",
-     "speedup": 1.082,
-     "microseconds": 250.0,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "120",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "160",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "served",
-     "kernel": "fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/ops/fused_moe/impls/flydsl/fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384/127f0d140084d2a4.json",
-     "speedup": 1.063,
-     "microseconds": 289.0,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
-     "candidates": 2
-    },
-    {
-     "dims": {
-      "n_tokens": "200",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "240",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 2
-    },
-    {
-     "dims": {
-      "n_tokens": "336",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "served",
-     "kernel": "fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384",
-     "language": "flydsl",
-     "path": "aklr/ops/fused_moe/impls/flydsl/fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384/127f0d140084d2a4.json",
-     "speedup": 1.051,
-     "microseconds": 315.0,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
-     "candidates": 1
-    },
-    {
-     "dims": {
       "n_tokens": "96",
       "model_dim": "3584",
       "n_experts": "896",
@@ -33695,6 +33514,31 @@
     },
     {
      "dims": {
+      "n_tokens": "160",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_qualified",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
       "n_tokens": "176",
       "model_dim": "3584",
       "n_experts": "896",
@@ -33773,6 +33617,31 @@
     {
      "dims": {
       "n_tokens": "224",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_qualified",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "240",
       "model_dim": "3584",
       "n_experts": "896",
       "topk": "16",
@@ -39617,7 +39486,7 @@
    "op_package": "aklr.ops.gemm",
    "baseline": "aiter's tuned 16-bit gemm, b as (n, k) only",
    "min_speedup": 1.05,
-   "kernels": 140,
+   "kernels": 139,
    "fixed": {
     "a.dtype": "bfloat16",
     "b.dtype": "bfloat16",
@@ -39632,8 +39501,8 @@
    },
    "group": "ops.gemm",
    "status": "partial",
-   "served": 1238,
-   "geomean": 1.2475749087430594,
+   "served": 1236,
+   "geomean": 1.2479096066121511,
    "points": [
     {
      "dims": {
@@ -49359,218 +49228,6 @@
      "dims": {
       "m": "4096",
       "n": "3072",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "1",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "2",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "4",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "8",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "served",
-     "kernel": "gemm_n32_k6144",
-     "language": "flydsl",
-     "path": "aklr/ops/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json",
-     "speedup": 1.061,
-     "microseconds": 4.24,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "16",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "32",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "64",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "128",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "256",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "512",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "1024",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_qualified",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "2048",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "served",
-     "kernel": "gemm_n32_k6144",
-     "language": "flydsl",
-     "path": "aklr/ops/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json",
-     "speedup": 1.053,
-     "microseconds": 12.5,
-     "requires": {
-      "flydsl": ">=0.3.2"
-     },
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "4096",
-      "n": "32",
       "k": "6144",
       "out.dtype": "bfloat16"
      },
