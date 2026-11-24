@@ -29,11 +29,14 @@ def _schema_id(path: Path) -> str:
     return f"{path.parent.name.removeprefix('kimi_k3_sgl_kda_').split('_strided_beta')[0]}/{path.stem}"
 
 
-def _case(path: Path, axes: dict) -> tuple[OpCase, dict]:
-    """The case of the committed schema at ``path`` at its workload ``axes``, and the schema's kernel."""
+def _case(path: Path, axes: dict, n_slots: int | None = None) -> tuple[OpCase, dict]:
+    """The case of the committed schema at ``path`` at its workload ``axes``, its pool of ``n_slots`` (an any_size
+    axis: any pool serves) where given, and the schema's kernel."""
     data = json.loads(path.read_text())
     assert axes in [w["axes"] for w in data["workloads"]], axes
     contract = ContractRegistry.default().for_schema_json(data)
+    if n_slots is not None:
+        axes = {**axes, "n_slots": n_slots}
     return OpCase(contract.point_from_json(data, axes)), data["kernel"]
 
 
@@ -104,24 +107,51 @@ def _smallest_prefill_points() -> list[tuple[Path, dict]]:
     ]
 
 
-@pytest.mark.gfx950
-@pytest.mark.parametrize(
+_ALL_PREFILL_POINTS = pytest.mark.parametrize(
     ("path", "axes"),
     _smallest_prefill_points() + _prefill_points(),
     ids=lambda v: _schema_id(v) if isinstance(v, Path) else f"{v['n_tokens']}x{v['n_seqs']}",
 )
-def test_a_committed_prefill_kernel_keeps_a_delta_past_fp16s_range(builder_registry, path, axes):
+# the value channels whose v is 2**18: whole 16-channel slabs (a walk wave's columns), or every other channel, each
+# wave's large columns beside small ones
+_LARGE_CHANNELS = {"slabs_0_3": slice(0, 64), "every_other": slice(0, 128, 2)}
+
+
+@pytest.mark.gfx950
+@_ALL_PREFILL_POINTS
+@pytest.mark.parametrize("channels", list(_LARGE_CHANNELS))
+def test_a_committed_prefill_kernel_keeps_a_delta_past_fp16s_range(builder_registry, path, axes, channels):
     """q = k = e0 at every token, raw beta 0 (beta 1/2), zero states, and v of 2**18 at each sequence's first token on
-    value channels 0-63: the first delta, beta v = 2**17, and the next ones, beta (v - S k), pass fp16's largest,
-    65504, while the kernel's u = beta (v - Kd h) goes through fp16; channels 64-127 keep their drawn v beside them.
-    The outputs, states and snapshots stay finite and within their bounds."""
+    some value channels: the first delta, beta v = 2**17, and the next ones, beta (v - S k), pass fp16's largest,
+    65504, while the kernel's u = beta (v - Kd h) goes through fp16, which a wave holding such a u takes scaled, each
+    of its columns by its own power of two. The other channels keep their drawn v: in whole slabs of their own, or
+    every other channel, beside the large ones in each wave. The outputs, states and snapshots stay finite and within
+    their bounds."""
     case, kernel = _case(path, axes)
     args = case.inputs()
     q, k, v = args["qkv"].unflatten(1, (3, case.point.axes["n_heads"])).unbind(1)
     for x in (q, k):
         x.zero_()
         x[..., 0] = 1
-    v[args["cu_seqlens"][:-1].long(), :, :64] = 2.0**18
+    v[args["cu_seqlens"][:-1].long(), :, _LARGE_CHANNELS[channels]] = 2.0**18
     args["raw_beta"].zero_()
     args["state_cache"].zero_()
     _run(builder_registry, case, kernel, args)
+
+
+# a slot of 12 heads' 128 x 128 float32 states is 786432 bytes: slot 5462 starts past 2**32 bytes
+_FAR_SLOT = 5462
+
+
+@pytest.mark.gfx950
+@_ALL_PREFILL_POINTS
+def test_a_committed_prefill_kernel_reaches_slots_past_4_gib(builder_registry, path, axes):
+    """A pool of 5470 slots (4.3 GB), the sequences' slots past 2**32 bytes into it (the last one, and slot 5462)
+    beside slot 0 and a -1: the states are read from and written back to those slots and no other slot changes, as
+    a 32-bit offset would not."""
+    case, kernel = _case(path, axes, n_slots=_FAR_SLOT + 8)
+    args = case.inputs()
+    slots = [_FAR_SLOT + 7, 0, _FAR_SLOT, -1][: axes["n_seqs"]]
+    args["state_indices"] = torch.tensor(slots, dtype=torch.int32)
+    outputs = _run(builder_registry, case, kernel, args)
+    _untouched(args, outputs, slots)
