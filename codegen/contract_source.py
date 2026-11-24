@@ -11,7 +11,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from aklr.core.contract.baseline import OpBaseline
 from aklr.core.contract.op import OpContract
+from aklr.core.contract.reference import OpReference
 
 __all__ = ["ContractSource"]
 
@@ -76,6 +78,10 @@ class ContractSource:
         elif isinstance(value, tuple | list):
             items = [("", item) for item in value]
             opening, closing = "(", ",)" if len(value) == 1 else ")"
+        elif isinstance(value, OpReference | OpBaseline):
+            # the op's own code: its class, called with nothing
+            self._imports.setdefault(type(value).__module__, set()).add(type(value).__name__)
+            return f"{type(value).__name__}()"
         else:
             return repr(value)
         flat = opening + ", ".join(prefix + self._written(item, 10**6) for prefix, item in items) + closing

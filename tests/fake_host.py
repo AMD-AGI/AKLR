@@ -28,11 +28,12 @@ SECOND = OpContract(
 _CONTRACT_PY = """\
 from aklr.core.contract.op import OpContract
 from aklr.plugins.{host} import plugin
-from aklr.plugins.sglang.kimi_k3_tiny_gemm.contract import KIMI_K3_TINY_GEMM as FIRST
+from aklr.plugins.sglang.kimi_k3_tiny_gemm.contract import KIMI_K3_TINY_GEMM
 
-SECOND = OpContract(
-    **{{**{{name: getattr(FIRST, name) for name in OpContract.model_fields}}, "contract_id": "second_gemm@1.0"}}
-)
+_FIELDS = {{name: getattr(KIMI_K3_TINY_GEMM, name) for name in OpContract.model_fields}}
+# the family's own contracts: Kimi-K3's tiny gemm, and a second one of the same calls
+FIRST = OpContract(**_FIELDS)
+SECOND = OpContract(**{{**_FIELDS, "contract_id": "second_gemm@1.0"}})
 CONTRACTS = (FIRST, SECOND)
 
 """

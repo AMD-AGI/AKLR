@@ -74,9 +74,6 @@ class Generation:
                 (self.host_dir / family / "contract.py").write_text(f'{header}"""\nCONTRACTS = ()\n')
             mains = self._main_contracts(tree)
             recut = [(a, *mains[a.source], a.contract(mains[a.source][0])) for a in self.adaptations]
-            taken: set[Path] = set()
-            for family in families:
-                self._write_family(tree, family, [r for r in recut if r[0].family == family], header, taken)
             copied = dict.fromkeys(main_dir for _, _, main_dir, _ in recut)
             for main_dir in copied:
                 target = self.host_dir / "_main" / main_dir.relative_to(tree / self.source)
@@ -91,6 +88,9 @@ class Generation:
                 *(p for p in (self.host_dir / "_main").rglob("*") if p.is_dir()),
             ]:
                 (directory / "__init__.py").write_text(_LICENSE)
+            taken: set[Path] = set()
+            for family in families:
+                self._write_family(tree, family, [r for r in recut if r[0].family == family], header, taken)
             self._write_cases(tree, recut, header)
             schemas = sorted((tree / self.source).rglob("impls/*/*/*.json"))
             return [str(path.relative_to(tree)) for path in schemas if path not in taken]
@@ -145,26 +145,38 @@ class Generation:
         those a host target takes, and main's schema files under them; ``taken`` gains each one taken."""
         directory = self.host_dir / family
         names = [contract_name(contract.contract_id).upper() for *_, contract in recut]
-        reference_py = f'{header}\n\nThe references of the {family} family: main\'s, under each contract\'s names."""\n\nfrom types import SimpleNamespace\n\n'
-        baseline_py = (
-            f'{header}\n\nThe baselines of the {family} family: main\'s, under each contract\'s names."""\n\n'
-        )
-        references, baselines, statements = "", "", ""
-        reference_imports, baseline_imports = {}, {}  # each of main's functions once, in order
+        # reference.py and baseline.py: a class over main's for each contract that is more than moved
+        for role in ("reference", "baseline"):
+            imports, classes = {}, ""  # each of main's classes once, in order
+            for adaptation, main, main_dir, contract in recut:
+                if not adaptation.is_move:
+                    main_class = type(getattr(main, role)).__name__
+                    imports[
+                        f"from {self._main_package(tree, main_dir)}.{role} import {main_class} as Main{main_class}\n"
+                    ] = None
+                    classes += adaptation.class_source(main, contract, role)
+            if classes:
+                docstring = f"The {role}s of the {family} family: main's, under each contract's names."
+                (directory / f"{role}.py").write_text(
+                    f'{header}\n\n{docstring}"""\n\n{"".join(imports)}{classes}'
+                )
+        contracts, statements = {}, ""
         for (adaptation, main, main_dir, contract), name in zip(recut, names, strict=True):
-            old = contract_name(main.contract_id)
-            main_package = ".".join((self.package, "_main", *main_dir.relative_to(tree / self.source).parts))
-            if f"def {old}_reference(" in (main_dir / "reference.py").read_text():
-                reference_imports[
-                    f"from {main_package}.reference import {old}_reference as main_{old}_reference\n"
-                ] = None
-                references += adaptation.reference_source(main, contract)
-            baseline = main_dir / "baseline.py"
-            if baseline.is_file() and f"def {old}_baseline(" in baseline.read_text():
-                baseline_imports[
-                    f"from {main_package}.baseline import {old}_baseline as main_{old}_baseline\n"
-                ] = None
-                baselines += adaptation.baseline_source(main, contract)
+            # the contract with its own reference and baseline in place of main's objects
+            own = {}
+            for role in ("reference", "baseline"):
+                if adaptation.is_move:
+                    module, class_name = (
+                        f"{self._main_package(tree, main_dir)}.{role}",
+                        type(getattr(main, role)).__name__,
+                    )
+                else:
+                    module, class_name = (
+                        f"{self.package}.{family}.{role}",
+                        adaptation.class_name(contract, role),
+                    )
+                own[role] = getattr(importlib.import_module(module), class_name)()
+            contract = contracts[name] = contract.model_copy(update=own)
             if adaptation.target is not None:
                 versions = ", ".join(f'"{v}"' if isinstance(v, str) else str(v) for v in adaptation.versions)
                 trailing = "," if len(adaptation.versions) == 1 else ""
@@ -182,7 +194,6 @@ class Generation:
                 written.parent.mkdir(parents=True, exist_ok=True)
                 written.write_text(schema.schema_text())
                 taken.add(path)
-        contracts = {name: contract for name, (*_, contract) in zip(names, recut, strict=True)}
         source = ContractSource(contracts).text()
         if statements:
             # the family's statements, at the bottom of its contract.py
@@ -190,12 +201,19 @@ class Generation:
             source = f"{imports}\nfrom {self.package} import plugin\n\n{assignments}\n{statements}"
         docstring = f"The contracts of the {family} family, and the host targets they describe."
         (directory / "contract.py").write_text(f'{header}\n\n{docstring}"""\n\n{source}')
+        # the file builds the contracts it was written from: their data, and their classes by name
         written = importlib.import_module(f"{self.package}.{family}.contract").CONTRACTS
-        if written != tuple(contracts.values()):
-            raise ValueError(f"{directory / 'contract.py'} does not build the contracts it was written from")
-        (directory / "reference.py").write_text(reference_py + "".join(reference_imports) + references)
-        if baselines:
-            (directory / "baseline.py").write_text(baseline_py + "".join(baseline_imports) + baselines)
+        for built, contract in zip(written, contracts.values(), strict=True):
+            classes = [type(built.reference), type(built.baseline)] == [
+                type(contract.reference),
+                type(contract.baseline),
+            ]
+            if built.model_dump() != contract.model_dump() or not classes:
+                raise ValueError(f"{directory / 'contract.py'} does not build {contract.contract_id}")
+
+    def _main_package(self, tree: Path, main_dir: Path) -> str:
+        """The package the copy of main's ``main_dir`` is under ``_main``."""
+        return ".".join((self.package, "_main", *main_dir.relative_to(tree / self.source).parts))
 
     def _write_cases(self, tree: Path, recut: list[tuple[Adaptation, OpContract, Path, OpContract]], header: str) -> None:  # structure: allow S4 write is long, and the cases are another file of main  # fmt: skip
         """Write ``tests/plugins/<host>/cases.py``: main's small Points, each under every re-cut contract

@@ -24,7 +24,6 @@ N_POST_TIMING_SETS: Final = 4
 CheckName = Literal[
     "first_capture",
     "numeric",
-    "large_magnitude",
     "determinism",
     "post_timing",
 ]
@@ -34,7 +33,6 @@ CheckName = Literal[
 _MISMATCH_CODES: Final[Mapping[CheckName, tuple[FindingCode, FindingCode]]] = {
     "first_capture": (FindingCode.NUMERIC_MISMATCH, FindingCode.CAPTURE_UNSAFE),
     "numeric": (FindingCode.NUMERIC_MISMATCH, FindingCode.NUMERIC_MISMATCH),
-    "large_magnitude": (FindingCode.NUMERIC_MISMATCH, FindingCode.NUMERIC_MISMATCH),
     "determinism": (FindingCode.NUMERIC_MISMATCH, FindingCode.NUMERIC_MISMATCH),
     "post_timing": (FindingCode.POST_TIMING_MISMATCH,) * 2,
 }
@@ -87,9 +85,6 @@ class TrialRequest:
     # the least published speedup over the baseline dispatch serves; 0: whatever is measured
     min_speedup: float
     incumbent: OpContract | None
-    # what users run today, exported as the baseline: the base kernel dispatch serves
-    # (this very kernel too), else the defined baseline's dotted name; None: neither
-    baseline: str | None
 
     @classmethod
     def of_workload(
@@ -101,7 +96,6 @@ class TrialRequest:
         *,
         thresholds: dict[Versus, Threshold],
         incumbent: OpContract | None,
-        baseline: str | None,
         min_speedup: float = 0,
     ) -> TrialRequest:
         """The request of ``schema``'s ``workload``."""
@@ -124,7 +118,6 @@ class TrialRequest:
             thresholds=thresholds,
             min_speedup=min_speedup,
             incumbent=incumbent,
-            baseline=baseline,
         )
 
     @property
@@ -136,8 +129,6 @@ class TrialRequest:
             steps.append(Step("numeric", i, f"numeric/{i}", "new", "capture"))
         if self.has_workload_set:
             steps.append(Step("numeric", 3, "workload", "new", "capture"))
-        if self.has_error_bound("dot_product"):
-            steps.append(Step("large_magnitude", 0, "large_magnitude", "new", "capture"))
         if self.schema_json["compare"]["determinism"] == "bitwise":
             steps.append(Step("determinism", 0, "numeric/0", "new", "capture"))
         modes = ["capture"] * (N_POST_TIMING_SETS - 1) + ["replay"]
@@ -196,38 +187,34 @@ class TrialRequest:
             for name in self.distributions
         )
 
-    def has_error_bound(self, kind: str) -> bool:
-        return any(
-            o["error_bounds"] and o["error_bounds"][0][1]["kind"] == kind
-            for o in semantics.mutable_tensor_declarations(self.schema_json).values()
-        )
-
     @property
     def n_ranks(self) -> int:
         return self.contract.ranks_at(self.point)
 
     def compose_inputs(self, step: Step | None, device: str, rank: int = 0) -> dict[str, Any]:
-        input_set = "timing" if step is None else step.input_set
-        row_major_args = semantics.row_major_inputs(
+        return semantics.row_major_inputs(
             self.schema_json,
             self.workload_json,
             self.distributions,
-            input_set=input_set,
+            input_set="timing" if step is None else step.input_set,
             device=device,
             rank=rank,
         )
-        if step is None:
-            return row_major_args
-        if step.check == "large_magnitude":
-            return semantics.magnified_inputs(self.schema_json, self.distributions, row_major_args)
-        return row_major_args
 
     def assemble_call(self, row_major_args: Mapping[str, Any], device: str | torch.device) -> dict[str, Any]:
+        """The api call of ``row_major_args`` on ``device``, its inputs in their stored layout."""
+        return self._call(semantics.stored_inputs(self.schema_json, row_major_args, device=device), device)
+
+    def reference_call(self, row_major_args: Mapping[str, Any], device: str | torch.device) -> dict[str, Any]:
+        """What the reference takes: the api call, its inputs ``row_major_args`` as they are."""
+        return self._call(row_major_args, device)
+
+    def _call(self, inputs: Mapping[str, Any], device: str | torch.device) -> dict[str, Any]:
         import torch
 
         contract, point = self.contract, self.point
         call = {p.name: p.default for p in contract.api_params}
-        call.update(semantics.stored_inputs(self.schema_json, row_major_args, device=device))
+        call.update(inputs)
         variant = contract.layout_variants.by_name[point.layout_variant_name]
         for fact in variant.detect_facts:
             param_name = fact.location.param_name(fact.name)

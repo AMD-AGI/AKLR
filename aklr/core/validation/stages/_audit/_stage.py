@@ -149,7 +149,7 @@ def check_kernel(
     tensor_names: Collection[str],
     mutable_names: Collection[str],
 ) -> tuple[Finding, ...]:
-    """Every SA0-SA4 rejection of the kernel of the schema at ``schema_path``."""
+    """Every SA0-SA5 rejection of the kernel of the schema at ``schema_path``."""
     try:
         kernel_sources = KernelSources(kernel, call_keys, tensor_names, mutable_names)
         parsed_sources = kernel_sources.parsed_sources

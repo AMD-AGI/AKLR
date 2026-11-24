@@ -17,6 +17,7 @@ from kernels_report.data_collect import (
 from kernels_report.report_render import write_section
 
 from aklr.core.contract import locate
+from aklr.core.contract.baseline import OpBaseline
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import WorkloadSpec
 
@@ -119,27 +120,26 @@ def test_threshold_defaults_to_aklr_min_speedup(monkeypatch, tmp_path, env, argv
     assert seen["t"] == expected
 
 
+class _DocumentedBaseline(OpBaseline):
+    def baseline(self, *, x, **_):
+        """Runs aiter's ``op`` on x; casts after.
+
+        More."""
+        return {"out": x}
+
+
+class _UndocumentedBaseline(OpBaseline):
+    def baseline(self, *, x, **_):
+        return {"out": x}
+
+
 @pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        (
-            'def op_baseline(x):\n    """Runs aiter\'s ``op`` on x; casts after.\n\n    More."""\n',
-            "Runs aiter's op on x",
-        ),
-        ("def op_baseline(x):\n    return x\n", "op_baseline"),
-        ("from aiter import op as op_baseline\n", "op_baseline"),
-        ("def other_baseline(x):\n    return x\n", None),
-    ],
-    ids=["docstring", "no-docstring", "imported", "absent"],
+    ("baseline", "expected"),
+    [(_DocumentedBaseline(), "Runs aiter's op on x"), (_UndocumentedBaseline(), "_UndocumentedBaseline")],
+    ids=["docstring", "no-docstring"],
 )
-def test_baseline_summary_reads_baseline_py_without_importing_it(tmp_path, source, expected):
-    (tmp_path / "baseline.py").write_text("import aiter_is_not_installed\n" + source)
-
-    assert baseline_summary(tmp_path, "op_baseline") == expected
-
-
-def test_baseline_summary_without_baseline_py(tmp_path):
-    assert baseline_summary(tmp_path, "op_baseline") is None
+def test_baseline_summary_is_the_first_sentence_of_the_baseline_docstring(baseline, expected):
+    assert baseline_summary(baseline) == expected
 
 
 def test_collect_reads_every_committed_kernel_with_any_size_axes_as_wildcards():

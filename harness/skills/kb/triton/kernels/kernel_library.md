@@ -50,7 +50,7 @@ Directories are under `aklr/`; a leading `…/` stands for `plugins/sglang/model
 
 | Family | Directory | Files | Points | Contract | PR |
 |---|---|---|---|---|---|
-| GLM-5.2 DSA indexer: key prepare; query and key prepare | `plugins/sglang/layers/dsa_indexer/impls/triton/dsa_indexer_key_prepare_…/`, `dsa_indexer_prepare_…/` | 0 → 17; 0 → 16 | 1–256 tokens, 9 each, two files per Point | bitwise, `max_violation_fraction` 0.0003 | #58 |
+| GLM-5.2 DSA indexer: key prepare; query and key prepare | `plugins/sglang/layers/dsa_indexer/impls/triton/dsa_indexer_key_prepare_…/`, `dsa_indexer_prepare_…/` | 0 → 17; 0 → 16 | 1–256 tokens, 9 each, two files per Point | bitwise | #58 |
 | DSA sparse MLA, one query token, 16 heads; 8 heads (§11) | `plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads{16,8}_…/` | 0 → 8; 3 → 12 | 36 each, 1–256 tokens (8 heads: 32, 128, 256 in two files) | bitwise | #66 |
 | Qwen3-Next gated attention, one query token | `…/qwen3_next/impls/triton/qwen3_next_gated_attention_decode_group_fp8_quant[_max_context<C>]_…/` (4) | 0 → 31 | 1–256 rows (1–32 at 131072, 1–64 at 65536) | bitwise | #78 |
 | Qwen3-Next fp8 router + experts, dim 2048, inter 128 | `…/qwen2_moe/impls/triton/qwen2_moe_fp8_router_experts_…_model_dim2048_…_inter_dim128/` | 0 → 11 | 16: 1–16384 tokens | bounded | #55 |

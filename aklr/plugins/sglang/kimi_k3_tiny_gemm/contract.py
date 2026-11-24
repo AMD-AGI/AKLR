@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
-from aklr.core.contract.semantics import DotProductBound, DType, FiniteDistribution
+from aklr.core.contract.semantics import DType, FiniteDistribution, tolerance
 from aklr.core.contract.spec import DTypeSpec, LayoutVariant, LayoutVariantsSpec, TensorSpec, axis
+from aklr.plugins.sglang.kimi_k3_tiny_gemm.baseline import KimiK3TinyGemmBaseline
+from aklr.plugins.sglang.kimi_k3_tiny_gemm.reference import KimiK3TinyGemmReference
 
 __all__ = ["CONTRACTS", "KIMI_K3_TINY_GEMM"]
 
@@ -40,10 +42,12 @@ KIMI_K3_TINY_GEMM = OpContract(
             description="x @ w.T.",
             shape=("m", "n"),
             dtype=_SAME_AS_X,
-            error_bounds=DotProductBound(length="k", accumulate_dtype=DType.FLOAT32, max_split_k=16),
+            error_bounds=tolerance(DType.BFLOAT16, DType.FLOAT16),
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=KimiK3TinyGemmReference(),
+    baseline=KimiK3TinyGemmBaseline(),
 )
 
 CONTRACTS = (KIMI_K3_TINY_GEMM,)

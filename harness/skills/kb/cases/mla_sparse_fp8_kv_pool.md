@@ -40,11 +40,11 @@ top-2048) is another contract, with its own one-launch kernel:
   one `n_extra_pages` 105428–123163 in the extra-pool schemas): 61 Points per file. `n_pages` and `n_extra_pages`
   are var axes without `any_size`, so dispatch matches them exactly (`FastKeyCodec.match_key`): a pool of any other
   page count falls back with `no_workload`, though the kernel does not depend on it.
-- Compare: `determinism: bounded`, `max_violation_fraction` 0.0; `output` atol = rtol = 1e-2, `lse` atol = rtol =
+- Compare: `determinism: bounded`; `output` atol = rtol = 1e-2, `lse` atol = rtol =
   1e-3 (`aklr/ops/mla/contract.py`). The reference defines the fp8 → bf16 step as the same bit assembly the kernel
   does, so that step matches it exactly; the error left to `compare` comes from bf16 P, bf16 partials and the bf16
   output.
-- Yardstick: `flash_mla_with_kvcache_baseline` (`aklr/ops/mla/baseline.py`), which for this cache format calls
+- Yardstick: `FlashMlaWithKvcacheBaseline` (`aklr/ops/mla/baseline.py`), which for this cache format calls
   sglang's TileLang `dpsk_v4_fp8_attention_fwd` (S3), not aiter. No schema name has a file in another language. The
   no-extra and extra-512 names have one kernel file each; the extra-8256 directory also holds
   `2d4eafd6ea816a59.json`, a FlyDSL file with three sources (`kernel.py`, `few.py`, `many.py`) whose 19 Points
@@ -203,7 +203,7 @@ lines are cited in the window-only file.
 - E5 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=7 rounds, CUDA-graph replay with a 1 GiB flush per call, arms interleaved] whole-call time, one-wave over four-wave combine, 64 heads, every slot live: 133 partials 1.331 and 20 partials 1.080 at batch 8; 4 partials 0.934 at batch 64; every arm within the contract's tolerances (the window-only file's kernel.py with only the combine's waves and LDS struct changed)
 - S1 aklr/ops/mla/contract.py:346 compare `BOUNDED`; `output` tolerance at :315, `lse` at :326; `n_pages` declared without `any_size` at :114
 - S2 aklr/ops/mla/reference.py:50 the reference's dequantisation is "the kernel's literal bf16 bit assembly, not fp8 scaling"
-- S3 aklr/ops/mla/baseline.py:35 `flash_mla_with_kvcache_baseline` calls sglang's `dpsk_v4_fp8_attention_fwd` (:40) for the `dsv4_fp8` cache format
+- S3 aklr/ops/mla/baseline.py:35 `FlashMlaWithKvcacheBaseline` calls sglang's `dpsk_v4_fp8_attention_fwd` (:40) for the `dsv4_fp8` cache format
 - S4 aklr/core/contract/fastkey/_codec.py:75 `match_key` drops only `any_size` axes from the dispatch key
 - S5 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:35 `KTIERS`; `_slots` at :74; `_workspace` at :84; `_build` keyed by `sm_scale`, `kv_scale` at :93
 - S6 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:171 `stage`: bias at :190, exponent arithmetic at :204, rope copy at :232

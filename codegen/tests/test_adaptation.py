@@ -4,10 +4,11 @@
 and baseline that stand on main's."""
 
 import json
-from types import SimpleNamespace
 
+from aklr.core.contract.baseline import OpBaseline
 from aklr.core.contract.op import OpContract
-from aklr.core.contract.semantics import DotProductBound, DType, FiniteDistribution
+from aklr.core.contract.reference import OpReference
+from aklr.core.contract.semantics import DType, FiniteDistribution, ToleranceBound
 from aklr.core.contract.spec import (
     DTypeSpec,
     LayoutFact,
@@ -22,6 +23,25 @@ from aklr.core.contract.spec import (
 from codegen.adaptation import Adaptation
 
 _F16 = (DType.BFLOAT16, DType.FLOAT16)
+_CALLS: list[dict] = []  # each call main's reference and baseline below took
+
+
+class GemmReference(OpReference):
+    """Main's reference, as far as the calls it takes."""
+
+    def reference(self, **call):
+        _CALLS.append(call)
+        return {"out": "expected"}
+
+
+class GemmBaseline(OpBaseline):
+    """Main's baseline, as far as the calls it takes."""
+
+    def baseline(self, **call):
+        _CALLS.append(call)
+        return {"out": "outputs"}
+
+
 # a 16-bit gemm as main's aklr/ops writes one: its own names, b either way round, an optional bias
 _MAIN = OpContract(
     contract_id="gemm@1.0",
@@ -66,9 +86,9 @@ _MAIN = OpContract(
             error_bounds=(
                 (
                     "out.dtype == 'float16'",
-                    DotProductBound(length="k", accumulate_dtype=DType.FLOAT32, max_split_k=1),
+                    ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
                 ),
-                (None, DotProductBound(length="k", accumulate_dtype=DType.FLOAT32, max_split_k=16)),
+                (None, ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)),
             ),
         )
     },
@@ -79,6 +99,8 @@ _MAIN = OpContract(
             )
         }
     ),
+    reference=GemmReference(),
+    baseline=GemmBaseline(),
 )
 # aiter's tuned gemm takes A, B (always (n, k)), bias, otype and out
 _TUNED = Adaptation(
@@ -155,40 +177,40 @@ def test_a_schema_keeps_its_kernel_and_its_measurements_under_the_targets_names(
     )
 
 
-def test_the_reference_and_the_baseline_are_mains_under_the_targets_names() -> None:
-    calls = []
-
-    def gemm_reference(point: SimpleNamespace, row_major_args: dict) -> str:
-        calls.append((point.attrs, point.dtypes, row_major_args))
-        return "reference"
-
-    def gemm_baseline(a, b, trans_b=True, bias=None, out_dtype=None, out=None) -> str:  # noqa: ANN001
-        calls.append((a, b, trans_b, bias, out_dtype, out))
-        return "baseline"
-
-    scope = {
-        "main_gemm_reference": gemm_reference,
-        "main_gemm_baseline": gemm_baseline,
-        "SimpleNamespace": SimpleNamespace,
-    }
+def test_the_reference_and_the_baseline_are_classes_over_mains_under_the_targets_names() -> None:
     contract = _TUNED.contract(_MAIN)
-    exec(_TUNED.reference_source(_MAIN, contract) + _TUNED.baseline_source(_MAIN, contract), scope)  # noqa: S102
-
-    point = SimpleNamespace(
-        axes={"m": 4},
-        attrs={"has_bias": False},
-        dtypes={"A": "bfloat16", "B": "bfloat16", "bias": None, "out": "bfloat16"},
+    scope = {"MainGemmReference": GemmReference, "MainGemmBaseline": GemmBaseline}
+    source = _TUNED.class_source(_MAIN, contract, "reference") + _TUNED.class_source(
+        _MAIN, contract, "baseline"
     )
-    assert scope["gemm_a16w16_reference"](point, {"A": 1, "B": 2, "bias": None}) == "reference"
-    assert scope["gemm_a16w16_baseline"](1, 2, otype="dtype", out="out") == "baseline"
-    assert calls == [
-        (
-            {"trans_b": True, "has_bias": False},
-            {"a": "bfloat16", "b": "bfloat16", "bias": None, "out": "bfloat16"},
-            {"a": 1, "b": 2, "bias": None},
-        ),
-        (1, 2, True, None, "dtype", "out"),
+    exec(source, scope)  # noqa: S102 -- the source under test
+    _CALLS.clear()
+
+    assert scope["GemmA16w16Reference"]().reference(A=1, B=2, bias=None, otype="dtype", out=None) == {
+        "out": "expected"
+    }
+    assert scope["GemmA16w16Baseline"]().baseline(A=1, B=2, bias=None, otype="dtype", out="out") == {
+        "out": "outputs"
+    }
+    assert _CALLS == [
+        dict(a=1, b=2, trans_b=True, bias=None, out_dtype="dtype", out=None),
+        dict(a=1, b=2, trans_b=True, bias=None, out_dtype="dtype", out="out"),
     ]
+    assert isinstance(scope["GemmA16w16Baseline"](), GemmBaseline)  # main's setup, teardown and profile
+
+
+def test_a_renamed_output_is_named_the_targets_in_the_results() -> None:
+    adaptation = Adaptation(
+        source="gemm@1.0",
+        family="kimi_k3_tiny_gemm",
+        target="gemm_a16w16_activation",
+        versions=(1,),
+        rename={"a": "x", "b": "w", "out_dtype": "dtype", "out": "y"},
+        pin={"trans_b": True},
+    )
+    scope = {"MainGemmReference": GemmReference}
+    exec(adaptation.class_source(_MAIN, adaptation.contract(_MAIN), "reference"), scope)  # noqa: S102
+    assert scope["GemmA16w16ActivationReference"]().reference(x=1, w=2) == {"y": "expected"}
 
 
 def test_a_description_names_the_targets_params_in_its_formulas_only() -> None:

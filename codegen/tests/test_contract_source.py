@@ -3,7 +3,7 @@
 """Contracts written as the python source that builds them."""
 
 from aklr.core.contract.op import OpContract
-from aklr.core.contract.semantics import ColumnMajor, DotProductBound, DType, FiniteDistribution, Preshuffle
+from aklr.core.contract.semantics import ColumnMajor, DType, FiniteDistribution, Preshuffle, ToleranceBound
 from aklr.core.contract.spec import (
     DTypeSpec,
     LayoutFact,
@@ -75,9 +75,9 @@ _GEMM = OpContract(
             error_bounds=(
                 (
                     "out.dtype == 'float16'",
-                    DotProductBound(length="k", accumulate_dtype=DType.FLOAT32, max_split_k=1),
+                    ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
                 ),
-                (None, DotProductBound(length="k", accumulate_dtype=DType.FLOAT32, max_split_k=16)),
+                (None, ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)),
             ),
         )
     },
@@ -92,6 +92,8 @@ _GEMM = OpContract(
             ),
         }
     ),
+    reference=KIMI_K3_TINY_GEMM.reference,
+    baseline=KIMI_K3_TINY_GEMM.baseline,
 )
 
 
@@ -99,15 +101,22 @@ def test_the_source_builds_the_contracts_it_was_written_from() -> None:
     text = ContractSource({"KIMI": KIMI_K3_TINY_GEMM, "GEMM": _GEMM}).text()
     scope: dict = {}
     exec(text, scope)  # noqa: S102 -- the source under test
-    assert scope["CONTRACTS"] == (KIMI_K3_TINY_GEMM, _GEMM)
-    assert scope["KIMI"] == KIMI_K3_TINY_GEMM
+    # the data, and the op's own reference and baseline by their classes
+    assert [c.model_dump() for c in scope["CONTRACTS"]] == [
+        KIMI_K3_TINY_GEMM.model_dump(),
+        _GEMM.model_dump(),
+    ]
+    assert type(scope["KIMI"].reference) is type(KIMI_K3_TINY_GEMM.reference)
+    assert type(scope["KIMI"].baseline) is type(KIMI_K3_TINY_GEMM.baseline)
 
 
 def test_the_source_reads_as_a_contract_is_written() -> None:
     """Constructor calls of the public names, nothing a default already says, a short call on one line."""
     text = ContractSource({"GEMM": _GEMM}).text()
     assert text.startswith("from aklr.core.contract.op import OpContract\n")
-    assert "\nfrom aklr.core.contract.semantics import ColumnMajor, DType, DotProductBound," in text
+    assert "\nfrom aklr.core.contract.semantics import ColumnMajor, DType, FiniteDistribution," in text
+    assert "\nfrom aklr.plugins.sglang.kimi_k3_tiny_gemm.reference import KimiK3TinyGemmReference\n" in text
+    assert "\n    reference=KimiK3TinyGemmReference(),\n    baseline=KimiK3TinyGemmBaseline(),\n" in text
     assert "._" not in text and "model_validate" not in text
     assert "workloads" not in text and 'kind="tensor"' not in text and 'kind="row_major"' not in text
     assert '\n    contract_id="written_gemm@1.0",\n' in text

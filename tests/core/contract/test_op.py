@@ -11,7 +11,7 @@ import torch
 from aklr.core.contract.fastkey import FastKeyCodec, FastKeyFnGenerator
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
-from aklr.core.contract.semantics import DotProductBound, DType, Preshuffle
+from aklr.core.contract.semantics import DType, Preshuffle, tolerance
 from aklr.core.contract.spec import DTypeSpec, LayoutVariant, LayoutVariantsSpec, PointSpec, TensorSpec
 from aklr.plugins.sglang.kimi_k3_tiny_gemm.contract import KIMI_K3_TINY_GEMM
 from tests.op_case import OpCase
@@ -28,7 +28,7 @@ _Y = TensorSpec(
     description="x @ w.T.",
     shape=("m", "n"),
     dtype=_BY_PARAM,
-    error_bounds=DotProductBound(length="k", accumulate_dtype=DType.FLOAT32, max_split_k=16),
+    error_bounds=tolerance(DType.BFLOAT16, DType.FLOAT16),
 )
 _Y_SAME_AS_X = _Y.model_copy(update={"dtype": _SAME_AS_X})
 

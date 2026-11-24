@@ -38,7 +38,7 @@ def _run(builder_registry, case: OpCase, kernel: dict, args: dict) -> None:
     outputs = {n: call[n] for n in (*case.contract.outputs, *case.contract.mutable_inputs)}
     for name, tensor in outputs.items():
         assert tensor.float().isfinite().all(), name
-    failed = {o: r.detail for o, r in case.compare(outputs, args).items() if not r.is_passed}
+    failed = case.compare(outputs, args)
     assert failed == {}
 
 

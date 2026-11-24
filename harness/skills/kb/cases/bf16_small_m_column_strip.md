@@ -29,7 +29,7 @@ kernel (`_build_splitk`). The band kernels of the same decode sizes, which split
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16, `trans_b`,
-  no bias, bf16 `out`. The schema's `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0).
+  no bias, bf16 `out`. The schema's `compare` is bitwise (`determinism: bitwise`).
   Every reduction these kernels run at a listed Point adds in a fixed order, with no atomics on data.
 - N = 6144 with K = 4096 or 6144: 48 or 72 MiB of `b`, against at most 1.5 MiB of `a` at these m (estimated from the
   shapes), so each kernel gives every CU its own strip of `b`.
@@ -97,7 +97,7 @@ Shared by both strip kernels (all of N 6144 × K 4096; N 6144 × K 6144 at m ≤
 
 `speedup` here is AKLR validate's one-sided lower bound of the aiter / kernel time ratio (measurement profile 19,
 `MEASUREMENT_PROFILE` in `aklr/core/validation/stages/_measure.py`; aiter's tuned `gemm_a16w16` through
-`gemm_baseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. N 6144 × K
+`GemmBaseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. N 6144 × K
 6144 was measured as its predecessor, whose code differs only at m 64 (§ Counter-signals). Dispatch reads the
 `speedup` CI writes: 1.204–1.316 at K 4096 and 1.081–1.300 at K 6144 (m 64, the fold launch, 1.117), all 16 Points
 served (#125).

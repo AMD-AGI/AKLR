@@ -3,42 +3,31 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
-
-from aklr.core.contract import semantics
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = [
-    "find_nondeterminism", "is_reference_comparable",
-]  # fmt: skip
-
-
-def is_reference_comparable(
-    output_dtypes: Mapping[str, str],
-    reference_outputs: Mapping[str, Tensor],
-    compared: Callable[[Mapping[str, Tensor]], Mapping[str, semantics.CompareResult]],
-) -> bool:
-    rounded = {o: r.to(semantics.torch_dtypes(output_dtypes[o])[0]) for o, r in reference_outputs.items()}
-    is_finite_where_reference_is = all(
-        (rounded[o].float().isfinite() | ~r.isfinite()).all() for o, r in reference_outputs.items()
-    )
-    return is_finite_where_reference_is and all(r.is_passed for r in compared(rounded).values())
+__all__ = ["find_nondeterminism"]
 
 
 def find_nondeterminism(
-    schema_json: Mapping[str, Any],
-    first_outputs: Mapping[str, Tensor],
-    second_outputs: Mapping[str, Tensor],
+    first_outputs: Mapping[str, Tensor], second_outputs: Mapping[str, Tensor]
 ) -> str | None:
-    """``None`` when two runs agree under the schema's determinism level, else the detail."""
-    runs = {
-        o: [first_outputs[o], second_outputs[o]] for o in semantics.mutable_tensor_declarations(schema_json)
-    }
-    determinism = schema_json["compare"]["determinism"]
-    if all(semantics.runs_agree(determinism, r) for r in runs.values()):
-        return None
-    fraction = max(semantics.run_to_run_fraction(*r) for r in runs.values())
-    return f"{fraction:.3g} of an output's elements differ from numeric/0's"
+    """``None`` when two runs of a ``bitwise`` schema on the same inputs wrote byte-identical
+    mutable tensors, else the detail."""
+    fraction = max(_differing_fraction(first_outputs[o], second_outputs[o]) for o in first_outputs)
+    return f"{fraction:.3g} of an output's elements differ from numeric/0's" if fraction else None
+
+
+def _differing_fraction(a: Tensor, b: Tensor) -> float:
+    """The fraction of elements whose bytes differ between two runs (NaN equals itself)."""
+    import torch
+
+    if a.shape != b.shape or a.dtype != b.dtype:
+        raise ValueError(f"runs differ in shape or dtype: {a.shape}, {b.shape}")
+    if not a.numel():
+        return 0.0
+    a_bytes, b_bytes = (t.contiguous().reshape(-1).view(torch.uint8).reshape(t.numel(), -1) for t in (a, b))
+    return int((a_bytes != b_bytes).any(-1).sum()) / a.numel()

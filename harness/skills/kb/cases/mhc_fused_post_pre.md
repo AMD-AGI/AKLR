@@ -28,9 +28,9 @@ One FlyDSL kernel for `mhc_fused_post_pre@1.0`. The schema embeds it as `kernel.
   (T, 4, 4) in fp32, and the rms-normed `layer_input` (T, 4096) bf16.
 - Points: T = 1, 2, 4, …, 4096 (13), with the captured scalars eps 1e-6, `post_multiplier` 2.0 and
   `sinkhorn_iters` 20 in every workload.
-- Compare: `determinism: bounded`, `max_violation_fraction` 0.0, atol = rtol = 1e-2 on all four outputs
+- Compare: `determinism: bounded`, atol = rtol = 1e-2 on all four outputs
   (`aklr/ops/mhc/contract.py`).
-- Yardstick: `mhc_fused_post_pre_baseline` (`aklr/ops/mhc/baseline.py`), aiter's
+- Yardstick: `MhcFusedPostPreBaseline` (`aklr/ops/mhc/baseline.py`), aiter's
   `mhc_fused_post_pre` (`aiter/ops/mhc.py`): on gfx950 its fused HIP kernel below 1024 tokens, `mhc_post` then
   `mhc_pre` from 1024 on (read from the source). This file is the only one of its schema name, in any language; the
   hidden-7168 schema of the same contract has a HIP kernel for T 1–16, a FlyDSL definition with no kernel (S9) and
@@ -177,7 +177,7 @@ aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc7
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=5, the predecessor repository's CI] per-Point range and served count in commit order: 1.042–1.217, 1.134–1.439, 1.095–1.504, 1.134–1.451, 1.100–1.510, 13 of 13 each time; the kernel text is the same in all five (mhc_fused_post_pre_has_norm_weight_hidden_size4096, under the file's name before the rename)
 - E3 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=100 calls per T and input family, the shipped file and a copy with the clamp inserted before its `_rsq` on the same inputs, outputs checked for non-finite values and against the contract's reference] inputs whose four residual streams cancel exactly (`x` 0, `comb_mix` the identity, equal pre gates: the true form and `layer_input` are 0), the workloads' norm_eps 1e-6: tokens with a non-finite `layer_input` as shipped 1034 of 6400 at T 64 and 7616 of 51200 at T 512, with `ssq = max(ssq, 0)` 0; the contract's own draws at the same T: none in either build (mhc_fused_post_pre_has_norm_weight_hidden_size4096)
 - S1 aklr/ops/mhc/contract.py:227 compare `BOUNDED`; tolerance atol = rtol = 1e-2 at :39, on all four outputs at :151–169
-- S2 aklr/ops/mhc/baseline.py:79 `mhc_fused_post_pre_baseline` calls aiter's `mhc_fused_post_pre`; aiter/ops/mhc.py:560 aiter runs `mhc_post` and `mhc_pre` from 1024 tokens on gfx950
+- S2 aklr/ops/mhc/baseline.py:79 `MhcFusedPostPreBaseline` calls aiter's `mhc_fused_post_pre`; aiter/ops/mhc.py:560 aiter runs `mhc_post` and `mhc_pre` from 1024 tokens on gfx950
 - S3 aklr/ops/mhc/reference.py:103 the reference rounds `next_residual` to bf16 before the pre step
 - S4 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json#kernel.py:1785 `_config`; `_PCFG` at :1820; NK at :1841; `part` on `torch.device("cuda")` at :1845; per-scalar compile in `launch` at :1857
 - S5 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/fc71f9d721054df9.json#kernel.py:1249 `_make_kmm_p`: weight slab to bf16 LDS at :1374, 96 KiB reservation at :1272 with its comment at :1267, Gram MFMAs at T 512 and 2048 at :1264

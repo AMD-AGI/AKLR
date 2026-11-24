@@ -2,7 +2,7 @@
 
 vLLM 里有些函数，aiter 没有对应的算子：可能是模型自己的函数，也可能是跑完一整段计算、要被融成一个算子的函数。插件就是把这样的函数换成 AKLR 的算子。本教程的示例是 `kimi_k3_attn_res`，它接管 Kimi-K3 的 attention residual。vLLM 为这个模型自带了一个 Triton kernel `attn_res`，每层的 attention 和 MLP 之前各跑一次，最后的 norm 之前再跑一次。
 
-开始之前，请先阅读 [Ops 教程](ops_tutorial.zh.md)：插件里的算子写法与之相同。SGLang 插件的做法见 [SGLang 插件教程](plugin_tutorial.zh.md)，插件的结构和规范见 [aklr/plugins/README.md](../aklr/plugins/README.md)。
+开始之前，请先阅读 [Ops 教程](ops_tutorial.zh.md)：插件里的算子写法与之相同。SGLang 插件的做法见 [SGLang 插件教程](sglang_plugin_tutorial.zh.md)，插件的结构和规范见 [aklr/plugins/README.md](../aklr/plugins/README.md)。
 
 ## 为什么需要插件
 
@@ -51,15 +51,15 @@ def attn_res(prefix, delta, blocks, norm_weight, qk_weight, output_norm_weight, 
 
 ### 3. 编写算子
 
-做法同 ops 教程的 1. A。针对这个算子：
+做法同 [Ops 教程](ops_tutorial.zh.md)的第 6 节。针对这个算子：
 
 - `contract.py` 定义 `KIMI_K3_ATTN_RES`（`kimi_k3_attn_res@1.0`）：
   - 输入：当前的 `prefix`；还没并入 prefix 的上一层输出 `addend`（`has_addend` 时才有）；每个 token 的 `bank`；打分用的两个权重 `score_norm_weight` 和 `score_proj_weight`；该层 norm 的 `norm_weight`（`has_norm` 时才有）；以及标量 `score_eps` 和 `norm_eps`；
   - attr：`n_valid_rows` 是 bank 里已经写了几行（0 到 8），mix 要把这些行全部读进来；`write_bank` 表示是否同时把 prefix 写成 bank 的第 `n_valid_rows` 行；另有 `has_addend` 和 `has_norm`。vLLM 实际用到的每种组合各算一个场景；
   - 布局：只有 `row_major`；
   - 输出：`out`，形状 `[n_tokens, hidden_size]`。有 `norm_weight` 时，是归一化后再乘以 `norm_weight` 的 mix，没有时就是 mix 本身。`prefix` 和 `bank` 是可变输入，算子像 vLLM 的 kernel 一样原地更新它们，误差界为零，要求逐位一致。
-- `reference.py`：`kimi_k3_attn_res_reference`，在 float32 下按 contract 计算。唯一的舍入在 prefix 上：`prefix + addend` 舍入为 prefix 的 dtype，和 vLLM 的 kernel 写回时一样。它返回调用结束时的 `out`、`prefix` 和 `bank`。
-- `baseline.py`：`kimi_k3_attn_res_baseline`，即 vLLM 目前的做法：用 `_triton.py` 里的副本，按 vLLM `attn_res` 的启动配置，每次调用启动一次这个 Triton kernel。
+- `reference.py`：`KimiK3AttnResReference`，在 float32 下按 contract 计算。它把 `prefix + addend` 舍入为 prefix 的 dtype，和 vLLM 的 kernel 写回时一样，输出也舍入为这个 dtype。它返回调用结束时的 `out`、`prefix` 和 `bank`。
+- `baseline.py`：`KimiK3AttnResBaseline`，即 vLLM 目前的做法：用 `_triton.py` 里的副本，按 vLLM `attn_res` 的启动配置，每次调用启动一次这个 Triton kernel。
 - `api.py`：算子的入口函数 `@api(KIMI_K3_ATTN_RES)`，函数体为 `...`。
 
 ### 4. 编写 route
@@ -145,21 +145,19 @@ AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
 
 ### 6. 编写 kernel 并验证
 
-按 ops 教程的 1. B 到第 4 步进行，场景换成这个算子的：Kimi-K3 的 attention residual，hidden size 为 7168；93 层每 12 层一块，bank 共 8 行（见 [Kimi-K3 的模型结构](../aklr/benchmarks/models/kimi_k3/README.md#model-structure)）。一次 forward 的 187 次调用里，170 次带 addend、做该层 norm，bank 行数从 1 到 8；7 次还要写 bank；8 次没有 addend，是每块第一层 MLP 前的那次；最后的 norm 之前那 1 次不做该层 norm；第一层 attention 前那 1 次还没有 bank 行。attr 的每种组合各算一个场景。脚本中 contract、Point 和 workload 不同，其中 `score_eps` 和 `norm_eps` 是标量，随每个 workload 给出（不做该层 norm 时，`_apply_attn_res` 传入的 `norm_eps` 是 0.0）；token 数取 1 到 4 个请求的 decode step，每个请求 3 个 token。这个算子已提交的 kernel 用 FlyDSL 编写：
+按 [Ops 教程](ops_tutorial.zh.md)的第 2 到第 5 节进行，场景换成这个算子的：Kimi-K3 的 attention residual，hidden size 为 7168；93 层每 12 层一块，bank 共 8 行（见 [Kimi-K3 的模型结构](../aklr/benchmarks/models/kimi_k3/README.md#model-structure)）。一次 forward 的 187 次调用里，170 次带 addend、做该层 norm，bank 行数从 1 到 8；7 次还要写 bank；8 次没有 addend，是每块第一层 MLP 前的那次；最后的 norm 之前那 1 次不做该层 norm；第一层 attention 前那 1 次还没有 bank 行。attr 的每种组合各算一个场景。脚本中 contract、Point 和 workload 不同，其中 `score_eps` 和 `norm_eps` 是标量，随每个 workload 给出（不做该层 norm 时，`_apply_attn_res` 传入的 `norm_eps` 是 0.0）；token 数取 1 到 4 个请求的 decode step，每个请求 3 个 token。这个算子已提交的 kernel 用 FlyDSL 编写（脚本里 `language` 写 `flydsl`，`requires` 写 `{"flydsl": ">=0.3.2"}`）：
 
 ```python
 contract = ContractRegistry.default().get("kimi_k3_attn_res@1.0")
-base = PointSpec(
+point = PointSpec(
     contract_id="kimi_k3_attn_res@1.0",
     axes={"n_tokens": 1, "hidden_size": 7168, "n_bank_rows": 8},
     dtypes={"prefix": "bfloat16", "addend": "bfloat16", "bank": "bfloat16", "score_norm_weight": "bfloat16",
             "score_proj_weight": "bfloat16", "norm_weight": "bfloat16", "out": "bfloat16"},
     attrs={"n_valid_rows": 8, "write_bank": False, "has_addend": True, "has_norm": True},
     layout_variant_name="row_major")
-workloads = [contract.workload_for(base.model_copy(update={"axes": {**base.axes, "n_tokens": t}}),
+workloads = [contract.workload_for(point.model_copy(update={"axes": {**point.axes, "n_tokens": t}}),
                                    {"score_eps": 1e-5, "norm_eps": 1e-5}) for t in (3, 6, 9, 12)]
-kernel = {"language": "flydsl", "targets": [{"arch": "gfx950", "hardware": "MI355X"}],
-          "entry_point": "kernel.py::run", "sources": []}
 ```
 
 schema 会写到这个场景已提交的 kernel 旁边，即 `aklr/plugins/vllm/models/kimi_k3/attn_res/impls/flydsl/kimi_k3_attn_res_hidden_size7168_n_bank_rows8/`；其他场景的名字里带着各自的 attr，例如 `kimi_k3_attn_res_rows3_write_hidden_size7168_n_bank_rows8`。没有 bank 行的那次调用没有 schema，留给 vLLM 的 kernel。验证和提 PR 的做法同 ops 教程。

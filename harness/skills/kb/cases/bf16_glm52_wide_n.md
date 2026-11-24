@@ -32,7 +32,7 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0;
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`;
   `GEMM` in `aklr/ops/gemm/contract.py`). The served FlyDSL paths keep each output's whole K in one wave; the served
   Triton n2624 kernel at m = 64 splits K six ways across workgroups and a second kernel adds the six fp32 slices in
   slice order.

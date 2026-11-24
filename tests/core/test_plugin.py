@@ -232,14 +232,12 @@ class TestDeclarations:
                 f'plugin.declare("{TARGET}", FIRST, versions=("0.5.23",))',
                 "already declared",
             ),
-            (f'plugin.declare("{TARGET}", FIRST, "kernels", versions=("0.5.22",))', "not a directory"),
         ],
         ids=[
             "target_not_a_name",
             "no_versions",
             "mixed_versions",
             "declared_twice",
-            "schemas_in_no_directory",
         ],
     )
     def test_a_wrong_statement_drops_its_family(
@@ -256,37 +254,46 @@ class TestDeclarations:
         line = FIRST_STATEMENT_LINE - 1 + len(declarations.split("\n"))
         assert f"{contract_py}:{line}: ValueError: " in message and error in message
 
-    def test_a_contract_outside_its_familys_contracts_drops_the_family(
+    def test_a_contract_of_no_family_is_not_declared(
         self, host: Host, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Known once the file is imported: the error names the file and the statement."""
-        host.family("good", 'plugin.declare("hostlib.gemm.gemm_into", FIRST, versions=("0.5.22",))')
-        contract_py = host.family(
-            "wrong",
+        """A statement belongs to the family whose ``CONTRACTS`` hold its contract."""
+        host.family(
+            "fam",
             f'plugin.declare("{TARGET}", FIRST.model_copy(update={{"contract_id": "other@1.0"}}), '
-            'versions=("0.5.22",))',
+            'versions=("0.5.22",))\n'
+            'plugin.declare("hostlib.gemm.gemm_into", FIRST, versions=("0.5.22",))',
         )
         assert dict(host.plugin.targets()) == {"hostlib.gemm.gemm_into": ("0.5.22",)}
         (message,) = _errors(caplog)
-        assert f"{contract_py}: ValueError: declare('{TARGET}', other@1.0)" in message
-        assert "not in its family's CONTRACTS" in message
+        assert f"declare('{TARGET}', other@1.0)" in message and "in no family's CONTRACTS" in message
 
-    def test_a_statement_is_heard_when_the_plugin_imports_its_contract_py(self, host: Host) -> None:
-        """A family's statements stand at the bottom of its contract.py, which the registry imports too:
-        outside the plugin's own collection a statement does nothing, and a file imported before it is
-        collected all the same."""
+    def test_schema_files_in_no_directory_drop_the_family(
+        self, host: Host, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        host.family("good", 'plugin.declare("hostlib.gemm.gemm_into", FIRST, versions=("0.5.22",))')
+        contract_py = host.family(
+            "wrong", f'plugin.declare("{TARGET}", FIRST, "kernels", versions=("0.5.22",))'
+        )
+        assert dict(host.plugin.targets()) == {"hostlib.gemm.gemm_into": ("0.5.22",)}
+        (message,) = _errors(caplog)
+        assert f"{contract_py}: declare('{TARGET}', kimi_k3_tiny_gemm@1.0)" in message
+        assert "not a directory" in message
+
+    def test_a_statement_is_heard_whoever_imports_its_contract_py(self, host: Host) -> None:
+        """A family's statements stand at the bottom of its contract.py, which the registry imports too,
+        before the plugin or after it: the contracts stay the objects that import made."""
         host.family("fam", f'plugin.declare("{TARGET}", FIRST, versions=("0.5.22",))')
-        importlib.import_module(f"aklr.plugins.{host.name}.fam.contract")
+        module = importlib.import_module(f"aklr.plugins.{host.name}.fam.contract")
         assert dict(host.plugin.targets()) == {TARGET: ("0.5.22",)}
-        host.plugin.declare("hostlib.gemm.gemm_into", KIMI_K3_TINY_GEMM, "impls", versions=("0.5.22",))
-        assert dict(host.plugin.targets()) == {TARGET: ("0.5.22",)}
+        assert importlib.import_module(f"aklr.plugins.{host.name}.fam.contract").FIRST is module.FIRST
 
     def test_a_target_is_declared_in_one_family(self, host: Host, caplog: pytest.LogCaptureFixture) -> None:
         host.family("a", f'plugin.declare("{TARGET}", FIRST, versions=("0.5.22",))')
         contract_py = host.family("b", f'plugin.declare("{TARGET}", SECOND, versions=("0.5.22",))')
         assert dict(host.plugin.targets()) == {TARGET: ("0.5.22",)}
         (message,) = _errors(caplog)
-        assert f"{contract_py}:{FIRST_STATEMENT_LINE}: ValueError: " in message
+        assert f"{contract_py}: declare('{TARGET}', second_gemm@1.0)" in message
         assert "declared in another family" in message
 
     def test_a_contract_py_that_fails_to_import_drops_its_family_alone(

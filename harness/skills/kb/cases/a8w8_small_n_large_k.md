@@ -32,7 +32,7 @@ sources:
   so 160–224 of the 256 CUs stay idle (`../gemm/grid_pricing.md` §1, `../gemm/small_m.md` §3). The K split stays
   inside each workgroup and adds waves to those CUs, not work to the others: confined to exactly that many CUs, the
   kernels take the same time *(field, E5)*.
-- Compare: each schema's `compare` block is `determinism: bounded`, `max_violation_fraction: 0.0`, against the
+- Compare: each schema's `compare` block is `determinism: bounded`, against the
   contract's tolerance (atol = rtol = 1e-2 for bf16 out; `aklr/ops/gemm/contract.py`). Every reduction in these
   three kernels runs in a fixed order with no atomics on data; run-to-run bit equality is not measured.
 

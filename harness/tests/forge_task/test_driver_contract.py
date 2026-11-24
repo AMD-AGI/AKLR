@@ -97,8 +97,7 @@ def test_the_driver_builds_validates_calls_with_this_checkouts_aklr(real_run):
     """
     run, schema = real_run
     driver = _import_driver(run)
-    budget, bind_clock, is_tracer_fault = driver._aklr_timer()
-    assert budget > 0 and callable(bind_clock) and callable(is_tracer_fault)
+    assert callable(driver._aklr_clock().profile)
     calls = driver._calls("cpu")
     assert set(calls) == {workload.case_id for workload in schema.workloads}
     registry, *_ = driver._aklr()
@@ -125,9 +124,8 @@ def test_the_driver_reads_aklrs_own_report_of_a_wrong_workload(real_run):
             schema_path="candidate.json",
             axes=workload.axes,
             kernel_content_hash="",
-            baseline=None,
             is_timed=False,
-            worst_violation_fraction=0.5 if workload is wrong else 0.0,
+            is_compared=True,
             timings=(),
             batch_stopped=False,
         )
@@ -167,7 +165,7 @@ def test_bench_times_the_candidate_without_validating_it(run, aklr_root: Path, m
 
 
 def test_correctness_is_reported_as_allclose(run):
-    """AKLR grades a violation fraction, not an SNR; KernelForge reads allclose instead."""
+    """AKLR passes or fails each output and reports no SNR; KernelForge reads allclose instead."""
     stdout = _run_driver(run)
     assert "allclose: True" in stdout
     assert "SNR:" not in stdout
@@ -259,9 +257,7 @@ def test_finding_kinds_split_into_wrong_and_slow(run):
                     {"code": "not_faster", "axes": {"m": 8}},
                     {"code": "nondeterministic", "axes": {"m": 16}},
                 ],
-                "workload_records": [
-                    {"axes": {"m": m}, "worst_violation_fraction": 0.0, "timings": []} for m in (8, 16)
-                ],
+                "workload_records": [{"axes": {"m": m}, "is_compared": True, "timings": []} for m in (8, 16)],
             },
         ]
     }
@@ -280,7 +276,7 @@ def test_a_workload_aklr_did_not_compare_is_not_correct(run):
                 "stage_name": "bench",
                 "findings": [{"code": "platform_failure", "axes": {"m": m}} for m in (8, 16)],
                 "workload_records": [
-                    {"axes": {"m": m}, "worst_violation_fraction": None, "timings": []} for m in (8, 16)
+                    {"axes": {"m": m}, "is_compared": False, "timings": []} for m in (8, 16)
                 ],
             },
         ]
@@ -367,36 +363,6 @@ def test_driver_is_importable_without_a_gpu(run):
     assert _import_driver(run).SCHEMA_JSON == run.schema_json
 
 
-def test_a_reading_the_profiler_dropped_is_taken_again_once(run):
-    """A trace that lost replays says nothing about the kernel; a second loss, or any other error, still fails."""
-    driver = _import_driver(run)
-    dropped = RuntimeError("rocprofiler-sdk recorded 9 of 10 graph replays")
-
-    def bench_failing(*failures):
-        queue = list(failures)
-
-        def bench(call, rep):
-            if queue:
-                raise queue.pop(0)
-            return 0.01
-
-        return bench
-
-    def is_fault(text):
-        return "graph replays" in text
-
-    assert driver.graph_reading(bench_failing(dropped), None, 20.0, is_fault) == 0.01
-    with pytest.raises(RuntimeError, match="9 of 10"):
-        driver.graph_reading(bench_failing(dropped, dropped), None, 20.0, is_fault)
-    with pytest.raises(RuntimeError, match="HIP error"):
-        driver.graph_reading(
-            bench_failing(RuntimeError("HIP error: illegal address")),
-            None,
-            20.0,
-            is_fault,
-        )
-
-
 def test_stress_passes_one_answer_and_names_the_workload_that_differs(real_run, monkeypatch, capsys):
     """--stress compares the outputs of every call under contention with the candidate's own result alone, bit for
     bit: here on the CPU, with stand-in conditions in place of the CU-limited and concurrent streams."""
@@ -432,37 +398,37 @@ def test_stress_compares_as_the_schemas_determinism_asks(run):
     alone = torch.linspace(1, 64, 4096, dtype=torch.bfloat16)
     one_ulp = alone.clone()
     one_ulp.view(torch.int16)[::50] += 1  # the next bf16 value up: one ulp
-    assert not driver._agrees(one_ulp, alone, "bitwise", 0.0)
-    assert driver._agrees(one_ulp, alone, "bounded", 0.001)
+    assert not driver._agrees(one_ulp, alone, "bitwise")
+    assert driver._agrees(one_ulp, alone, "bounded")
     nan = one_ulp.clone()
     nan[7] = float("nan")
-    assert not driver._agrees(nan, alone, "bounded", 0.001)
+    assert not driver._agrees(nan, alone, "bounded")
     wrong = alone.clone()
     wrong[:100] += 8
-    assert not driver._agrees(wrong, alone, "bounded", 0.001)
+    assert not driver._agrees(wrong, alone, "bounded")
     ids = torch.arange(16)
-    assert driver._agrees(ids, ids.clone(), "bounded", 0.001)
+    assert driver._agrees(ids, ids.clone(), "bounded")
     huge = torch.full((4,), 2.0**127, dtype=torch.bfloat16)  # its bound past float32's range
-    assert not driver._agrees(torch.zeros_like(huge), huge, "bounded", 0.0)
-    at_fraction = torch.ones(2000, dtype=torch.bfloat16)
-    off = at_fraction.clone()
-    off[:2] = 2.0
-    assert driver._agrees(off, at_fraction, "bounded", 0.001)
+    assert not driver._agrees(torch.zeros_like(huge), huge, "bounded")
+    ones = torch.ones(2000, dtype=torch.bfloat16)
+    off = ones.clone()
+    off[:2] = 2.0  # 2 of 2000 elements off: no element may be
+    assert not driver._agrees(off, ones, "bounded")
 
 
-def test_stress_lets_full_rows_reorder_under_any_in_full_rows(run):
-    """Under any_in_full_rows a full row may come out in another order; a row padded with -1 keeps its order, and a
-    full row with another element is still wrong."""
+def test_stress_lets_a_full_row_of_integers_reorder_when_asked(run):
+    """With is_row_order_free a full row may come out in another order; a row padded with -1 keeps its order, and a
+    full row with another element is still wrong; without it, order counts."""
     torch = pytest.importorskip("torch")
     driver = _import_driver(run)
     alone = torch.tensor([[3, 1, 2, 0], [5, 4, -1, -1]], dtype=torch.int32)
     full_reordered = torch.tensor([[0, 1, 2, 3], [5, 4, -1, -1]], dtype=torch.int32)
-    assert driver._agrees(full_reordered, alone, "bitwise", 0.0, "any_in_full_rows")
-    assert not driver._agrees(full_reordered, alone, "bitwise", 0.0, "fixed")
+    assert driver._agrees(full_reordered, alone, "bounded", is_row_order_free=True)
+    assert not driver._agrees(full_reordered, alone, "bounded")
     short_reordered = torch.tensor([[3, 1, 2, 0], [4, 5, -1, -1]], dtype=torch.int32)
-    assert not driver._agrees(short_reordered, alone, "bitwise", 0.0, "any_in_full_rows")
+    assert not driver._agrees(short_reordered, alone, "bounded", is_row_order_free=True)
     full_wrong = torch.tensor([[3, 1, 2, 7], [5, 4, -1, -1]], dtype=torch.int32)
-    assert not driver._agrees(full_wrong, alone, "bitwise", 0.0, "any_in_full_rows")
+    assert not driver._agrees(full_wrong, alone, "bounded", is_row_order_free=True)
 
 
 def test_stress_reports_a_call_that_never_finishes_as_hung(real_run, monkeypatch, capsys):

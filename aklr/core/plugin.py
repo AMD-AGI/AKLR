@@ -12,7 +12,6 @@ import json
 import logging
 import pkgutil
 import re
-import sys
 import threading
 import traceback
 from collections.abc import Callable, Mapping
@@ -37,8 +36,17 @@ _SGLANG_DEVICE_READY = "sglang.srt.model_executor.model_runner.ModelRunner.init_
 _VLLM_WORKER_WRAPPER = "vllm.v1.worker.worker_base.WorkerWrapperBase"
 
 
+class _Statement(NamedTuple):
+    """One ``declare`` statement, as it was made."""
+
+    target: str
+    contract: OpContract
+    path: str | None
+    versions: tuple[str, ...] | tuple[int, ...]
+
+
 class _Declaration(NamedTuple):
-    """One ``declare`` statement."""
+    """One ``declare`` statement of a family."""
 
     contract: OpContract
     versions: tuple[str, ...] | tuple[int, ...]
@@ -53,8 +61,7 @@ class Plugin:
         """``host`` names the host library and its directory ``aklr/plugins/<host>/``."""
         self.host = host
         self._declarations: dict[str, list[_Declaration]] = {}
-        # the contract.py of the family being collected; None outside a collection
-        self._family: Path | None = None
+        self._statements: list[_Statement] = []  # as made, before the collection sorts them into families
         self._reached: set[str] = set()  # the intercepted targets a call has taken to dispatch
         self._lock = threading.RLock()
         self._is_collected = False
@@ -72,27 +79,18 @@ class Plugin:
         """``target``, a host function's dotted full name (an op's name in aiter), is described by
         ``contract`` on the host versions ``versions``, and the contract's schema JSON, its kernels, are
         under ``path``, relative to the family's directory; ``None``: it has none yet. A statement at
-        the bottom of a family's ``contract.py``: it is heard when the plugin imports that file, and does
-        nothing when another does."""
+        the bottom of a family's ``contract.py``, the one whose ``CONTRACTS`` hold ``contract``: it is
+        heard whoever imports that file."""
         what = f"declare({target!r}, {contract.contract_id})"
-        if self._family is None:
-            return
-        file = self._family
         if not _TARGET_PATTERN.fullmatch(target):
             raise ValueError(f"{what}: the target is not a name")
         if not versions or {type(v) for v in versions} not in ({str}, {int}):
             raise ValueError(f"{what}: versions lists host versions, all strings or all integers")
-        declared = self._declarations.get(target, [])
-        if any(d.contract.contract_id == contract.contract_id for d in declared):
+        if any(
+            s.target == target and s.contract.contract_id == contract.contract_id for s in self._statements
+        ):
             raise ValueError(f"{what}: already declared")
-        if declared and declared[0].path != file:
-            raise ValueError(f"{what}: the target is declared in another family, {declared[0].path}")
-        schemas = None if path is None else (file.parent / path).resolve()
-        if schemas is not None and not schemas.is_dir():
-            raise ValueError(f"{what}: {schemas} is not a directory")
-        self._declarations.setdefault(target, []).append(
-            _Declaration(contract, tuple(versions), file, schemas)
-        )
+        self._statements.append(_Statement(target, contract, path, tuple(versions)))
 
     def register(self) -> None:
         """The host's entry point calls it: collect the declarations, check them, intercept each target."""
@@ -174,36 +172,54 @@ class Plugin:
         )
 
     def _collect(self) -> None:
-        """Import the ``contract.py`` of every family under ``aklr/plugins/<host>/``, once, hearing the
-        statements at its bottom; then check each family's schema files against its statements."""
+        """Import the ``contract.py`` of every family under ``aklr/plugins/<host>/``, once, so that its
+        statements are made; sort the statements into their families and check each family's."""
         with self._lock:
             if self._is_collected:
                 return
             self._is_collected = True
             package = importlib.import_module(f"aklr.plugins.{self.host}")
+            families: list[tuple[Path, tuple[OpContract, ...]]] = []
             for root in map(Path, package.__path__):
                 for file in sorted(root.rglob("contract.py")):
                     name = ".".join((package.__name__, *file.parent.relative_to(root).parts, "contract"))
+                    heard = len(self._statements)
                     try:
-                        self._family = file
-                        # the registry may have imported the file, its statements unheard: they run again
-                        imported = sys.modules.get(name)
-                        module = importlib.reload(imported) if imported else importlib.import_module(name)
-                        for target, declarations in self._declarations.items():
-                            for d in declarations:
-                                if d.path == file and d.contract not in module.CONTRACTS:
-                                    raise ValueError(
-                                        f"declare({target!r}, {d.contract.contract_id}): the contract is "
-                                        "not in its family's CONTRACTS"
-                                    )
+                        families.append((file, importlib.import_module(name).CONTRACTS))
                     except Exception as e:  # noqa: BLE001 -- a family's error never fails the host
+                        del self._statements[heard:]  # what the file stated before it failed
                         lines = [
                             f.lineno for f in traceback.extract_tb(e.__traceback__) if f.filename == str(file)
                         ]
                         where = f"{file}:{lines[-1]}" if lines else file
                         self._drop(file, f"{where}: {type(e).__name__}: {e}")
-                    finally:
-                        self._family = None
+            wrong: dict[Path, str] = {}  # each family with a wrong statement, and the first one
+            for target, contract, path, versions in self._statements:
+                what = f"declare({target!r}, {contract.contract_id})"
+                # the registry may have imported the file first: the contract is the object it made
+                file = next((f for f, contracts in families if any(contract is c for c in contracts)), None)
+                if file is None:
+                    _LOGGER.error(
+                        "%s: the contract is in no family's CONTRACTS under aklr/plugins/%s/; the "
+                        "statement is dropped",
+                        what,
+                        self.host,
+                    )
+                    continue
+                declared = self._declarations.get(target, [])
+                schemas = None if path is None else (file.parent / path).resolve()
+                if declared and declared[0].path != file:
+                    wrong.setdefault(
+                        file, f"{what}: the target is declared in another family, {declared[0].path}"
+                    )
+                elif schemas is not None and not schemas.is_dir():
+                    wrong.setdefault(file, f"{what}: {schemas} is not a directory")
+                else:
+                    self._declarations.setdefault(target, []).append(
+                        _Declaration(contract, versions, file, schemas)
+                    )
+            for file, reason in wrong.items():
+                self._drop(file, f"{file}: {reason}")
             for file in sorted({declarations[0].path for declarations in self._declarations.values()}):
                 declared = [
                     d for declarations in self._declarations.values() for d in declarations if d.path == file

@@ -13,7 +13,9 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
+from aklr.core.contract.baseline import DistOpBaseline
 from aklr.core.contract.op import OpContract
+from aklr.core.contract.reference import DistOpReference, OpReference
 from aklr.core.contract.spec import (
     LayoutVariant,
     LayoutVariantsSpec,
@@ -65,7 +67,7 @@ class _Expressions(ast.NodeTransformer):
                 continue
             fields = {
                 name: self.text(value)
-                for name in type(item).expr_fields
+                for name in getattr(type(item), "expr_fields", ())
                 if isinstance(value := getattr(item, name), str)
             }
             kept.append((None if when is True else when, item.model_copy(update=fields)))
@@ -151,8 +153,14 @@ class Adaptation:
     facts: tuple[str, ...] = ()
     override: Mapping[str, Any] = _NOTHING
 
+    @property
+    def is_move(self) -> bool:
+        """Whether the contract only moves: main's names, attrs and layouts as they are."""
+        return not (self.rename or self.pin or self.override)
+
     def contract(self, main: OpContract) -> OpContract:
-        """The re-cut contract of ``main``, which is ``source``."""
+        """The re-cut contract of ``main``, which is ``source``; its reference and baseline are main's,
+        for the ones ``class_source`` writes to take their place."""
         expressions = _Expressions(self.rename, self.pin)
         inputs = {}
         for name, spec in main.inputs.items():
@@ -209,10 +217,13 @@ class Adaptation:
             layout_variants=LayoutVariantsSpec(by_name=variants),
             compare=main.compare,
             ranks=main.ranks and self._name(main.ranks),
+            reference=main.reference,
+            baseline=main.baseline,
         )
         if not self.override:
             return contract
-        return OpContract.model_validate(_merged(contract.model_dump(mode="json"), self.override))
+        merged = _merged(contract.model_dump(mode="json"), self.override)
+        return OpContract.model_validate({**merged, "reference": main.reference, "baseline": main.baseline})
 
     def point(self, main_point: PointSpec, contract: OpContract) -> PointSpec | None:
         """``main_point``, a Point of ``source``, as a Point of the re-cut ``contract``; ``None`` where the
@@ -260,52 +271,48 @@ class Adaptation:
         kernel["sources"] = [{"path": path, "content": content} for path, content in sources.items()]
         return contract.narrow(point, workloads=workloads, kernel=kernel)
 
-    def reference_source(self, main: OpContract, contract: OpContract) -> str:
-        """The source of the re-cut ``contract``'s reference: main's, called with main's names."""
-        old, new = contract_name(main.contract_id), contract_name(contract.contract_id)
-        attrs = ", ".join(
-            f"{name!r}: "
-            + (repr(self.pin[name]) if name in self.pin else f"point.attrs[{self._name(name)!r}]")
-            for name in main.attrs
-        )
-        tensors = contract.tensors()
-        dtypes = ", ".join(
-            f"{t!r}: " + (f"point.dtypes[{self._name(t)!r}]" if self._name(t) in tensors else "None")
-            for t in main.tensors()
-        )
-        args = ", ".join(
-            f"{name!r}: "
-            + (f"row_major_args.get({self._name(name)!r})" if self._name(name) in contract.inputs else "None")
-            for name in main.inputs
-        )
-        return (
-            f"\n\ndef {new}_reference(point, row_major_args):\n"
-            f'    """main\'s ``{old}_reference`` under the names of ``{contract.contract_id}``."""\n'
-            f"    main_point = SimpleNamespace(axes=point.axes, attrs={{{attrs}}}, dtypes={{{dtypes}}})\n"
-            f"    return main_{old}_reference(main_point, {{{args}}})\n"
-        )
+    def class_name(self, contract: OpContract, role: str) -> str:
+        """The name of the re-cut ``contract``'s ``role`` class, ``"reference"`` or ``"baseline"``."""
+        words = contract_name(contract.contract_id).split("_")
+        return "".join(word.capitalize() for word in words) + role.capitalize()
 
-    def baseline_source(self, main: OpContract, contract: OpContract) -> str:
-        """The source of the re-cut ``contract``'s baseline: main's, called with main's names."""
-        old, new = contract_name(main.contract_id), contract_name(contract.contract_id)
-        fixed = self._fixed(main)
-        params = ", ".join(p.name if p.is_required else f"{p.name}=None" for p in contract.api_params)
-        kwargs = ", ".join(
-            f"{p.name}=" + (repr(fixed[p.name]) if p.name in fixed else self._name(p.name))
-            for p in main.api_params
-        )
-        marks = ""
-        if "layout_variant" in self.pin:
+    def class_source(self, main: OpContract, contract: OpContract, role: str) -> str:
+        """The source of the re-cut ``contract``'s ``role`` class, ``"reference"`` or ``"baseline"``: one
+        over main's class (``Main<its name>`` where the source runs) that takes the target's call, calls
+        main's with main's names, and names its results the target's."""
+        base = type(getattr(main, role))
+        if isinstance(getattr(main, role), DistOpReference | DistOpBaseline):
+            raise NotImplementedError(f"{self.source}: an op of ranks is re-cut by moving only")
+        if role == "reference" and base.check is not OpReference.check:
+            raise NotImplementedError(f"{self.source}: {base.__name__} has a check of its own names")
+        fixed, marks, shown = self._fixed(main), "", {}
+        if role == "baseline" and "layout_variant" in self.pin:
             # a fact main's caller showed on a tensor, which the target's caller does not: shown here
             for fact in main.layout_variants.by_name[self.pin["layout_variant"]].detect_facts:
                 tensor, _, attribute = fact.name.partition(".")
                 if attribute and fact.name not in self.facts:
-                    t = self._name(tensor)
-                    marks += f"    {t} = {t}.view({t}.shape)\n    {t}.{attribute} = {fact.expected_value!r}\n"
+                    if tensor not in shown:
+                        new = self._name(tensor)
+                        marks += f"        {tensor} = call[{new!r}].view(call[{new!r}].shape)\n"
+                        shown[tensor] = tensor
+                    marks += f"        {tensor}.{attribute} = {fact.expected_value!r}\n"
+        kwargs = ", ".join(
+            f"{p.name}="
+            + (
+                repr(fixed[p.name])
+                if p.name in fixed
+                else shown.get(p.name, f"call.get({self._name(p.name)!r})")
+            )
+            for p in main.api_params
+        )
+        renamed = {old: new for old, new in self.rename.items() if old in main.tensors()}
         return (
-            f"\n\ndef {new}_baseline({params}):\n"
-            f'    """main\'s ``{old}_baseline`` under the names of ``{contract.contract_id}``."""\n'
-            f"{marks}    return main_{old}_baseline({kwargs})\n"
+            f"\n\nclass {self.class_name(contract, role)}(Main{base.__name__}):\n"
+            f'    """main\'s ``{base.__name__}`` under the names of ``{contract.contract_id}``."""\n\n'
+            f"    def {role}(self, **call):\n"
+            f"{marks}"
+            f"        results = super().{role}({kwargs})\n"
+            f"        return {{{renamed!r}.get(name, name): tensor for name, tensor in results.items()}}\n"
         )
 
     def _name(self, name: str) -> str:

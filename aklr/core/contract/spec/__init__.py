@@ -5,6 +5,7 @@ from aklr.core.contract.semantics._frozen_model import FrozenModel
 from aklr.core.contract.spec._args import (
     ArgSpec,
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     ScalarSpec,
     ShapeByAttrSpec,
@@ -50,6 +51,7 @@ __all__ = [
     "CompareSpec",
     "ContractId",
     "DTypeSpec",
+    "DeterminismLevel",
     "FrozenModel",
     "KernelSpec",
     "Language",

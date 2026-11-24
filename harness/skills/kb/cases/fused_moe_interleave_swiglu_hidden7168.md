@@ -48,7 +48,7 @@ names and kernels.
   takes `num_local_tokens`: the `has_num_local_tokens` names of this shape (m 1024 and 2048) have no kernel.
 - A token's expert ids are distinct (the `topk_ids` contract), and `99a7b2a5…` relies on it when it ORs a token's bit
   into each of its experts' bitmaps.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, whole-output SQNR ≥ 13 dB. The reference keeps the
+- Compare: `determinism: bounded`, whole-output SQNR ≥ 13 dB. The reference keeps the
   activations unrounded in this gate mode (`aklr/ops/fused_moe/reference.py`, its docstring); all three kernels
   quantize them to MX-fp8 (Counter-signals).
 - Points listed, one kernel file per name: m 1, 2, 4, 8, 16, 32, 64 (inter 384, `15ab9c15…`); m 1, 2, 4, 16, 32,
@@ -81,7 +81,7 @@ names and kernels.
   all-zero intermediate, and at limit 1000 most values from the bench's own inputs round to zero (estimated). The
   predecessors passed every listed Point with a worst violation fraction of 0 in four runs, all at limit 10, the
   only limit the workloads pass *(field, E1, E2, E3, E4, E9, E10)*; the SQNR itself is not recorded.
-- **Scratch cached per shape is shared by concurrent calls.** `aklr/ops/README.md:180–181` allows scratch allocated
+- **Scratch cached per shape is shared by concurrent calls.** `aklr/ops/README.md:312–313` allows scratch allocated
   once per shape in a compile function if every call rewrites it before reading it; that is safe only while one
   stream calls a Point at a time, since the buffer belongs to every call of that shape and two calls at once on two
   streams overwrite each other's intermediates. The earlier predecessors did this: two concurrent calls with

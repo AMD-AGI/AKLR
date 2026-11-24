@@ -40,7 +40,7 @@ The same fold forms at N 6016–8448 and at K 35840 are in [k3_bf16_splitk_wide_
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0,
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`,
   the `CompareSpec` defaults), with the fp32 dot-product error bound of `_dot_k()` (`max_split_k` 16; `GEMM` in
   `aklr/ops/gemm/contract.py`). Every fold these kernels run adds its terms in an order fixed by index.
 - K = 7168 with N = 144, 768, 1280, 1536, 2112 or 3584 (a weight of 2–49 MiB). At m ≤ 112 the output has 9–224
@@ -351,7 +351,7 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n1536: single-launch fold +33.9–84.9% at m ≤ 112 (recorded); XCD-grouped order + tiles +17.6, 19.2, 3.6, 17.3% at m 893–16384 (recorded); 256 flagged workgroups +4.2–15.6% at m ≤ 112 (recorded); 12-wave split tiles +20.7 / +8.2% at 893 / 2732 (gemm_n1536_k7168)
 - E11 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n2112: pipelined kernel + fold +39.1–82.2% at m ≤ 112 (recorded); reducer workgroups +3.9, 3.7, 4.7, 4.7, 5.1, 6.1, 6.9, 9.8% at m 40–112 (recorded); split-major order +22.8% at 893; per-XCD tiles +7.3, 18.1, 4.4% at 2732, 9397, 16384 (recorded); larger tiles +8.3 / +10.5% at 9397 / 16384 (gemm_n2112_k7168)
 - E12 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n3584: K-split kernel +15.1–76.1% (recorded); reduce-scatter +4.6, 1.4, 2.0, 2.7, 1.5, 2.1, 7.8, 11.9, 11.3% at m 21–98; `nt` B + A first +2.9–6.4% (recorded); columns over waves +2.7–4.5% at m 21–98 (recorded); whole-line planes +0.3–1.4%; all off +23.2–125.2% (gemm_n3584_k7168)
-- S1 aklr/ops/gemm/contract.py:95 `_dot_k()` (fp32, `max_split_k` 16) on `GEMM` at :128; `_SLACK`, `_SQRT_LENGTH_MULTIPLE`, `_CONSTANT_MULTIPLE` at aklr/core/contract/semantics/_compare.py:329
+- S1 aklr/ops/gemm/contract.py:95 `_dot_k()` (fp32, `max_split_k` 16) on `GEMM` at :128; `_SLACK`, `_SQRT_LENGTH_MULTIPLE`, `_CONSTANT_MULTIPLE` at AMD-AGI/AKLR@8f6812f:aklr/core/contract/semantics/_compare.py:331-333 (removed with `DotProductBound`)
 - S2 aklr/ops/gemm/impls/flydsl/gemm_n144_k7168/f8ab3dbed316f795.json#kernel.py:25 the NaN-pattern MAGIC; agent-scope atomic flag store and poll at :70 and :82; `_CONFIG` at :102; `_LARGE` at :679; unbounded polls at :355 and :597; co-residency assert at :189
 - S3 aklr/ops/gemm/impls/flydsl/gemm_n768_k7168/399cbcd0ea88f335.json#kernel.py:22 `_CONFIGS`; splits per XCD at :163; bounded poll at :232, NaN at :250, flag clear at :259; workspace per call at :391
 - S4 aklr/ops/gemm/impls/flydsl/gemm_n1280_k7168/67a621bfd7700a60.json#kernel.py:1 docstring; `p24 = ma >= 4` at :1328; operands loaded straight from global at :1364; `_CONFIGS` at :1473; NaN on timeout at :747, :924, :1447
