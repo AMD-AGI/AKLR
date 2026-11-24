@@ -14,10 +14,12 @@ import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang.layers.kda_triton import api, baseline
+from aklr.plugins.sglang.layers.kda_triton.contract import CONTRACTS
 from aklr.plugins.sglang.layers.kda_triton.reference import (
     KimiK3SglKdaPrefillReference,
     KimiK3SglKdaPrefillTrackReference,
 )
+from tests.plugins.sglang import cases
 
 HEADS, DIM, SLOTS = 2, 128, 5
 # a row of sglang's [f_a | b] projection at this head count (f_a, b, the pad to 8): beta is a column slice of it
@@ -489,3 +491,12 @@ def test_the_track_baseline_asks_chunk_kda_for_the_snapshots(sglang_kernels):
         and call["track_state"].data_ptr() == snapshot.data_ptr()
     )
     assert call["track_chunk_idx"] is chunks
+
+
+@pytest.mark.parametrize("contract", CONTRACTS, ids=lambda c: c.contract_id)
+def test_a_prefill_may_name_more_sequences_than_slots(contract):
+    """Padding sequences take slot -1, any number of them: a call of more sequences than the pool has slots is inside
+    the contract (validation's draws keep n_seqs <= n_slots, for their slots are distinct)."""
+    (point,) = (p for p in cases.SMALL_POINTS if p.contract_id == contract.contract_id)
+    padded = point.model_copy(update={"axes": {**point.axes, "n_seqs": 3, "n_offsets": 4, "n_slots": 1}})
+    assert contract.domain.contains(padded)

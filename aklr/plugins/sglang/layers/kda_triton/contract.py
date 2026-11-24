@@ -160,7 +160,8 @@ _CHUNKED_STATE = ToleranceBound(absolute_tolerance=2e-2, relative_tolerance=1e-2
 _SLOTS_DRAWN = (
     # drawn >= 0 and distinct, so that every timed sequence steps a state: no distribution draws -1 any number of
     # times beside distinct slots (IntRangeDistribution's distinct draws hold -1 once at most);
-    # tests/plugins/sglang/test_kda_triton_kernels.py runs the kernels on slots padded so (gfx950)
+    # tests/plugins/sglang/test_kda_triton_kernels.py runs the kernels on slots padded so (gfx950). A call may have
+    # more sequences than slots (its -1 ones); distinct draws need n_seqs <= n_slots, which every workload keeps
     IntRangeDistribution(lo=0, hi="n_slots - 1", distinct=True)
 )
 _STATE_ROWS = derived_axis("Rows of one slot: every head's state, v by v.", "n_heads * head_dim")
@@ -196,7 +197,6 @@ KIMI_K3_SGL_KDA_PREFILL = OpContract(
     constraints=(
         "n_offsets == n_seqs + 1",
         "n_seqs <= n_tokens",
-        "n_seqs <= n_slots",  # the drawn slots are distinct
     ),
     inputs={
         **_common_inputs(),
