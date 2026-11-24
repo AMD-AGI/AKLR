@@ -17,7 +17,7 @@ vLLM computes Kimi-K3's attention residual in one Triton kernel, `attn_res` (`mo
 | 5 | The layer's RMSNorm on the mix: `input_layernorm` before attention, `post_attention_layernorm` before the MLP, none before the final norm | ✓ | ✓ |
 | 6 | The output quantized to fp8 per token, when the next linear takes fp8 input | ✓ | — |
 
-vLLM already runs these steps as one kernel, but the kernel is the model's own: it lives in Kimi-K3's model directory, not in aiter. No aiter op covers it, so AKLR's aiter provider never sees the call, and no op in `aklr/plugins/aiter` has its computation. To run a faster kernel in its place, the plugin replaces the model's function: the `attn_res` that `_apply_attn_res` calls. The op takes steps 1–5; the fp8 output of step 6 is in no contract, so there the route falls back to vLLM's kernel.
+vLLM already runs these steps as one kernel, but the kernel is the model's own: it lives in Kimi-K3's model directory, not in aiter. No aiter op covers it, so AKLR's aiter provider never sees the call, and no op in `aklr/plugins/aiter` has its computation. To run a faster kernel in its place, the plugin replaces the model's function: the `attn_res` that `_apply_attn_res` calls. The op takes steps 1–5; a call that asks for step 6's fp8 output goes to a second op, `kimi_k3_attn_res_fp8`, whose contract adds the per-token quantization.
 
 What a plugin may replace: a route never replaces an aiter function, nor a framework function that only wraps one aiter call, such as vLLM's `_rocm_aiter_fused_moe_impl` (`_aiter_ops.py`) around aiter's `fused_moe`. Calls of aiter's ops reach AKLR through aiter's own plugin interface, whose AKLR provider is `aklr/plugins/aiter/provider` ([aiter's kernel plugin interface](../aklr/plugins/README.md#aiters-kernel-plugin-interface)). A route does one of two things: it replaces a model's own function, as here, or it fuses a whole stretch of the framework's computation, aiter calls included, into one op.
 
@@ -47,7 +47,7 @@ def attn_res(prefix, delta, blocks, norm_weight, qk_weight, output_norm_weight, 
 
 ### 2. Create the package
 
-Create `aklr/plugins/vllm/models/kimi_k3/attn_res/`: `kimi_k3/` is named after vLLM's source directory `models/kimi_k3/`, `attn_res/` after the kernel's file `ops/attn_res.py`. It holds the same files as an op in `aklr/plugins/aiter`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`; and `_triton.py`, a copy of vLLM's Triton kernel and its launcher without the fp8 output, so that the baseline runs without vLLM. The package name is the op's `op_type` (`attn_res`) and must be unique across `aklr/plugins/aiter` and `aklr/plugins`.
+Create `aklr/plugins/vllm/models/kimi_k3/attn_res/`: `kimi_k3/` is named after vLLM's source directory `models/kimi_k3/`, `attn_res/` after the kernel's file `ops/attn_res.py`. It holds the same files as an op in `aklr/plugins/aiter`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`; and `_triton.py`, a copy of vLLM's Triton kernel and its launcher, so that the baseline runs without vLLM. The package name is the op's `op_type` (`attn_res`) and must be unique across `aklr/plugins/aiter` and `aklr/plugins`.
 
 ### 3. Write the op
 
@@ -164,13 +164,21 @@ The schema is written beside the committed kernel of this scenario, in `aklr/plu
 
 ### 7. Run it in vLLM
 
-Validation checks the kernel against the reference, not the route; check the route by running the model. Start vLLM with Kimi-K3's MXFP4 checkpoint at TP8, with the deployment's own options and the plugin on. Its attention and dense MLP are BF16, so no call asks for the fp8 output the route leaves to vLLM:
+Validation checks the kernel against the reference, not the route; check the route by running the model. Start vLLM with Kimi-K3's MXFP4 checkpoint at TP8, with the deployment's own options and the plugin on. Its attention and dense MLP are BF16, so no call asks for the fp8 output:
 
 ```bash
 AKLR_VLLM_PLUGIN=1 vllm serve <Kimi-K3 MXFP4 checkpoint> --tensor-parallel-size 8
 ```
 
 The log reports the hooked calls (`aklr hooks N calls of vLLM 0.34.0`), and the model's replies must stay correct. With `AKLR_TRACE=plugin`, each route logs once per distinct call whether it served or fell back, and why ([aklr/plugins/README.md](../aklr/plugins/README.md#enabling-the-plugin-and-upgrading-sglang)).
+
+## An op whose ranks call it together
+
+Kimi-K3's latent-MoE tail (`aklr/plugins/vllm/models/kimi_k3/latent_moe/`) replaces two all-reduces, a norm and an addmm with one kernel whose ranks exchange through each other's memory. Its contract sets `ranks` (`tp_size`), its reference and baseline are a `DistOpReference` and a `DistOpBaseline` ([aklr/plugins/aiter/README.md](../aklr/plugins/aiter/README.md)), and the route and the kernel follow three rules:
+
+- Every rank takes the same path: the route decides from what every rank has alike, and the ranks agree on the dispatcher's verdict over vLLM's TP group before any of them launches, since a rank that launched alone would wait for the others.
+- The state the kernel keeps between calls (its peer buffers, launch counters and health words) is in the kernel's own sources, `runtime.py` beside `kernel.py`. The route sets it up over vLLM's TP group before the kernel's first call, through the kernel the dispatcher serves the call with (`api.serving`'s metadata names its module); where no caller set it up, as in validation, the kernel's first call sets it up over torch.distributed's default group.
+- A wait inside the kernel gives up after 10 s and fails the whole group, as a host stall of one rank that long would. The vLLM plugin then stops the step: after every step's launches it runs the step watches in `AFTER_STEP` (`aklr/plugins/vllm/__init__.py`), and the tail's (`latent_moe/failstop.py`) raises before that step's output leaves the worker. `AKLR_DISABLE=kimi_k3_latent_moe_tail@1.0` hands every call back to vLLM's tail.
 
 ## Next
 
