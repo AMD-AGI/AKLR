@@ -11,9 +11,14 @@ from aklr.core.contract.registry import ContractRegistry
 from tests.op_case import OpCase
 
 
-def _with_ranks(contract_id: str, ranks: str) -> OpContract:
-    contract = ContractRegistry.default().get(contract_id)
-    return OpContract.model_validate(contract.model_dump() | {"ranks": ranks})
+def _with_ranks(contract_id: str, ranks: str, group_op: str = "mega_moe@1.0") -> OpContract:
+    """``contract_id``'s contract with ``ranks``, and ``group_op``'s reference and baseline."""
+    registry = ContractRegistry.default()
+    group = registry.get(group_op)
+    return OpContract.model_validate(
+        registry.get(contract_id).model_dump()
+        | {"ranks": ranks, "reference": group.reference, "baseline": group.baseline}
+    )
 
 
 def test_ranks_at_reads_the_attr() -> None:
@@ -23,16 +28,16 @@ def test_ranks_at_reads_the_attr() -> None:
     assert case.contract.ranks_at(case.point) == 1
 
 
-@pytest.mark.parametrize(
-    ("contract_id", "ranks"),
-    [("fp8_paged_mqa_logits@1.0", "nope"), ("fused_moe@1.0", "act_quant")],
-    ids=["not_an_attr", "baseline_relative"],
-)
-def test_ranks_rejects(contract_id: str, ranks: str) -> None:
-    """``ranks`` names an attr of positive ints, and no bound needs the baseline in the
-    reference task, which runs on one device."""
+def test_ranks_rejects_what_is_not_an_attr() -> None:
+    """``ranks`` names an attr of positive ints."""
     with pytest.raises(ValueError, match="ranks: "):
-        _with_ranks(contract_id, ranks)
+        _with_ranks("fp8_paged_mqa_logits@1.0", "nope")
+
+
+def test_ranks_needs_a_group_reference_and_baseline() -> None:
+    """A contract with ``ranks`` has a DistOpReference and a DistOpBaseline."""
+    with pytest.raises(ValueError, match="ranks: "):
+        _with_ranks("fp8_paged_mqa_logits@1.0", "page_size", group_op="fp8_paged_mqa_logits@1.0")
 
 
 def test_each_rank_draws_its_own_inputs() -> None:
@@ -49,18 +54,3 @@ def test_each_rank_draws_its_own_inputs() -> None:
     assert not any(torch.equal(rank0[n], rank1[n]) for n in tensors)
     again = request.compose_inputs(None, "cpu", 1)
     assert all(torch.equal(again[n], rank1[n]) for n in tensors)
-
-
-def test_no_group_py_is_no_group_init(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An op without ``group.py`` sets nothing up; one whose own import fails raises."""
-    from aklr.core.contract import op
-
-    contract = OpCase.of("gemm@1.0").contract
-    assert contract.group_init() is None
-
-    def unimportable(op_package: str, submodule: str) -> None:
-        raise ModuleNotFoundError("No module named 'mori'", name="mori")
-
-    monkeypatch.setattr(op, "op_module", unimportable)
-    with pytest.raises(ModuleNotFoundError, match="mori"):
-        contract.group_init()

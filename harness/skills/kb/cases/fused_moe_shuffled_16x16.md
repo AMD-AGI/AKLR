@@ -19,14 +19,14 @@ measured:
   - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.123–1.193; 6 of 6 Points ≥ 1.03 (m 4, 8, 16, 32, 64, 128)", gpu: MI355X, workload: "fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048 file b92ebdd46e149aa2 as its predecessor (same GPU code, not re-measured), m 4, 8, 16, 32, 64, 128", run_ref: "base 0e02a81", date: "2026-11-09"}
   - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.230–1.365; 3 of 3 Points ≥ 1.03 (m 256, 2048, 4096)", gpu: MI355X, workload: "fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048 file 178877181ed5a81b as its predecessor (same GPU code, not re-measured), m 256, 2048, 4096", run_ref: "base 0e02a81", date: "2026-11-09"}
 sources:
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/f13fecf15dbe0a9d.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/e33e2bc97ec165f1.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512/3f488296c3d52d4c.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048/fa7e6f02d24a4982.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/d0d05b32522e5cb2.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/b92ebdd46e149aa2.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/178877181ed5a81b.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/f13fecf15dbe0a9d.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/e33e2bc97ec165f1.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512/3f488296c3d52d4c.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048/fa7e6f02d24a4982.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/d0d05b32522e5cb2.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/b92ebdd46e149aa2.json
+  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/178877181ed5a81b.json
 ---
 
 # MXFP4 fused MoE with 16×16-shuffled weights, hidden 6144, top-9
@@ -55,17 +55,17 @@ below are of the earlier versions, but for E18 on `3f488296…`.
   6144, inter) as fp4 e2m1 in aiter's 16×16 preshuffle, one E8M0 scale per 1×32, shuffled and padded to (256, 8);
   bf16 `hidden_states`, fp32 `topk_weights`, int32 `topk_ids`, no expert mask; SiLU on separate gate and up rows,
   routing weight applied in stage 2, `act_quant` 4 (activations quantized to MXFP4); bf16 `out`
-  (`aklr/ops/fused_moe/contract.py`, the `shuffled_16x16` variant). A token's 9 expert ids are distinct (the
+  (`aklr/plugins/aiter/fused_moe/contract.py`, the `shuffled_16x16` variant). A token's 9 expert ids are distinct (the
   `topk_ids` contract); none of these names has an expert mask or `num_local_tokens`.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, and one bound on the whole output: SQNR ≥ 13 dB
-  against the reference (float32 in validation) rounded to bf16, with no per-element bound and no bias test (`SqnrBound`,
-  `aklr/core/contract/semantics/_compare.py`). Atomic accumulation is allowed.
+- Compare: `determinism: bounded`, and one bound on the whole output: SQNR ≥ 13 dB
+  against the reference in bf16, with no per-element bound (`SqnrBound`,
+  `aklr/core/contract/semantics/_error_bounds.py`). Atomic accumulation is allowed.
 - The model: the commit that adds the 257-expert `5d5b47d0…` names it GLM-5.2's MXFP4 MoE (256 routed experts plus
   the fused shared one, top-9) at decode sizes. The four names fit that layer (hidden 6144, MoE intermediate 2048,
   `aklr/benchmarks/models/glm52/README.md`): inter 256 and 512 are 2048 split 8 and 4 ways, 65 and 33 experts are
   64 or 32 routed experts plus the shared one. No other file names the model.
 - Points. Dispatch serves a Point with the file of the highest `speedup` among the files of its schema name, from
-  1.03; a workload without a CI `speedup` is not served (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment
+  1.03; a workload without a CI `speedup` is not served (`AKLR_MIN_SPEEDUP`, `aklr/plugins/aiter/README.md` § Environment
   variables; S6). Served on main as of #102 (6d7cfec, CI run 42549655045), by the speedups CI wrote into the files
   *(field, E1)*:
 
@@ -105,16 +105,15 @@ below are of the earlier versions, but for E18 on `3f488296…`.
   rounds, its routing-weighted bf16 rows and its bf16 output at every m (`bits >> 16`); `f13fecf1…` at m ≥ 512, where
   it is not served, stores int8 rows with one fp32 scale per 32 values. `e33e2bc9…` (every Point), `3f488296…` (m
   1024–4096) and `17887718…` (every Point) store each route's stage-2 row as MXFP4, e2m1 with an E8M0 scale per 32,
-  before the route sum. The contract notes that the 33- and 65-expert kernels keep partials far off aiter's error
-  (`contract.py`, the FIXME at `out`'s `error_bounds`). The runs record `accuracy: passed`, not the SQNR. Against
-  aiter's error (the contract's `BaselineRelativeBound`), `fa7e6f02…`'s fp8 rows fail at 31.4–31.5 dB against aiter's
+  before the route sum. The runs record `accuracy: passed`, not the SQNR. Against a bound relative to aiter's own
+  error (the contract now has SQNR alone: 20 dB with MXFP8 activations, 10 dB with MXFP4), `fa7e6f02…`'s fp8 rows fail at 31.4–31.5 dB against aiter's
   46.9–47.3 dB, and its fp32 or bf16 rows pass; `d0d05b32…` fails at 26.5–30.3 dB, and rounding to nearest even
   instead of truncating moves it by under 0.1 dB, so rounding is not what limits it *(field, E19)*. The MXFP4 route
   rows are not measured against such a bound.
 - **Not the compile-function form in three files.** `f13fecf1…`, `fa7e6f02…` and `d0d05b32…` keep built launches in
   a module-level dict `_RUN_CACHE` filled from `run`, not in a `functools.cache` compile function, allocate their
   per-shape scratch on device `"cuda"` rather than an argument's device, and `f13fecf1…` hashes its own source file
-  (`Path(__file__).read_bytes()`) on a Point's first call: file I/O in launch code (`aklr/ops/README.md` § The kernel
+  (`Path(__file__).read_bytes()`) on a Point's first call: file I/O in launch code (`aklr/plugins/aiter/README.md` § The kernel
   section and ABI). Their scratch is written by every call before it is read (`f13fecf1…` zeroes its expert counters
   in `quant_input` at m ≥ 32; the others store their counts per call). The other six files use `functools.cache` and
   allocate their workspace per call.
@@ -228,7 +227,7 @@ What the nine kernels share:
 - **Activations quantized twice on the GPU:** the input rows to MXFP4 (amax of each 32-value group across lanes, an
   E8M0 exponent from it, `cvt_scalef32_pk_fp4_*`), and the SiLU(gate)·up intermediate again before stage 2: in stage
   1's epilogue, or, in `f13fecf1…`, at the start of stage 2 at m 1 and 2 and in a separate `activate_quant` launch at
-  m 4–32. The reference rounds both to MXFP4 too (`aklr/ops/fused_moe/reference.py`, its docstring).
+  m 4–32. The reference rounds both to MXFP4 too (`aklr/plugins/aiter/fused_moe/reference.py`, its docstring).
 - **Configuration per m** from constants in the source, compiled on a Point's first call. In `e33e2bc9…` they
   include the block sizes and stage-1 kernels its earlier version took from aiter's tuned table, in `3f488296…` the
   stage wrappers and stage-1 output format its earlier version took from aiter's configuration.
@@ -410,14 +409,14 @@ at 512 and 247.2 at 4096 against aiter's 150.8 and 445.1; `3f488296…` 225.8 an
 On an MI355X, from the repository root, one schema file at a time:
 
 ```
-python -m aklr validate aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/e33e2bc97ec165f1.json
+python -m aklr validate aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/e33e2bc97ec165f1.json
 ```
 
 and the same for the other paths under `sources`. Each runs the audit and bench stages and writes
-`aklr_validation/report.md` with the per-Point speedup (`aklr/ops/README.md` § Commands). Add `--base origin/main`
+`aklr_validation/report.md` with the per-Point speedup (`aklr/plugins/aiter/README.md` § Commands). Add `--base origin/main`
 only on a branch that edits the file: with the base set, bench measures only schemas that are not at the base, so on
 an unchanged checkout it skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). The
-local result does not count; CI's measurement is the one dispatch reads (`aklr/ops/README.md` § Workflow).
+local result does not count; CI's measurement is the one dispatch reads (`aklr/plugins/aiter/README.md` § Workflow).
 
 ## Rollback
 
@@ -460,14 +459,14 @@ head launch's sorted-id bound (S9) and its scale path at m 1024 (E18).
 - E17 [2026-11, gfx950, FlyDSL ?, N=1, AKLR CI, measurement profile 18] speedup over aiter in the committed files before #102 (at 0e02a81), per Point m 1–4096: f13fecf15dbe0a9d 2.460, 2.024, 0.136, 0.909, 0.178, 0.827, 0.828, 0.311, 0.861, 0.372, 0.426, 0.808, 0.758; fa7e6f02d24a4982 1.217, 1.090, 1.031, 1.024, 0.967, 1.018, 1.031, 1.192, 1.170, 1.263, 1.720, 1.073, 1.077; d0d05b32522e5cb2 1.282, 1.050, 0.979, 0.960, 0.941, 0.967, 0.969, 0.863, 0.954, 1.007, 1.221, 0.867, 0.803 (d908d01, CI run 42000899019)
 - E18 [2026-11, gfx950, FlyDSL 0.3.2, N=500 tries per run (two streams, different inputs, AKLR timing inputs), each output compared with the call alone, bitwise at m 1024, rows off by more than 4 at m 512] the earlier revision at m 1024: 8, 6 and 8 wrong outputs of 2000 in three runs, one route row wrong per affected token, up to 45.75 off; stage 2 rerun alone on the captured stage-1 output reproduced them; the same without the split stage 1 at 1024: 2 of 1000; 3f488296c3d52d4c 0 of 1000, and AKLR validate (measurement profile 19, 16 rounds) 1.061, 1.161, 1.425, 1.649 at m 512, 1024, 2048, 4096, accuracy passed; 3f488296c3d52d4c at m 512: 0 of 1200 outputs with a row off by more than 4, worst 3.0, alone repeats up to 2.5
 - E19 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=3 input sets per Point; SQNR of the bf16 output against the reference rounded to bf16, and the contract's `BaselineRelativeBound` with aiter's `fused_moe` as the baseline] fa7e6f02d24a4982 with its fp8 stage-2 rows: 31.44–31.52 dB at m 16, 64, 512, 4096, the bound violated; with fp32 or bf16 rows instead, within the bound; aiter 46.93–47.34 dB. d0d05b32522e5cb2: 26.46–30.33 dB at m 1, 16, 512, violated; its truncations rounded to nearest even change SQNR by −0.053 to +0.078 dB and still fail. Every reading passes the schema's `SqnrBound` 13 dB
-- S1 aklr/ops/fused_moe/contract.py:271 `SqnrBound(min_sqnr_db=13.0)` under the FIXME at :269–270 (e33/e65 kernels keep fp8/MXFP4 partials); compare at :299; the `shuffled_16x16` variant at :278–286
+- S1 aklr/plugins/aiter/fused_moe/contract.py:271 `SqnrBound(min_sqnr_db=13.0)` under the FIXME at :269–270 (e33/e65 kernels keep fp8/MXFP4 partials); compare at :299; the `shuffled_16x16` variant at :278–286
 - S2 fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/f13fecf15dbe0a9d.json#kernel.py:655 `pack_weights` at m 4, 16, 128, 512, 1024, launched at :763–785 (`pack_weight_scales`, :138); stage 1 at :245, stage-2 gather by `ds_bpermute` at :374–381, route sum in route order at :394–400; `_RUN_CACHE` at :801, `read_bytes()` at :653, device `"cuda"` at :708; counters zeroed per call at :234–236
 - S3 fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json#kernel.py:58 `_plan` (functools.cache) builds the fold for m in {8, 16, 32, 64}, XCD grouping at m 32 (:37); workspace per call at :144; g1_fold.py:518 non-temporal weights, :1143 `s_setprio(1)`; g2_port.py:328 kernarg preload 16, :899–915 bf16x2 `atomicrmw fadd`
 - S4 fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048/fa7e6f02d24a4982.json#kernel.py:1340 per-m flags (to :1493) and launch chain at :1527–1574; fp8 rows at :1231 and :1238, `_reduce_fp8x4` at :1320; `_chiplet_order` at :156; docstring at :1; `_RUN_CACHE` at :1593, device `'cuda'` at :1494
 - S5 fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/d0d05b32522e5cb2.json#kernel.py:1380 per-m flags in `_Runner` (to :1472); bf16 truncation of the stage-2 rows at :777 (m ≥ 2) and :974 (m 1), of the output at :982 (m 1) and :1080 (m ≥ 2); the other stage-2 store paths (:782–803, :843–867) are reached by no Point; `FULL_STAGE_A` at :293 and :455–467; torch sort fallback at :1493–1509 behind `fused_sort` (:1435); per-shape scratch in `_Runner.__init__` at :1421–1445, kept by `_RUN_CACHE` at :1550
 - S6 aklr/core/runtime/dispatch/_dispatcher.py:112 a workload qualifies at `speedup >= AKLR_MIN_SPEEDUP` (`aklr/core/contract/spec/_workloads.py:38`; a workload without `speedup` does not, :41); the highest-ranked file serves a Point (:114–117); `rank_key` (aklr/core/contract/op.py:948) orders by accuracy not failed, then `speedup`, then the kernel's content hash (:951–952)
 - S7 fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/e33e2bc97ec165f1.json#kernel.py:2337 `_BLOCK_M` and :2341 `_STAGE1_KERNEL` (aiter dbd8bf5bd's tuned block sizes and stage-1 kernels, 1024's kernel its own), `_g2` at :2349; `_STAGE2_KERNEL` at :2369 (MXFP4 route rows, W2 kept in L2 and `_sp801` at 2048, 4096; comment at :2366–2368), `_SORT_CFG` at :2378, `_SPREAD` at :2381, `_W1_PREFETCH` at :2385 and its tail at :2388; `_plan` (functools.cache) at :2392, raising for other m at :2394, its fused-sort and quantization asserts at :2411–2412, the route sum of MXFP4 rows at :2402; `compile_sort_fused` at :2002, the activation quantization at :1903–1909, the W1 prefetch at :1951; `ws_route_sum_fp4_kernel` at :1838, routes in route order at :1864; `_stage1_tsl` at :5453; aiter's FlyDSL modules as copies in the other 15 sources (`moe_kernels.py`, `mixed_moe_gemm_2stage_common.py`, `mxmoe_dispatcher.py`, ...)
-- S8 AKLR@449734c0^:aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512/4ea93103a078dc17.json#kernel.py:94 `_FOLD` (m 32: XCD-contiguous stage 1, XCD-major stage 2) and the block and tile sizes at :95–103; `_fold_stage1` at :466, every workgroup sorting all routes at :517, the weight stream before the sort's publish at :346; `_atomic_bf16_epilog` at :730; `_fold_plan` at :1044 and `_fold_run` (workspace per call at :1079) at :1076; `run` raises for other m at :1137 and takes the fold at :1139
+- S8 AKLR@449734c0^:aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512/4ea93103a078dc17.json#kernel.py:94 `_FOLD` (m 32: XCD-contiguous stage 1, XCD-major stage 2) and the block and tile sizes at :95–103; `_fold_stage1` at :466, every workgroup sorting all routes at :517, the weight stream before the sort's publish at :346; `_atomic_bf16_epilog` at :730; `_fold_plan` at :1044 and `_fold_run` (workspace per call at :1079) at :1076; `run` raises for other m at :1137 and takes the fold at :1139
 - S9 fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512/3f488296c3d52d4c.json#kernel.py:183 `_route_kernel`; `_ES_RANK` at :387, `_ROUTE` at :392, `_ROUTE_QUANT` at :614, `_S1_GATHER` at :619, `_S1_SPLIT` at :624, `_FP4_REDUCE` at :627, `_OVERRIDE` at :634, `_S1_LOCAL` at :642; `_S1_MODULES` at :661 (the stage-1 builder copies `mixed_moe_gemm_2stage_common_vb.py`, `…_vbgs4.py`, `…_vbgs8.py`); `_head_resort_kernel` at :396, its sorted-id descriptor bounded at :431, the bound passed at :1256, rows past the valid count masked at :459 and tiles stored only below it at :461; `_ES_GRID` at :677, `_es_stage2_kernel` at :695; `_fp4_reduce_kernel` (route order, fp32) at :1004; `_plan` at :1283, raising for other m at :1291; `_into_out` at :1306 (routing launch at :1333, m 512's stage 2 through `_flydsl_v2_stage2_wrapper` of `fused_moe_v2_stage2.py` at :1384); `run` at :1396
 - S10 fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/b92ebdd46e149aa2.json#kernel.py:49 `_S1_KERNEL` (a name in aiter's registry, read by the copied `moe_kernels.py`), stage-2 constants at :51–54 (`_S2_KSPLIT` 2), `_FOLD` at :58, `_S1_TAIL_PARTS` and `_S1_TAIL_FULL` at :61–62, `_TAIL_CPOL` at :65, `_N_TOKENS` at :68; `_cfg` (functools.cache) at :328 with stage 2 `mode="atomic"` at :342; the prelude at :77, zeroing the split-tail counters at :178; `run` raises for other m at :427; the copied builders at :510, the split-tail merge in part order at :555–557
 - S11 fused_moe_shuffled_16x16_model_dim6144_n_experts65_topk9_inter_dim2048/178877181ed5a81b.json#kernel.py:3194 `_OWNED` (the 2048-token constants, comment at :3192–3193), `run` raising for other m at :3224; `build_moe_module` at :2531 with branches written for 65 experts at :2543–2545 (`CACHE1` at 256 tokens), :2555–2557 (`GROUP_M1`, `GROUP_M2`), :2705–2751 (`PIPE1` :2705, `GATHER_FUSED` :2719, `PIPE2` :2724, `DERIVE_TILES` :2743, `TAILS` :2746, `W2NT` :2751) and :2769; `BM_LARGE` 96 at :2584, `FP4_P` at :2782, scratch per call at :2793; `_reduce_fp4` (slot order, fp32) at :2474

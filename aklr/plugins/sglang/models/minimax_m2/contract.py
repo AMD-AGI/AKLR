@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    DeterminismLevel,
+    MOE_MXFP4_SNR,
     DType,
     E8M0Scales,
     FiniteDistribution,
@@ -16,6 +16,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -25,6 +26,11 @@ from aklr.core.contract.spec import (
     attr,
     axis,
     derived_axis,
+)
+from aklr.plugins.sglang.models.minimax_m2.baseline import MinimaxM2Fp8MoeBaseline, MinimaxM2Mxfp4MoeBaseline
+from aklr.plugins.sglang.models.minimax_m2.reference import (
+    MinimaxM2Fp8MoeReference,
+    MinimaxM2Mxfp4MoeReference,
 )
 
 __all__ = ["CONTRACTS", "MINIMAX_M2_FP8_MOE", "MINIMAX_M2_MXFP4_MOE"]
@@ -104,12 +110,12 @@ _EXPERT_OFFSET = ScalarSpec(
 )
 
 
-def _output(min_sqnr_db: float) -> TensorSpec:
+def _output(error_bounds: SqnrBound) -> TensorSpec:
     return TensorSpec(
         description="This rank's share of the MoE's output.",
         shape=("n_tokens", "model_dim"),
         dtype=DTypeSpec(same_as_tensor="hidden_states"),
-        error_bounds=SqnrBound(min_sqnr_db=min_sqnr_db),
+        error_bounds=error_bounds,
     )
 
 
@@ -245,11 +251,13 @@ MINIMAX_M2_FP8_MOE = OpContract(
         "expert_offset": _EXPERT_OFFSET,
     },
     # the fp8 activations come to about 36 dB on the bench's inputs
-    outputs={"out": _output(30.0)},
+    outputs={"out": _output(SqnrBound(min_sqnr_db=30.0))},
     # sglang holds the experts for aiter as shuffle_weight(w, (16, 16)) leaves them, the
     # scales as the checkpoint stores them
     layout_variants=_shuffled("w1", "w2"),
     compare=_COMPARE,
+    reference=MinimaxM2Fp8MoeReference(),
+    baseline=MinimaxM2Fp8MoeBaseline(),
 )
 
 MINIMAX_M2_MXFP4_MOE = OpContract(
@@ -278,9 +286,11 @@ MINIMAX_M2_MXFP4_MOE = OpContract(
         "expert_offset": _EXPERT_OFFSET,
     },
     # the experts' MXFP4 activations alone come to about 13 dB on the bench's inputs
-    outputs={"out": _output(10.0)},
+    outputs={"out": _output(MOE_MXFP4_SNR)},
     layout_variants=_MXFP4_LAYOUTS,
     compare=_COMPARE,
+    reference=MinimaxM2Mxfp4MoeReference(),
+    baseline=MinimaxM2Mxfp4MoeBaseline(),
 )
 
 CONTRACTS = (MINIMAX_M2_FP8_MOE, MINIMAX_M2_MXFP4_MOE)

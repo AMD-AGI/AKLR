@@ -160,8 +160,8 @@
         "n_tokens": 2
       },
       "accuracy": "passed",
-      "speedup": 2.759,
-      "microseconds": 13.8
+      "speedup": 2.847,
+      "microseconds": 13.4
     }
   ],
   "layout_variants": {
@@ -193,9 +193,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

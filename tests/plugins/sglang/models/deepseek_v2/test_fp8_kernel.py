@@ -48,12 +48,10 @@ def test_glm_fp8_decode_rows_match_native(rows, inter_dim, bias_dtype, builder_r
         arguments["correction_bias"] = torch.linspace(7.94, 8.06, point.axes["n_routed"], dtype=torch.float32)
     call = case.call(arguments, "cuda")
     call["out"] = torch.full_like(call["hidden_states"], float("nan"))
-    native = DEEPSEEK_V2_FP8_MOE.baseline()(**call)
-    expected = {
-        name: value.clone() for name, value in DEEPSEEK_V2_FP8_MOE.call_mutable_tensors(native, call).items()
-    }
+    native = DEEPSEEK_V2_FP8_MOE.baseline.baseline(**call)
+    expected = {name: value.clone() for name, value in native.items()}
     call["out"].fill_(float("nan"))
     BuilderRegistry.get_instance().build(matching[0])(**call)
     torch.cuda.synchronize()
-    compared = case.compare({"out": call["out"]}, arguments, baseline_outputs=expected)
-    assert all(result.is_passed for result in compared.values()), compared
+    compared = DEEPSEEK_V2_FP8_MOE.reference.check({"out": call["out"]}, expected, case.request.schema)
+    assert compared == {}, compared

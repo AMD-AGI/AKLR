@@ -116,7 +116,7 @@ per lane, compiled with Triton 3.8.0 for gfx950 (`numerics.md` §6). The gated-a
 - **Every split writes a record, empty or not:** max −inf, denominator 0 and numerator 0 for a split with no keys, which
   the merge weighs by exp(−inf) = 0 (S1). Scratch from `torch.empty` then needs no zeroing, and a graph replay with
   other lengths reads no stale record, as run on the 32-row Qwen3.5 and 24-token DSA files *(field, E13)*; lengths and
-  slots are read on the device, the configuration from the batch shape (S5). Scratch rules: `aklr/ops/README.md` § The
+  slots are read on the device, the configuration from the batch shape (S5). Scratch rules: `aklr/plugins/aiter/README.md` § The
   kernel section and ABI.
 - **Lay the records out for both launches.** Simplest, Qwen3.5's: numerators `[rows, heads, splits, 256]` bf16 and
   statistics `[rows, heads, splits, 2]` fp32, the numerator converted to
@@ -161,13 +161,13 @@ CI's stored speedups, 64 heads at 43e112e, 8 heads at a29581b *(field, E1)*; sin
 *(field, E8)*, VGPRs being `.vgpr_count`, VGPRs and AGPRs together (`kernels/kernel_library.md` §1); grids, warps and
 `waves_per_eu` as traced at launch *(field, E15)*; heads per program × splits from the host code. A file is
 `<file>.json` in the directory of S16 (64 heads) or S11 (8 heads), its sources the `content` of each `kernel.sources`
-entry (`aklr/ops/README.md` § The kernel section and ABI). The 8-token file and the three 8-head files add a
+entry (`aklr/plugins/aiter/README.md` § The kernel section and ABI). The 8-token file and the three 8-head files add a
 `q.to(torch.bfloat16)` launch in `run` (S17, S11, S18, S19).
 
 - **Measured DSA grids, not an isolated CU-residency rule.** At 12/16/32 tokens the accurate committed 64-head files' 192/256/256 eight-wave producers beat modified 96/128/512: modified/committed call times 1.414/1.456/1.098, paired-log 99% CIs 1.402751–1.425598/1.441523–1.470504/1.094254–1.102277 (one session, 6 counterbalanced rounds per arm, 3 forward and 3 reverse) *(field, E18)*. At 24 tokens, in three earlier runs, 384 same-head producers ran 1.08–1.09× slower than 192 *(field, E2)*. Splits change tiles and merge width; the 16-token variant also changes `pv_mode` (`"panels64"`) and the packed statistics, the 32-token variant `pv_mode` (`"serial32"`) and the refill. LDS predicts at most one such workgroup per CU, but residency and its timing contribution were not measured, nor were four-wave or Qwen3.5 residency and untested Points (`../attention/split_kv.md` §4).
 - **Do not start a 64-head kernel from the 8-token file.** It differs from the 12–32-token files in many choices:
   16-head groups of 4 warps, rows async-copied into LDS, bf16 hi + lo P, fp32 partials and the extra `q` cast. It
-  stores 1.030 *(field, E1)*, at the edge of what dispatch serves (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` §
+  stores 1.030 *(field, E1)*, at the edge of what dispatch serves (`AKLR_MIN_SPEEDUP`, `aklr/plugins/aiter/README.md` §
   Environment variables); its baseline differs from theirs, and no Point attributes the gap to one choice.
 - **With 8 heads the MFMA did not bound the 32- and 128-token producers.** Each 576-byte row feeds 8 query rows, about
   30 FLOP per gathered byte (estimated); doubling the QK MFMAs cost 0.6–1.0% at 32 tokens and 4.2–4.7% at 128 (3 runs)
@@ -554,8 +554,8 @@ AKLR paths are on `AMD-AGI/AKLR@0e02a81` unless a line names another commit; a c
 - E22 [2026-11, gfx950, Triton 3.8.0, N=1, `10df1ae2` compiled for gfx950 without a launch, one constexpr changed at a time, the pre-QK wait read from the ISA] `10df1ae2dc9d3c69` at 8 rows: as committed and with `EARLY_VALUE=False` the same ISA, `vmcnt(4)` with the 4 slot-prefetch loads and no V copy outstanding; with `PREFETCH_STAGE=1` or `0`, `vmcnt(4)` with the 4 V copies outstanding (Qwen3.5 `10df1ae2dc9d3c69`)
 - S1 aklr/plugins/sglang/models/qwen3_5/impls/triton/gated_attention_decode_group_fp8_quant_qkv_dim4608_n_kv_heads1_head_dim256/d9cbde237fd34de9.json#attention.py:59 one producer tile: QK (:59-62), scale and mask (:63-66), running max and rescale factor (:67-74), rescale of sum and numerator (:79-83), V through padded LDS and P·V (:88-99); keys on the warps (:28-31); "Stage 0 issues V before QK; stages 1/2 bracket the sum reduction" (:54); max and sum as `SliceLayout(1, mma)` vectors (:136-138); a split with keys loads Q, rows past 8 masked to 0 (:139-146), peels its first tile (:147-158) and deals itself the rest cyclically, `FULL_TILE` per tile (:159-171); every split writes its record (:172), the bf16 numerator at 16 bytes per lane (:173-179); records from `torch.empty` (:360-365)
 - S2 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/2ee56a6dbabc48a6.json#kernel.py:540 the merge: max, weights, fixed-order sums, the guarded reciprocal (:560), 8 channels per lane (:525-527); `_write_partial` (:233) stores the records `[channel // 8][head][channel % 8]` from the accumulator (:250-254), XORing the channel group with `split * 4` at 64 heads (:252-253), which the merge undoes (:546-554)
-- S3 aklr/core/utils/testing.py:164 `bench_cudagraph`: each captured call inside its own profiler scope, the flush outside it (:206-210); a call's time is the sum of the device durations of the kernels in its scope, from AKLR's rocprofiler-sdk collector (`_collect_scope_times`, :139-160); the median by default (:164, :245)
-- S4 aklr/core/contract/semantics/_compare.py:222 `runs_agree`: `bitwise` means every run's output byte-identical to the first's
+- S3 aklr/core/utils/testing.py:136 `bench_cudagraph`: each captured call inside its own profiler scope, the flush outside it (:169-174); a call's time is the sum of the device durations of the kernels in its scope, from AKLR's rocprofiler-sdk collector (`_collect_scope_times`, :139-160); the median by default (:164, :245)
+- S4 aklr/core/validation/stages/_bench/_evaluation/_comparison.py:15 `find_nondeterminism`: `bitwise` means every run's output byte-identical to the first's
 - S5 aklr/plugins/sglang/models/qwen3_5/impls/triton/gated_attention_decode_group_fp8_quant_qkv_dim4608_n_kv_heads1_head_dim256/f5ba496e04f8e989.json#attention.py:152 batch-size tuning only, capacity not a loop bound; 64-key tiles and 32 splits (:153); grid `(rows, heads, splits)` (:157)
 - S6 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/1148d1c8e30397f7.json#kernel.py:240 `BALANCED_GATHER` layout, set by `rows == 12` at the launch (:574); records of 544 channels at ≤ 16 tokens (:549); partials stored `.cs` (:62-64); merge loads `.cg` at ≤ 16 tokens (:595)
 - S7 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/f60f22e6f14448c6.json#kernel.py:343 statistics stored after channel 512 inside the record when `PACK_STATS` (:343-344), on at 16 tokens with 544-channel records (:683, :691); `stats = partial.view(torch.float32)` (:716)

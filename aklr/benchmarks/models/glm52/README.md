@@ -100,7 +100,7 @@ Two sections name what a report could not measure. **Coverage**: hooked but neve
 
 ## AKLR workloads
 
-The shapes this model runs are written by `python -m aklr export` from a run with `AKLR_EXPORT=1`; the scenarios that have a kernel are checked in under `aklr/ops/<op>/impls/<language>/` (`aklr/ops/README.md`).
+The shapes this model runs are written by `python -m aklr export` from a run with `AKLR_EXPORT=1`; the scenarios that have a kernel are checked in under `aklr/plugins/aiter/<op>/impls/<language>/` (`aklr/plugins/aiter/README.md`).
 
 ## TODO
 

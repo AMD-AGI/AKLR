@@ -9,9 +9,9 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=4
 sources:
-  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/1ceb094e60e8e93a.json
+  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json
+  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json
+  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n64_k4096/1ceb094e60e8e93a.json
 ---
 
 # Wait-free split-K fold
@@ -252,7 +252,7 @@ What was checked, and what was not, is under Cost and risk.
   inputs (E10).
 - Where the tags may live: a tag read before this call writes it can only live in scratch allocated in the call,
   and its correctness rests on no leftover word equalling this launch's tag. Check the scratch rules in
-  `aklr/ops/README.md` § The kernel section and ABI and `../SKILL.md` § Stop before choosing this over zeroing.
+  `aklr/plugins/aiter/README.md` § The kernel section and ABI and `../SKILL.md` § Stop before choosing this over zeroing.
 
 ## Evidence
 
@@ -280,22 +280,22 @@ What was checked, and what was not, is under Cost and risk.
 - E22 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI, stored speedup per Point] df3ce7632a470864 at m 40, 48 (FOLD 4) 1.870, 1.819; at m 80, 96, 112, 120, 160, 200, 240 (FOLD 5) 1.619, 1.469, 1.269, 1.248, 1.169, 1.146, 1.158 (bf16 GEMM n3648 k7168; AMD-AGI/AKLR@e193b1d9, CI run 44081029964)
 - E23 [2026-11, gfx950 (MI355X), Triton of the sglang 0.5.22 image (no FlyDSL kernel), N=400 outputs per m and arm (200 rounds of one call on each of two streams), 2000 calls per m beside the matmul process; each output against fp32 `a @ bᵀ` (wrong: non-finite or relative max error > 2e-2) and bit for bit against a serial call; counters zeroed before each arm] 65f19013d279858b at m 6–96: eager calls on a capture stream alternating with replays, on another stream, of a graph captured on it: 30–33 wrong of 400; two graphs captured on that one stream, replayed on two streams: 164–214 wrong of 400, worst relative error 2.2; eager on one stream, eager on two streams, and beside a second process running bf16 8192 × 8192 matmuls on the same GPU: 0 wrong (bf16 GEMM n32 k6144, Triton)
 - E24 [2026-11, gfx950 (MI355X), Triton of the sglang 0.5.22 image (no FlyDSL kernel), N=1 validate run per build, AKLR validate on one MI355X (graph replays, 1 GiB flush before each call)] 65f19013d279858b at m 6–96 as shipped 1.33–1.95 per Point; a copy that allocates and zeroes the partials and counters for each call made under capture and keeps them for that graph's replays 0.77–1.10, with 0 wrong outputs in E23's graph arms (bf16 GEMM n32 k6144, Triton)
-- S1 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:49 `_SC01 = 17`, system-scope access past the non-coherent caches
-- S2 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:426 `s_waitcnt vmcnt(0)` before the arrival
-- S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:430 the agent-scope `atomicrmw add`
-- S4 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:440 the last split folds in split order
-- S5 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:443 the folding split's `xchg` of its counter back to zero
+- S1 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:49 `_SC01 = 17`, system-scope access past the non-coherent caches
+- S2 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:426 `s_waitcnt vmcnt(0)` before the arrival
+- S3 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:430 the agent-scope `atomicrmw add`
+- S4 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:440 the last split folds in split order
+- S5 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:443 the folding split's `xchg` of its counter back to zero
 - S6 the N = K = 6144 campaign's final kernel, not committed: `_launch_tag` is `dispatch.id · H1 + queue.ptr · H2`, shifted left past the count bits (`_H1` odd)
 - S7 the N = K = 6144 campaign's final kernel, not committed: the compare-and-swap loop, where a word with another tag counts as 0, `llvm.cmpxchg` monotonic, `syncscope="agent"`
 - S8 the N = K = 6144 campaign's final kernel, not committed: one `torch.empty` per call holds the partials and the counter lines, not zeroed
 - S9 the N=128, K=6144 campaign's final kernel, not committed: `_launch_tag` from the dispatch id's low and high words and the queue pointer's low word
 - S10 the N=128, K=6144 campaign's final kernel, not committed: the 16 B slot store at aux 17, `s_waitcnt(vmcnt=0)`, one load per split, C written if every tag matches
 - S11 the N=128, K=6144 campaign's final kernel, not committed: the slots in a `torch.empty` per call
-- S12 aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json#kernel.py:394 planes stored, `vmcnt(0)` (:395), tag `did ^ rotl(qptr, 32)` (:403) stored to the wave's slot (:408), `vmcnt(0)` (:409), slots loaded (:413), `readfirstlane` (:422), fold if all match (:423)
-- S13 aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json#kernel.py:467 the planes and slots in a `torch.empty` per call
-- S14 aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/1ceb094e60e8e93a.json#kernel.py:304 the tile's counter word and the launch tag (`dispatch.id + queue.ptr · _TAG_MUL`, 56 bits) read before any DMA; the compare-and-swap reset of a stale word (:396-408) and the add whose old value `tag << 8 | S − 1` elects the folder (:410-418)
+- S12 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json#kernel.py:394 planes stored, `vmcnt(0)` (:395), tag `did ^ rotl(qptr, 32)` (:403) stored to the wave's slot (:408), `vmcnt(0)` (:409), slots loaded (:413), `readfirstlane` (:422), fold if all match (:423)
+- S13 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json#kernel.py:467 the planes and slots in a `torch.empty` per call
+- S14 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n64_k4096/1ceb094e60e8e93a.json#kernel.py:304 the tile's counter word and the launch tag (`dispatch.id + queue.ptr · _TAG_MUL`, 56 bits) read before any DMA; the compare-and-swap reset of a stale word (:396-408) and the add whose old value `tag << 8 | S − 1` elects the folder (:410-418)
 - S15 the N=256, K=6144 campaign's final kernel, not committed: two splits: `atomicrmw xchg` of the tag, the one that reads it back is second and swaps the sentinel back; lane 0 of each wave after its `vmcnt(0)`; own partial from registers plus the partner's
 - S16 the N=256, K=6144 campaign's final kernel, not committed: one 128 B counter slot per tile, one 8 B word per wave; the tag is the dispatch id alone
-- S17 aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json#kernel.py:489 `slot_off`: two fp32 sums and the 64-bit tag (`dispatch.id` · H1 + `queue.ptr` · H2, :481) per 16 B slot, stored `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509
-- S18 aklr/ops/gemm/impls/flydsl/gemm_n3648_k7168/df3ce7632a470864.json#kernel.py:1231 FOLD 4 / 5: a split that does not complete the arrival mask polls its word until its bit is gone or the mask is full, for at most `_sk_WAIT_TICKS` = 2000 `s_memrealtime` ticks (:780, "100 MHz" at :779), then sets its abandon bit by compare-and-swap (:1250-1254); the split that completes the mask merges its own and the abandoned shares and zeroes the word (:1222-1228); a word an earlier launch left is claimed by compare-and-swap (:1196-1203); one 64-bit word per (tile, wave) (:875); FOLD per m in `_N3648` (:1328-1338); the workspace a `torch.empty` per call (:1406)
-- S19 aklr/ops/gemm/impls/triton/gemm_n32_k6144/65f19013d279858b.json#kernel.py:82 `@functools.cache` `_workspace(device, stream)`: partials `torch.empty`, counters `torch.zeros` (:85), keyed on the stream current at launch (:95); a split stores its partial `.wt` (:61) and counts in with `atomic_add` (:64); the one that reads `SPLIT - 1` folds and resets the counter with `atomic_xchg` (:71)
+- S17 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json#kernel.py:489 `slot_off`: two fp32 sums and the 64-bit tag (`dispatch.id` · H1 + `queue.ptr` · H2, :481) per 16 B slot, stored `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509
+- S18 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3648_k7168/df3ce7632a470864.json#kernel.py:1231 FOLD 4 / 5: a split that does not complete the arrival mask polls its word until its bit is gone or the mask is full, for at most `_sk_WAIT_TICKS` = 2000 `s_memrealtime` ticks (:780, "100 MHz" at :779), then sets its abandon bit by compare-and-swap (:1250-1254); the split that completes the mask merges its own and the abandoned shares and zeroes the word (:1222-1228); a word an earlier launch left is claimed by compare-and-swap (:1196-1203); one 64-bit word per (tile, wave) (:875); FOLD per m in `_N3648` (:1328-1338); the workspace a `torch.empty` per call (:1406)
+- S19 aklr/plugins/aiter/gemm/impls/triton/gemm_n32_k6144/65f19013d279858b.json#kernel.py:82 `@functools.cache` `_workspace(device, stream)`: partials `torch.empty`, counters `torch.zeros` (:85), keyed on the stream current at launch (:95); a split stores its partial `.wt` (:61) and counts in with `atomic_add` (:64); the one that reads `SPLIT - 1` folds and resets the counter with `atomic_xchg` (:71)

@@ -1,31 +1,30 @@
 # Plugin tutorial: replacing vLLM functions
 
-When an optimization has to cover more than one op, a plugin hands several vLLM calls to one AKLR op. This tutorial's example is `muse_spark_moe`, which takes Muse Spark's MoE layer from the pre-expert RMSNorm to each route's expert output; the aiter `fused_moe` that vLLM calls in this layer covers only its experts.
+A plugin replaces a vLLM function that no aiter op covers with an AKLR op: a function of the model's own, or one that runs a whole stretch of vLLM's computation, which the op fuses. This tutorial's example is `kimi_k3_attn_res`, which takes Kimi-K3's attention residual: `attn_res`, vLLM's own Triton kernel for the model, run before each layer's attention and MLP and once before the final norm.
 
-Before you start, read the [ops tutorial](ops_tutorial.md): a plugin's op is written the same way. The SGLang plugin is covered in the [SGLang plugin tutorial](plugin_tutorial.md), and the plugin's layout and rules are in [aklr/plugins/README.md](../aklr/plugins/README.md).
+Before you start, read the [ops tutorial](ops_tutorial.md): a plugin's op is written the same way. The SGLang plugin is covered in the [SGLang plugin tutorial](sglang_plugin_tutorial.md), and the plugin's layout and rules are in [aklr/plugins/README.md](../aklr/plugins/README.md).
 
 ## Why a plugin
 
-vLLM computes Muse Spark's MoE layer in `MuseSparkMoE` (`models/muse_spark/amd/model.py`), in several calls. `fused_moe` covers only some of its steps:
+vLLM computes Kimi-K3's attention residual in one Triton kernel, `attn_res` (`models/kimi_k3/amd/ops/attn_res.py`), which `_apply_attn_res` (`models/kimi_k3/amd/linear.py`) calls with the layer's weights. Each token keeps a bank of rows, the embedding and then the sum of each block of 12 layers' outputs, beside the running prefix of the current block. For each token the kernel computes:
 
-| Step | What it does | `fused_moe` | `muse_spark_moe` |
+| Step | What it does | vLLM's `attn_res` | `kimi_k3_attn_res` |
 |---|---|---|---|
-| 1 | Routing: the FP32 router and its top-k; the pooler projects the hidden states from width 8192 to the experts' width 4096 | — | — |
-| 2 | Pre-expert RMSNorm (fp32, times `norm_weight + gain_center`), each row expanded into topk rows, one per route | — | ✓ |
-| 3 | Routes grouped by expert; the routes to experts this GPU does not hold give zeros | ✓ | ✓ |
-| 4 | Input quantized to MXFP4 | ✓ | ✓ |
-| 5 | GEMM: gate and up | ✓ | ✓ |
-| 6 | Activation SiLU(gate) × up, quantized to MXFP4 | ✓ | ✓ |
-| 7 | GEMM: down, giving each route's output (not multiplied by the router weights) | ✓ | ✓ |
-| 8 | Reduction across GPUs, each route's post-expert norm, the router weights and the sum over the routes | — | — |
-| 9 | Unpooler | — | — |
+| 1 | The pending layer output `delta` added to the prefix, rounded to bf16 and stored back | ✓ | ✓ |
+| 2 | On a block's first layer, the prefix written as the bank's next row | ✓ | ✓ |
+| 3 | Each source scored, the bank's written rows and the prefix: RMS-normalized, then projected to one score | ✓ | ✓ |
+| 4 | Softmax over the scores; the sources' weighted sum is the mix | ✓ | ✓ |
+| 5 | The layer's RMSNorm on the mix: `input_layernorm` before attention, `post_attention_layernorm` before the MLP, none before the final norm | ✓ | ✓ |
+| 6 | The output quantized to fp8 per token, when the next linear takes fp8 input | ✓ | — |
 
-vLLM runs step 2 on its own before `fused_moe`, in `fused_rmsnorm_expand`: it writes the normalized rows out, topk copies of each, and the experts read them back. To fold the norm into the experts' loading of their input, one op has to take steps 2–7; and no single vLLM call covers them: step 2 is in `MuseSparkMoE._pool`, steps 3–7 in `MuseSparkAiterExperts.apply`. So the plugin replaces both calls, and defers the norm to the experts' call.
+vLLM already runs these steps as one kernel, but the kernel is the model's own: it lives in Kimi-K3's model directory, not in aiter. No aiter op covers it, so AKLR's aiter provider never sees the call, and no op in `aklr/plugins/aiter` has its computation. To run a faster kernel in its place, the plugin replaces the model's function: the `attn_res` that `_apply_attn_res` calls. The op takes steps 1–5; the fp8 output of step 6 is in no contract, so there the route falls back to vLLM's kernel.
+
+What a plugin may replace: a route never replaces an aiter function, nor a framework function that only wraps one aiter call, such as vLLM's `_rocm_aiter_fused_moe_impl` (`_aiter_ops.py`) around aiter's `fused_moe`. Calls of aiter's ops reach AKLR through aiter's own plugin interface, whose AKLR provider is `aklr/plugins/aiter/provider` ([aiter's kernel plugin interface](../aklr/plugins/README.md#aiters-kernel-plugin-interface)). A route does one of two things: it replaces a model's own function, as here, or it fuses a whole stretch of the framework's computation, aiter calls included, into one op.
 
 So:
 
-- To make one op faster, write an op in `aklr/ops`.
-- When the optimization crosses one op's boundary, write a plugin.
+- To make one op faster, write an op in `aklr/plugins/aiter`; if aiter routes that op, the aiter provider hands its calls to AKLR.
+- When the function is the model's own, or the optimization fuses a stretch of the framework's computation across ops, write a plugin.
 
 ## How the plugin runs
 
@@ -33,187 +32,145 @@ With `AKLR_VLLM_PLUGIN=1`, each worker hooks the routes once its device is bound
 
 ## Steps
 
-### 1. Find the functions to replace
+### 1. Find the function to replace
 
-These two vLLM calls:
+This vLLM call:
 
-- `fused_rmsnorm_expand`, called by `MuseSparkMoE._pool` (`models/muse_spark/amd/model.py`): computes step 2 above and returns the normalized, expanded rows.
-- `MuseSparkAiterExperts.apply`, called by `FusedMoEKernelModularImpl._fused_experts` (`models/muse_spark/amd/muse_moe_runner.py`): computes steps 3–7 above and hands each route's output to vLLM's later steps (step 8).
+- `attn_res`, called by `_apply_attn_res` (`models/kimi_k3/amd/linear.py`): computes steps 1–6 above and returns the output, having updated the prefix and the bank in place. `_apply_attn_res` runs twice in each decoder layer, before attention and before the MLP (`KimiDecoderLayer.forward_attn_residual`), and once before the final norm (`KimiLinearModel.forward`): 187 calls a forward over Kimi-K3's 93 layers.
 
-Their parameters in vLLM 0.34.0, which the routes copy exactly, `self` included for the method:
+`_apply_attn_res` only unpacks the layer's modules into tensors and, for an fp8 output, wraps the result; the arguments of `attn_res` are already the op's, so the route replaces `attn_res`. Its parameters in vLLM 0.34.0, which the route copies exactly:
 
 ```python
-def fused_rmsnorm_expand(x, weight, eps, gain_center, input_scale, repeats): ...
-
-def apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, activation, global_num_experts,
-          expert_map, a1q_scale, a2_scale, workspace13, workspace2, expert_tokens_meta,
-          apply_router_weight_on_input): ...
+def attn_res(prefix, delta, blocks, norm_weight, qk_weight, output_norm_weight, num_blocks, block_write_idx,
+             eps, output_norm_eps, *, quant_dtype=None): ...
 ```
 
 ### 2. Create the package
 
-Create `aklr/plugins/vllm/models/muse_spark/`, named after vLLM's source directory `models/muse_spark/`. It holds the same files as an op in `aklr/ops`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`; and `_norm_expand.py`, a copy of vLLM's norm kernel, so that the baseline runs without vLLM. The package name is the op's `op_type` (`muse_spark`) and must be unique across `aklr/ops` and `aklr/plugins`.
+Create `aklr/plugins/vllm/models/kimi_k3/attn_res/`: `kimi_k3/` is named after vLLM's source directory `models/kimi_k3/`, `attn_res/` after the kernel's file `ops/attn_res.py`. It holds the same files as an op in `aklr/plugins/aiter`: `__init__.py`, `contract.py`, `reference.py`, `baseline.py`, `api.py` and `impls/`; and `_triton.py`, a copy of vLLM's Triton kernel and its launcher without the fp8 output, so that the baseline runs without vLLM. The package name is the op's `op_type` (`attn_res`) and must be unique across `aklr/plugins/aiter` and `aklr/plugins`.
 
 ### 3. Write the op
 
-As in step 1. A of the ops tutorial. For this op:
+As in section 6 of the [ops tutorial](ops_tutorial.md). For this op:
 
-- `contract.py` defines `MUSE_SPARK_MOE` (`muse_spark_moe@1.0`):
-  - inputs: the pooled rows `hidden_states`, not yet normalized; the norm's `norm_weight`; each row's routes `topk_ids`; `expert_mask`, the experts this GPU holds (its last slot is vLLM's always-masked one); the experts' `w1`, `w1_scale`, `w2` and `w2_scale`; and the scalars `eps` and `gain_center`;
-  - layouts: `row_major` and `shuffled_16x16`, the latter as vLLM holds the experts for aiter;
-  - output: `out`, of shape `[n_tokens, topk, model_dim]`: each route's expert output, not multiplied by the router weights; the routes to experts this GPU does not hold give zeros. The router weights, the post-expert norm and the sum over the routes are vLLM's, after it.
-- `reference.py`: `muse_spark_moe_reference`, the contract's computation: the RMSNorm in fp32, rounded to `hidden_states`' dtype as vLLM's `fused_rmsnorm_expand` writes it, then each route through `fused_moe`'s reference at weight 1.
-- `baseline.py`: `muse_spark_moe_baseline`, what vLLM runs today for steps 2–7: `fused_rmsnorm_expand`, then the aiter `fused_moe` (per_1x32) that `MuseSparkAiterExperts.apply` calls.
-- `api.py`: the entry function `@api(MUSE_SPARK_MOE)`, whose body is `...`.
+- `contract.py` defines `KIMI_K3_ATTN_RES` (`kimi_k3_attn_res@1.0`):
+  - inputs: the running `prefix`; the pending layer output `addend`, present with `has_addend`; each token's `bank`; the score's two weights `score_norm_weight` and `score_proj_weight`; the layer norm's `norm_weight`, present with `has_norm`; and the scalars `score_eps` and `norm_eps`;
+  - attrs: `n_valid_rows`, the bank rows written so far (0 to 8), all of which the mix reads; `write_bank`, whether the prefix also becomes bank row `n_valid_rows`; and `has_addend` and `has_norm`. Each combination vLLM calls is a scenario of its own;
+  - layout: `row_major` only;
+  - output: `out`, of shape `[n_tokens, hidden_size]`: the mix, normalized and scaled by `norm_weight` when there is one. `prefix` and `bank` are mutable inputs, which the op updates in place as vLLM's kernel does; their error bound is exact.
+- `reference.py`: `KimiK3AttnResReference`, the contract's computation in float32. It rounds `prefix + addend` to the prefix's dtype, as vLLM's kernel stores it back, and its outputs to that dtype. It returns `out`, `prefix` and `bank` as the call leaves them.
+- `baseline.py`: `KimiK3AttnResBaseline`, what vLLM runs today: its Triton kernel, one launch per call, with the launch configuration of its `attn_res`, from the copy in `_triton.py`.
+- `api.py`: the entry function `@api(KIMI_K3_ATTN_RES)`, whose body is `...`.
 
-### 4. Write the routes
+### 4. Write the route
 
-The routes go in `api.py`, beside the op's entry function `muse_spark_moe`. Together they hand vLLM's two calls to this one op:
+The route goes in `api.py`, beside the op's entry function `kimi_k3_attn_res`. It turns vLLM's arguments into the op's and calls `kimi_k3_attn_res`:
 
-- The contract's inputs are the rows not yet normalized and the norm's `norm_weight`, `eps` and `gain_center`: the op computes the norm. So `_defer_norm` skips vLLM's norm and leaves its arguments to the op.
-- `_experts_apply` turns vLLM's arguments into the op's and calls `muse_spark_moe`.
+- `blocks`, `norm_weight` and `qk_weight` are the op's `bank`, `score_norm_weight` and `score_proj_weight`; `delta` and `output_norm_weight` its optional `addend` and `norm_weight`; `eps` and `output_norm_eps` its `score_eps` and `norm_eps`.
+- `num_blocks` is `n_valid_rows`, and a `block_write_idx` of 0 or more is `write_bank`: vLLM writes the bank only at row `num_blocks`, the row the contract writes.
+- What no contract states goes back to vLLM before the op is called: the fp8 output (`quant_dtype`), and a bank write at any other row.
 
-The first argument of `@vllm_route` is the caller, the second the replaced function; the two routes are in one `group`. Some parameters and checks are omitted below:
+The first argument of `@vllm_route` is the caller, the second the replaced function, named as the caller looks it up at run time: `linear.py` imports `attn_res` from `ops/attn_res.py`, so the route replaces `vllm.models.kimi_k3.amd.linear.attn_res`. `versions` lists the vLLM releases the route was tested on:
 
 ```python
 @vllm_route(
-    "vllm.models.muse_spark.amd.model.MuseSparkMoE._pool",
-    "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
-    versions=("0.34.0",),
-    group="muse_spark.norm_experts",
+    "vllm.models.kimi_k3.amd.linear._apply_attn_res",
+    "vllm.models.kimi_k3.amd.linear.attn_res",
+    versions=("0.32.1rc1.dev276", "0.33.0rc1.dev910", "0.33.0", "0.34.0"),
 )
-def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):  # exactly the replaced function's parameters
-    # an input AKLR does not support
-    if weight is None or input_scale or x.dtype != torch.bfloat16 or x.shape[0] == 0:
+def _attn_res(
+    prefix,
+    delta,
+    blocks,
+    norm_weight,
+    qk_weight,
+    output_norm_weight,
+    num_blocks,
+    block_write_idx,
+    eps,
+    output_norm_eps,
+    *,
+    quant_dtype=None,
+):
+    """Every attention residual of Kimi-K3's decoder layers and the one before its final norm.
+    vLLM writes the bank only at row num_blocks."""
+    # the fp8 output for a linear that takes per-token fp8 input, which no contract states
+    if quant_dtype is not None or block_write_idx not in (-1, num_blocks):
         return FallbackReason.OUT_OF_CONTRACT
-    # the op declines this layer at this token count: vLLM runs its norm
-    layer = id(weight)
-    serves = _SERVES.get((layer, x.shape[0]))
-    if serves is None and layer in _EXPERTS:
-        serves = _would_serve(x, weight, eps, gain_center, layer)
-    if serves is False:
-        return FallbackReason.OUT_OF_CONTRACT
-    # no norm: its arguments are kept on the tensor, returned as it is, for the experts' route
-    setattr(x, _DEFERRED_NORM, (weight, eps, gain_center))
-    _PENDING.add(layer)
-    return x
-
-
-def _would_serve(x, weight, eps, gain_center, layer):
-    # the layer's experts as _experts_apply recorded them; None for a vLLM configuration it does not support
-    if _EXPERTS[layer] is None:
-        return False
-    topk, ids_dtype, expert_map, w1, w1_scale, w2, w2_scale = _EXPERTS[layer]
-    # asks the op, with its arguments, whether it takes the call, without computing; ids are zeros as topk_ids
-    reason = muse_spark_moe.fallback_reason(
-        x, weight, ids[: x.shape[0]], expert_map, w1, w1_scale, w2, w2_scale,
-        eps=float(eps), gain_center=float(gain_center),
+    return kimi_k3_attn_res(
+        prefix,
+        blocks,
+        norm_weight,
+        qk_weight,
+        n_valid_rows=num_blocks,
+        write_bank=block_write_idx >= 0,
+        addend=delta,
+        norm_weight=output_norm_weight,
+        score_eps=eps,
+        norm_eps=output_norm_eps,
     )
-    _SERVES[(layer, x.shape[0])] = reason is None
-    return reason is None
-
-
-@vllm_route(
-    "vllm.model_executor.layers.fused_moe.modular_kernel.FusedMoEKernelModularImpl._fused_experts",
-    "vllm.models.muse_spark.amd.muse_moe_runner.MuseSparkAiterExperts.apply",
-    versions=("0.34.0",),
-    group="muse_spark.norm_experts",
-)
-def _experts_apply(self, output, hidden_states, w1, w2, topk_weights, topk_ids, ...):
-    deferred = getattr(hidden_states, _DEFERRED_NORM, None)
-    # the layer's norm was not deferred: back to vLLM
-    if deferred is None:
-        return FallbackReason.OUT_OF_CONTRACT
-    weight, eps, gain_center = deferred
-    quant = self.quant_config
-    route_output = FallbackReason.OUT_OF_CONTRACT
-    _EXPERTS[id(weight)] = None
-    # a vLLM configuration AKLR supports
-    if expert_map is not None and activation.name == "SILU" and quant.use_mxfp4_w4a4 and ...:
-        # the layer's experts, for _defer_norm to check later calls with
-        _EXPERTS[id(weight)] = (topk_ids.shape[1], topk_ids.dtype, expert_map, w1, quant.w1_scale, w2, quant.w2_scale)
-        # the op that fuses the norm and fused_moe
-        route_output = muse_spark_moe(
-            hidden_states,  # the pooled rows, not yet normalized
-            weight,  # norm_weight
-            topk_ids,
-            expert_map,  # expert_mask
-            w1,
-            quant.w1_scale,
-            w2,
-            quant.w2_scale,
-            eps=float(eps),
-            gain_center=float(gain_center),
-            out=output,
-        )
-    # the op declined: the deferred norm first, then vLLM's own apply
-    if isinstance(route_output, FallbackReason):
-        normalized = _original(_defer_norm)(hidden_states, weight, eps, gain_center, False, topk_ids.shape[1])
-        return _original(_experts_apply)(self, output, normalized, w1, w2, topk_weights, topk_ids, ...)
-    # each route's output, for vLLM's later steps (step 8)
-    self._park_route_output(route_output.view_as(output))
-    return None
 ```
 
-When the op takes the call, it returns `out`, each route's output of shape `[n_tokens, topk, model_dim]`, which the route hands to `_park_route_output` in `output`'s shape, for vLLM's later steps (step 8); when it declines, it returns a `FallbackReason`, and the route runs the deferred norm and falls back to vLLM.
+When the op takes the call, it returns `out`, which the route returns to `_apply_attn_res` as vLLM's `attn_res` would, with `prefix` and `bank` updated in place; when it declines, it returns a `FallbackReason`, and vLLM's `attn_res` runs. Token counts, row counts and GPU models are the op's to judge, not the route's: the call before the first layer's attention, with no bank row yet, reaches the op, which has no kernel for it and declines.
 
 ### 5. Add test inputs
 
-Add a small Point of the op to `SMALL_POINTS` in `tests/plugins/vllm/cases.py`:
+Add small Points of the op to `SMALL_POINTS` in `tests/plugins/vllm/cases.py`, the contract's base Point first. This op has four, one for each kind of call: folding the pending output into the prefix, writing the bank with and without the addend, and the residual before the final norm, without a layer norm. The first:
 
 ```python
 PointSpec(
-    contract_id="muse_spark_moe@1.0",
-    axes={"n_tokens": 4, "model_dim": 2048, "topk": 2, "n_experts": 2, "inter_dim": 256, "global_experts": 5},
-    dtypes={"hidden_states": "bfloat16", "norm_weight": "bfloat16", "topk_ids": "int32", "expert_mask": "int32",
-            "w1": "float4_e2m1", "w1_scale": "float8_e8m0", "w2": "float4_e2m1", "w2_scale": "float8_e8m0",
-            "out": "bfloat16"},
-    attrs={},
-    layout_variant_name="shuffled_16x16",
+    contract_id="kimi_k3_attn_res@1.0",
+    axes={"n_tokens": 4, "hidden_size": 256, "n_bank_rows": 4},
+    dtypes={
+        "prefix": "bfloat16",
+        "addend": "bfloat16",
+        "bank": "bfloat16",
+        "score_norm_weight": "bfloat16",
+        "score_proj_weight": "bfloat16",
+        "norm_weight": "bfloat16",
+        "out": "bfloat16",
+    },
+    attrs={"n_valid_rows": 2, "write_bank": False, "has_addend": True, "has_norm": True},
+    layout_variant_name="row_major",
 ),
 ```
 
-Its baseline runs only on gfx950, so its contract id also goes into `GFX950_CONTRACT_IDS` in the same file. Then update `tests/plugins/vllm/names.txt`:
+`GFX950_CONTRACT_IDS` in the same file lists the contracts whose baseline runs only on gfx950; vLLM's Triton kernel is not one of them, so this contract is not listed. Then update `tests/plugins/vllm/names.txt`:
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 ```
 
-`tests/plugins/vllm/test_hook.py` checks every route: that the function it replaces exists in the installed vLLM with the same parameters, and that no other route replaces it. The deferred norm is an agreement between the two routes that `test_hook.py` cannot check, so it is tested on its own in `tests/plugins/vllm/test_muse_spark.py`: rows without a deferred norm fall back to vLLM, a deferred norm lost on the way raises, and the baseline's copy of the norm gives vLLM's bits.
+`tests/plugins/vllm/test_hook.py` checks every route: that the function it replaces exists in the installed vLLM with the same parameters, and that no other route replaces it. How the route maps vLLM's arguments `test_hook.py` cannot check, so it is tested on its own in `tests/plugins/vllm/test_kimi_k3_attn_res.py`: the fp8 output and a bank write before the last row go back to vLLM without the op called, a supported call hands each operand to the op under its name, and the baseline's copy of vLLM's Triton kernel gives vLLM's bits for the output, the updated prefix and the bank.
 
 ### 6. Write the kernel and validate it
 
-Follow steps 1. B to 4 of the ops tutorial, with this op's scenario: Muse Spark's MXFP4 MoE layer at EP8, where each GPU holds 32 of the 256 routed experts and `global_experts` is the 256 plus the always-masked slot. The script differs in the contract, the Point and the workloads, where `eps` and `gain_center` are scalars given with each workload; this op's committed kernel is written in FlyDSL:
+Follow sections 2 to 5 of the [ops tutorial](ops_tutorial.md), with this op's scenario: Kimi-K3's attention residual at hidden size 7168, with a bank of 8 rows for its 93 layers in blocks of 12 (see [Kimi-K3's model structure](../aklr/benchmarks/models/kimi_k3/README.md#model-structure)). Of the 187 calls a forward makes, 170 fold the pending output in and apply the layer norm, at 1 to 8 bank rows; 7 also write the bank; 8 have no addend, the MLP's call on a block's first layer; one, before the final norm, has no layer norm; and the one before the first layer's attention has no bank row yet. Each combination of the attrs is a scenario of its own. The script differs in the contract, the Point and the workloads, where `score_eps` and `norm_eps` are scalars given with each workload (`_apply_attn_res` passes a `norm_eps` of 0.0 without a layer norm); the token counts are decode steps of 1 to 4 requests, 3 tokens each, and this op's committed kernels are written in FlyDSL (`language` is `flydsl` in the script, and `requires` is `{"flydsl": ">=0.3.2"}`):
 
 ```python
-contract = ContractRegistry.default().get("muse_spark_moe@1.0")
-base = PointSpec(
-    contract_id="muse_spark_moe@1.0",
-    axes={"n_tokens": 1, "model_dim": 4096, "topk": 8, "n_experts": 32, "inter_dim": 4096, "global_experts": 257},
-    dtypes={"hidden_states": "bfloat16", "norm_weight": "bfloat16", "topk_ids": "int32", "expert_mask": "int32",
-            "w1": "float4_e2m1", "w1_scale": "float8_e8m0", "w2": "float4_e2m1", "w2_scale": "float8_e8m0",
-            "out": "bfloat16"},
-    attrs={},
-    layout_variant_name="shuffled_16x16")
-workloads = [contract.workload_for(base.model_copy(update={"axes": {**base.axes, "n_tokens": t}}),
-                                   {"eps": 1e-6, "gain_center": 1.0}) for t in (8, 256, 8192)]
-kernel = {"language": "flydsl", "targets": [{"arch": "gfx950", "hardware": "MI355X"}],
-          "entry_point": "kernel.py::run", "sources": []}
+contract = ContractRegistry.default().get("kimi_k3_attn_res@1.0")
+point = PointSpec(
+    contract_id="kimi_k3_attn_res@1.0",
+    axes={"n_tokens": 1, "hidden_size": 7168, "n_bank_rows": 8},
+    dtypes={"prefix": "bfloat16", "addend": "bfloat16", "bank": "bfloat16", "score_norm_weight": "bfloat16",
+            "score_proj_weight": "bfloat16", "norm_weight": "bfloat16", "out": "bfloat16"},
+    attrs={"n_valid_rows": 8, "write_bank": False, "has_addend": True, "has_norm": True},
+    layout_variant_name="row_major")
+workloads = [contract.workload_for(point.model_copy(update={"axes": {**point.axes, "n_tokens": t}}),
+                                   {"score_eps": 1e-5, "norm_eps": 1e-5}) for t in (3, 6, 9, 12)]
 ```
 
-The schema is written beside the committed kernel of this scenario, in `aklr/plugins/vllm/models/muse_spark/impls/flydsl/muse_spark_moe_shuffled_16x16_model_dim4096_topk8_n_experts32_inter_dim4096_global_experts257/`. Where these shapes and token counts come from is in [Muse Spark's definitions](../aklr/benchmarks/models/muse_spark/DEFINITIONS.md). Validate it and open the PR as in the ops tutorial.
+The schema is written beside the committed kernel of this scenario, in `aklr/plugins/vllm/models/kimi_k3/attn_res/impls/flydsl/kimi_k3_attn_res_hidden_size7168_n_bank_rows8/`; the other scenarios carry their attrs in the name, such as `kimi_k3_attn_res_rows3_write_hidden_size7168_n_bank_rows8`. The call without a bank row has no schema and stays on vLLM's kernel. Validate it and open the PR as in the ops tutorial.
 
 ### 7. Run it in vLLM
 
-Validation checks the kernel against the reference, not the routes; check the routes by running the model. The experts' route takes calls only under expert parallelism, so start vLLM with Muse Spark (MXFP4) at TP8 with `--enable-expert-parallel`:
+Validation checks the kernel against the reference, not the route; check the route by running the model. Start vLLM with Kimi-K3's MXFP4 checkpoint at TP8, with the deployment's own options and the plugin on. Its attention and dense MLP are BF16, so no call asks for the fp8 output the route leaves to vLLM:
 
 ```bash
-VLLM_ROCM_USE_AITER=1 VLLM_ROCM_MUSE_MOE_REDUCE_DTYPE=bf16 VLLM_USE_BREAKABLE_CUDAGRAPH=1 AKLR_VLLM_PLUGIN=1 \
-    vllm serve <Muse Spark MXFP4 checkpoint> --tensor-parallel-size 8 --enable-expert-parallel \
-    --language-model-only --attention-backend ROCM_AITER_FA
+AKLR_VLLM_PLUGIN=1 vllm serve <Kimi-K3 MXFP4 checkpoint> --tensor-parallel-size 8
 ```
 
-The full launch options are in [Muse Spark's definitions](../aklr/benchmarks/models/muse_spark/DEFINITIONS.md). The log reports the hooked calls (`aklr hooks N calls of vLLM 0.34.0`), and the model's replies must stay correct.
+The log reports the hooked calls (`aklr hooks N calls of vLLM 0.34.0`), and the model's replies must stay correct. With `AKLR_TRACE=plugin`, each route logs once per distinct call whether it served or fell back, and why ([aklr/plugins/README.md](../aklr/plugins/README.md#enabling-the-plugin-and-upgrading-sglang)).
 
 ## Next
 

@@ -45,16 +45,16 @@ jobs:
           measured='[.workloads[] | select(has("speedup") or has("accuracy") or has("microseconds")) | {axes, speedup, accuracy, microseconds}] | sort_by(.axes)'
           # Collected first: -e checks a command substitution, not a process substitution.
           # dispatch's glob follows symlinks (Path.glob, Path.is_file): a symlink or submodule
-          # anywhere under aklr/ops/ or aklr/plugins/ could point it at files this guard never reads.
-          links=$(git diff --raw --no-renames --diff-filter=d "$base" "$HEAD_SHA" -- aklr/ops aklr/plugins |
+          # anywhere under aklr/plugins/ could point it at files this guard never reads.
+          links=$(git diff --raw --no-renames --diff-filter=d "$base" "$HEAD_SHA" -- aklr/plugins |
             awk -F'\t' 'split($1, m, " ") && m[2] ~ /^1[26]0000$/ {print $2}')
           if [[ -n $links ]]; then
-            while IFS= read -r p; do echo "::error file=$p::a symlink or submodule under aklr/ops/ or aklr/plugins/"; done <<<"$links"
+            while IFS= read -r p; do echo "::error file=$p::a symlink or submodule under aklr/plugins/"; done <<<"$links"
             exit 1
           fi
           # Exactly the files dispatch loads (locate.committed_schema_paths: impls/<language>/*/*.json);
           # every change but a deletion, so a type change (file -> symlink) is seen.
-          changed=$(git diff --name-only --no-renames --diff-filter=d "$base" "$HEAD_SHA" -- ':(glob)aklr/ops/*/impls/*/*/*.json' ':(glob)aklr/plugins/**/impls/*/*/*.json')
+          changed=$(git diff --name-only --no-renames --diff-filter=d "$base" "$HEAD_SHA" -- ':(glob)aklr/plugins/**/impls/*/*/*.json')
           status=0
           while IFS= read -r p; do
             [[ -n $p ]] || continue

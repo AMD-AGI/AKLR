@@ -2,14 +2,14 @@
 
 A plugin replaces a function of an inference framework (for example, an MoE layer's forward) with an AKLR implementation. When AKLR has a faster op implementation, the AKLR implementation runs; otherwise the call falls back to the original path.
 
-To add an optimization, follow the [plugin tutorial](../../docs/plugin_tutorial.md). This page is the reference: the layout, the call flow, the rules for routes, validation, and enabling and upgrading.
+To add an optimization, follow the [SGLang plugin tutorial](../../docs/sglang_plugin_tutorial.md) or the [vLLM plugin tutorial](../../docs/vllm_plugin_tutorial.md). This page is the reference: the layout, the call flow, the rules for routes, validation, and enabling and upgrading.
 
 ## Architecture
 
 A plugin has three parts:
 
 - Entry and hooking: `__init__.py` and `hook.py` start AKLR and hook the routes onto the framework's functions.
-- Ops: each made of a contract, a reference, a baseline and kernels, written the same way as the ops in `aklr/ops` (see `aklr/ops/README.md`).
+- Ops: each made of a contract, a reference, a baseline and kernels, written as `aklr/plugins/aiter/README.md` says.
 - Routes: code that replaces a framework function and hands the call to an op; when the op does not take the call, it falls back to the framework's original implementation.
 
 ```
@@ -30,10 +30,11 @@ aklr/plugins/
 │   ├── hook.py               @vllm_route wraps the function a vLLM function looks up at run time
 │   ├── warmup.py             compiles the AKLR kernels vLLM's own warmup does not reach
 │   ├── stack.py              runs each vLLM step from a CPython frame chunk of its own
-│   ├── layers/               routes from vLLM's layers to the ops of aklr/ops, mirrors vLLM's model_executor/layers/
+│   ├── layers/               routes from vLLM's layers to the ops of aklr/plugins/aiter, mirrors vLLM's model_executor/layers/
 │   └── models/               routes from the model files vLLM runs uncompiled, mirrors vLLM's models/
 │       └── muse_spark/       Muse Spark on ROCm (vLLM's models/muse_spark/amd)
-└── aiter/                    AKLR on aiter's side: aiter's routed calls turned into AKLR op calls
+└── aiter/                    AKLR on aiter's side: its ops, one package per op family (aiter/README.md), and
+    ├── <op>/                 contract.py, api.py, reference.py, baseline.py, impls/
     └── provider/             AKLR as a kernel plugin of aiter: one module per op family selects the calls of aiter's routed ops
 ```
 
@@ -41,7 +42,7 @@ aklr/plugins/
 
 aiter routes some of its public functions through its kernel plugin interface (`aiter.plugin`, RFC ROCm/aiter#7240): before running its own kernel, aiter asks each enabled provider whether it serves the call. `aklr/plugins/aiter/provider` is AKLR's provider, declared by the `aiter.plugins` entry point. It replaces no function: aiter keeps the call, and the provider answers from AKLR's dispatch table without running anything.
 
-- No route of a plugin wraps an aiter function aiter routes, or a framework function that only calls one: sglang and vLLM reach AKLR on those ops only through this provider, so one call is offered to AKLR once. Where the provider needs what only the framework knows, a route that runs nothing notes it for the provider (sglang's paged top-k calls `provider.mla.note_target_verify`). aiter functions aiter does not route (its Triton `unified_attention`) keep their framework routes.
+- No route of a plugin wraps an aiter function, or a framework function that only calls one: sglang and vLLM reach AKLR on those ops only through this provider, so one call is offered to AKLR once. Where the provider needs what only the framework knows, a route that runs nothing notes it for the provider (sglang's paged top-k calls `provider.mla.note_target_verify`). An aiter function aiter does not route gets no route either: it is AKLR's once aiter routes it. A route may replace a framework segment that calls aiter only where its op fuses the framework's own work into the same launch (Muse Spark's pre-expert RMSNorm into its experts): what it replaces is then more than an aiter call.
 - Enabling: with `AKLR_AITER_PLUGIN=1` the sglang and vLLM plugins call `aklr.plugins.aiter.provider.enable()` at start-up, which puts AKLR first among the providers aiter asks and keeps the others; another host calls it itself. aiter's `AITER_PLUGINS=0` turns all routing off. An aiter without the interface leaves its ops to aiter.
 - Selecting: one selector per aiter op, registered with `@selector("<aiter op>", version=...)` at the version of aiter's contract. It unpacks the call by aiter's parameter names, declines what the AKLR contract does not take, and asks the op's api `serving(...)`: the kernel `dispatch` would run, or the `FallbackReason`, counted and traced as a fallback. Its `run` takes aiter's parameters exactly, since aiter checks them before the call, and returns what aiter's op returns.
 - Not falling back: once `run` starts, aiter does not fall back, so `run` asks the same table `select` asked and raises if it fell back. Inside a CUDA graph capture, a Point never run outside one is declined, so aiter's kernel is captured.
@@ -64,7 +65,7 @@ In addition, a route is hooked only on the SGLang releases it declares, and insi
 - When preparing the op's inputs is costly (for example, computing projections first), call `op.fallback_reason(...)` to confirm that the op takes the call before preparing them.
 - Raise exceptions for errors; return a `FallbackReason` for unsupported cases, never an exception.
 - Import `sglang` only inside functions: environments without SGLang import `api.py` too.
-- A plugin package's name is its op's `op_type` and must be unique across `aklr/ops` and `aklr/plugins`.
+- A plugin package's name is its op's `op_type` and must be unique across `aklr/plugins`.
 
 ## Validation and tests
 
@@ -77,7 +78,7 @@ In CI, audit always runs, and bench needs the PR to carry the `ci:gpu` label (a 
 
 Unit tests:
 
-- The small inputs in `tests/plugins/sglang/cases.py` feed the shared tests in `tests/ops`.
+- The small inputs in `tests/plugins/sglang/cases.py` feed the shared tests in `tests/plugins/aiter`.
 - `tests/plugins/sglang/test_hook.py` covers hooking, version checks, fallback, and exiting the process when start-up fails, and automatically checks every route: its target exists, has the same parameters, and is not replaced by another route.
 
 ## Enabling the plugin and upgrading SGLang

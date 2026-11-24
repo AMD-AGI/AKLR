@@ -4,7 +4,7 @@
 import pytest
 import torch
 
-from aklr.plugins.sglang.models.deepseek_v2.baseline import deepseek_v2_fp8_moe_baseline
+from aklr.plugins.sglang.models.deepseek_v2.baseline import DeepseekV2Fp8MoeBaseline
 from tests.op_case import OpCase
 from tests.plugins.sglang.cases import SMALL_POINTS
 
@@ -38,7 +38,7 @@ def test_fp8_baseline_preserves_fp32_expert_selection():
     inputs["w1_scale"].fill_(1)
     inputs["w2_scale"].fill_(1)
 
-    actual = deepseek_v2_fp8_moe_baseline(**case.call(inputs, "cuda"))
+    actual = DeepseekV2Fp8MoeBaseline().baseline(**case.call(inputs, "cuda"))["out"]
 
     # Seven certain experts 1..7 plus expert0: its +.002 FP32 bias beats the
     # last expert's sigmoid(1/256). BF16 rounds that bias to1 and loses expert0.

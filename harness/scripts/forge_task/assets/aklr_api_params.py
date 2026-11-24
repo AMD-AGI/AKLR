@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Print, as JSON, the keyword arguments AKLR calls a schema's entry with (``params``), the outputs among them in
-the order the contract returns them (``outputs``), and its contract's baseline function as ``[module, name]``, or
-null when the contract has none. argv: the AKLR checkout, then the
+"""Print, as a JSON list, the keyword arguments AKLR calls a schema's entry with. argv: the AKLR checkout, then the
 schema file."""
 
 import json
@@ -22,13 +20,4 @@ schema = contract.narrow(
     workloads=raw["workloads"],
     kernel=raw["kernel"],
 )
-baseline = contract.baseline()
-print(
-    json.dumps(
-        {
-            "params": list(schema.kernel_call_keys),
-            "outputs": list(contract.outputs),
-            "baseline": baseline and [baseline.__module__, baseline.__name__],
-        }
-    )
-)
+print(json.dumps(list(schema.kernel_call_keys)))

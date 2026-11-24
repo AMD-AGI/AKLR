@@ -16,6 +16,7 @@ it and answer its Check questions for the change.
 |---|---|
 | Do not change a contract to fit a kernel | [cases/contract_changed_to_fit_kernel.md](cases/contract_changed_to_fit_kernel.md) |
 | Do not hide a slow fallback inside a kernel | [cases/slow_fallback_inside_kernel.md](cases/slow_fallback_inside_kernel.md) |
+| Do not call the reference or the baseline from a kernel | [cases/kernel_calls_reference_or_baseline.md](cases/kernel_calls_reference_or_baseline.md) |
 
 ## Add a case
 
