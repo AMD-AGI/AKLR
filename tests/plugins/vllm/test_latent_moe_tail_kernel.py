@@ -104,6 +104,11 @@ def _all(ok, device):
     return bool(flag.item())
 
 
+def _barrier():
+    """Returns once every rank has reached it: a CPU collective, which allocates nothing on a GPU."""
+    dist.all_reduce(torch.ones(1))
+
+
 def _computes(rank, rows, replays):
     device = torch.device("cuda", rank)
     _, _, kernel, runtime = _kernel()
@@ -361,6 +366,11 @@ def _injected(call, real_open, failing):
 def _failing_setup(rank, failing_rank):
     device = torch.device("cuda", rank)
     *_, runtime = _kernel()
+    # a process's first GPU tensors cost it 2 MiB of the device once, which HIP keeps (measured: only the first
+    # setup that gets as far as the group's tensors loses them): made here, before anything is measured
+    torch.tensor([0], dtype=torch.int64, device=device)
+    torch.zeros(runtime.SCRATCH_BYTES, dtype=torch.uint8, device=device)
+    torch.zeros(runtime.GRID, dtype=torch.int32, device=device)
     outcomes = {}
     for call in ("alloc_uncached", "handle", "open"):
 
@@ -375,6 +385,8 @@ def _failing_setup(rank, failing_rank):
         group = runtime.setup(dist.group.WORLD, rank, TP, device, hip=Failing)
         none = group is None
         del group
+        # a peer that still maps this rank's buffer keeps its memory: measured once every rank has released
+        _barrier()
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
         leaked = free - torch.cuda.mem_get_info(device)[0]
