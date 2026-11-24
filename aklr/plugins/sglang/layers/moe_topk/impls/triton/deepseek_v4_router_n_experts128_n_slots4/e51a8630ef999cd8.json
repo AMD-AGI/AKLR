@@ -1,0 +1,366 @@
+{
+  "schema_version": 5,
+  "name": "deepseek_v4_router_n_experts128_n_slots4",
+  "contract_id": "deepseek_v4_router@1.0",
+  "description": "sglang's select_experts on ROCm for a sqrtsoftplus router whose shared experts are fused into the top-k (DeepSeek-V4): each token's n_slots - n_shared experts by sqrt(softplus(router_logits)) + correction_bias, weighed with the unbiased scores, divided by their sum when renormalize, times routed_scaling_factor; then n_shared columns of shared experts n_experts + s at weight shared_scale. Rows at or past num_token_non_padded, when given, keep the shared ids and take routed ids 0 and weights 0.",
+  "op_type": "moe_topk",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 128,
+      "description": "Routed experts scored per token."
+    },
+    "n_slots": {
+      "type": "const",
+      "value": 4,
+      "description": "Experts per token: the routed ones, then the n_shared shared ones."
+    }
+  },
+  "attrs": {
+    "n_shared": 1,
+    "renormalize": true,
+    "has_num_token_non_padded": false
+  },
+  "inputs": {
+    "router_logits": {
+      "shape": [
+        "n_tokens",
+        "n_experts"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Router logits per token."
+    },
+    "correction_bias": {
+      "shape": [
+        "n_experts"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-expert bias added to the scores for selection only."
+    },
+    "routed_scaling_factor": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every routed weight."
+    },
+    "shared_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "The weight of every shared expert column."
+    }
+  },
+  "outputs": {
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "n_slots"
+      ],
+      "dtype": "float32",
+      "description": "Per token: the routed experts' unbiased scores, renormalized and scaled, then shared_scale per shared expert; 0 on padded rows."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "n_slots"
+      ],
+      "dtype": "int32",
+      "description": "Per token: the routed experts by descending biased score (0 on padded rows), then shared experts n_experts .. n_experts + n_shared - 1."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 5
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 15
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 20
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 25
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 35
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 40
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 50
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 70
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 80
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 90
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 100
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 110
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 130
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 140
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 150
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 160
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 200
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 220
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 260
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 280
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 300
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 320
+      },
+      "scalars": {
+        "routed_scaling_factor": 1.5,
+        "shared_scale": 1.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "GEAK",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"DeepSeek-V4's sqrtsoftplus MoE router with its fused shared experts, in one Triton launch.\n\nOne 64-lane wave per row, as aiter's wave64 topk_gating_kernel_opt holds it: lane l scores experts\nl + 64 * j (j < n_experts / 64) with sqrt(softplus(x)) (+inf clamps to FLT_MAX, NaN weighs 0 and never\nwins), adds the correction bias, sorts its slots with aiter's sorting network and runs a k-way merge\nover the lanes: the winner is the largest biased score, ties to the lowest lane, and only the winning\nlane pops its head. The winners' unbiased scores are summed in round order for the renormalization,\ntimes routed_scaling_factor. The shared-expert columns (id n_experts + s, weight shared_scale) and the\npadded-row mask (routed ids 0, every weight 0) are applied in registers before the single store, so\nthe result equals aiter's topk_gating followed by sglang's fused_append_shared_experts bit for bit.\n\nServes n_experts 64, 128, 256 and 384 (one to six experts per lane) and up to 64 slots per row.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport triton\nimport triton.language as tl\n\n_FLT_MAX = tl.constexpr(3.4028234663852886e38)\n_LOG2_E = tl.constexpr(1.4426950408889634)\n_LN_2 = tl.constexpr(0.6931471805599453)\n\n\n@triton.jit\ndef _score(x):\n    # aiter compute_score<SQRTSOFTPLUS>: +inf clamps to FLT_MAX, NaN passes, sqrt correctly rounded\n    x = tl.where(x > _FLT_MAX, _FLT_MAX, x)\n    t = tl.exp2(x * _LOG2_E)\n    sp = tl.where(x > 20.0, x, tl.log2(1.0 + t) * _LN_2)\n    return tl.sqrt_rn(sp)\n\n\n@triton.jit\ndef _cas(vi, oi, ii, vj, oj, ij):\n    # aiter _CAS_DESC: swap when vals[i] < vals[j]; equal values stay put\n    c = vi < vj\n    return (tl.where(c, vj, vi), tl.where(c, oj, oi), tl.where(c, ij, ii),\n            tl.where(c, vi, vj), tl.where(c, oi, oj), tl.where(c, ii, ij))\n\n\n@triton.jit\ndef _ord(v):\n    # order-preserving int32 image of a non-NaN fp32 (-0 folded onto +0, as fp32 compare does)\n    b = v.to(tl.int32, bitcast=True)\n    b = tl.where(b >= 0, b, b ^ 0x7FFFFFFF)\n    return tl.where(v == 0.0, 0, b)\n\n\n@triton.jit\ndef _load_score(logits_ptr, bias_ptr, roff, e, rmask, HAS_BIAS: tl.constexpr):\n    x = tl.load(logits_ptr + roff + e, mask=rmask, other=0.0).to(tl.float32)\n    s = _score(x)\n    o = tl.where(s != s, 0.0, s)  # aiter: a NaN score weighs 0\n    if HAS_BIAS:\n        v = s + tl.load(bias_ptr + e).to(tl.float32)\n    else:\n        v = s\n    v = tl.where(v != v, float(\"-inf\"), v)  # aiter fmaxf(v, -inf): NaN never wins\n    return v, o\n\n\n@triton.jit(do_not_specialize=[\"M\"])\ndef _fused_router_gate_kernel(\n    logits_ptr,        # [M, E] bf16/fp16/fp32, row stride stride_lm, unit column stride\n    bias_ptr,          # [E] fp32/bf16 (HAS_BIAS)\n    weights_ptr,       # [M, TOPK + NUM_SHARED] fp32\n    ids_ptr,           # [M, TOPK + NUM_SHARED] int32\n    ntnp_ptr,          # [1] integer tensor (HAS_PADDING)\n    M,\n    stride_lm,\n    stride_om,\n    routed_scaling_factor,\n    shared_scale,\n    EPT: tl.constexpr,\n    TOPK: tl.constexpr,\n    NUM_SHARED: tl.constexpr,\n    ROWS: tl.constexpr,\n    HAS_BIAS: tl.constexpr,\n    RENORM: tl.constexpr,\n    HAS_PADDING: tl.constexpr,\n):\n    E: tl.constexpr = EPT * 64\n    pid = tl.program_id(0)\n    rows = pid * ROWS + tl.arange(0, ROWS)                       # [ROWS], one wave per row\n    rows2 = rows[:, None]                                        # [ROWS, 1]\n    rmask = rows2 < M\n    lane = tl.arange(0, 64)[None, :]                             # [1, 64]\n    roff = rows2.to(tl.int64) * stride_lm\n    zero2 = tl.zeros([ROWS, 64], dtype=tl.int32)\n\n    # ---- load -> score -> bias; slot j of a lane holds expert lane + 64 * j\n    i0 = lane + zero2\n    v0, o0 = _load_score(logits_ptr, bias_ptr, roff, i0, rmask, HAS_BIAS)\n    i1 = i0\n    v1 = v0\n    o1 = o0\n    i2 = i0\n    v2 = v0\n    o2 = o0\n    i3 = i0\n    v3 = v0\n    o3 = o0\n    i4 = i0\n    v4 = v0\n    o4 = o0\n    i5 = i0\n    v5 = v0\n    o5 = o0\n    if EPT > 1:\n        i1 = i0 + 64\n        v1, o1 = _load_score(logits_ptr, bias_ptr, roff, i1, rmask, HAS_BIAS)\n    if EPT > 2:\n        i2 = i0 + 128\n        v2, o2 = _load_score(logits_ptr, bias_ptr, roff, i2, rmask, HAS_BIAS)\n        i3 = i0 + 192\n        v3, o3 = _load_score(logits_ptr, bias_ptr, roff, i3, rmask, HAS_BIAS)\n    if EPT > 4:\n        i4 = i0 + 256\n        v4, o4 = _load_score(logits_ptr, bias_ptr, roff, i4, rmask, HAS_BIAS)\n        i5 = i0 + 320\n        v5, o5 = _load_score(logits_ptr, bias_ptr, roff, i5, rmask, HAS_BIAS)\n\n    # ---- aiter sort_network_desc<EPT> (same comparator sequence -> same order of equal values)\n    if EPT == 2:\n        v0, o0, i0, v1, o1, i1 = _cas(v0, o0, i0, v1, o1, i1)\n    if EPT == 4:\n        v0, o0, i0, v1, o1, i1 = _cas(v0, o0, i0, v1, o1, i1)\n        v2, o2, i2, v3, o3, i3 = _cas(v2, o2, i2, v3, o3, i3)\n        v0, o0, i0, v2, o2, i2 = _cas(v0, o0, i0, v2, o2, i2)\n        v1, o1, i1, v3, o3, i3 = _cas(v1, o1, i1, v3, o3, i3)\n        v1, o1, i1, v2, o2, i2 = _cas(v1, o1, i1, v2, o2, i2)\n    if EPT == 6:\n        v0, o0, i0, v1, o1, i1 = _cas(v0, o0, i0, v1, o1, i1)\n        v2, o2, i2, v3, o3, i3 = _cas(v2, o2, i2, v3, o3, i3)\n        v4, o4, i4, v5, o5, i5 = _cas(v4, o4, i4, v5, o5, i5)\n        v0, o0, i0, v2, o2, i2 = _cas(v0, o0, i0, v2, o2, i2)\n        v1, o1, i1, v4, o4, i4 = _cas(v1, o1, i1, v4, o4, i4)\n        v3, o3, i3, v5, o5, i5 = _cas(v3, o3, i3, v5, o5, i5)\n        v0, o0, i0, v1, o1, i1 = _cas(v0, o0, i0, v1, o1, i1)\n        v2, o2, i2, v3, o3, i3 = _cas(v2, o2, i2, v3, o3, i3)\n        v4, o4, i4, v5, o5, i5 = _cas(v4, o4, i4, v5, o5, i5)\n        v1, o1, i1, v2, o2, i2 = _cas(v1, o1, i1, v2, o2, i2)\n        v3, o3, i3, v4, o4, i4 = _cas(v3, o3, i3, v4, o4, i4)\n        v2, o2, i2, v3, o3, i3 = _cas(v2, o2, i2, v3, o3, i3)\n\n    # ---- merge state: per slot (ord(val), lane << 9 | idx, orig); heads live in slot 0 and the\n    #      winning lane shifts its list up (== aiter's cursor++), refilling with the exhausted\n    #      sentinel (-inf, idx 0)\n    lane_t = lane << 9\n    tx = lane_t + zero2\n    vx = _ord(tl.full([ROWS, 64], float(\"-inf\"), tl.float32))\n    t0 = lane_t | i0\n    t1 = t0\n    t2 = t0\n    t3 = t0\n    t4 = t0\n    t5 = t0\n    v0 = _ord(v0)\n    if EPT > 1:\n        t1 = lane_t | i1\n        v1 = _ord(v1)\n    if EPT > 2:\n        t2 = lane_t | i2\n        t3 = lane_t | i3\n        v2 = _ord(v2)\n        v3 = _ord(v3)\n    if EPT > 4:\n        t4 = lane_t | i4\n        t5 = lane_t | i5\n        v4 = _ord(v4)\n        v5 = _ord(v5)\n\n    cursor = zero2\n    sel_idx = zero2\n    sel_w = tl.zeros([ROWS, 64], dtype=tl.float32)\n    total = tl.zeros([ROWS], dtype=tl.float32)\n    for k in tl.static_range(TOPK):\n        m = tl.max(v0, axis=1)[:, None]                                          # [ROWS, 1]\n        tmin = tl.min(tl.where(v0 == m, t0, 0x7FFFFFFF), axis=1)[:, None]        # lowest lane\n        win_idx = tmin & 511\n        i_won = (t0 == tmin) & (cursor < EPT)\n        my_orig = tl.where(i_won, o0, 0.0)\n        cursor = cursor + i_won.to(tl.int32)\n        if EPT == 1:\n            v0 = tl.where(i_won, vx, v0)\n            t0 = tl.where(i_won, tx, t0)\n        else:\n            v0 = tl.where(i_won, v1, v0)\n            t0 = tl.where(i_won, t1, t0)\n            o0 = tl.where(i_won, o1, o0)\n        if EPT == 2:\n            v1 = tl.where(i_won, vx, v1)\n            t1 = tl.where(i_won, tx, t1)\n        if EPT > 2:\n            v1 = tl.where(i_won, v2, v1)\n            t1 = tl.where(i_won, t2, t1)\n            o1 = tl.where(i_won, o2, o1)\n            v2 = tl.where(i_won, v3, v2)\n            t2 = tl.where(i_won, t3, t2)\n            o2 = tl.where(i_won, o3, o2)\n        if EPT == 4:\n            v3 = tl.where(i_won, vx, v3)\n            t3 = tl.where(i_won, tx, t3)\n        if EPT > 4:\n            v3 = tl.where(i_won, v4, v3)\n            t3 = tl.where(i_won, t4, t3)\n            o3 = tl.where(i_won, o4, o3)\n            v4 = tl.where(i_won, v5, v4)\n            t4 = tl.where(i_won, t5, t4)\n            o4 = tl.where(i_won, o5, o4)\n            v5 = tl.where(i_won, vx, v5)\n            t5 = tl.where(i_won, tx, t5)\n        sel_idx = tl.where(lane == k, win_idx, sel_idx)\n        # at most one lane won (unique idx): the lane sum is exactly the winner's weight\n        w = tl.sum(my_orig, axis=1)                                              # [ROWS]\n        total = total + w                                                        # sequential fp32\n        sel_w = tl.where(lane == k, w[:, None], sel_w)\n\n    rsf = tl.zeros([ROWS], dtype=tl.float32) + routed_scaling_factor\n    if RENORM:\n        scale = tl.div_rn(rsf, tl.maximum(total, 1e-20))\n    else:\n        scale = rsf\n    weights = sel_w * scale[:, None]\n    ids = sel_idx\n\n    # ---- fused_append_shared_experts(scale_factor=shared_scale, N=E[, num_token_non_padded])\n    is_shared = lane >= TOPK\n    weights = tl.where(is_shared, shared_scale, weights)\n    ids = tl.where(is_shared, E + lane - TOPK, ids)\n    if HAS_PADDING:\n        n_real = tl.load(ntnp_ptr)\n        pad = rows2 >= n_real\n        ids = tl.where(pad & (lane < TOPK), 0, ids)\n        weights = tl.where(pad, 0.0, weights)\n    out_mask = rmask & (lane < TOPK + NUM_SHARED)\n    ooff = rows2.to(tl.int64) * stride_om + lane\n    tl.store(weights_ptr + ooff, weights, mask=out_mask)\n    tl.store(ids_ptr + ooff, ids, mask=out_mask)\n\n\ndef run(\n    *,\n    router_logits,\n    correction_bias,\n    num_token_non_padded,\n    routed_scaling_factor,\n    shared_scale,\n    n_shared,\n    renormalize,\n    topk_weights,\n    topk_ids,\n) -> None:\n    n_tokens, n_experts = router_logits.shape\n    if n_tokens == 0:\n        return\n    has_padding = num_token_non_padded is not None\n    _fused_router_gate_kernel[(n_tokens,)](\n        router_logits,\n        correction_bias,\n        topk_weights,\n        topk_ids,\n        num_token_non_padded if has_padding else topk_ids,\n        n_tokens,\n        router_logits.stride(0),\n        topk_ids.stride(0),\n        float(routed_scaling_factor),\n        float(shared_scale),\n        EPT=n_experts // 64,\n        TOPK=topk_ids.shape[1] - n_shared,\n        NUM_SHARED=n_shared,\n        ROWS=1,\n        HAS_BIAS=True,\n        RENORM=bool(renormalize),\n        HAS_PADDING=has_padding,\n        num_warps=1,\n    )\n"
+      }
+    ]
+  }
+}
