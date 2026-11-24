@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
-import ast
 import inspect
 import itertools
 import math
-import textwrap
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from functools import cached_property
@@ -63,7 +61,7 @@ __all__ = [
 ]
 
 CONTRACT_VERSION: Final = 5  # the json format of a schema file (its "schema_version")
-_RESERVED_NAMES = frozenset({"out_dtype", "layout_variant"})
+_RESERVED_NAMES = frozenset({"layout_variant"})
 _DISTINCT_PRIME_DIMS = (10007, 10009, 10037, 10039, 10061, 10067, 10069, 10079)
 
 
@@ -75,13 +73,13 @@ class OpContract(FrozenModel):
     name: Annotated[str, Field(min_length=1)] | None = None
     contract_id: ContractId
     description: str
-    op_type: str  # the op family: "gemm" for aklr/ops/gemm/
+    op_type: str  # the family: its directory's name under aklr/plugins
     workloads: tuple[WorkloadSpec, ...] = ()
     axes: dict[str, AxisSpec]
     attrs: dict[str, AttrSpec] = {}  # noqa: RUF012 -- pydantic copies defaults
     constraints: tuple[str, ...] = ()
     inputs: dict[str, ArgSpec]
-    outputs: dict[str, TensorSpec]  # "out" alone, or names other than "out"
+    outputs: dict[str, TensorSpec]
     layout_variants: LayoutVariantsSpec
     compare: CompareSpec = CompareSpec()
     kernel: KernelSpec | None = None
@@ -93,8 +91,6 @@ class OpContract(FrozenModel):
         if self.name is None:
             if self.workloads or self.kernel is not None:
                 raise ValueError("a registered contract has no workloads or kernel")
-            if self.layout_variants.names()[0] != "row_major":
-                raise ValueError('the first layout variant of a registered contract is "row_major"')
             return self
         if not self.workloads or self.kernel is None:
             raise ValueError("a schema has non-empty workloads and a kernel")
@@ -126,12 +122,16 @@ class OpContract(FrozenModel):
             *self.inputs,
             *self.outputs,
             *self._layout_arg_names(),
+            *(s.dtype.param_name for s in self.outputs.values() if s.dtype.param_name is not None),
         ]
         repeated = [n for n, count in Counter(names).items() if count > 1]
         if repeated or _RESERVED_NAMES & set(names):
             raise ValueError(f"repeated {repeated} or reserved {sorted(_RESERVED_NAMES)} names")
-        if not self.outputs or ("out" in self.outputs and len(self.outputs) > 1):
-            raise ValueError("outputs are 'out' alone, or names other than 'out'")
+        for name, spec in self.inputs.items():
+            if isinstance(spec, TensorSpec) and spec.dtype.param_name is not None:
+                raise ValueError(f"{name}: only an output takes a dtype param")
+        if not self.outputs:
+            raise ValueError("a contract has an output")
         return self
 
     def _scope(self) -> tuple[frozenset[str], frozenset[str]]:
@@ -190,14 +190,14 @@ class OpContract(FrozenModel):
                 raise ValueError(f"{name}: needs any_of or the same_as_tensor of a tensor without one")
             if (
                 name in self.outputs
-                and "out" not in self.outputs
+                and dtype_spec.param_name is None
                 and not (
                     (dtype_spec.same_as_tensor is None and len(dtype_spec.any_of or ()) == 1)
                     or (dtype_spec.any_of is None and dtype_spec.same_as_tensor in self.inputs)
                 )
             ):
                 raise ValueError(
-                    f"{name}: an output other than 'out' has one dtype or the same_as_tensor of an input"
+                    f"{name}: an output without a dtype param has one dtype or the same_as_tensor of an input"
                 )
             if (
                 dtype_spec.default is not None
@@ -221,7 +221,8 @@ class OpContract(FrozenModel):
             first = tensors[readers[0]] if readers else None
             if (
                 first is None
-                or "out" in readers  # "out" is allocated, so never required
+                # an output with a dtype param is allocated, so never required
+                or any(r in self.outputs and tensors[r].dtype.param_name is not None for r in readers)
                 or (
                     first.present_when is not None
                     and (len(readers) > 1 or first.present_when not in presence_attrs)
@@ -229,7 +230,7 @@ class OpContract(FrozenModel):
             ):
                 raise ValueError(
                     f"axis {axis!r} is not readable from a required input, an output "
-                    "other than 'out', or the one optional tensor of a presence attr"
+                    "without a dtype param, or the one optional tensor of a presence attr"
                 )
         presence = Counter(s.present_when for s in self.inputs.values())
         bools = {attr_membership_key(False), attr_membership_key(True)}
@@ -385,8 +386,7 @@ class OpContract(FrozenModel):
 
     @property
     def op_package(self) -> str:
-        """``"aklr.ops.gemm"`` for ``op_type`` ``"gemm"``; a plugin op's package
-        under ``aklr.plugins``."""
+        """The family's package under ``aklr.plugins``: the one whose directory is named ``op_type``."""
         return op_package_of(self.op_type)
 
     @property
@@ -511,9 +511,8 @@ class OpContract(FrozenModel):
     @cached_property
     def api_params(self) -> tuple[ApiParam, ...]:
         """The api's params, in order: required inputs and outputs, attrs, layout args
-        (defaulting to the first variant's facts), optional inputs, ``out_dtype`` if the
-        output is ``out``, then the outputs not required; the kernel entry takes the subset
-        ``kernel_call_keys``.
+        (defaulting to the first variant's facts), optional inputs, the outputs' dtype params,
+        then the outputs not required; the kernel entry takes the subset ``kernel_call_keys``.
         """
         required, optional = [], []
         for name, spec in self.inputs.items():
@@ -533,14 +532,18 @@ class OpContract(FrozenModel):
             for name in self._layout_arg_names()
         ]
         outputs = [ApiParam(name=o, is_required=o in self.required_outputs) for o in self.outputs]
-        out_dtype = [ApiParam(name="out_dtype", is_required=False)]
+        dtype_params = [
+            ApiParam(name=s.dtype.param_name, is_required=False)
+            for s in self.outputs.values()
+            if s.dtype.param_name is not None
+        ]
         return (
             *required,
             *(p for p in outputs if p.is_required),
             *attrs,
             *layout,
             *optional,
-            *(out_dtype if "out" in self.outputs else ()),
+            *dtype_params,
             *(p for p in outputs if not p.is_required),
         )
 
@@ -641,7 +644,8 @@ class OpContract(FrozenModel):
             if dtype is None or self._dtype_root(name) != name:
                 continue  # absent, or another tensor's dtype
             first = point.dtypes[source] if source else self.dtypes_of(name)[0].value
-            parts.append("" if dtype == first else f"{name}_{dtype}")
+            # a host's param may be upper case (aiter's XQ): a schema name is lower case
+            parts.append("" if dtype == first else f"{name.lower()}_{dtype}")
         if point.layout_variant_name != self.layout_variants.names()[0]:
             parts.append(point.layout_variant_name)
         absent = self.absent_axes(point.attrs)
@@ -1039,9 +1043,8 @@ class OpContract(FrozenModel):
                 yield {f"{t}.dtype": None if t in gone else root_dtype[root_of[t]].value for t in tensors}
 
     def check_api_signature(self, fn: Callable) -> None:
-        """Raise ``TypeError`` unless ``fn`` is this contract's api function: named
-        params, every required one without a non-``None`` default, extra ones
-        defaulted, named and placed at ``api_name``, a body of exactly ``...``."""
+        """Raise ``TypeError`` unless ``fn``'s params are this contract's: named params, every
+        required one without a non-``None`` default, extra ones defaulted."""
         params = inspect.signature(fn).parameters
         named = (
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -1064,13 +1067,6 @@ class OpContract(FrozenModel):
         ]
         if undefaulted:
             raise TypeError(f"{fn.__name__}: {undefaulted} not in {self.contract_id} need a default")
-        if fn.__name__ != contract_name(self.contract_id):
-            raise TypeError(f"{fn.__name__} must be named {contract_name(self.contract_id)}")
-        if api_name(fn) != self.api_name:
-            raise TypeError(f"{api_name(fn)} != {self.api_name}")
-        (node,) = ast.parse(textwrap.dedent(inspect.getsource(fn))).body
-        if ast.dump(ast.Module(body=node.body, type_ignores=[])) != _ELLIPSIS_BODY:
-            raise TypeError(f"{fn.__name__}: the body must be exactly `...`")
 
 
 # Relations see an absent optional tensor's ``<t>.dtype`` as ``None``, so presence is a relation.
@@ -1122,10 +1118,6 @@ class Domain(FrozenModel):
         if point.layout_variant_name not in self.allowed_values["layout_variant"]:
             return f"unknown layout variant {point.layout_variant_name!r}"
         return None
-
-
-# An api function is its signature only: no ``*args``/``**kwargs``, a body of exactly ``...``.
-_ELLIPSIS_BODY = ast.dump(ast.parse("..."))
 
 
 class ApiParam(FrozenModel):

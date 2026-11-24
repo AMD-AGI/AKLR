@@ -30,14 +30,14 @@ class TestBuilderRegistry:
     """``build`` imports a schema's kernel as a ``Runnable``, once per content hash."""
 
     def test_imports_entry_point(self, builder_registry: BuilderRegistry) -> None:
-        """The gemm case's schema builds to a ``Runnable`` writing ``a @ b.T`` into ``out``."""
-        case = OpCase.of("gemm@1.0")
+        """The tiny gemm case's schema builds to a ``Runnable`` writing ``x @ w.T`` into ``out``."""
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         runnable = builder_registry.build(case.schema(GEMM_KERNEL_SOURCE))
         assert isinstance(runnable, Runnable)
         call = case.call(case.inputs())
-        call["out"] = torch.empty(case.contract.storage_shape_of("out", case.point), dtype=call["out_dtype"])
+        call["out"] = torch.empty(case.contract.storage_shape_of("out", case.point), dtype=torch.bfloat16)
         runnable(**call)
-        torch.testing.assert_close(call["out"], call["a"] @ call["b"].mT, rtol=0, atol=0)
+        torch.testing.assert_close(call["out"], call["x"] @ call["w"].mT, rtol=0, atol=0)
         package = runnable.metadata.misc["module_name"].partition(".")[0]
         assert package in sys.modules
         builder_registry.cleanup()
@@ -47,8 +47,8 @@ class TestBuilderRegistry:
         ("source", "match"),
         [
             (_IMPORT_ERROR_KERNEL_SOURCE, r"cannot import kernel\.py::run"),
-            ("def run(a, b):\n    return a @ b.mT\n", _UNBOUND),
-            ("def run(*, a, b, out, scale, **_): ...\n", _UNBOUND),
+            ("def run(x, w):\n    return x @ w.mT\n", _UNBOUND),
+            ("def run(*, x, w, out, scale, **_): ...\n", _UNBOUND),
         ],
         ids=["import_error", "without_out", "unknown_required"],
     )
@@ -56,7 +56,7 @@ class TestBuilderRegistry:
         self, builder_registry: BuilderRegistry, source: str, match: str
     ) -> None:
         """A kernel that cannot be imported or bound gives a ``BuildError`` naming its entry point, and leaves no package behind."""
-        schema = OpCase.of("gemm@1.0").schema(source)
+        schema = OpCase.of("kimi_k3_tiny_gemm@1.0").schema(source)
         with pytest.raises(BuildError, match=match):
             builder_registry.build(schema)
         package = f"{KERNEL_PACKAGE_PREFIX}flydsl_{schema.kernel.content_hash[:16]}"
@@ -64,10 +64,9 @@ class TestBuilderRegistry:
 
     def test_caches_by_content_hash(self, builder_registry: BuilderRegistry) -> None:
         """Two schemas with the same kernel build one ``Runnable``."""
-        gemm_schema = OpCase.of("gemm@1.0").schema()
-        bmm_schema = OpCase.of("bmm@1.0").schema()
-        assert gemm_schema.name != bmm_schema.name
-        assert builder_registry.build(gemm_schema) is builder_registry.build(bmm_schema)
+        narrow, wide, *_ = (c.schema() for c in OpCase.all() if c.contract_id == "kimi_k3_tiny_gemm@1.0")
+        assert narrow.name != wide.name
+        assert builder_registry.build(narrow) is builder_registry.build(wide)
 
 
 def test_an_optional_attr_at_its_default_hides_its_param_from_the_kernel() -> None:
@@ -91,20 +90,20 @@ class TestHipBuilder:
     """``build`` of a hip schema loads its library and returns its entry op."""
 
     def test_builds_entry_op(self, builder_registry: BuilderRegistry) -> None:
-        """The hip gemm writes ``a @ b.T`` into ``out``."""
-        case = OpCase.of("gemm@1.0")
+        """The hip gemm writes ``x @ w.T`` into ``out``."""
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         runnable = builder_registry.build(case.schema(HIP_GEMM_KERNEL_SOURCE, language="hip"))
         assert runnable.metadata.build_type == "hip"
         call = case.call(case.inputs(), device="cuda")
         call["out"] = torch.empty(
             case.contract.storage_shape_of("out", case.point),
-            dtype=call["out_dtype"],
+            dtype=torch.bfloat16,
             device="cuda",
         )
         runnable(**call)
         torch.testing.assert_close(
             call["out"].float(),
-            call["a"].float() @ call["b"].float().mT,
+            call["x"].float() @ call["w"].float().mT,
             rtol=1e-2,
             atol=1e-2,
         )
@@ -124,7 +123,7 @@ class TestHipBuilder:
         source = HIP_GEMM_KERNEL_SOURCE.replace(old, new)
         assert source != HIP_GEMM_KERNEL_SOURCE
         with pytest.raises(BuildError, match=match):
-            builder_registry.build(OpCase.of("gemm@1.0").schema(source, language="hip"))
+            builder_registry.build(OpCase.of("kimi_k3_tiny_gemm@1.0").schema(source, language="hip"))
 
     def test_library_that_does_not_load_is_the_kernels_fault(self, builder_registry: BuilderRegistry) -> None:
         """An undefined symbol links but fails the load: a ``BuildError`` not caused by an ``OSError``, so bench does not blame the platform."""
@@ -132,7 +131,7 @@ class TestHipBuilder:
             "namespace {\n", "void aklr_undefined();\n\nnamespace {\n", 1
         ).replace("    gemm<<<", "    aklr_undefined();\n    gemm<<<")
         with pytest.raises(BuildError, match="undefined symbol") as error:
-            builder_registry.build(OpCase.of("gemm@1.0").schema(source, language="hip"))
+            builder_registry.build(OpCase.of("kimi_k3_tiny_gemm@1.0").schema(source, language="hip"))
         assert not isinstance(error.value.__cause__, OSError)
 
 
@@ -141,21 +140,21 @@ class TestHsacoBuilder:
     """``build`` of an hsaco schema imports its entry, which launches its code object."""
 
     def test_launches_the_code_object(self, builder_registry: BuilderRegistry) -> None:
-        """The hsaco gemm writes ``a @ b.T`` into ``out``."""
-        case = OpCase.of("gemm@1.0")
+        """The hsaco gemm writes ``x @ w.T`` into ``out``."""
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         schema = case.schema(HSACO_GEMM_KERNEL_SOURCE, language="hsaco", other_sources=hsaco_gemm_sources())
         runnable = builder_registry.build(schema)
         assert runnable.metadata.build_type == "hsaco"
         call = case.call(case.inputs(), device="cuda")
         call["out"] = torch.empty(
             case.contract.storage_shape_of("out", case.point),
-            dtype=call["out_dtype"],
+            dtype=torch.bfloat16,
             device="cuda",
         )
         runnable(**call)
         torch.testing.assert_close(
             call["out"].float(),
-            call["a"].float() @ call["b"].float().mT,
+            call["x"].float() @ call["w"].float().mT,
             rtol=1e-2,
             atol=1e-2,
         )

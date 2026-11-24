@@ -8,6 +8,20 @@ from aklr.core.contract.spec import PointSpec
 
 # full PointSpec literals; each contract's base Point first
 SMALL_POINTS: tuple[PointSpec, ...] = (
+    PointSpec(
+        contract_id="kimi_k3_tiny_gemm@1.0",
+        axes={"m": 4, "n": 16, "k": 128},
+        dtypes={"x": "bfloat16", "w": "bfloat16", "out": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="kimi_k3_tiny_gemm@1.0",
+        axes={"m": 4, "n": 24, "k": 128},
+        dtypes={"x": "bfloat16", "w": "bfloat16", "out": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # GLM-5.2-MXFP4's DeepseekV2MoE: the shared expert fused last, as sglang holds the
     # experts for aiter
     PointSpec(

@@ -3,12 +3,14 @@
 
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
 
+from aklr.core.contract.op import OpContract
 from aklr.core.platform.device import DeviceTarget
 from aklr.core.platform.env import ENV_KERNEL_CACHE_DIR
 from aklr.core.runtime.builder import (
@@ -18,9 +20,8 @@ from aklr.core.runtime.builder import (
     HsacoBuilder,
     TritonBuilder,
 )
-from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
-from aklr.core.runtime.dispatch._trace import trace
-from tests.op_case import OpCase
+from aklr.core.runtime.dispatch import DispatcherRegistry, DispatchTable, FallbackReason, trace
+from tests.op_case import KERNEL_TARGET, OpCase
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -98,3 +99,67 @@ def default_dispatchers(
         for dispatcher in registry.dispatchers().values():
             dispatcher.close(FallbackReason.NO_SCHEMA)
         registry.recorder, registry.is_initialized = None, False
+
+
+@pytest.fixture
+def family_modules() -> Iterator[None]:
+    """Forgets, after the test, the family modules it imported from a ``FakeHost``'s temporary
+    ``aklr/plugins/<ns>/``."""
+    before = set(sys.modules)
+    yield
+    for name in [n for n in sys.modules if n.startswith("aklr.plugins.") and n not in before]:
+        del sys.modules[name]
+        parent, _, child = name.rpartition(".")
+        if hasattr(sys.modules.get(parent), child):
+            delattr(sys.modules[parent], child)
+
+
+@pytest.fixture
+def dispatch_starts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """A fresh process ``DispatcherRegistry``, nothing loaded; each ``init_once`` that would load is
+    recorded here instead of run."""
+    registry = DispatcherRegistry()
+    monkeypatch.setattr(DispatcherRegistry, "default", classmethod(lambda cls: registry))
+    starts: list[str] = []
+
+    def init_once(registry: DispatcherRegistry) -> None:
+        if not registry.is_initialized:
+            starts.append("init_once")
+            registry.is_initialized = True
+
+    monkeypatch.setattr(DispatcherRegistry, "init_once", init_once)
+    return starts
+
+
+@pytest.fixture
+def serve(
+    builder_registry: BuilderRegistry, dispatch_starts: list[str]
+) -> Callable[[OpContract, str], dict[str, Any]]:
+    """Serves a contract of Kimi-K3's tiny gemm calls at its small Point, by a kernel of the given body
+    over ``x``, ``w`` and ``out``; returns a call at that Point."""
+
+    def serve(contract: OpContract, kernel_body: str) -> dict[str, Any]:
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
+        point = case.point.model_copy(update={"contract_id": contract.contract_id})
+        source = f"def run(*, x, w, out, **_):\n    {kernel_body}\n"
+        schema = contract.narrow(
+            point,
+            workloads=[contract.workload_for(point, {})],
+            kernel={
+                "language": "flydsl",
+                "targets": [KERNEL_TARGET],
+                "entry_point": "kernel.py::run",
+                "sources": [{"path": "kernel.py", "content": source}],
+            },
+        )
+        table = DispatchTable.from_schemas(
+            contract,
+            torch.device("cpu"),
+            [(schema, builder_registry.build(schema), schema.workloads)],
+            min_speedup=0.0,
+        )
+        table.warmed_keys.update(table.runnables)
+        DispatcherRegistry.default().dispatcher(contract).set_table(table)
+        return case.call(case.inputs())
+
+    return serve

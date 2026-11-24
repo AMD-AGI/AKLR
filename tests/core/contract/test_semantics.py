@@ -26,8 +26,8 @@ class TestRowMajorInputs:
                 ), name
 
     def test_other_input_set_draws_other_values(self) -> None:
-        """``numeric/0`` and ``numeric/1`` of the gemm case differ in some tensor."""
-        case = OpCase.of("gemm@1.0")
+        """``numeric/0`` and ``numeric/1`` of the tiny gemm case differ in some tensor."""
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         first, second = case.inputs("numeric/0"), case.inputs("numeric/1")
         assert any(
             not torch.equal(value, second[name]) for name, value in first.items() if torch.is_tensor(value)
@@ -83,7 +83,7 @@ class TestCompareOutputs:
     @pytest.mark.parametrize(
         "contract_id",
         [
-            pytest.param("gemm@1.0", id="float_output"),
+            pytest.param("kimi_k3_tiny_gemm@1.0", id="float_output"),
             pytest.param("gemm_a8w8_blockwise_scaled@1.0", id="tolerance_output"),
             pytest.param("fused_moe@1.0", id="sqnr_output"),
             pytest.param("biased_grouped_topk@1.0", id="integer_output"),

@@ -23,15 +23,15 @@ from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import CompareResult
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
 from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
-from tests.ops import cases as ops_cases
+from tests.plugins.aiter import cases as aiter_cases
 from tests.plugins.sglang import cases as sglang_cases
 from tests.plugins.vllm import cases as vllm_cases
 
-# the gemm@1.0 kernel the CPU tests serve: out = a @ b.T
-GEMM_KERNEL_SOURCE = "def run(*, a, b, out, **_):\n    out.copy_(a @ b.mT)\n"
-# the same in hip, bf16 only
+# the kimi_k3_tiny_gemm@1.0 kernel the CPU tests serve: out = x @ w.T
+GEMM_KERNEL_SOURCE = "def run(*, x, w, out, **_):\n    out.copy_(x @ w.mT)\n"
+# the same in hip, bf16 only; <optional> is the include test_audit swaps for others
 HIP_GEMM_KERNEL_SOURCE = """\
-// out = a @ b.T in bf16, a thread an output element.
+// out = x @ w.T in bf16, a thread an output element.
 #include <ATen/hip/HIPContext.h>
 #include <hip/hip_bf16.h>
 #include <optional>
@@ -39,30 +39,27 @@ HIP_GEMM_KERNEL_SOURCE = """\
 
 namespace {
 
-__global__ void gemm(const __hip_bfloat16 *a, const __hip_bfloat16 *b, __hip_bfloat16 *out,
+__global__ void gemm(const __hip_bfloat16 *x, const __hip_bfloat16 *w, __hip_bfloat16 *out,
                      int k) {
     float acc = 0.0f;
     for (int i = 0; i < k; ++i) {
-        acc += __bfloat162float(a[blockIdx.x * k + i]) * __bfloat162float(b[threadIdx.x * k + i]);
+        acc += __bfloat162float(x[blockIdx.x * k + i]) * __bfloat162float(w[threadIdx.x * k + i]);
     }
     out[blockIdx.x * blockDim.x + threadIdx.x] = __float2bfloat16(acc);
 }
 
-void run(const at::Tensor &a, const at::Tensor &b, bool trans_b,
-         const std::optional<at::Tensor> &bias, at::ScalarType out_dtype, at::Tensor &out) {
-    gemm<<<a.size(0), b.size(0), 0, at::hip::getCurrentHIPStream()>>>(
-        static_cast<const __hip_bfloat16 *>(a.data_ptr()),
-        static_cast<const __hip_bfloat16 *>(b.data_ptr()),
-        static_cast<__hip_bfloat16 *>(out.data_ptr()), static_cast<int>(a.size(1)));
+void run(const at::Tensor &x, const at::Tensor &w, at::Tensor &out) {
+    gemm<<<x.size(0), w.size(0), 0, at::hip::getCurrentHIPStream()>>>(
+        static_cast<const __hip_bfloat16 *>(x.data_ptr()),
+        static_cast<const __hip_bfloat16 *>(w.data_ptr()),
+        static_cast<__hip_bfloat16 *>(out.data_ptr()), static_cast<int>(x.size(1)));
 }
 
 } // namespace
 
 #define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)
 TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
-    m.def("run(Tensor a, Tensor b, bool trans_b, Tensor? bias, ScalarType out_dtype, "
-          "Tensor(a!) out) -> ()",
-          &run);
+    m.def("run(Tensor x, Tensor w, Tensor(a!) out) -> ()", &run);
 }
 """
 # the same as a code object's device function (hsaco_gemm_code_object), and the hsaco kernel
@@ -71,17 +68,17 @@ HSACO_GEMM_DEVICE_SOURCE = """\
 #include <hip/hip_bf16.h>
 #include <hip/hip_runtime.h>
 
-extern "C" __global__ void gemm(const __hip_bfloat16 *a, const __hip_bfloat16 *b, __hip_bfloat16 *out,
+extern "C" __global__ void gemm(const __hip_bfloat16 *x, const __hip_bfloat16 *w, __hip_bfloat16 *out,
                                 int n, int k) {
     float acc = 0.0f;
     for (int i = 0; i < k; ++i) {
-        acc += __bfloat162float(a[blockIdx.x * k + i]) * __bfloat162float(b[threadIdx.x * k + i]);
+        acc += __bfloat162float(x[blockIdx.x * k + i]) * __bfloat162float(w[threadIdx.x * k + i]);
     }
     out[blockIdx.x * n + threadIdx.x] = __float2bfloat16(acc);
 }
 """
 HSACO_GEMM_KERNEL_SOURCE = '''\
-"""out = a @ b.T in bf16 from a code object, a thread an output element."""
+"""out = x @ w.T in bf16 from a code object, a thread an output element."""
 
 import struct
 
@@ -92,9 +89,9 @@ from .codeobjects import GEMM
 _GEMM = hsaco.Kernel(GEMM, "gemm")
 
 
-def run(*, a, b, trans_b, bias, out_dtype, out):
-    kernarg = struct.pack("<QQQii", a.data_ptr(), b.data_ptr(), out.data_ptr(), b.shape[0], a.shape[1])
-    _GEMM.launch((a.shape[0],), (b.shape[0],), kernarg, device=a.device)
+def run(*, x, w, out):
+    kernarg = struct.pack("<QQQii", x.data_ptr(), w.data_ptr(), out.data_ptr(), w.shape[0], x.shape[1])
+    _GEMM.launch((x.shape[0],), (w.shape[0],), kernarg, device=x.device)
 '''
 KERNEL_TARGET = {"arch": "gfx950", "hardware": "MI355X"}  # as the committed schemas
 
@@ -130,12 +127,12 @@ def hsaco_gemm_sources() -> dict[str, str]:
 
 _NO_OP_KERNEL_SOURCE = "def run(**call): ...\n"  # a schema's kernel no test runs
 
-# every contract's small Points (tests/ops/cases.py, tests/plugins/<framework>/cases.py),
+# every contract's small Points (tests/plugins/<host>/cases.py),
 # contract order: each contract's base Point first
 _SMALL_POINTS: tuple[PointSpec, ...] = tuple(
     sorted(
         (
-            *ops_cases.SMALL_POINTS,
+            *aiter_cases.SMALL_POINTS,
             *sglang_cases.SMALL_POINTS,
             *vllm_cases.SMALL_POINTS,
         ),
@@ -143,7 +140,7 @@ _SMALL_POINTS: tuple[PointSpec, ...] = tuple(
     )
 )
 _GFX950_CONTRACT_IDS = (
-    ops_cases.GFX950_CONTRACT_IDS | sglang_cases.GFX950_CONTRACT_IDS | vllm_cases.GFX950_CONTRACT_IDS
+    aiter_cases.GFX950_CONTRACT_IDS | sglang_cases.GFX950_CONTRACT_IDS | vllm_cases.GFX950_CONTRACT_IDS
 )
 
 
@@ -162,13 +159,17 @@ class OpCase:
 
     @classmethod
     def all(cls) -> tuple[OpCase, ...]:
-        """Every small Point's case, in contract order."""
-        return tuple(cls(point) for point in _SMALL_POINTS)
+        """Every small Point's case, in contract order; the Points of a family not yet moved under
+        ``aklr/plugins`` (their contracts went with ``aklr/ops``) have none."""
+        registered = {c.contract_id for c in ContractRegistry.default().contracts()}
+        return tuple(cls(point) for point in _SMALL_POINTS if point.contract_id in registered)
 
     @classmethod
     def params(cls, points: Iterable[PointSpec]) -> list[Any]:
         """The cases of ``points`` in contract order as pytest params: the contract id, and ``gfx950``
-        where the backend runs the Point only there."""
+        where the backend runs the Point only there; none for a family not yet moved under ``aklr/plugins``."""
+        registered = {c.contract_id for c in ContractRegistry.default().contracts()}
+        points = [point for point in points if point.contract_id in registered]
         cases = [cls(point) for point in sorted(points, key=lambda point: point.contract_id)]
         return [
             pytest.param(case, id=case.contract_id, marks=[pytest.mark.gfx950] if case.needs_gfx950 else [])
@@ -177,10 +178,13 @@ class OpCase:
 
     @classmethod
     def of(cls, contract_id: str) -> OpCase:
-        """The first case of ``contract_id``; ``KeyError`` for a contract without one."""
+        """The first case of ``contract_id``; ``KeyError`` for a contract without one. A contract
+        that is not registered skips the test: its family went with ``aklr/ops``."""
         case = next((c for c in cls.all() if c.contract_id == contract_id), None)
         if case is None:
-            raise KeyError(contract_id)
+            if any(c.contract_id == contract_id for c in ContractRegistry.default().contracts()):
+                raise KeyError(contract_id)
+            pytest.skip(f"{contract_id}: its family is not under aklr/plugins yet")
         return case
 
     @property
@@ -197,7 +201,7 @@ class OpCase:
                 self.contract_id,
                 self.point.layout_variant_name,
             )
-            in ops_cases.GFX950_LAYOUT_VARIANTS
+            in aiter_cases.GFX950_LAYOUT_VARIANTS
         )
 
     def schema(

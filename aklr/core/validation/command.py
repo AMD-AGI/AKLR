@@ -38,7 +38,9 @@ def main(argv: Sequence[str]) -> int:
         help=f"a part of {','.join(STAGE_ORDER)} that starts with audit",
     )
     parser.add_argument("--devices", help="0-7 or 0,2,5")
-    parser.add_argument("--under", metavar="DIR", help="only the schemas under DIR, such as aklr/ops")
+    parser.add_argument(
+        "--under", metavar="DIR", help="only the schemas under DIR, such as aklr/plugins/sglang"
+    )
     parser.add_argument("--exclude", metavar="DIR", help="not the schemas under DIR")
     parser.add_argument(
         "--no-timing",

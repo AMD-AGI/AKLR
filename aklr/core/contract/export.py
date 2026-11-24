@@ -105,7 +105,7 @@ def read_calls(directory: Path) -> list[CallRecord]:
 class SchemaCalls(NamedTuple):
     """The calls at the Points of one schema file: added, or committed and serving."""
 
-    # <op>/impls/<language>/<schema_name>/<uuid>.json, under the export dir or aklr/ops/
+    # <op>/impls/<language>/<schema_name>/<uuid>.json, under the export dir or the family's directory
     relative_path: PurePosixPath
     is_added: bool
     # (axes_text, n_calls): most calls first, then by axes_text

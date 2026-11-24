@@ -96,7 +96,7 @@ class ContractRegistry:
         if parsed.get("name") != schema.name:
             raise ValueError(
                 f"{where}: name {parsed.get('name')!r} is not {schema.name!r}: the "
-                "naming rule (aklr/ops/README.md, Names) or a declaration order changed"
+                "naming rule (OpContract.name_at) or a declaration order changed"
             )
         if text != expected_text:
             pairs = itertools.zip_longest(text.split("\n"), expected_text.split("\n"))

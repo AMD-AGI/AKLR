@@ -24,20 +24,21 @@ dependencies = [
 ]
 
 [project.entry-points."sglang.srt.plugins"]
-aklr = "aklr.plugins.sglang:register"
+aklr = "aklr.plugins.sglang:plugin.register"
+aklr_aiter = "aklr.plugins.aiter.provider:Provider.enable"
 
 [project.entry-points."vllm.general_plugins"]
-aklr = "aklr.plugins.vllm:register"
+aklr = "aklr.plugins.vllm:plugin.register"
+aklr_aiter = "aklr.plugins.aiter.provider:Provider.enable"
 
 [project.entry-points."aiter.plugins"]
-aklr = "aklr.plugins.aiter.provider:provider"
+aklr = "aklr.plugins.aiter.provider:Provider"
 
 [tool.setuptools.packages.find]
 include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
-"aklr.ops" = ["*/impls/*/*/*.json"]
-"aklr.plugins" = ["*/*/*/impls/*/*/*.json", "*/*/*/*.hip"]
+"aklr.plugins" = ["**/impls/*/*/*.json"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]
@@ -81,7 +82,7 @@ omit = [
 show_missing = true
 # Python line coverage does not measure JIT kernel bodies.
 omit = [
-    "aklr/ops/*/impls/*",
+    "aklr/plugins/*/*/impls/*",
 ]
 
 [tool.coverage.paths]

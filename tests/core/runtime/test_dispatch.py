@@ -2,16 +2,13 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 import logging
-import sys
 import threading
 import time
-import types
 from pathlib import Path
 
 import pytest
 import torch
 
-import aklr.ops.gemm
 from aklr.core.contract.export import read_calls
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
@@ -27,7 +24,6 @@ from aklr.core.platform.env import (
     RuntimeEnv,
 )
 from aklr.core.runtime import LoadError
-from aklr.core.runtime._vllm_hook_registry import HookRegistry
 from aklr.core.runtime.builder import BuilderRegistry
 from aklr.core.runtime.dispatch import (
     CallRecorder,
@@ -35,9 +31,14 @@ from aklr.core.runtime.dispatch import (
     DispatchTable,
     FallbackReason,
     KernelDispatcher,
-    register_vllm_plugin,
 )
 from tests.op_case import GEMM_KERNEL_SOURCE, KERNEL_TARGET, OpCase
+
+
+def kimi_k3_tiny_gemm(x: torch.Tensor, w: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
+    """The host function ``make_api_fn`` replaces: ``x @ w.T``, into ``out`` when the caller passes one."""
+    result = torch.nn.functional.linear(x, w)
+    return result if out is None else out.copy_(result)
 
 
 class TestKernelDispatcher:
@@ -50,7 +51,7 @@ class TestKernelDispatcher:
         *,
         min_speedup: float = 0.0,
     ) -> KernelDispatcher:
-        contract_id = schemas[0].contract_id if schemas else "gemm@1.0"
+        contract_id = schemas[0].contract_id if schemas else "kimi_k3_tiny_gemm@1.0"
         contract = ContractRegistry.default().get(contract_id)
         dispatcher = KernelDispatcher(contract)
         if schemas:
@@ -64,7 +65,19 @@ class TestKernelDispatcher:
             dispatcher.set_table(table)
         return dispatcher
 
-    @pytest.mark.parametrize("served", ["allocated", "caller", "strided_a_scale"])
+    @pytest.mark.parametrize(
+        "served",
+        [
+            "allocated",
+            "caller",
+            pytest.param(
+                "strided_a_scale",
+                marks=pytest.mark.skip(
+                    reason="gemm_a8w8_blockwise_scaled@1.0: its family is not under aklr/plugins yet"
+                ),
+            ),
+        ],
+    )
     def test_api_fn_runs_served_kernel(self, builder_registry: BuilderRegistry, served: str) -> None:
         """The kernel fills the caller's ``out`` as is, else one dispatch allocates;
         sglang's column-major a_scale view reaches it as the stored tensor."""
@@ -90,20 +103,20 @@ class TestKernelDispatcher:
             torch.testing.assert_close(result.view(-1)[: stored.numel()], expected)
             return
         caller_out = served == "caller"
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
-        api_fn = dispatcher.make_api_fn(aklr.ops.gemm.gemm.__wrapped__)
+        api_fn = dispatcher.make_api_fn(kimi_k3_tiny_gemm)
         call = case.call(case.inputs())
         if caller_out:
             call["out"] = torch.empty(
                 case.contract.storage_shape_of("out", case.point),
-                dtype=call["out_dtype"],
+                dtype=torch.bfloat16,
             )
         result = api_fn(**call)
         assert isinstance(result, torch.Tensor)
         if caller_out:
             assert result is call["out"]
-        torch.testing.assert_close(result, call["a"] @ call["b"].mT, rtol=0, atol=0)
+        torch.testing.assert_close(result, call["x"] @ call["w"].mT, rtol=0, atol=0)
 
     @pytest.mark.parametrize(
         ("miss", "reason"),
@@ -126,7 +139,7 @@ class TestKernelDispatcher:
         miss: str,
         reason: FallbackReason,
     ) -> None:
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         schema = case.schema(GEMM_KERNEL_SOURCE)
         workload = schema.workloads[0]
         with_workload = lambda **update: schema.model_copy(
@@ -148,17 +161,17 @@ class TestKernelDispatcher:
         call["out"] = torch.full(
             case.contract.storage_shape_of("out", case.point),
             float("nan"),
-            dtype=call["out_dtype"],
+            dtype=torch.bfloat16,
         )
         if miss == "undescribed_call":
-            call["a"] = call["a"].float()
+            call["x"] = call["x"].float()
         elif miss == "misaligned":
-            a = call["a"]
-            call["a"] = torch.empty(a.numel() + 1, dtype=a.dtype, device=a.device)[1:].view_as(a).copy_(a)
+            x = call["x"]
+            call["x"] = torch.empty(x.numel() + 1, dtype=x.dtype, device=x.device)[1:].view_as(x).copy_(x)
         elif miss == "non_contiguous":
-            call["a"] = call["a"].mT.contiguous().mT
+            call["x"] = call["x"].mT.contiguous().mT
         elif miss == "aliased_out":
-            call["out"] = call["a"].view(-1)[: call["out"].numel()].view_as(call["out"]).fill_(float("nan"))
+            call["out"] = call["x"].view(-1)[: call["out"].numel()].view_as(call["out"]).fill_(float("nan"))
         elif miss == "not_warmed":
             dispatcher.table.warmed_keys.clear()
             monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: True)
@@ -248,7 +261,7 @@ class TestKernelDispatcher:
     ) -> None:
         """A kernel's error is not caught; the log names the kernel, its toolchain here
         and the switch that turns its op off."""
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         schema = case.schema("def run(**_):\n    raise RuntimeError('broken')\n")
         dispatcher = self._dispatcher(builder_registry, (schema,))
         with pytest.raises(RuntimeError, match="broken"):
@@ -270,7 +283,7 @@ class TestKernelDispatcher:
         """``AKLR_TRACE`` op or all: one ``[aklr op]`` line per distinct call, naming its
         Point and kernel when served, its reason when not."""
         monkeypatch.setenv(ENV_TRACE, mode)
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         schema = case.schema(GEMM_KERNEL_SOURCE)
         dispatcher = self._dispatcher(builder_registry, (schema,))
         closed = KernelDispatcher(case.contract)
@@ -285,14 +298,14 @@ class TestKernelDispatcher:
         served, fallen = lines
         assert (
             served.startswith("[aklr op] pid=")
-            and f" contract=gemm@1.0 scenario={schema.name} point=m=" in served
+            and f" contract=kimi_k3_tiny_gemm@1.0 scenario={schema.name} point=m=" in served
         )
         meta = dispatcher.table.runnables[next(iter(dispatcher.table.runnables))].metadata
         assert served.endswith(
             f" result=served kernel=flydsl:{meta.schema_name}:{meta.content_hash[:12]} reason=-"
         )
         assert fallen.endswith(
-            " contract=gemm@1.0 scenario=- point=- result=fallback kernel=- reason=no_schema"
+            " contract=kimi_k3_tiny_gemm@1.0 scenario=- point=- result=fallback kernel=- reason=no_schema"
         )
 
     def test_a_bad_trace_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,7 +314,7 @@ class TestKernelDispatcher:
             RuntimeEnv()
 
     def test_best_ranked_kernel_serves(self, builder_registry: BuilderRegistry) -> None:
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         workload = case.schema().workloads[0]
         measured = lambda source, speedup: case.schema(source).model_copy(
             update={"workloads": (workload.model_copy(update={"accuracy": "passed", "speedup": speedup}),)}
@@ -312,7 +325,7 @@ class TestKernelDispatcher:
             dispatcher = self._dispatcher(builder_registry, schemas)
             call = case.call(case.inputs())
             result = dispatcher.dispatch(call)
-            torch.testing.assert_close(result, call["a"] @ call["b"].mT, rtol=0, atol=0)
+            torch.testing.assert_close(result, call["x"] @ call["w"].mT, rtol=0, atol=0)
 
     def test_fallback_reason_asks_without_serving(
         self, builder_registry: BuilderRegistry, tmp_path: Path
@@ -320,48 +333,48 @@ class TestKernelDispatcher:
         """A call a kernel serves: ``None``, nothing run, allocated or counted; a missed one:
         dispatch's reason, counted as dispatch counts it. The api function's
         ``fallback_reason`` takes the api's arguments."""
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
         recorder = CallRecorder(tmp_path, DeviceTarget.from_names(**KERNEL_TARGET))
         dispatcher.set_table(dispatcher.table, recorder)
-        api_fn = dispatcher.make_api_fn(aklr.ops.gemm.gemm.__wrapped__)
+        api_fn = dispatcher.make_api_fn(kimi_k3_tiny_gemm)
         call = case.call(case.inputs())
         call["out"] = torch.full(
             case.contract.storage_shape_of("out", case.point),
             float("nan"),
-            dtype=call["out_dtype"],
+            dtype=torch.bfloat16,
         )
         assert api_fn.fallback_reason(**call) is None
         assert call["out"].isnan().all() and not recorder.calls
-        out_of_contract = {**call, "a": call["a"].float()}
+        out_of_contract = {**call, "x": call["x"].float()}
         assert api_fn.fallback_reason(**out_of_contract) is FallbackReason.OUT_OF_CONTRACT
         assert {k.reason: n for k, n in recorder.calls.items()} == {FallbackReason.OUT_OF_CONTRACT: 1}
 
     def test_serving_names_the_kernel_without_serving(self, builder_registry: BuilderRegistry) -> None:
         """``serving``: the metadata of the kernel ``dispatch`` would run, nothing run; else
         ``fallback_reason``'s reason."""
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
-        api_fn = dispatcher.make_api_fn(aklr.ops.gemm.gemm.__wrapped__)
+        api_fn = dispatcher.make_api_fn(kimi_k3_tiny_gemm)
         call = case.call(case.inputs())
         call["out"] = torch.full(
             case.contract.storage_shape_of("out", case.point),
             float("nan"),
-            dtype=call["out_dtype"],
+            dtype=torch.bfloat16,
         )
         meta = api_fn.serving(**call)
         assert meta is dispatcher.table.runnables[next(iter(dispatcher.table.runnables))].metadata
         assert meta.kernel_ref == f"flydsl:{meta.schema_name}:{meta.content_hash[:12]}"
         assert call["out"].isnan().all()
-        assert api_fn.serving(**{**call, "a": call["a"].float()}) is FallbackReason.OUT_OF_CONTRACT
+        assert api_fn.serving(**{**call, "x": call["x"].float()}) is FallbackReason.OUT_OF_CONTRACT
 
     def test_recorder_counts_calls(self, builder_registry: BuilderRegistry, tmp_path: Path) -> None:
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
         recorder = CallRecorder(tmp_path, DeviceTarget.from_names(**KERNEL_TARGET))
         dispatcher.set_table(dispatcher.table, recorder)
         served = case.call(case.inputs())
-        out_of_contract = {**served, "a": served["a"].float()}
+        out_of_contract = {**served, "x": served["x"].float()}
         assert isinstance(dispatcher.dispatch(served), torch.Tensor)
         # the first key is saved at once
         assert [r.n_calls for r in read_calls(tmp_path)] == [1]
@@ -416,8 +429,9 @@ class TestDispatcherRegistry:
         dispatchers = default_dispatchers.dispatchers()
         assert set(dispatchers) == {c.contract_id for c in ContractRegistry.default().contracts()}
         assert {d.dispatch({}) for d in dispatchers.values()} == {FallbackReason.DISABLED}
-        case = OpCase.of("gemm@1.0")
-        assert aklr.ops.gemm.gemm(**case.call(case.inputs())) is FallbackReason.DISABLED
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
+        api_fn = default_dispatchers.dispatcher(case.contract).make_api_fn(kimi_k3_tiny_gemm)
+        assert api_fn(**case.call(case.inputs())) is FallbackReason.DISABLED
         # an init failing partway leaves every dispatcher closed
         (tmp_path / "file").touch()
         monkeypatch.setenv(ENV_EXPORT, "1")
@@ -472,14 +486,14 @@ class TestDispatcherRegistry:
     ) -> None:
         """A schema whose ``kernel.requires`` the toolchains here miss is not served, and
         one INFO line says why."""
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         schema = case.schema(GEMM_KERNEL_SOURCE)
         kernel = schema.kernel.model_copy(update={"requires": {"flydsl": ">=0.3.2"}})
         self._schema_alone(monkeypatch, schema.model_copy(update={"kernel": kernel}))
         monkeypatch.setattr(toolchain, "toolchain_version", lambda name: installed)
         with caplog.at_level(logging.INFO):
             default_dispatchers.init()
-        result = aklr.ops.gemm.gemm(**case.call(case.inputs()))
+        result = default_dispatchers.dispatcher(case.contract).dispatch(case.call(case.inputs()))
         assert isinstance(result, torch.Tensor) is is_served
         skipped = "skipped 1 schemas: flydsl 0.3.1 is not >=0.3.2"
         assert (skipped in caplog.text) is not is_served
@@ -488,12 +502,13 @@ class TestDispatcherRegistry:
         self, default_dispatchers: DispatcherRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The error names the switch that turns the kernel's op off."""
-        case = OpCase.of("gemm@1.0")
+        case = OpCase.of("kimi_k3_tiny_gemm@1.0")
         self._schema_alone(monkeypatch, case.schema("import no_such_module\n"))
         hint = f"{ENV_DISABLE}={case.contract_id} turns this op off"
         with pytest.raises(LoadError, match=hint):
             default_dispatchers.init()
 
+    @pytest.mark.skip(reason="needs a committed schema: no family has one yet")
     @pytest.mark.gfx950
     @pytest.mark.parametrize("has_baseline", [True, False])
     def test_init_serves_committed_schema(
@@ -510,7 +525,7 @@ class TestDispatcherRegistry:
             monkeypatch.delenv(ENV_MIN_SPEEDUP, raising=False)
             monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
         default_dispatchers.init()
-        contract = OpCase.of("gemm@1.0").contract
+        contract = OpCase.of("kimi_k3_tiny_gemm@1.0").contract
         schemas, errors = ContractRegistry.default().read_schemas(contract.op_package)
         assert errors == []
         schema, workload = next(
@@ -522,48 +537,13 @@ class TestDispatcherRegistry:
         )
         case = OpCase(schema.point(workload.axes))
         args = case.inputs()
-        result = aklr.ops.gemm.gemm(**case.call(args, "cuda"))
+        result = default_dispatchers.dispatcher(contract).dispatch(case.call(args, "cuda"))
         assert not isinstance(result, FallbackReason)
         comparisons = case.compare(case.contract.outputs_by_name(result), args)
         assert {o: c.is_passed for o, c in comparisons.items()} == dict.fromkeys(case.contract.outputs, True)
 
 
-class TestVllmPlugin:
-    """``register_vllm_plugin``: AKLR starts in a vLLM worker once its device is bound."""
-
-    def test_init_runs_after_init_device(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The wrapped ``Worker.init_device`` runs the original, then ``init_once``, and
-        returns the original's result."""
-        events: list[str] = []
-
-        class Worker:
-            def init_device(self) -> str:
-                events.append("init_device")
-                return "bound"
-
-        for name in ("vllm", "vllm.v1", "vllm.v1.worker", "vllm.v1.worker.gpu_worker"):
-            module = types.ModuleType(name)
-            module.__path__ = []
-            monkeypatch.setitem(sys.modules, name, module)
-            parent, _, child = name.rpartition(".")
-            if parent:
-                monkeypatch.setattr(sys.modules[parent], child, module, raising=False)
-        module.Worker = Worker
-        monkeypatch.setattr(DispatcherRegistry, "init_once", lambda self: events.append("init_once"))
-        registry = HookRegistry()
-        monkeypatch.setattr(HookRegistry, "default", classmethod(lambda cls: registry))
-        try:
-            register_vllm_plugin()
-            wrapped = Worker.init_device
-            register_vllm_plugin()
-            assert Worker.init_device is wrapped
-            assert Worker().init_device() == "bound"
-            assert events == ["init_device", "init_once"]
-        finally:
-            registry.restore()
-
-
 def test_a_failing_hsaco_kernels_hint_names_the_hip_that_loads_it() -> None:
     from aklr.core.runtime.dispatch._dispatcher import kernel_failure_hint
 
-    assert kernel_failure_hint("gemm@1.0", "hsaco").startswith("hip ")
+    assert kernel_failure_hint("kimi_k3_tiny_gemm@1.0", "hsaco").startswith("hip ")

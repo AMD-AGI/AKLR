@@ -47,6 +47,8 @@ class DTypeSpec(FrozenModel):
     any_of: tuple[DType, ...] | None = None
     same_as_tensor: str | None = None
     default: DType | None = None
+    # an output's only: the api param through which the caller picks its dtype; None: not the caller's choice
+    param_name: str | None = None
 
     @model_validator(mode="after")
     def _check(self) -> DTypeSpec:
@@ -107,7 +109,7 @@ class TensorSpec(FrozenModel):
         (shape,) = self.shape_cases(attrs)
         update: dict[str, Any] = {"shape": shape}
         if dtype is not None:
-            update["dtype"] = DTypeSpec(any_of=(DType(dtype),))
+            update["dtype"] = DTypeSpec(any_of=(DType(dtype),), param_name=self.dtype.param_name)
             update["distribution"] = self._decide_branches(self.distribution, symbols)
             update["error_bounds"] = self._decide_branches(self.error_bounds, symbols)
         return type(self)(**{**dict(self), **update})
