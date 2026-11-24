@@ -59,7 +59,7 @@ class KimiK3LatentMoeTailBaseline(DistOpBaseline):
         vLLM's TP group before its first call: the peer buffer every rank maps, the launch counters and the health
         words. Kept until the process ends, as in vLLM: a rank freeing its buffer could not know that no peer still
         writes to it without a collective, which a peer stopped at a finding would never join."""
-        from aklr.plugins.vllm.models.kimi_k3.latent_moe import runtime
+        from aklr.core.jit import kimi_k3_latent_moe_tail as runtime
 
         device = torch.device("cuda", torch.cuda.current_device())
         if runtime.setup(dist.group.WORLD, dist.get_rank(), dist.get_world_size(), device) is None:

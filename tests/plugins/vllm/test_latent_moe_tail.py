@@ -24,9 +24,10 @@ from aklr.core.contract.fastkey import FastKeyCodec, FastKeyFnGenerator
 from aklr.core.contract.locate import committed_schema_paths, op_dir, schema_relative_path, schema_uuid
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
+from aklr.core.jit import kimi_k3_latent_moe_tail as runtime
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins import vllm as plugin
-from aklr.plugins.vllm.models.kimi_k3.latent_moe import api, runtime
+from aklr.plugins.vllm.models.kimi_k3.latent_moe import api
 from aklr.plugins.vllm.models.kimi_k3.latent_moe.contract import KIMI_K3_LATENT_MOE_TAIL
 
 TP, HIDDEN, LATENT = 8, 7168, 3584
@@ -481,6 +482,7 @@ def _fresh_route(monkeypatch):
     monkeypatch.setattr(api, "_VERDICTS", {})
     monkeypatch.setattr(api, "_ENABLED", True)
     monkeypatch.setattr(api, "_CHECK", False)
+    monkeypatch.setattr(plugin, "AFTER_STEP", [])
 
 
 @pytest.fixture
@@ -600,7 +602,7 @@ def test_a_call_the_dispatcher_declines_goes_back_before_the_setup(vllm_tp, op):
 
 def test_a_supported_call_hands_vllms_operands_over(vllm_tp, op):
     """vLLM's own tensors, no copy: the routed and shared partials, this rank's up rows, the norm's weight and eps;
-    the group set up once, over vLLM's TP group."""
+    the group set up once, over vLLM's TP group, and its fail-stop watched after every step."""
     run = runner()
     fused, shared = outputs(10)
     out = api._shard_up_proj_tail(run, fused, shared, None)
@@ -611,7 +613,7 @@ def test_a_supported_call_hands_vllms_operands_over(vllm_tp, op):
     assert args[2] is run.routed_output_transform.up_proj.weight
     assert args[3] is run.routed_output_transform.norm.weight
     assert kwargs == {"tp_size": TP, "eps": 1e-5}
-    assert vllm_tp.setups == [(0, TP, fused.device)]
+    assert vllm_tp.setups == [(0, TP, fused.device)] and plugin.AFTER_STEP == [runtime.after_step]
 
 
 @pytest.mark.parametrize("rank", [0, 3, 7])
@@ -654,7 +656,7 @@ def test_a_group_the_ranks_could_not_set_up_keeps_every_call_with_vllm(vllm_tp, 
     monkeypatch.setattr(runtime, "setup", lambda *args, **kwargs: vllm_tp.setups.append(args))
     for n in (10, 40):
         assert api._shard_up_proj_tail(runner(), *outputs(n), None) is FallbackReason.OUT_OF_CONTRACT
-    assert op.calls == [] and len(vllm_tp.setups) == 1
+    assert op.calls == [] and len(vllm_tp.setups) == 1 and plugin.AFTER_STEP == []
 
 
 @pytest.fixture
@@ -916,6 +918,7 @@ def steps_on_rank(rank, world, words, failing_rank, failing_step, captured):
     anything more, and no rank's launches end before every rank's got that far (the kernel's exchange: a barrier)."""
     hip = fake_hip_on(rank, world, words)
     runtime.setup(dist.group.WORLD, rank, world, torch.device("cpu"), hip=hip)
+    plugin.AFTER_STEP.append(runtime.after_step)  # as the route registers it with the group (api._group)
     outputs = []
     for step in range(6):
         torch.cuda.is_current_stream_capturing = lambda step=step: step in captured

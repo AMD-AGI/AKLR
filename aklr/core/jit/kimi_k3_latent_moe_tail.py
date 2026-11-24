@@ -8,17 +8,18 @@
 # Source: vllm/models/kimi_k3/amd/specialized_decode/runtime/peer.py (PeerBuffer, tp_agree; itself adapted from
 # ROCm/ATOM at a526f0d, MIT License) and runtime/guards.py (FailStop), as in vLLM 0.32.1rc1.dev276
 # Modified by Advanced Micro Devices, Inc. for the AKLR project.
-# Modified for aklr/plugins/vllm/models/kimi_k3/latent_moe: HIP's IPC calls made here (as aiter's MIT-licensed
-# UncachedIpcHeap makes them) instead of through aiter; per-workgroup launch counters in place of the step epoch;
-# the fail-stop watch run from the vLLM plugin's step hook
+# Modified for aklr/plugins/vllm/models/kimi_k3/latent_moe, whose kernels import it from aklr/core/jit: HIP's IPC calls
+# made here (as aiter's MIT-licensed UncachedIpcHeap makes them) instead of through aiter; per-workgroup launch
+# counters in place of the step epoch; the fail-stop watch run from the vLLM plugin's step hook
 #
 # This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
 # not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
-"""What the latent-MoE tail kernel keeps per rank between calls: an uncached buffer every rank of the group has
-mapped (``peer_table``, the ranks' base addresses) with the group's FAILED word at its end, a device scratch, one
-launch counter per workgroup and the health words.
+"""What the latent-MoE tail kernel (kimi_k3_latent_moe_tail@1.0) keeps per rank between calls: an uncached buffer
+every rank of the group has mapped (``peer_table``, the ranks' base addresses) with the group's FAILED word at its
+end, a device scratch, one launch counter per workgroup and the health words. The kernels read it, so it lives in
+aklr.core.jit, the one part of aklr a kernel may import (SA5); the vLLM route and the op's baseline set it up.
 
 Every launch of the kernel reads its workgroup's counter as its mailbox tag and bumps it as it ends, so every rank's
 counters advance together as long as every rank launches the kernel the same number of times: the route declines
@@ -30,9 +31,9 @@ because the group's word is set (they all do, soon: so no rank hangs) sets it on
 sticky. So whatever data any rank reads from a wait that gave up, its own group word was set first: a rank's group
 word, read after its step's launches, says whether its step saw one.
 
-``after_step`` (the vLLM plugin's step watch) queues a copy of this rank's group word to pinned memory once a step,
-on a stream of its own after the step's launches: no collective, nothing waits. Its check runs before the step's
-output leaves the worker (as vLLM's output thread reads it) and raises once the word is set.
+``after_step`` (the vLLM plugin's step watch, which the route registers) queues a copy of this rank's group word to
+pinned memory once a step, on a stream of its own after the step's launches: no collective, nothing waits. Its check
+runs before the step's output leaves the worker (as vLLM's output thread reads it) and raises once the word is set.
 """
 
 from __future__ import annotations
@@ -303,7 +304,6 @@ def setup(cpu_group: Any, rank: int, world: int, device: torch.device, hip: Any 
         _release(hip, opened, local)
         return None
     _GROUPS[device] = group
-    _register_after_step()
     return group
 
 
@@ -352,13 +352,6 @@ def after_step() -> Callable[[], None] | None:
             one()
 
     return check
-
-
-def _register_after_step() -> None:
-    from aklr.plugins import vllm as plugin
-
-    if after_step not in plugin.AFTER_STEP:
-        plugin.AFTER_STEP.append(after_step)
 
 
 class _FailStop:

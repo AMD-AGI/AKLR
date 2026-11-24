@@ -19,9 +19,9 @@ import os
 import torch
 import torch.distributed as dist
 
+from aklr.core.jit import kimi_k3_latent_moe_tail as runtime
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.vllm.hook import _original, vllm_route
-from aklr.plugins.vllm.models.kimi_k3.latent_moe import runtime
 from aklr.plugins.vllm.models.kimi_k3.latent_moe.contract import KIMI_K3_LATENT_MOE_TAIL
 
 __all__ = ["kimi_k3_latent_moe_tail"]
@@ -120,12 +120,17 @@ def _out_of_contract(runner, fused_output, shared_output, trunc_size) -> list[st
 
 def _group(device: torch.device) -> runtime.TailGroup | None:
     """The kernel's group state on ``device``, set up over vLLM's TP group by the first call that gets here (every
-    rank's, outside a capture); None where the ranks agreed it cannot be."""
+    rank's, outside a capture), its fail-stop watched after every step (``runtime.after_step``); None where the ranks
+    agreed it cannot be."""
     if device not in _GROUPS:
         from vllm.distributed import get_tp_group
 
+        from aklr.plugins import vllm as plugin
+
         tp = get_tp_group()
         _GROUPS[device] = runtime.setup(tp.cpu_group, tp.rank_in_group, tp.world_size, device)
+        if _GROUPS[device] is not None and runtime.after_step not in plugin.AFTER_STEP:
+            plugin.AFTER_STEP.append(runtime.after_step)
     return _GROUPS[device]
 
 
