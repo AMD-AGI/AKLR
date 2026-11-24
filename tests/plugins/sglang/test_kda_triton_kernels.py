@@ -133,3 +133,34 @@ def test_a_committed_decode_kernel_normalizes_past_float32s_squares(builder_regi
         args["state_cache"].zero_()
     outputs = _run(builder_registry, case, kernel, args)
     assert not outputs["out"].any()
+
+
+def _smallest_prefill_points() -> list[tuple[Path, dict]]:
+    """Each committed prefill and snapshot schema at its first workload (one sequence, its fewest tokens)."""
+    return [
+        (path, json.loads(path.read_text())["workloads"][0]["axes"])
+        for path in _schemas("kimi_k3_sgl_kda_prefill")
+    ]
+
+
+@pytest.mark.gfx950
+@pytest.mark.parametrize(
+    ("path", "axes"),
+    _smallest_prefill_points() + _prefill_points(),
+    ids=lambda v: _schema_id(v) if isinstance(v, Path) else f"{v['n_tokens']}x{v['n_seqs']}",
+)
+def test_a_committed_prefill_kernel_keeps_a_delta_past_fp16s_range(builder_registry, path, axes):
+    """q = k = e0 at every token, raw beta 0 (beta 1/2), zero states, and v of 2**18 at each sequence's first token on
+    value channels 0-63: the first delta, beta v = 2**17, and the next ones, beta (v - S k), pass fp16's largest,
+    65504, while the kernel's u = beta (v - Kd h) goes through fp16; channels 64-127 keep their drawn v beside them.
+    The outputs, states and snapshots stay finite and within their bounds."""
+    case, kernel = _case(path, axes)
+    args = case.inputs()
+    q, k, v = args["qkv"].unflatten(1, (3, case.point.axes["n_heads"])).unbind(1)
+    for x in (q, k):
+        x.zero_()
+        x[..., 0] = 1
+    v[args["cu_seqlens"][:-1].long(), :, :64] = 2.0**18
+    args["raw_beta"].zero_()
+    args["state_cache"].zero_()
+    _run(builder_registry, case, kernel, args)
