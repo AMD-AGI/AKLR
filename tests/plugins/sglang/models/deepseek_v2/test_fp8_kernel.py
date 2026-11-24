@@ -45,9 +45,7 @@ def test_glm_fp8_decode_rows_match_native(rows, inter_dim, bias_dtype, builder_r
     if bias_dtype == "float32":
         # Cover a representative positive layer offset without truncating the
         # FP32 differences that determine expert ordering.
-        arguments["correction_bias"] = torch.linspace(
-            7.94, 8.06, point.axes["n_routed"], dtype=torch.float32
-        )
+        arguments["correction_bias"] = torch.linspace(7.94, 8.06, point.axes["n_routed"], dtype=torch.float32)
     call = case.call(arguments, "cuda")
     call["out"] = torch.full_like(call["hidden_states"], float("nan"))
     native = DEEPSEEK_V2_FP8_MOE.baseline()(**call)
