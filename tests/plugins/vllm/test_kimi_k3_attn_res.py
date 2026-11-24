@@ -241,3 +241,43 @@ def test_a_committed_kernel_mixes_rows_past_float32s_squares(builder_registry, p
         args["score_proj_weight"].fill_(1.0)
 
     _run_committed(builder_registry, path, n_tokens, fill)
+
+
+def _split_points() -> list[tuple[Path, int]]:
+    """(schema, n_tokens) of every committed workload past 512 tokens of a kernel with a split build (its column
+    shares exchange partials through scratch): the tokens past 512 are the split's."""
+    points = []
+    for path in _kernel_schemas():
+        data = json.loads(path.read_text())
+        if any("def _make_split" in s["content"] for s in data["kernel"]["sources"]):
+            points += [
+                (path, w["axes"]["n_tokens"]) for w in data["workloads"] if 512 < w["axes"]["n_tokens"] <= 560
+            ]
+    return points
+
+
+@pytest.mark.gfx950
+@pytest.mark.parametrize(
+    ("path", "n_tokens"), _split_points(), ids=lambda v: _schema_id(v) if isinstance(v, Path) else str(v)
+)
+def test_a_split_build_normalizes_a_mix_whose_rows_cancel(builder_registry, path, n_tokens):
+    """Bank rows 0 and 1 are x and -x with |x| near 1024, the other rows and p near 1, score weights 0 (every row
+    weighted alike): the mix is the small rows' and its sum of squares a 2**-20 part of the rows'. A sum of squares
+    taken from the rows' Gram partials (x.x + (-x).(-x) + 2 x.(-x)) cancels to float32's rounding of the large terms,
+    13% off at 1024 and negative, the out NaN, at 4096; the mix's own sum of squares is exact to float32."""
+
+    def fill(args, has_norm):
+        gen = torch.Generator().manual_seed(1)
+        x = torch.randn(args["prefix"].shape, generator=gen) * 1024
+        args["bank"][:, 0] = x.to(torch.bfloat16)
+        args["bank"][:, 1] = (-x).to(torch.bfloat16)
+        args["bank"][:, 2:].copy_(torch.randn(args["bank"][:, 2:].shape, generator=gen))
+        args["prefix"].copy_(torch.randn(args["prefix"].shape, generator=gen))
+        if args.get("addend") is not None:
+            args["addend"].copy_(torch.randn(args["addend"].shape, generator=gen))
+        args["score_norm_weight"].zero_()
+        args["score_proj_weight"].zero_()
+        if args.get("norm_weight") is not None:
+            args["norm_weight"].fill_(1.0)
+
+    _run_committed(builder_registry, path, n_tokens, fill)
