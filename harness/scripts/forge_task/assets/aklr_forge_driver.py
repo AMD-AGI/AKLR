@@ -122,21 +122,15 @@ def _candidate_text() -> tuple[str, str]:
     return text, schema_uuid(raw["name"], op_contract.authored_parts(json.loads(text)))
 
 
-def _publish() -> tuple[Path, str | None]:
-    """Write the candidate where AKLR keeps kernels, its op's directory (aklr/ops/<op>, or a plugin op's own package
-    under aklr/plugins); return its path relative to the checkout, and the text of the file the checkout held there
-    (the same kernel, committed or published before), None where it held none."""
+def _publish() -> Path:
+    """Write the candidate where AKLR keeps kernels; return its path relative to the checkout."""
     _, _, schema_relative_path, _ = _aklr()
-    from aklr.core.contract.locate import op_package_of
-
     text, uuid = _candidate_text()
     raw = json.loads(text)
-    path = Path(*op_package_of(OP_DIR).split("."), schema_relative_path(raw["name"], LANGUAGE, uuid))
-    target = AKLR_ROOT / path
-    held = target.read_text(encoding="utf-8") if target.is_file() else None
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text, encoding="utf-8")
-    return path, held
+    path = Path("aklr/ops", OP_DIR, schema_relative_path(raw["name"], LANGUAGE, uuid))
+    (AKLR_ROOT / path).parent.mkdir(parents=True, exist_ok=True)
+    (AKLR_ROOT / path).write_text(text, encoding="utf-8")
+    return path
 
 
 def _platform_failed(report: dict) -> bool:
@@ -161,7 +155,7 @@ def _validate(out: Path) -> dict:
     report = out / "report.json"
     if report.is_file():
         return json.loads(report.read_text(encoding="utf-8"))
-    path, held = _publish()
+    path = _publish()
     # `python -m` run from the checkout's root imports that checkout's aklr.
     command = [
         sys.executable,
@@ -184,12 +178,8 @@ def _validate(out: Path) -> dict:
             check=False,
         )
     finally:
-        # Another kernel's file left in the checkout would be served beside the next one; a file the checkout held
-        # there goes back as it was
-        if held is None:
-            (AKLR_ROOT / path).unlink(missing_ok=True)
-        else:
-            (AKLR_ROOT / path).write_text(held, encoding="utf-8")
+        # Another kernel's file left in the checkout would be served beside the next one.
+        (AKLR_ROOT / path).unlink(missing_ok=True)
     if not report.is_file():
         sys.stderr.write(completed.stdout[-3000:] + completed.stderr[-3000:])
         raise SystemExit(f"aklr validate wrote no report (exit {completed.returncode})")
@@ -581,7 +571,7 @@ def main() -> int:
     )
     args, _unknown = parser.parse_known_args()
     if args.publish:
-        print(_publish()[0])
+        print(_publish())
         return 0
     if args.profile_run:
         return _run_profile()
