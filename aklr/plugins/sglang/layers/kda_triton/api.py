@@ -78,11 +78,13 @@ def _packed(q, k, v, heads, dim):
 
 def _layer_operands(q, b, A_log, dt_bias, ssm_states, cache_indices):
     """(name, failed) of what the route takes as sglang's KDA backend passes it: bf16 rows, beta [1, n, heads] dense
-    in its heads, A_log and dt_bias per head, the float32 pool [slots, heads, v, k] dense, int32 slots."""
+    in its heads, its elements within int32 offsets of its first (the kernels' offsets), A_log and dt_bias per head,
+    the float32 pool [slots, heads, v, k] dense, int32 slots."""
     n, heads, dim = q.shape[1], q.shape[2], q.shape[3]
     return (
         ("q|k|v not bf16", q.dtype != torch.bfloat16),
         ("beta", tuple(b.shape) != (1, n, heads) or b.stride(2) != 1 or b.dtype != torch.bfloat16),
+        ("beta past int32 offsets", (n - 1) * b.stride(1) + heads - 1 >= 2**31),
         ("A_log", A_log.numel() != heads or A_log.dtype != torch.float32 or not A_log.is_contiguous()),
         (
             "dt_bias",

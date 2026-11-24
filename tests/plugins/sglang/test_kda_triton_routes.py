@@ -191,6 +191,10 @@ OPERAND_CHANGES = {
     "beta_fp32": lambda c: c.update(beta=c["beta"].float()),
     "bf16_state": lambda c: c.update(ssm_states=c["ssm_states"].to(torch.bfloat16)),
     "state_k_major": lambda c: c.update(ssm_states=c["ssm_states"].transpose(-1, -2)),
+    # rows of beta 2**29 elements apart: the 8th past the kernels' int32 element offsets
+    "beta_past_int32": lambda c: c.update(
+        beta=torch.empty_strided(c["beta"].shape, (2**32, 2**29, 1), dtype=torch.bfloat16, device="meta")
+    ),
 }
 
 
@@ -297,6 +301,7 @@ def test_aligned_only_tracking_serves_the_plain_prefill(prefill_ops):
         "beta_fp32",
         "bf16_state",
         "state_k_major",
+        "beta_past_int32",
     ],
     ids=[
         "no_lower_bound",
@@ -317,6 +322,7 @@ def test_aligned_only_tracking_serves_the_plain_prefill(prefill_ops):
         "beta_fp32",
         "bf16_state",
         "state_k_major",
+        "beta_past_int32",
     ],  # fmt: skip
 )
 def test_other_prefills_stay_with_sglang(monkeypatch, change):
