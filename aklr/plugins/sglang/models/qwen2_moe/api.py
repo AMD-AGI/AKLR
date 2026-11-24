@@ -10,6 +10,7 @@ from aklr.plugins.sglang.models.qwen2_moe.contract import (
     QWEN2_MOE_FP8_EXPERTS,
     QWEN2_MOE_FP8_ROUTER_EXPERTS,
     QWEN2_MOE_MXFP4_MOE,
+    QWEN2_MOE_MXFP4_ROUTER_EXPERTS,
     QWEN2_MOE_ROUTER,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "qwen2_moe_fp8_experts",
     "qwen2_moe_fp8_router_experts",
     "qwen2_moe_mxfp4_moe",
+    "qwen2_moe_mxfp4_router_experts",
     "qwen2_moe_router",
 ]
 
@@ -66,6 +68,19 @@ def qwen2_moe_mxfp4_moe(
 ): ...
 
 
+@api(QWEN2_MOE_MXFP4_ROUTER_EXPERTS)
+def qwen2_moe_mxfp4_router_experts(
+    hidden_states,
+    router_weight,
+    shared_gate_weight,
+    w1,
+    w1_scale,
+    w2,
+    w2_scale,
+    topk=10,
+): ...
+
+
 @sglang_route("sglang.srt.models.qwen2_moe.Qwen2MoeSparseMoeBlock.forward", versions=("0.5.22", "0.5.23"))
 def _forward(self, hidden_states, forward_batch=None, defer_finalize=False):
     """The whole block, its BF16 shared expert apart from the MXFP4 experts (sglang's path for
@@ -107,9 +122,9 @@ def _forward(self, hidden_states, forward_batch=None, defer_finalize=False):
     versions=("0.5.22", "0.5.23"),
 )
 def _forward_router_experts(self, hidden_states, *, defer_finalize=False):
-    """The router and experts, the shared expert last, as one op; where it does not serve, the
-    router op, then the experts op or sglang's experts on its routing. The output is this
-    rank's share, as sglang's."""
+    """The router and experts, the shared expert last, as one op; where it does not serve, for
+    fp8 experts the router op, then the experts op or sglang's experts on its routing (MXFP4
+    experts fall back whole). The output is this rank's share, as sglang's."""
     import torch
 
     if (
@@ -121,6 +136,17 @@ def _forward_router_experts(self, hidden_states, *, defer_finalize=False):
     ):
         return FallbackReason.OUT_OF_CONTRACT
     experts, topk = self.experts, self.topk.topk_config.top_k
+    if moe_blocks.experts_format(experts) == "QuarkW4A4MXFp4MoE":
+        return qwen2_moe_mxfp4_router_experts(
+            hidden_states=hidden_states,
+            router_weight=self.gate.weight,
+            shared_gate_weight=self.shared_expert_gate.weight,
+            w1=experts.w13_weight,
+            w1_scale=experts.w13_weight_scale,
+            w2=experts.w2_weight,
+            w2_scale=experts.w2_weight_scale,
+            topk=topk,
+        )
     expert_args = {
         "hidden_states": hidden_states,
         "shared_gate_weight": self.shared_expert_gate.weight,
@@ -162,7 +188,7 @@ def _block_falls_back(block) -> bool:
         get_parallel().moe_ep_size != 1
         or block.num_fused_shared_experts != 1
         or moe_blocks.topk_falls_back(block.topk, scoring_func="softmax", biased=False)
-        or moe_blocks.experts_fall_back(block.experts, ("Fp8MoEMethod",))
+        or moe_blocks.experts_fall_back(block.experts, ("Fp8MoEMethod", "QuarkW4A4MXFp4MoE"))
     )
 
 

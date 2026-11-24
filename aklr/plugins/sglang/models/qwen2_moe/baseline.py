@@ -11,7 +11,9 @@ quantizes the activations per 1 x 128). sglang's runner also patches aiter's MoE
 for decode-sized calls (apply_aiter_small_moe_sort_patch); the baselines leave aiter's
 process state alone and time aiter's own sorting.
 
-With MXFP4 experts and the shared expert apart in BF16, the whole forward: the shared
+With MXFP4 experts and the MXFP4 shared expert fused into them, the same routing, then
+FusedMoE (sglang's gfx950 small-M kernel where it serves, else aiter's fused_moe at
+per_1x32). With MXFP4 experts and the shared expert apart in BF16, the whole forward: the shared
 expert, then the gate, fused_topk and FusedMoE (sglang's gfx950 small-M kernel where it
 serves, else aiter's fused_moe at per_1x32), then the shared expert's fused gate added."""
 
@@ -25,6 +27,7 @@ __all__ = [
     "Qwen2MoeFp8ExpertsBaseline",
     "Qwen2MoeFp8RouterExpertsBaseline",
     "Qwen2MoeMxfp4MoeBaseline",
+    "Qwen2MoeMxfp4RouterExpertsBaseline",
     "Qwen2MoeRouterBaseline",
 ]
 
@@ -316,3 +319,29 @@ class Qwen2MoeMxfp4MoeBaseline(OpBaseline):
         routed = _mxfp4_experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)
         fused_gate_sigmoid_mul_add(hidden_states, shared_gate_weight.squeeze(), shared, routed)
         return {"out": routed}
+
+
+class Qwen2MoeMxfp4RouterExpertsBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        hidden_states,
+        router_weight,
+        shared_gate_weight,
+        w1,
+        w1_scale,
+        w2,
+        w2_scale,
+        topk=10,
+        out_dtype=None,
+        out=None,
+    ):
+        """_forward_router_experts: sglang's small-M router where it serves, else the gate,
+        fused_topk and the shared expert's fused gate; then FusedMoE (_mxfp4_experts)."""
+        _check_aiter_path()
+        routed = _smallm_router(hidden_states, router_weight, shared_gate_weight)
+        if routed is None or topk + _N_SHARED != routed[1].shape[-1]:
+            weights, ids = _topk(hidden_states, router_weight, topk)
+            routed = _with_shared(hidden_states, weights, ids, shared_gate_weight, router_weight.shape[0])
+        weights, ids = routed
+        return {"out": _mxfp4_experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)}

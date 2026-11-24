@@ -4,7 +4,8 @@
 """sglang's Qwen2MoeSparseMoeBlock with its shared expert fused into the experts (aiter's
 path for Qwen3.5 and Qwen3-Next): the router, the fp8 experts, and both at once. With
 MXFP4 experts and the shared expert kept apart in BF16 (sglang's path for Qwen3.5's MXFP4
-checkpoint, which cannot fuse it), the whole block.
+checkpoint, which cannot fuse it), the whole block; with the shared expert MXFP4 as well
+(Qwen3.5's AttnFP8-V2 checkpoint), fused in after the routed ones, the router and experts.
 
 A model is a scenario of each contract: Qwen3.5-397B-A17B at TP4 is model_dim 4096,
 n_routed 512, inter_dim 256 (and shared_inter_dim 256); Qwen3-Next-80B-A3B at TP4 is
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    MOE_MXFP4_SNR,
     DType,
     E8M0Scales,
     FiniteDistribution,
@@ -40,12 +42,14 @@ from aklr.plugins.sglang.models.qwen2_moe.baseline import (
     Qwen2MoeFp8ExpertsBaseline,
     Qwen2MoeFp8RouterExpertsBaseline,
     Qwen2MoeMxfp4MoeBaseline,
+    Qwen2MoeMxfp4RouterExpertsBaseline,
     Qwen2MoeRouterBaseline,
 )
 from aklr.plugins.sglang.models.qwen2_moe.reference import (
     Qwen2MoeFp8ExpertsReference,
     Qwen2MoeFp8RouterExpertsReference,
     Qwen2MoeMxfp4MoeReference,
+    Qwen2MoeMxfp4RouterExpertsReference,
     Qwen2MoeRouterReference,
 )
 
@@ -54,6 +58,7 @@ __all__ = [
     "QWEN2_MOE_FP8_EXPERTS",
     "QWEN2_MOE_FP8_ROUTER_EXPERTS",
     "QWEN2_MOE_MXFP4_MOE",
+    "QWEN2_MOE_MXFP4_ROUTER_EXPERTS",
     "QWEN2_MOE_ROUTER",
 ]
 
@@ -414,4 +419,86 @@ QWEN2_MOE_MXFP4_MOE = OpContract(
     baseline=Qwen2MoeMxfp4MoeBaseline(),
 )
 
-CONTRACTS = (QWEN2_MOE_ROUTER, QWEN2_MOE_FP8_EXPERTS, QWEN2_MOE_FP8_ROUTER_EXPERTS, QWEN2_MOE_MXFP4_MOE)
+QWEN2_MOE_MXFP4_ROUTER_EXPERTS = OpContract(
+    contract_id="qwen2_moe_mxfp4_router_experts@1.0",
+    description=(
+        "sglang's Qwen2MoeSparseMoeBlock._forward_router_experts on one rank of its TP "
+        "group, with MXFP4 experts and the MXFP4 shared expert fused into them after the "
+        f"routed ones: {_ROUTING}, {_SHARED}; each expert down(silu(gate(x)) * up(x)) of its "
+        "MXFP4 weights (fused_moe's: fp4 values at an e8m0 scale per 32), each of its two "
+        "linears taking its input in MXFP4 as aiter's per_1x32 fused_moe quantizes it (each "
+        "1 x 32 block at an e8m0 scale); out is this rank's share of the block's output, which "
+        "the TP group sums after the call"
+    ),
+    op_type="qwen2_moe",
+    axes={
+        **_TOKENS,
+        "n_routed": _ROUTED,
+        "n_experts": derived_axis(_SLOTS, "n_routed + 1"),
+        "inter_dim": axis("Expert intermediate size on this rank.", 128, 16384, multiple_of=128),
+        "gate_up_rows": derived_axis("w1 rows: gate and up concatenated.", "2 * inter_dim"),
+        "model_blocks": derived_axis("w1 scale columns.", "model_dim // 32"),
+        "inter_blocks": derived_axis("w2 scale columns.", "inter_dim // 32"),
+    },
+    attrs={"topk": attr("Routed experts per token.", 10, param_name="topk")},
+    constraints=(
+        "topk <= n_routed",
+        # makes the scales' padding a no-op
+        "model_dim % 256 == 0 and inter_dim % 256 == 0",
+    ),
+    inputs={
+        "hidden_states": _HIDDEN_STATES,
+        "router_weight": _ROUTER_WEIGHT,
+        "shared_gate_weight": _SHARED_GATE_WEIGHT,
+        "w1": TensorSpec(
+            description="Gate-up projection per expert slot on this rank: gate rows, then up rows.",
+            shape=("n_experts", "gate_up_rows", "model_dim"),
+            dtype=_MXFP4,
+            distribution=FiniteDistribution(),
+            lifetime="weight",
+        ),
+        "w1_scale": TensorSpec(
+            description="Per 1 x 32 block of w1.",
+            shape=("n_experts", "gate_up_rows", "model_blocks"),
+            dtype=_E8M0,
+            distribution=_e8m0_scales("model_dim"),
+            lifetime="weight",
+        ),
+        "w2": TensorSpec(
+            description="Down projection per expert slot on this rank.",
+            shape=("n_experts", "model_dim", "inter_dim"),
+            dtype=_MXFP4,
+            distribution=FiniteDistribution(),
+            lifetime="weight",
+        ),
+        "w2_scale": TensorSpec(
+            description="Per 1 x 32 block of w2.",
+            shape=("n_experts", "model_dim", "inter_blocks"),
+            dtype=_E8M0,
+            distribution=_e8m0_scales("inter_dim"),
+            lifetime="weight",
+        ),
+    },
+    # kernels come to 24 to 35 dB on the bench's inputs, activations kept bf16 (sglang's own
+    # small-M kernel) to 11 to 14 dB, a reference without the shared expert or ungated below 3 dB
+    outputs={
+        "out": TensorSpec(
+            description="This rank's share of the MoE block's output.",
+            shape=("n_tokens", "model_dim"),
+            dtype=DTypeSpec(same_as_tensor="hidden_states"),
+            error_bounds=MOE_MXFP4_SNR,
+        )
+    },
+    layout_variants=_MXFP4_LAYOUTS,
+    compare=_COMPARE,
+    reference=Qwen2MoeMxfp4RouterExpertsReference(),
+    baseline=Qwen2MoeMxfp4RouterExpertsBaseline(),
+)
+
+CONTRACTS = (
+    QWEN2_MOE_ROUTER,
+    QWEN2_MOE_FP8_EXPERTS,
+    QWEN2_MOE_FP8_ROUTER_EXPERTS,
+    QWEN2_MOE_MXFP4_MOE,
+    QWEN2_MOE_MXFP4_ROUTER_EXPERTS,
+)
