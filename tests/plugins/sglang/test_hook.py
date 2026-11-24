@@ -42,11 +42,13 @@ def test_no_two_routes_take_one_target():
     [
         ("0.5.23", True),
         ("0.5.23.dev20261120+g28e5763574", True),
-        ("0.5.23.dev20261121+gunknown", False),
+        ("0.5.23.dev20261121+gnew", True),
+        ("0.5.24", True),
+        ("0.5.23.dev20261119", False),
+        ("0.5.22", False),
     ],
-    ids=["release", "verified-daily", "unknown-daily"],
 )
-def test_deepseek_moe_hook_on_verified_daily(monkeypatch, installed, supported):
+def test_deepseek_moe_hook_from_minimum_version(monkeypatch, installed, supported):
     registered = []
     registry = ModuleType("sglang.srt.plugins.hook_registry")
     registry.HookType = SimpleNamespace(AROUND="around")
@@ -69,7 +71,7 @@ def installed_sglang():
 
 def model_image_only(versions):
     """A route declared only for development builds: a model image's sglang, where it was tested."""
-    return all(Version(v).is_devrelease for v in versions)
+    return all(not v.startswith(("<", ">", "=", "!", "~")) and Version(v).is_devrelease for v in versions)
 
 
 def test_every_route_was_tested_on_the_installed_sglang():
@@ -78,7 +80,7 @@ def test_every_route_was_tested_on_the_installed_sglang():
     untested = [
         target
         for target, versions, _ in DECLARED
-        if installed not in versions and not model_image_only(versions)
+        if not hook.sglang_version_matches(installed, versions) and not model_image_only(versions)
     ]
     assert untested == []
 
@@ -96,7 +98,7 @@ def parameters(fn, *, defaults=True):
 
 @pytest.mark.parametrize(("target", "versions", "route"), DECLARED, ids=[t for t, _, _ in DECLARED])
 def test_every_route_takes_its_targets_parameters(target, versions, route):
-    if installed_sglang() not in versions:
+    if not hook.sglang_version_matches(installed_sglang(), versions):
         pytest.skip("declared for another sglang, which holds its target")
     if not target.startswith("aiter."):
         assert parameters(route) == parameters(pkgutil.resolve_name(target))
