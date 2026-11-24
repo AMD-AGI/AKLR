@@ -79,9 +79,7 @@
       ],
       "dtype": "float32",
       "distribution": {
-        "kind": "log_uniform",
-        "log2_lo": -2,
-        "log2_hi": 1.47
+        "kind": "finite"
       },
       "description": "Log of each head's gate scale (sglang's A_log, [1, 1, n_heads, 1] there)."
     },
@@ -119,7 +117,7 @@
         "hi": "n_slots - 1",
         "distinct": true
       },
-      "description": "Each token's slot, the ones >= 0 distinct; -1 (sglang's padded graph rows) reads a zero state and writes none."
+      "description": "Each token's slot, the ones >= 0 distinct; -1 (sglang's padded graph rows), any number of times, reads a zero state and writes none."
     },
     "scale": {
       "shape": null,

@@ -20,9 +20,9 @@ from aklr.core.contract.semantics import (
     FiniteDistribution,
     IntRangeDistribution,
     LecunNormalDistribution,
-    LogUniformDistribution,
     StridedRows,
     ToleranceBound,
+    tolerance,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -120,8 +120,9 @@ def _common_inputs() -> dict[str, TensorSpec]:
             description="Log of each head's gate scale (sglang's A_log, [1, 1, n_heads, 1] there).",
             shape=("n_heads",),
             dtype=_FP32,
-            # log(U[1, 16]), as KDA initializes it: exp(a_log) in [1.3, 16]
-            distribution=LogUniformDistribution(log2_lo=-2, log2_hi=1.47),
+            # any finite log-scale, a scale of 1 or less too; drawn N(0, 1): scales of about 0.05 to 20, the [1, 16]
+            # KDA initializes them in among them
+            distribution=_FINITE,
             lifetime="weight",
         ),
         "g_bias": TensorSpec(
@@ -162,6 +163,17 @@ def _state_cache(description: str, error_bounds: ToleranceBound) -> TensorSpec:
     )
 
 
+# sglang's chunk_kda, the engine's prefill, rounds the normalized q and k to bf16 and multiplies them and the state
+# chunk by chunk on bf16 operands (float32 sums), as any chunked kernel on bf16 tensor cores does: its states move off
+# the float32 recurrence by bf16 roundings (2**-8 of a product), past float32's common 1e-4; entries reach about 5 at
+# N(0, 1) inputs, and a kernel computing so ends up to about 1e-2 off
+_CHUNKED_STATE = ToleranceBound(absolute_tolerance=2e-2, relative_tolerance=1e-2)
+_SLOTS_DRAWN = (
+    # drawn >= 0 and distinct, so that every timed sequence steps a state: no distribution draws -1 any number of
+    # times beside distinct slots (IntRangeDistribution's distinct draws hold -1 once at most);
+    # tests/plugins/sglang/test_kda_triton_kernels.py runs the kernels on slots padded so (gfx950)
+    IntRangeDistribution(lo=0, hi="n_slots - 1", distinct=True)
+)
 _STATE_ROWS = derived_axis("Rows of one slot: every head's state, v by v.", "n_heads * head_dim")
 _QKV_HEADS = derived_axis("Heads of a packed q|k|v row: q's, then k's, then v's.", "3 * n_heads")
 _HEAD_AXES = {
@@ -195,22 +207,23 @@ KIMI_K3_SGL_KDA_PREFILL = OpContract(
     constraints=(
         "n_offsets == n_seqs + 1",
         "n_seqs <= n_tokens",
-        "n_seqs <= n_slots",
+        "n_seqs <= n_slots",  # the drawn slots are distinct
     ),
     inputs={
         **_common_inputs(),
         "state_cache": _state_cache(
             "sglang's state pool of the layer (temporal, [slots, heads, v, k] there): slot by slot, each head's "
             "(v, k) state, the head's head_dim rows of head_dim keys.",
-            # a correct kernel multiplies bf16 operands into the fp32 state, and a segmented one composes bf16
-            # segment maps: its entries (up to about 5 at N(0, 1) inputs) end up to about 1e-2 off
-            ToleranceBound(absolute_tolerance=2e-2, relative_tolerance=1e-2),
+            _CHUNKED_STATE,
         ),
         "state_indices": TensorSpec(
-            description="Each sequence's slot, distinct; -1 (sglang's padding) reads a zero state and writes none.",
+            description=(
+                "Each sequence's slot, the ones >= 0 distinct; -1 (sglang's padding), any number of times, reads a "
+                "zero state and writes none."
+            ),
             shape=("n_seqs",),
             dtype=_INT32,
-            distribution=IntRangeDistribution(lo=0, hi="n_slots - 1", distinct=True),
+            distribution=_SLOTS_DRAWN,
         ),
         "cu_seqlens": TensorSpec(
             description="Where each sequence's tokens start, then where the last ends (sglang's query_start_loc).",
@@ -252,7 +265,7 @@ _TRACK_INPUTS = {
         dtype=_FP32,
         distribution=_FINITE,
         mutable=True,
-        error_bounds=ToleranceBound(absolute_tolerance=2e-2, relative_tolerance=1e-2),
+        error_bounds=_CHUNKED_STATE,
     ),
 }
 
@@ -299,25 +312,24 @@ KIMI_K3_SGL_KDA_DECODE = OpContract(
         "n_slots": axis("Slots of the state pool.", 1, 65536, is_var=True, any_size=True),
         **_HEAD_AXES,
     },
-    constraints=("n_tokens <= n_slots",),
+    constraints=("n_tokens <= n_slots",),  # the drawn slots are distinct
     inputs={
         **_common_inputs(),
         "state_cache": _state_cache(
             "sglang's state pool of the layer (temporal, [slots, heads, v, k] there): slot by slot, each head's "
             "(v, k) state, the head's head_dim rows of head_dim keys.",
-            # one float32 step from float32 operands (bf16 inputs decode exactly): about 1e-6 at N(0, 1) states
-            ToleranceBound(absolute_tolerance=1e-4, relative_tolerance=1e-4),
+            # one float32 step from float32 operands (bf16 inputs decode exactly), about 1e-6 off at N(0, 1)
+            # states: float32's common bound
+            tolerance(DType.FLOAT32),
         ),
         "state_indices": TensorSpec(
             description=(
-                "Each token's slot, the ones >= 0 distinct; -1 (sglang's padded graph rows) reads a zero state and "
-                "writes none."
+                "Each token's slot, the ones >= 0 distinct; -1 (sglang's padded graph rows), any number of times, "
+                "reads a zero state and writes none."
             ),
             shape=("n_tokens",),
             dtype=_INT32,
-            # drawn >= 0, so that every timed token steps a state: the -1 rows are the reference's and the unit
-            # tests'
-            distribution=IntRangeDistribution(lo=0, hi="n_slots - 1", distinct=True),
+            distribution=_SLOTS_DRAWN,
         ),
         **_scalars(),
     },
