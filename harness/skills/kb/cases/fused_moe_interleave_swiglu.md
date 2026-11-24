@@ -31,7 +31,7 @@ sources:
 # MXFP4 fused MoE with clamped SwiGLU, gate/up-interleaved weights, hidden 4096, top-6
 
 DeepSeek-V4-Flash's MoE (hidden 4096, 256 routed experts, top-6:
-`aklr/benchmarks/models/deepseekv4/README.md`) under four schema names: expert parallel with 32 or 64 local experts
+the model's `config.json`) under four schema names: expert parallel with 32 or 64 local experts
 of 256 and inter dim 2048, and all 256 experts local at inter dim 256 or 512. Each name has two kernel files, split
 by token count:
 
