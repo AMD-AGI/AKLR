@@ -62,7 +62,7 @@ below are of the earlier versions, but for E18 on `3f488296…`.
   `aklr/core/contract/semantics/_error_bounds.py`). Atomic accumulation is allowed.
 - The model: the commit that adds the 257-expert `5d5b47d0…` names it GLM-5.2's MXFP4 MoE (256 routed experts plus
   the fused shared one, top-9) at decode sizes. The four names fit that layer (hidden 6144, MoE intermediate 2048,
-  the model's `config.json`): inter 256 and 512 are 2048 split 8 and 4 ways, 65 and 33 experts are
+  `config.json` of `zai-org/GLM-5.2`): inter 256 and 512 are 2048 split 8 and 4 ways, 65 and 33 experts are
   64 or 32 routed experts plus the shared one. No other file names the model.
 - Points. Dispatch serves a Point with the file of the highest `speedup` among the files of its schema name, from
   1.03; a workload without a CI `speedup` is not served (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment
