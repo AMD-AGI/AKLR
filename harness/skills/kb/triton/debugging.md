@@ -62,7 +62,7 @@ ls tc_run1/*/   # per compiled kernel: .source .ttgir .llir .amdgcn .hsaco .json
 Validating f3970dec (Gluon) or cf637bff (plain Triton) left only the schema's launched def and AKLR's
 `_flush_l2_cache_kernel` in a fresh cache: these baselines compiled no Triton kernel *(field, E3)*. AKLR imports the
 schema's sources as the package `_aklr_triton_<content hash[:16]>` under `<AKLR_KERNEL_CACHE_DIR>/triton/` (S32; default
-`${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels`, `aklr/ops/README.md` § Environment variables): an MLIR diagnostic's
+`${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels`, `aklr/plugins/aiter/README.md` § Environment variables): an MLIR diagnostic's
 `<file>:<line>:<col>` points at that package's `kernel.py`, at the line of the schema's `kernel.sources`; a
 `CompilationError` counts lines from the function's `def` (§4). With `--base`, the incumbent's kernels land in the same
 cache under the same names; the package in each `.amdgcn`'s `.file` path tells them apart, and the report's
@@ -217,7 +217,7 @@ launch-only ones (`KeyError`, `unhashable type`, `out of resource`) at a launch 
 | `mfma_scaled`: e4m3 `[16, 16, 64]` and `[16, 16, 32]` at version 4 have no instruction; a version-3 layout asserts `version == 4 && isF8F6F4`; a `BlockedLayout` parent or operand raises `Expected lhs/rhs layout … parent matching MFMA layout` | swapped A and B operand indices and unequal `k_width` (16 and 8, or 8 and 16) **compiled** for e4m3 `[16, 16, 128]` with `None` scales, which says nothing about the results; `gl.dot_fma` instead rejects the indices while tracing (`a's operand index must be 0` / `b's … 1`), and an operand not in a `DotOperandLayout` *(field, E7)* | do not use absence of a compile error as a correctness check; [mfma.md](gluon/mfma.md) §10 |
 | `mfma_scaled`: `scale factor must be 16 or 32`, `MFMA.cpp:901` assertion, `LLVM ERROR: Dimensions must match` | a wrong scale block; scales in a `BlockedLayout`; a rank-3 layout with `None` scales (an abort), respectively *(field, E2, E7)* | [mfma.md](gluon/mfma.md) §10 |
 | `error: 'amdg.buffer_store' op failed to verify that value element type matches the pointed type of ptr` | `buffer_store` of fp32 to a bf16 pointer: it does not cast | `.to(gl.bfloat16)` first (`gl.store` casts) |
-| `NameError("Cannot access global variable BLOCK_GLOBAL from within @jit'ed function. …")` | the jit body reads a plain module-level value | a `gl.constexpr` parameter, or the value written inside the jit function (`aklr/ops/README.md` § The kernel section and ABI); Triton also accepts a module-level `BLOCK = gl.constexpr(64)`, which that rule excludes |
+| `NameError("Cannot access global variable BLOCK_GLOBAL from within @jit'ed function. …")` | the jit body reads a plain module-level value | a `gl.constexpr` parameter, or the value written inside the jit function (`aklr/plugins/aiter/README.md` § The kernel section and ABI); Triton also accepts a module-level `BLOCK = gl.constexpr(64)`, which that rule excludes |
 | `Shape element d must be a power of 2` | a tensor extent that is not a power of 2: 35 builds with extents 3–384 failed, `arange`, `zeros` and `full` of [96] naming d = 0 and `zeros([64, 96])` d = 1, and 12 power-of-2 controls compiled *(field, E7)* | for the 96-element case, pad to 128 and mask |
 | `error: TODO: unsupported scan layout`, then `PassManager::run failed` | `gl.associative_scan` on a tensor in a `SliceLayout` (S49) | convert it to a 1-D blocked layout first |
 | `error: Fp4ToFpOp/SplitOp requires at least 2 elements per thread in the axis/last dimension` | `gl.split` of an axis of size 2 held by two lanes, not in one lane's registers (S50) | a layout with `size_per_thread` 2 on that axis |
@@ -325,7 +325,7 @@ without `allow_flush_denorm` the 4 DSA 64-head kernels' code did not change; acc
    from aklr.core.contract import semantics
    from aklr.core.contract.registry import ContractRegistry
    from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
-   path = "aklr/ops/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json"
+   path = "aklr/plugins/aiter/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json"
    registry = ContractRegistry.default()
    schema = registry.parse_schema(Path(path).read_bytes(), path)
    contract = registry.get(schema.contract_id)
@@ -351,7 +351,7 @@ without `allow_flush_denorm` the 4 DSA 64-head kernels' code did not change; acc
    parenthesize: Python binds `&` looser than `+`, `-`, `*`, so `15 - 3 * (row & 3) - 2 * part & 15` is
    `(15 - 3 * (row & 3) - 2 * part) & 15` (S59).
 4. Remove the debug outputs before validating: a kernel writes only its outputs, mutable inputs and scratch
-   (`aklr/ops/README.md` § The kernel section and ABI); a debug store into the read-only input `a` of
+   (`aklr/plugins/aiter/README.md` § The kernel section and ABI); a debug store into the read-only input `a` of
    gemm_n6144_k2048 failed `validate` as `input_mutation` *(field, E1)*.
 
 ## 6. Crashes and hangs
@@ -432,7 +432,7 @@ A replayed graph pays none of the host cost; eager calls (an uncaptured many-tok
   `triton==3.8.0` wheel: the padded `gl.bank_conflicts` assertion of §4 sits at `LinearLayoutConversions.cpp:1364` in
   the image and at `:1379` in the wheel and in the v3.8.0 tag *(field, E12)*: confirm compile-only findings on the
   image.
-- **The baseline's aiter.** Most `aklr/ops` baselines call aiter (the bf16 GEMM's is its tuned `gemm_a16w16`, S46). CI's
+- **The baseline's aiter.** Most `aklr/plugins/aiter` baselines call aiter (the bf16 GEMM's is its tuned `gemm_a16w16`, S46). CI's
   aiter-test installs ROCm/aiter at `aiter` in `stack.json` (dbd8bf5 at 43e112e, v0.1.29 on main) over the image's own (`aiter_image`,
   for now the sglang image); its sglang-test times sglang's plugins against the sglang image's own aiter (285579b6 in v0.5.23; e7d2453f2 in v0.5.22, read from the image's build in
   [measured_a_different_build.md](../pitfalls/measured_a_different_build.md)), and its vllm-test times vLLM's plugins against the vllm image's own aiter; aiter-test checks that pip installed that commit (its `direct_url.json`, S36); `report.json` does not
@@ -570,7 +570,7 @@ whose bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33)
 - S43 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:181 `parse_options` keeps only the keys that are `HIPOptions` fields
 - S44 triton-lang/triton@c01b677:python/triton/runtime/jit.py:715 at the first compile of a launch, a keyword that is neither an option nor a parameter raises `KeyError("Keyword argument %s was specified but unrecognised")`
 - S45 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/cdna4/async_copy.py:91 `buffer_load_to_shared`: "size per thread * bits per element must be 128 or 32" for the offsets layout, or lowering to LLVM fails
-- S46 aklr/ops/gemm/baseline.py:16 `GemmBaseline`: "aiter's tuned 16-bit gemm" (`from aiter.tuned_gemm import gemm_a16w16`, :17); the RMSNorm baselines call `aiter.ops.rmsnorm` (aklr/ops/rms_norm/baseline.py:12, :24); `"aiter": "dbd8bf5…"` at stack.json:4
+- S46 aklr/plugins/aiter/gemm/baseline.py:16 `GemmBaseline`: "aiter's tuned 16-bit gemm" (`from aiter.tuned_gemm import gemm_a16w16`, :17); the RMSNorm baselines call `aiter.ops.rmsnorm` (aklr/plugins/aiter/rms_norm/baseline.py:12, :24); `"aiter": "dbd8bf5…"` at stack.json:4
 - S47 triton-lang/triton@c01b677:python/src/ir.cc:1982 a failed pass-manager run throws `PassManager::run failed`; every run enables MLIR's crash reproducer, printed to the console without `TRITON_REPRODUCER_PATH` (:1956) and written to that path with it (:1953), which turns a crash inside a pass into a failed run
 - S48 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/MFMA.cpp:273 "no matching matrix core intrinsic" when no instruction has the requested shape and types
 - S49 triton-lang/triton@c01b677:lib/Conversion/TritonGPUToLLVM/ScanOpToLLVM.cpp:474 "TODO: unsupported scan layout"

@@ -127,7 +127,7 @@ def _publish() -> Path:
     _, _, schema_relative_path, _ = _aklr()
     text, uuid = _candidate_text()
     raw = json.loads(text)
-    path = Path("aklr/ops", OP_DIR, schema_relative_path(raw["name"], LANGUAGE, uuid))
+    path = Path("aklr/plugins/aiter", OP_DIR, schema_relative_path(raw["name"], LANGUAGE, uuid))
     (AKLR_ROOT / path).parent.mkdir(parents=True, exist_ok=True)
     (AKLR_ROOT / path).write_text(text, encoding="utf-8")
     return path

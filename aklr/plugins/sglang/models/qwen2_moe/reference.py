@@ -13,7 +13,7 @@ import torch
 
 from aklr.core.contract.reference import OpReference
 from aklr.core.contract.semantics import rounded_to_bfloat16
-from aklr.ops.fused_moe.reference import mxfp4_weight
+from aklr.plugins.aiter.fused_moe.reference import mxfp4_weight
 
 __all__ = [
     "Qwen2MoeFp8ExpertsReference",

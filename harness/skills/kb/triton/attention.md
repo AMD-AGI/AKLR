@@ -116,7 +116,7 @@ per lane, compiled with Triton 3.8.0 for gfx950 (`numerics.md` §6). The gated-a
 - **Every split writes a record, empty or not:** max −inf, denominator 0 and numerator 0 for a split with no keys, which
   the merge weighs by exp(−inf) = 0 (S1). Scratch from `torch.empty` then needs no zeroing, and a graph replay with
   other lengths reads no stale record, as run on the 32-row Qwen3.5 and 24-token DSA files *(field, E13)*; lengths and
-  slots are read on the device, the configuration from the batch shape (S5). Scratch rules: `aklr/ops/README.md` § The
+  slots are read on the device, the configuration from the batch shape (S5). Scratch rules: `aklr/plugins/aiter/README.md` § The
   kernel section and ABI.
 - **Lay the records out for both launches.** Simplest, Qwen3.5's: numerators `[rows, heads, splits, 256]` bf16 and
   statistics `[rows, heads, splits, 2]` fp32, the numerator converted to
@@ -161,13 +161,13 @@ CI's stored speedups, 64 heads at 43e112e, 8 heads at a29581b *(field, E1)*; sin
 *(field, E8)*, VGPRs being `.vgpr_count`, VGPRs and AGPRs together (`kernels/kernel_library.md` §1); grids, warps and
 `waves_per_eu` as traced at launch *(field, E15)*; heads per program × splits from the host code. A file is
 `<file>.json` in the directory of S16 (64 heads) or S11 (8 heads), its sources the `content` of each `kernel.sources`
-entry (`aklr/ops/README.md` § The kernel section and ABI). The 8-token file and the three 8-head files add a
+entry (`aklr/plugins/aiter/README.md` § The kernel section and ABI). The 8-token file and the three 8-head files add a
 `q.to(torch.bfloat16)` launch in `run` (S17, S11, S18, S19).
 
 - **Measured DSA grids, not an isolated CU-residency rule.** At 12/16/32 tokens the accurate committed 64-head files' 192/256/256 eight-wave producers beat modified 96/128/512: modified/committed call times 1.414/1.456/1.098, paired-log 99% CIs 1.402751–1.425598/1.441523–1.470504/1.094254–1.102277 (one session, 6 counterbalanced rounds per arm, 3 forward and 3 reverse) *(field, E18)*. At 24 tokens, in three earlier runs, 384 same-head producers ran 1.08–1.09× slower than 192 *(field, E2)*. Splits change tiles and merge width; the 16-token variant also changes `pv_mode` (`"panels64"`) and the packed statistics, the 32-token variant `pv_mode` (`"serial32"`) and the refill. LDS predicts at most one such workgroup per CU, but residency and its timing contribution were not measured, nor were four-wave or Qwen3.5 residency and untested Points (`../attention/split_kv.md` §4).
 - **Do not start a 64-head kernel from the 8-token file.** It differs from the 12–32-token files in many choices:
   16-head groups of 4 warps, rows async-copied into LDS, bf16 hi + lo P, fp32 partials and the extra `q` cast. It
-  stores 1.030 *(field, E1)*, at the edge of what dispatch serves (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` §
+  stores 1.030 *(field, E1)*, at the edge of what dispatch serves (`AKLR_MIN_SPEEDUP`, `aklr/plugins/aiter/README.md` §
   Environment variables); its baseline differs from theirs, and no Point attributes the gap to one choice.
 - **With 8 heads the MFMA did not bound the 32- and 128-token producers.** Each 576-byte row feeds 8 query rows, about
   30 FLOP per gathered byte (estimated); doubling the QK MFMAs cost 0.6–1.0% at 32 tokens and 4.2–4.7% at 128 (3 runs)

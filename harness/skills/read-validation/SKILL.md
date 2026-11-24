@@ -12,13 +12,13 @@ failing Point in the report: the log names the failing schema, and only the repo
 
 Read [references/ruler.md](references/ruler.md) (how a Point is timed and judged),
 [references/ci.md](references/ci.md) (what CI validates and where its report is) and
-`aklr/ops/README.md`.
+`aklr/plugins/aiter/README.md`.
 
 ## Procedure
 
 1. **Get the report.** Locally, `python -m aklr validate --base origin/main --stages audit,bench
    <schemas> --out <dir>` writes `<dir>/report.md` and `report.json`. From CI, download the run's
-   artifact `validation-report-aiter-test-<attempt>` (`aklr/ops`), `validation-report-sglang-test-<attempt>`
+   artifact `validation-report-aiter-test-<attempt>` (`aklr/plugins/aiter`), `validation-report-sglang-test-<attempt>`
    (sglang's plugins) or `validation-report-vllm-test-<attempt>` (vLLM's); the `aiter-test`, `sglang-test` and
    `vllm-test` jobs' `Validate` step logs end with the findings, and `Enforce the overall CI result` only names the job that failed.
 2. **Separate findings from demotions.** A bench finding of one workload (it names the `axes`) that
@@ -32,9 +32,9 @@ Read [references/ruler.md](references/ruler.md) (how a Point is timed and judged
 3. **Read an accuracy failure.** The detail names each tensor past its bound: a `tolerance` bound gives
    the `violation_fraction` (elements past it; one fails it) and the `peak_bound_multiple` (the worst
    error over the bound), an `sqnr` bound the SQNR against its minimum. The bound is the contract's
-   (`error_bounds` in `aklr/ops/<op>/contract.py`), the expected values the reference's (`reference.py`),
+   (`error_bounds` in `aklr/plugins/aiter/<op>/contract.py`), the expected values the reference's (`reference.py`),
    and the judgment its `check`, which an op may override ("Reference and baseline" in
-   `aklr/ops/README.md`). Before blaming the bound, compute the baseline's error on the same inputs: when
+   `aklr/plugins/aiter/README.md`). Before blaming the bound, compute the baseline's error on the same inputs: when
    the engine's own code is within the bound and the kernel is not, the kernel is wrong.
 4. **Read a slow Point's rounds.** In `report.json`, the bench stage's `workload_records` entry
    with that `schema_path` and `axes` holds `timings[]`: per-round `candidate_milliseconds` and

@@ -13,9 +13,9 @@ measured:
   - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "2.396–5.845; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_…_extra_page_size2_n_extra_indices8256, batch 1–256 × 4–9 pool sizes", date: "2026-10-28"}
   - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "2.362–5.078; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_…_extra_page_size64_n_extra_indices512, batch 1–256 × 4–9 pool sizes", date: "2026-10-28"}
 sources:
-  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json
-  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size2_n_extra_indices8256/09f5a6dd679e5878.json
-  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size64_n_extra_indices512/e80a8786cd629998.json
+  - aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json
+  - aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size2_n_extra_indices8256/09f5a6dd679e5878.json
+  - aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size64_n_extra_indices512/e80a8786cd629998.json
 ---
 
 # Sparse MLA with one query token per sequence on the DeepSeek-V4 fp8 pool: one dequantised tile for all 64 heads
@@ -41,10 +41,10 @@ top-2048) is another contract, with its own one-launch kernel:
   are var axes without `any_size`, so dispatch matches them exactly (`FastKeyCodec.match_key`): a pool of any other
   page count falls back with `no_workload`, though the kernel does not depend on it.
 - Compare: `determinism: bounded`; `output` atol = rtol = 1e-2, `lse` atol = rtol =
-  1e-3 (`aklr/ops/mla/contract.py`). The reference defines the fp8 → bf16 step as the same bit assembly the kernel
+  1e-3 (`aklr/plugins/aiter/mla/contract.py`). The reference defines the fp8 → bf16 step as the same bit assembly the kernel
   does, so that step matches it exactly; the error left to `compare` comes from bf16 P, bf16 partials and the bf16
   output.
-- Yardstick: `FlashMlaWithKvcacheBaseline` (`aklr/ops/mla/baseline.py`), which for this cache format calls
+- Yardstick: `FlashMlaWithKvcacheBaseline` (`aklr/plugins/aiter/mla/baseline.py`), which for this cache format calls
   sglang's TileLang `dpsk_v4_fp8_attention_fwd` (S3), not aiter. No schema name has a file in another language. The
   no-extra and extra-512 names have one kernel file each; the extra-8256 directory also holds
   `2d4eafd6ea816a59.json`, a FlyDSL file with three sources (`kernel.py`, `few.py`, `many.py`) whose 19 Points
@@ -63,10 +63,10 @@ top-2048) is another contract, with its own one-launch kernel:
   (`../attention/split_kv.md` §7); the speedup on serving inputs is not measured. At batch 1 one
   row's drawn lengths set the work: the nine batch-1 Points of extra 8256 read 2.809–5.845 *(field, E2)*, and each
   reproduces within 4.1% in the other committed run *(field, E4)*, so the spread follows each Point's inputs
-  (seeded by its workload hash, `aklr/ops/README.md` § Inputs and workloads), not run noise.
+  (seeded by its workload hash, `aklr/plugins/aiter/README.md` § Inputs and workloads), not run noise.
 - **`sm_scale` and `kv_scale` are compile-time constants.** `_build` is a `functools.cache` keyed by both values; a
   new value compiles a new kernel pair at the call that brings it, which may be inside a graph capture. The README
-  has the first call of a Point compile every variant a scalar selects (`aklr/ops/README.md` § The kernel section
+  has the first call of a Point compile every variant a scalar selects (`aklr/plugins/aiter/README.md` § The kernel section
   and ABI). Every workload holds `sm_scale` 0.0442 and `kv_scale` 1.0.
 - **Workspace kept per batch size.** `_workspace(batch, n1, n2, dev)` (`functools.cache`) holds a bf16 partial
   output and an fp32 partial lse for every slot a row can write, for the life of the process: estimated 0.26 MB,
@@ -170,11 +170,11 @@ On an MI355X, in a checkout that holds these files (on AKLR main their workloads
 the table's numbers), one schema at a time:
 
 ```
-python -m aklr validate aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json
+python -m aklr validate aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json
 ```
 
 and the same for the other two paths under `sources`. Each runs the audit and bench stages and writes
-`aklr_validation/report.md` with the per-Point speedup (`aklr/ops/README.md` § Commands). The pools are large
+`aklr_validation/report.md` with the per-Point speedup (`aklr/plugins/aiter/README.md` § Commands). The pools are large
 (estimated from the shapes: 1.8 GB main pool at 12317 pages, 4.6 GB extra pool for extra 512), and bench draws them
 again for every input set. Add `--base origin/main` only on a branch that edits the file: with the base set, bench
 measures only schemas that are not at the base, so on an unchanged checkout it skips the bench
@@ -201,13 +201,13 @@ lines are cited in the window-only file.
 - E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup 2.362–5.078 per Point, 61 of 61 ≥ 1.03; batch 1 2.620–3.493, 2 2.674–3.571, 4 3.300–3.585, 8 3.114–3.414, 16 2.688–2.790, 32 2.362–3.614, 64 2.738–3.385, 128 3.429–3.910, 256 4.645–5.078 (…_extra_page_size64_n_extra_indices512, 61 Points)
 - E4 [2026-10, gfx950, FlyDSL 0.3.2, N=2, the predecessor repository's CI] the two committed measurements, in commit order: no extra 1.167–2.439 then 1.165–2.405, extra 8256 2.374–5.616 then 2.396–5.845, extra 512 2.363–5.019 then 2.362–5.078, all 183 Points ≥ 1.03 both times; per-Point ratio between the runs 0.924–1.070; extra 8256 at batch 1 by pool size 2.753, 5.616, 5.542, 5.027, 5.246, 5.523, 3.468, 4.491, 2.791 then 2.809, 5.845, 5.595, 5.071, 5.357, 5.526, 3.444, 4.494, 2.861 (the three schemas)
 - E5 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=7 rounds, CUDA-graph replay with a 1 GiB flush per call, arms interleaved] whole-call time, one-wave over four-wave combine, 64 heads, every slot live: 133 partials 1.331 and 20 partials 1.080 at batch 8; 4 partials 0.934 at batch 64; every arm within the contract's tolerances (the window-only file's kernel.py with only the combine's waves and LDS struct changed)
-- S1 aklr/ops/mla/contract.py:346 compare `BOUNDED`; `output` tolerance at :315, `lse` at :326; `n_pages` declared without `any_size` at :114
-- S2 aklr/ops/mla/reference.py:50 the reference's dequantisation is "the kernel's literal bf16 bit assembly, not fp8 scaling"
-- S3 aklr/ops/mla/baseline.py:35 `FlashMlaWithKvcacheBaseline` calls sglang's `dpsk_v4_fp8_attention_fwd` (:40) for the `dsv4_fp8` cache format
+- S1 aklr/plugins/aiter/mla/contract.py:346 compare `BOUNDED`; `output` tolerance at :315, `lse` at :326; `n_pages` declared without `any_size` at :114
+- S2 aklr/plugins/aiter/mla/reference.py:50 the reference's dequantisation is "the kernel's literal bf16 bit assembly, not fp8 scaling"
+- S3 aklr/plugins/aiter/mla/baseline.py:35 `FlashMlaWithKvcacheBaseline` calls sglang's `dpsk_v4_fp8_attention_fwd` (:40) for the `dsv4_fp8` cache format
 - S4 aklr/core/contract/fastkey/_codec.py:75 `match_key` drops only `any_size` axes from the dispatch key
-- S5 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:35 `KTIERS`; `_slots` at :74; `_workspace` at :84; `_build` keyed by `sm_scale`, `kv_scale` at :93
-- S6 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:171 `stage`: bias at :190, exponent arithmetic at :204, rope copy at :232
-- S7 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:274 logits MFMA; max and sum shuffles at :285; alpha through LDS at :300; transposed reads at :319 and P·V MFMA at :330
-- S8 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:374 `comb_kernel`: wave slices at :411, wave-order merge at :441, sink factor at :459
-- S9 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:523 `_words` views the storage from offset 0 (:527); aklr/core/contract/semantics/_layouts.py:216 `Deepseekv4KvPages.storage_test` checks strides only
-- S10 the contract's other FlyDSL kernels under aklr/ops/mla/impls/flydsl/, each `contract_id` `flash_mla_with_kvcache@1.0` at :4: 64-head extra-8256 2d4eafd6ea816a59.json (pools of 1501–5229 pages), 128-head extra-8256 7c7c8b9d2c0ac20a.json and extra-1024 43b2d2975d491dd7.json, 64-head extra-1024 0e41dac662b070e5.json, 96-head fp8 f7b2bc6f70f00674.json and 854d38b4a14e3719.json; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids
+- S5 aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:35 `KTIERS`; `_slots` at :74; `_workspace` at :84; `_build` keyed by `sm_scale`, `kv_scale` at :93
+- S6 aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:171 `stage`: bias at :190, exponent arithmetic at :204, rope copy at :232
+- S7 aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:274 logits MFMA; max and sum shuffles at :285; alpha through LDS at :300; transposed reads at :319 and P·V MFMA at :330
+- S8 aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:374 `comb_kernel`: wave slices at :411, wave-order merge at :441, sink factor at :459
+- S9 aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:523 `_words` views the storage from offset 0 (:527); aklr/core/contract/semantics/_layouts.py:216 `Deepseekv4KvPages.storage_test` checks strides only
+- S10 the contract's other FlyDSL kernels under aklr/plugins/aiter/mla/impls/flydsl/, each `contract_id` `flash_mla_with_kvcache@1.0` at :4: 64-head extra-8256 2d4eafd6ea816a59.json (pools of 1501–5229 pages), 128-head extra-8256 7c7c8b9d2c0ac20a.json and extra-1024 43b2d2975d491dd7.json, 64-head extra-1024 0e41dac662b070e5.json, 96-head fp8 f7b2bc6f70f00674.json and 854d38b4a14e3719.json; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids

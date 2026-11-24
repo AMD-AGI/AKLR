@@ -13,10 +13,10 @@ import inspect
 
 from aklr.core.contract.spec import attr_value
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.fused_moe.api import fused_moe
-from aklr.ops.fused_moe.reference import SWIGLU_BF16_ROWS
-from aklr.ops.situv2_a4w4_moe.api import situv2_a4w4_moe
+from aklr.plugins.aiter.fused_moe.api import fused_moe
+from aklr.plugins.aiter.fused_moe.reference import SWIGLU_BF16_ROWS
 from aklr.plugins.aiter.provider._base import offer, selector, served
+from aklr.plugins.aiter.situv2_a4w4_moe.api import situv2_a4w4_moe
 
 
 @selector("fused_moe")

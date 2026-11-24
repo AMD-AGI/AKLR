@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from aklr.ops.mhc.api import mhc_fused_post_pre, mhc_pre
+from aklr.plugins.aiter.mhc.api import mhc_fused_post_pre, mhc_pre
 from aklr.plugins.aiter.provider._base import offer, selector, served
 
 

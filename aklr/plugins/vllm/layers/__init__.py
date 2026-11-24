@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Routes from vLLM's layers to the ops of ``aklr/ops``; mirrors vLLM's
+"""Routes from vLLM's layers to the ops of ``aklr/plugins/aiter``; mirrors vLLM's
 ``model_executor/layers`` and ``v1/attention``."""
 
 from aklr.plugins.vllm.layers import fused_moe_router, utils

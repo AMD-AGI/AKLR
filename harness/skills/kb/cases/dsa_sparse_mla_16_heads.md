@@ -22,7 +22,7 @@ pads TP4 batches to, the decode attention of GLM-5.2 at 16 heads per rank. It is
 [dsa_sparse_mla_8_heads.md](dsa_sparse_mla_8_heads.md)'s kernel ported to 16 heads by a forge-loop campaign and
 reviewed; everything that page says of the ring, the key sort and the fp8 MFMAs holds here unless this page says
 otherwise. Its workloads carry no `speedup` yet, so dispatch serves them only once CI has written one that
-qualifies (`aklr/ops/README.md` § Environment variables). It embeds its source as `kernel.sources[0].content`
+qualifies (`aklr/plugins/aiter/README.md` § Environment variables). It embeds its source as `kernel.sources[0].content`
 (`kernel.py`); function names below are in it.
 
 ## Applies when
@@ -34,7 +34,7 @@ qualifies (`aklr/ops/README.md` § Environment variables). It embeds its source 
   Dispatch matches `n_tokens` exactly; `n_slots` is `any_size`.
 - Yardstick at each Point: the faster of the baseline, `DsaSparseMlaDecodeBaseline` (sglang 0.5.22's
   `triton_sparse_mla_decode_splitk`), and the file main serves there: PR #66's Triton (Gluon) files, served at the
-  Points where CI measured them at or above `AKLR_MIN_SPEEDUP` (`aklr/ops/README.md` § Environment variables): 27 of the 36, all but 12, 24, 56 and 136–176 tokens, as of
+  Points where CI measured them at or above `AKLR_MIN_SPEEDUP` (`aklr/plugins/aiter/README.md` § Environment variables): 27 of the 36, all but 12, 24, 56 and 136–176 tokens, as of
   #102.
 - Not covered: the draft steps of speculative decoding and a q that is not one contiguous (tokens, 16, 576) view
   (the api sends them back to sglang), another top-k or head count.
@@ -137,7 +137,7 @@ python -m aklr validate aklr/plugins/sglang/layers/dsa_backend/impls/flydsl/dsa_
 ```
 
 It times the kernel against the baseline and against the file main serves at each Point and writes
-`aklr_validation/report.md` (`aklr/ops/README.md` § Commands). The local result does not count; CI's measurement
+`aklr_validation/report.md` (`aklr/plugins/aiter/README.md` § Commands). The local result does not count; CI's measurement
 is the one dispatch reads. The stress check is the forge driver's `--stress` (`docs/forge_task.md`). To read the
 kernel: `python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kernel"]["sources"][0]["content"])' <schema>`.
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import torch
 
-from aklr.ops.kda_conv.api import kimi_k3_kda_conv
+from aklr.plugins.aiter.kda_conv.api import kimi_k3_kda_conv
 from aklr.plugins.aiter.provider._base import offer, selector, served
 
 _WIDTH = 4  # the contract's taps
