@@ -6,9 +6,11 @@ over: q, k and v the [1, n, heads, dim] views of the packed convolution rows, th
 [1, n, heads], the layer's A_log and flat dt_bias, the state pool [slots, heads, v, k].
 
 - Prefill: fla's ``chunk_kda`` with q and k normalized, the gate and beta activated inside (beta_is_raw), the state
-  read and written in place at the slots, as ``TritonKDAKernel.extend`` calls it on sglang 0.5.22 (0.5.23 on gfx950
-  first tries its HIP prefill, which is not this baseline); with a snapshot, its fp32 track_state written at
-  track_chunk_idx, as the KDA backend asks it under the mamba radix cache's extra buffer."""
+  read and written in place at the slots, as ``TritonKDAKernel.extend`` calls it on sglang 0.5.22; with a snapshot,
+  its fp32 track_state written at track_chunk_idx, as the KDA backend asks it under the mamba radix cache's extra
+  buffer. sglang 0.5.23 on gfx950 runs its own HIP prefill (kda_gfx950_prefill) first, on by default; there the route
+  leaves every call to sglang, so chunk_kda is the engine's path wherever the route serves (0.5.22, or 0.5.23 with
+  SGLANG_ROCM_KDA_HIP_PREFILL=0)."""
 
 from aklr.core.contract.baseline import OpBaseline
 

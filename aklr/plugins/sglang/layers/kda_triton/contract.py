@@ -11,7 +11,11 @@ the kernels normalize q and k, activate the gate (K3's safe gate, with its lower
 read and write each sequence's recurrent state in its slot of sglang's state pool. sglang hands beta
 over as a column slice of the [f_a | b] projection, so its rows are apart by more than a row
 (``strided_beta``). A slot of -1 (sglang's padding sentinel) is read as a zero state and written
-nowhere."""
+nowhere.
+
+chunk_kda is what sglang 0.5.22 runs for extend. sglang 0.5.23 on gfx950 runs its own HIP prefill
+(kda_gfx950_prefill) instead, on by default: there the route leaves every call to sglang, and serves only with that
+prefill turned off (SGLANG_ROCM_KDA_HIP_PREFILL=0)."""
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (

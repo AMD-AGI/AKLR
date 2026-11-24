@@ -120,9 +120,9 @@ def _storage(b):
 
 @functools.cache
 def _sglang_hip_prefill() -> bool:
-    """Whether sglang runs its own HIP KDA prefill (0.5.23's kda_gfx950_prefill, on by default on gfx950), which its
-    TritonKDAKernel.extend tries before chunk_kda: those calls stay with sglang, since the op is timed against
-    chunk_kda, not against it."""
+    """Whether sglang runs its own HIP KDA prefill (0.5.23's kda_gfx950_prefill, on by default on gfx950, off with
+    SGLANG_ROCM_KDA_HIP_PREFILL=0), which its TritonKDAKernel.extend tries before chunk_kda: then every call stays with
+    sglang, since the op is timed against chunk_kda, not against it."""
     kda_triton = importlib.import_module(_TRITON_KDA.rpartition(".")[0])
     hip = getattr(kda_triton, "kda_gfx950_prefill", None)
     return hip is not None and bool(hip.available())
@@ -153,7 +153,9 @@ def _extend(
     track_chunk_idx) through kimi_k3_sgl_kda_prefill_track. Returns what sglang's does: the output [1, n, heads, dim],
     and with return_intermediate_states no per-chunk states (the backend reads track_state, or the final state where
     every tracked row is chunk-aligned). Stays with sglang: a breakable prefill CUDA graph (padded chunk tables) or any
-    capture, a spec-decode extend, a call wanting the per-chunk states h, and sglang's own HIP prefill where it runs."""
+    capture, a spec-decode extend, a call wanting the per-chunk states h, and every call where sglang's own HIP prefill
+    runs. So the route serves on 0.5.22; on 0.5.23 on gfx950, whose HIP prefill is on by default, it leaves every call
+    to sglang and serves only with that prefill turned off (SGLANG_ROCM_KDA_HIP_PREFILL=0)."""
     track_state, track_chunk_idx = kwargs.get("track_state"), kwargs.get("track_chunk_idx")
     h_src = kwargs.get("track_ssm_h_src")
     if (
