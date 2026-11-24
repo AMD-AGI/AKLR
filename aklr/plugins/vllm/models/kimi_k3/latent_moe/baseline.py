@@ -6,7 +6,6 @@ deployment's), vLLM's RMSNorm layer, the addmm into this rank's columns of the s
 writes it), and the all-reduce of the shared output. vLLM's TP group is set up over the caller's process group on the
 first call."""
 
-import torch
 import torch.distributed as dist
 
 from aklr.core.contract.baseline import DistOpBaseline
@@ -54,16 +53,7 @@ def _vllm_norm(width, eps, device):
 
 
 class KimiK3LatentMoeTailBaseline(DistOpBaseline):
-    def setup(self):
-        """The kernel's state over the group's process group (one rank a device), as the vLLM route sets it up over
-        vLLM's TP group before its first call: the peer buffer every rank maps, the launch counters and the health
-        words. Kept until the process ends, as in vLLM: a rank freeing its buffer could not know that no peer still
-        writes to it without a collective, which a peer stopped at a finding would never join."""
-        from aklr.core.jit import kimi_k3_latent_moe_tail as runtime
-
-        device = torch.device("cuda", torch.cuda.current_device())
-        if runtime.setup(dist.group.WORLD, dist.get_rank(), dist.get_world_size(), device) is None:
-            raise RuntimeError("latent-MoE tail: the group's peer memory could not be set up")
+    """vLLM's tail needs no setup of its own: vLLM's TP group is set up at the first call (``_vllm_tp``)."""
 
     def baseline(
         self,

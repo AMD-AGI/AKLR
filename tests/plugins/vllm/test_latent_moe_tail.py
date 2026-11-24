@@ -24,14 +24,37 @@ from aklr.core.contract.fastkey import FastKeyCodec, FastKeyFnGenerator
 from aklr.core.contract.locate import committed_schema_paths, op_dir, schema_relative_path, schema_uuid
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
-from aklr.core.jit import kimi_k3_latent_moe_tail as runtime
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins import vllm as plugin
-from aklr.plugins.vllm.models.kimi_k3.latent_moe import api
+from aklr.plugins.vllm.models.kimi_k3.latent_moe import api, failstop
 from aklr.plugins.vllm.models.kimi_k3.latent_moe.contract import KIMI_K3_LATENT_MOE_TAIL
 
 TP, HIDDEN, LATENT = 8, 7168, 3584
 BF16 = torch.bfloat16
+
+
+def committed_schema():
+    contract = ContractRegistry.default().get("kimi_k3_latent_moe_tail@1.0")
+    (path,) = committed_schema_paths(op_dir(contract.op_package))
+    return path
+
+
+def kernel_source(name):
+    sources = json.loads(committed_schema().read_text())["kernel"]["sources"]
+    return next(s["content"] for s in sources if s["path"] == name)
+
+
+def kernel_module(name):
+    """The committed kernel's source ``name`` as a module of its own (one that imports none of the others)."""
+    module = types.ModuleType(f"kimi_k3_latent_moe_tail_{name.removesuffix('.py')}")
+    exec(compile(kernel_source(name), name, "exec"), module.__dict__)
+    return module
+
+
+# the kernel's runtime (its group state and setup), as the kernel and the route reach it
+runtime = kernel_module("runtime.py")
+# the package of the kernel the fake dispatcher serves with (``_Op.serving``), whose runtime the route sets up
+KERNEL_PACKAGE = "_test_latent_moe_tail_kernel"
 
 
 def bf16(x):
@@ -103,22 +126,9 @@ def test_a_rank_outside_the_sum_changes_the_out():
 # ---------------------------------------------------------------- the committed kernel's layout, for eight ranks
 
 
-def committed_schema():
-    contract = ContractRegistry.default().get("kimi_k3_latent_moe_tail@1.0")
-    (path,) = committed_schema_paths(op_dir(contract.op_package))
-    return path
-
-
-def kernel_source(name):
-    sources = json.loads(committed_schema().read_text())["kernel"]["sources"]
-    return next(s["content"] for s in sources if s["path"] == name)
-
-
 @pytest.fixture(scope="module")
 def layout():
-    module = types.ModuleType("kimi_k3_latent_moe_tail_layout")
-    exec(compile(kernel_source("layout.py"), "layout.py", "exec"), module.__dict__)
-    return module
+    return kernel_module("layout.py")
 
 
 class _Memory:
@@ -447,9 +457,24 @@ class _Op:
         self.calls.append((args, kwargs))
         return torch.ones(args[0].shape[0], HIDDEN)
 
-    def fallback_reason(self, *args, **kwargs):
+    def serving(self, *args, **kwargs):
+        """The kernel that serves the call (aklr's Python builders' metadata), else the reason."""
         self.asked.append((args, kwargs))
-        return self.reason
+        if self.reason is not None:
+            return self.reason
+        return SimpleNamespace(misc={"module_name": f"{KERNEL_PACKAGE}.kernel"})
+
+
+def fake_runtime(setup):
+    """The served kernel's runtime as the route imports it, its group setup ``setup``."""
+    module = types.ModuleType(f"{KERNEL_PACKAGE}.runtime")
+    module.setup = setup
+    return module
+
+
+def fake_group(cpu_group):
+    """A group state as the route reads it: its CPU group, and what the fail-stop's watch copies its word with."""
+    return SimpleNamespace(cpu_group=cpu_group, hip=None, failed_word=0, peer_table=torch.zeros(1))
 
 
 @pytest.fixture
@@ -468,9 +493,9 @@ def vllm_tp(monkeypatch):
 
     def setup(cpu_group, rank, world, device):
         tp.setups.append((rank, world, device))
-        return SimpleNamespace(cpu_group=cpu_group)
+        return fake_group(cpu_group)
 
-    monkeypatch.setattr(runtime, "setup", setup)
+    monkeypatch.setitem(sys.modules, f"{KERNEL_PACKAGE}.runtime", fake_runtime(setup))
     return tp
 
 
@@ -480,9 +505,9 @@ def _fresh_route(monkeypatch):
     monkeypatch.setattr(api, "_GROUPS", {})
     monkeypatch.setattr(api, "_CHECKED", {})
     monkeypatch.setattr(api, "_VERDICTS", {})
-    monkeypatch.setattr(api, "_ENABLED", True)
     monkeypatch.setattr(api, "_CHECK", False)
     monkeypatch.setattr(plugin, "AFTER_STEP", [])
+    monkeypatch.setattr(failstop, "_WATCHES", [])
 
 
 @pytest.fixture
@@ -530,6 +555,8 @@ def _changed(case):
         run = runner(reduced=True)
     elif case == "no_norm":
         run.routed_output_transform.norm = None
+    elif case == "final_all_reduce_skipped":
+        run.moe_config = SimpleNamespace(skip_final_all_reduce=True)
     elif case == "rows_0":
         fused, shared = outputs(0)
     elif case == "fp16":
@@ -543,14 +570,30 @@ def _changed(case):
     return run, fused, shared, trunc
 
 
-@pytest.mark.parametrize(
-    "case",
-    ["padded", "reduced", "no_norm", "rows_0", "fp16", "strided", "shared_width", "norm_fp32"],
-)
+@pytest.mark.parametrize("case", ["padded", "reduced", "no_norm", "final_all_reduce_skipped"])
 def test_what_no_contract_states_goes_back_to_vllm_untouched(vllm_tp, op, case):
-    """Declined before the dispatcher is asked, the group set up or the op run."""
+    """vLLM's tail computing something else than the op (padded columns stripped, a routed output reduced already,
+    no latent norm, the final all-reduce left to the caller): declined before the dispatcher is asked, the group set
+    up or the op run."""
     run, fused, shared, trunc = _changed(case)
     assert api._shard_up_proj_tail(run, fused, shared, trunc) is FallbackReason.OUT_OF_CONTRACT
+    assert op.asked == [] and op.calls == [] and vllm_tp.setups == []
+
+
+@pytest.mark.parametrize("case", ["fp16", "strided", "shared_width", "norm_fp32"])
+def test_operands_the_contract_does_not_state_are_its_dispatchers_to_decline(vllm_tp, monkeypatch, case):
+    """Dtypes, shapes and layouts are the op's to judge: the route hands the call over, and the contract's fast key
+    declines it (no group set up, no launch)."""
+    op = KeyedOp()
+    monkeypatch.setattr(api, "kimi_k3_latent_moe_tail", op)
+    run, fused, shared, trunc = _changed(case)
+    assert api._shard_up_proj_tail(run, fused, shared, trunc) is FallbackReason.OUT_OF_CONTRACT
+    assert op.calls == [] and vllm_tp.setups == []
+
+
+def test_a_call_without_rows_goes_back_to_vllm(vllm_tp, op):
+    run, fused, shared, trunc = _changed("rows_0")
+    assert api._shard_up_proj_tail(run, fused, shared, trunc) is FallbackReason.NO_WORKLOAD
     assert op.asked == [] and op.calls == [] and vllm_tp.setups == []
 
 
@@ -586,11 +629,15 @@ def test_pipeline_stages_go_back_to_vllm(vllm_tp, op):
     assert op.asked == [] and vllm_tp.setups == []
 
 
-def test_another_tp_size_goes_back_to_vllm(vllm_tp, op):
+def test_another_tp_size_is_the_dispatchers_to_judge(vllm_tp, op):
+    """The op states TP 2 and 4 too: the call goes over with vLLM's TP size, and the dispatcher decides (a schema of
+    that size, or not)."""
     vllm_tp.world_size = 4
+    op.reason = FallbackReason.NO_WORKLOAD
     run, fused, shared, trunc = _changed(None)
-    assert api._shard_up_proj_tail(run, fused, shared, trunc) is FallbackReason.OUT_OF_CONTRACT
-    assert op.asked == [] and vllm_tp.setups == []
+    assert api._shard_up_proj_tail(run, fused, shared, trunc) is FallbackReason.NO_WORKLOAD
+    ((_, kwargs),) = op.asked
+    assert kwargs["tp_size"] == 4 and vllm_tp.setups == []
 
 
 def test_a_call_the_dispatcher_declines_goes_back_before_the_setup(vllm_tp, op):
@@ -613,7 +660,7 @@ def test_a_supported_call_hands_vllms_operands_over(vllm_tp, op):
     assert args[2] is run.routed_output_transform.up_proj.weight
     assert args[3] is run.routed_output_transform.norm.weight
     assert kwargs == {"tp_size": TP, "eps": 1e-5}
-    assert vllm_tp.setups == [(0, TP, fused.device)] and plugin.AFTER_STEP == [runtime.after_step]
+    assert vllm_tp.setups == [(0, TP, fused.device)] and plugin.AFTER_STEP == [failstop.after_step]
 
 
 @pytest.mark.parametrize("rank", [0, 3, 7])
@@ -653,7 +700,10 @@ def test_before_the_setup_a_capture_goes_back_to_vllm(vllm_tp, op, monkeypatch):
 
 
 def test_a_group_the_ranks_could_not_set_up_keeps_every_call_with_vllm(vllm_tp, op, monkeypatch):
-    monkeypatch.setattr(runtime, "setup", lambda *args, **kwargs: vllm_tp.setups.append(args))
+    failing = fake_runtime(
+        lambda *args: vllm_tp.setups.append(args)
+    )  # None: the ranks agreed it cannot be set up
+    monkeypatch.setitem(sys.modules, f"{KERNEL_PACKAGE}.runtime", failing)
     for n in (10, 40):
         assert api._shard_up_proj_tail(runner(), *outputs(n), None) is FallbackReason.OUT_OF_CONTRACT
     assert op.calls == [] and len(vllm_tp.setups) == 1 and plugin.AFTER_STEP == []
@@ -675,7 +725,7 @@ def vllms_tail(monkeypatch):
 
 def test_the_first_eager_call_of_a_bucket_is_checked_against_vllms_tail(vllm_tp, op, vllms_tail, monkeypatch):
     agreements = []
-    monkeypatch.setattr(runtime, "tp_agree", lambda ok, group: agreements.append(ok) or ok)
+    monkeypatch.setattr(api, "_all_ranks", lambda ok, group: agreements.append(ok) or ok)
     for n in (10, 15, 16, 31):
         out = api._shard_up_proj_tail(runner(), *outputs(n), None)
         assert torch.equal(out, torch.ones(n, HIDDEN))  # the op's
@@ -692,7 +742,7 @@ def test_a_bucket_any_rank_finds_different_stays_with_vllm(vllm_tp, op, vllms_ta
     assert api._shard_up_proj_tail(runner(), *outputs(12), None) is FallbackReason.INACCURATE
     assert len(op.calls) == 1
     vllms_tail.scale = 1.0
-    monkeypatch.setattr(runtime, "tp_agree", lambda ok, group: False)  # another rank differs
+    monkeypatch.setattr(api, "_all_ranks", lambda ok, group: False)  # another rank differs
     out = api._shard_up_proj_tail(runner(), *outputs(40), None)
     assert torch.equal(out, torch.ones(40, HIDDEN)) and api._CHECKED[(out.device, 6)] is False
 
@@ -917,8 +967,7 @@ def steps_on_rank(rank, world, words, failing_rank, failing_step, captured):
     ``failing_step``, half a second late, setting the group's word on every rank as the kernel does before it stores
     anything more, and no rank's launches end before every rank's got that far (the kernel's exchange: a barrier)."""
     hip = fake_hip_on(rank, world, words)
-    runtime.setup(dist.group.WORLD, rank, world, torch.device("cpu"), hip=hip)
-    plugin.AFTER_STEP.append(runtime.after_step)  # as the route registers it with the group (api._group)
+    failstop.watch(runtime.setup(dist.group.WORLD, rank, world, torch.device("cpu"), hip=hip))  # as the route
     outputs = []
     for step in range(6):
         torch.cuda.is_current_stream_capturing = lambda step=step: step in captured
@@ -962,7 +1011,9 @@ def test_every_rank_stops_at_the_step_any_rank_failed_in(tmp_path, failing_rank,
 
 def unpaired_steps_on_rank(rank, world, words):
     """Rank 0 runs five steps, every other rank one, no rank waiting on another in its forward: their outputs."""
-    runtime.setup(dist.group.WORLD, rank, world, torch.device("cpu"), hip=fake_hip_on(rank, world, words))
+    failstop.watch(
+        runtime.setup(dist.group.WORLD, rank, world, torch.device("cpu"), hip=fake_hip_on(rank, world, words))
+    )
     read = []
     for step in range(5 if rank == 0 else 1):
         plugin._execute(lambda: None)
@@ -994,13 +1045,15 @@ class KeyedOp(_Op):
         super().__init__(reason)
         self.key = FastKeyFnGenerator(FastKeyCodec.from_contract(KIMI_K3_LATENT_MOE_TAIL), None).generate()
 
-    def fallback_reason(self, *args, **kwargs):
-        if self.reason is not None:
-            return self.reason
-        return None if self.key(call_of(args, kwargs)) is not None else FallbackReason.OUT_OF_CONTRACT
+    def serving(self, *args, **kwargs):
+        if self.reason is None and self.key(call_of(args, kwargs)) is None:
+            return FallbackReason.OUT_OF_CONTRACT
+        return super().serving(*args, **kwargs)
 
     def __call__(self, *args, **kwargs):
-        assert self.fallback_reason(*args, **kwargs) is None, "launched a call its dispatcher declines"
+        assert not isinstance(self.serving(*args, **kwargs), FallbackReason), (
+            "launched a call its dispatcher declines"
+        )
         return super().__call__(*args, **kwargs)
 
 
@@ -1031,7 +1084,9 @@ def route_on_rank(rank, world, misaligned, aliased, declining):
     distributed.get_pp_group = lambda: SimpleNamespace(world_size=1)
     sys.modules["vllm"], sys.modules["vllm.distributed"] = types.ModuleType("vllm"), distributed
     setups = []
-    runtime.setup = lambda *args, **kwargs: setups.append(args) or SimpleNamespace(cpu_group=tp.cpu_group)
+    sys.modules[f"{KERNEL_PACKAGE}.runtime"] = fake_runtime(
+        lambda *args: setups.append(args) or fake_group(tp.cpu_group)
+    )
     op = api.kimi_k3_latent_moe_tail = KeyedOp(FallbackReason.NO_SCHEMA if rank in declining else None)
     api._CHECK = False
     run, decisions, given = runner(rank=rank), [], []
@@ -1087,21 +1142,25 @@ def test_the_committed_schema_serves_every_row_bucket_up_to_128():
     assert {n.bit_length() for n in rows} == set(range(1, 9)) and max(rows) == 128
     assert {10, 40, 120} <= set(rows)
     kernel = schema["kernel"]
-    assert kernel["requires"] == {"flydsl": ">=0.3.2"} and kernel["entry_point"] == "kernel.py::run"
+    assert kernel["requires"] == {"flydsl": ">=0.4.2"} and kernel["entry_point"] == "kernel.py::run"
     assert [s["path"] for s in kernel["sources"]] == [
         "kernel.py",
         "kernel_small.py",
         "layout.py",
         "layout_small.py",
+        "runtime.py",
     ]
 
 
-def test_the_kernel_takes_the_call_keys_and_nothing_from_aiter():
+def test_the_kernel_takes_the_call_keys_and_nothing_from_aiter_vllm_or_aklr():
+    """Its group state included (runtime.py): the kernel's sources are all it runs with."""
     tree = ast.parse(kernel_source("kernel.py"))
     run = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run")
     assert [a.arg for a in run.args.kwonlyargs] == list(KIMI_K3_LATENT_MOE_TAIL.kernel_call_keys)
-    imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)} | {
-        a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names
-    }
-    assert not any(m and m.split(".")[0] in ("aiter", "vllm") for m in imported)
+    for source in json.loads(committed_schema().read_text())["kernel"]["sources"]:
+        tree = ast.parse(source["content"])
+        imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and not n.level} | {
+            a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names
+        }
+        assert not any(m.split(".")[0] in ("aiter", "vllm", "aklr") for m in imported), source["path"]
     assert "RANGE_SAFE = True" in kernel_source("kernel.py")
