@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The routes of Kimi-K3's KDA prefill and decode on sglang's Triton backend (TritonKDAKernel.extend and .decode):
-how the KDA backend's calls map onto the ops, which calls stay with sglang, and the baselines' calls of sglang's own
-kernels, on stand-ins of sglang 0.5.22 and 0.5.23 (whose two methods take the same parameters)."""
+"""The route of Kimi-K3's KDA prefill on sglang's Triton backend (TritonKDAKernel.extend): how the KDA backend's
+calls map onto the ops, which calls stay with sglang, and the baselines' calls of sglang's own kernel, on stand-ins of
+sglang 0.5.22 and 0.5.23 (whose extend takes the same parameters)."""
 
 import inspect
 import sys
@@ -15,7 +15,6 @@ import torch
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang.layers.kda_triton import api, baseline
 from aklr.plugins.sglang.layers.kda_triton.reference import (
-    KimiK3SglKdaDecodeReference,
     KimiK3SglKdaPrefillReference,
     KimiK3SglKdaPrefillTrackReference,
 )
@@ -24,7 +23,7 @@ HEADS, DIM, SLOTS = 2, 128, 5
 # a row of sglang's [f_a | b] projection at this head count (f_a, b, the pad to 8): beta is a column slice of it
 BFA = DIM + HEADS + 6
 
-# sglang 0.5.22's and 0.5.23's TritonKDAKernel.extend and .decode (srt/layers/attention/linear/kernels/kda_triton.py)
+# sglang 0.5.22's and 0.5.23's TritonKDAKernel.extend (srt/layers/attention/linear/kernels/kda_triton.py)
 P, K, V = (
     inspect.Parameter.POSITIONAL_OR_KEYWORD,
     inspect.Parameter.KEYWORD_ONLY,
@@ -41,12 +40,6 @@ SGLANG_EXTEND = [
     ("return_intermediate_states", K, False),
     ("kwargs", V, EMPTY),
 ]
-SGLANG_DECODE = [
-    *[(n, P, EMPTY) for n in ("self", "q", "k", "v", "a", "b")],
-    *[(n, K, EMPTY) for n in ("A_log", "dt_bias", "ssm_states", "cache_indices", "query_start_loc")],
-    ("lower_bound", K, None),
-    ("kwargs", V, EMPTY),
-]
 
 
 # the route's check of sglang's own HIP prefill, before the autouse fixture stands it in
@@ -57,9 +50,8 @@ def parameters(fn):
     return [(p.name, p.kind, p.default) for p in inspect.signature(fn).parameters.values()]
 
 
-@pytest.mark.parametrize(("route", "sglangs"), [(api._extend, SGLANG_EXTEND), (api._decode, SGLANG_DECODE)])
-def test_the_routes_take_sglangs_parameters(route, sglangs):
-    assert parameters(route) == sglangs
+def test_the_route_takes_sglangs_parameters():
+    assert parameters(api._extend) == SGLANG_EXTEND
 
 
 @pytest.fixture(autouse=True)
@@ -153,102 +145,6 @@ def reference_op(reference, names):
 COMMON = ("qkv", "raw_g", "raw_beta", "a_log", "g_bias", "state_cache", "state_indices")
 
 
-# ---- decode
-
-
-def decode_call(indices):
-    gen = torch.Generator().manual_seed(0)
-    n = len(indices)
-    conv, call = layer_operands(gen, n)
-    call.update(
-        a=randn(gen, n, HEADS * DIM, scale=DIM**-0.5),  # the decode gate, flat
-        cache_indices=torch.tensor(indices, dtype=torch.int32),
-        query_start_loc=torch.arange(n + 1, dtype=torch.int32),
-    )
-    return conv, call
-
-
-@pytest.fixture
-def decode_op(monkeypatch):
-    op = Op(reference_op(KimiK3SglKdaDecodeReference(), COMMON))
-    monkeypatch.setattr(api, "kimi_k3_sgl_kda_decode", op)
-    return op
-
-
-@pytest.mark.parametrize(
-    "indices", [[3, 1, 4], [2, 0, -1, -1]], ids=["slots", "padding_slot_and_padded_graph_rows"]
-)
-def test_a_decode_runs_the_op_on_the_views_of_sglangs_operands(decode_op, indices):
-    conv, call = decode_call(indices)
-    pool = call["ssm_states"]
-    gate = call["a"].float().view(len(indices), HEADS, DIM)
-    spans = [(t, t + 1) for t in range(len(indices))]
-    want_out, want_pool, _ = sglang_steps(call, gate, spans, indices)
-    out = api._decode(None, **call)
-    assert out.shape == (1, len(indices), HEADS, DIM) and out.dtype == torch.bfloat16
-    torch.testing.assert_close(out[0].float(), want_out, atol=1e-3, rtol=1e-2)
-    # every slot as sglang leaves it: the named ones stepped, -1 none, the others unchanged
-    torch.testing.assert_close(pool, want_pool, atol=1e-4, rtol=1e-4)
-    ((args, kwargs),) = decode_op.calls
-    qkv, _, raw_beta, _, _, state_cache, _ = args
-    # views, not copies: the convolution rows, beta's column of the projection, the pool
-    assert qkv.data_ptr() == conv.data_ptr() and qkv.shape == (len(indices), 3 * HEADS, DIM)
-    assert raw_beta.shape == (len(indices), HEADS, 1) and raw_beta.stride(0) == BFA
-    assert state_cache.data_ptr() == pool.data_ptr() and state_cache.shape == (SLOTS, HEADS * DIM, DIM)
-    assert kwargs == {"storage": "strided_beta", "scale": DIM**-0.5, "lower_bound": -5.0}
-
-
-def test_a_dense_beta_is_row_major(decode_op):
-    _, call = decode_call([1, 2])
-    call["b"] = call["b"].contiguous()
-    api._decode(None, **call)
-    assert decode_op.calls[0][1]["storage"] == "row_major"
-
-
-def unpacked_qkv(call):
-    call.update(q=call["q"].clone(), k=call["k"].clone(), v=call["v"].clone())
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        lambda c: c.update(lower_bound=None),  # the softplus gate (Kimi-Linear)
-        lambda c: c.update(extra=True),  # an option sglang's KDA backend does not pass
-        unpacked_qkv,
-        lambda c: c.update(q=c["q"].half(), k=c["k"].half(), v=c["v"].half()),
-        lambda c: c.update(a=c["a"].t().contiguous().t()),
-        lambda c: c.update(b=c["b"].float()),
-        lambda c: c.update(ssm_states=c["ssm_states"].to(torch.bfloat16)),
-        lambda c: c.update(ssm_states=c["ssm_states"].transpose(-1, -2)),
-        lambda c: c.update(cache_indices=c["cache_indices"].long()),
-        lambda c: c.update(query_start_loc=torch.tensor([0, 2], dtype=torch.int32)),  # not a token a sequence
-    ],
-    ids=[
-        "no_lower_bound",
-        "option",
-        "unpacked",
-        "fp16",
-        "gate_strided",
-        "beta_fp32",
-        "bf16_state",
-        "state_k_major",
-        "int64_slots",
-        "not_one_token_each",
-    ],  # fmt: skip
-)
-def test_other_decodes_stay_with_sglang(monkeypatch, change):
-    monkeypatch.setattr(api, "kimi_k3_sgl_kda_decode", Op(lambda *a, **kw: pytest.fail("the op ran")))
-    _, call = decode_call([1, 2])
-    change(call)
-    assert api._decode(None, **call) is FallbackReason.OUT_OF_CONTRACT
-
-
-def test_a_declined_decode_goes_back_to_sglang(monkeypatch):
-    monkeypatch.setattr(api, "kimi_k3_sgl_kda_decode", Op(reason=FallbackReason.NO_WORKLOAD))
-    _, call = decode_call([1, 2])
-    assert api._decode(None, **call) is FallbackReason.NO_WORKLOAD
-
-
 # ---- prefill
 
 
@@ -283,6 +179,17 @@ def prefill_call(seqlens, indices, **kwargs):
     call.update(kwargs)
     spans = list(zip(bounds[:-1], bounds[1:], strict=True))
     return conv, call, spans
+
+
+# operands the KDA backend hands over otherwise than the op takes them
+OPERAND_CHANGES = {
+    "unpacked": lambda c: c.update(q=c["q"].clone(), k=c["k"].clone(), v=c["v"].clone()),
+    "fp16": lambda c: c.update(q=c["q"].half(), k=c["k"].half(), v=c["v"].half()),
+    "gate_strided": lambda c: c.update(g=c["g"].transpose(2, 3).contiguous().transpose(2, 3)),
+    "beta_fp32": lambda c: c.update(beta=c["beta"].float()),
+    "bf16_state": lambda c: c.update(ssm_states=c["ssm_states"].to(torch.bfloat16)),
+    "state_k_major": lambda c: c.update(ssm_states=c["ssm_states"].transpose(-1, -2)),
+}
 
 
 def expected_prefill(call, spans):
@@ -382,6 +289,12 @@ def test_aligned_only_tracking_serves_the_plain_prefill(prefill_ops):
         {"extend_seq_lens_cpu": [5, 4]},  # rows past the sequences
         {"cache_indices": torch.tensor([2, 0])},  # int64
         {"query_start_loc": torch.tensor([0, 8], dtype=torch.int32)},
+        "unpacked",
+        "fp16",
+        "gate_strided",
+        "beta_fp32",
+        "bf16_state",
+        "state_k_major",
     ],
     ids=[
         "no_lower_bound",
@@ -396,14 +309,30 @@ def test_aligned_only_tracking_serves_the_plain_prefill(prefill_ops):
         "padded_rows",
         "int64_slots",
         "offsets",
+        "unpacked",
+        "fp16",
+        "gate_strided",
+        "beta_fp32",
+        "bf16_state",
+        "state_k_major",
     ],  # fmt: skip
 )
 def test_other_prefills_stay_with_sglang(monkeypatch, change):
     monkeypatch.setattr(api, "kimi_k3_sgl_kda_prefill", Op(lambda *a, **kw: pytest.fail("the op ran")))
     monkeypatch.setattr(api, "kimi_k3_sgl_kda_prefill_track", Op(lambda *a, **kw: pytest.fail("the op ran")))
     _, call, _ = prefill_call((5, 3), [2, 0])
-    call.update(change)
+    if isinstance(change, str):
+        OPERAND_CHANGES[change](call)
+    else:
+        call.update(change)
     assert api._extend(None, **call) is FallbackReason.OUT_OF_CONTRACT
+
+
+def test_a_dense_beta_is_row_major(prefill_ops):
+    _, call, _ = prefill_call((5, 3), [2, 0])
+    call["beta"] = call["beta"].contiguous()
+    api._extend(None, **call)
+    assert prefill_ops[0].calls[0][1]["storage"] == "row_major"
 
 
 def test_a_prefill_in_a_graph_capture_stays_with_sglang(monkeypatch):
@@ -447,10 +376,7 @@ def test_sglangs_own_hip_prefill_keeps_its_calls(monkeypatch, hip, takes):
 
 @pytest.fixture
 def sglang_kernels(monkeypatch):
-    """Stand-ins of sglang's chunk_kda and fused_sigmoid_gating_delta_rule_update (the recurrent kernel at both its
-    0.5.22 and 0.5.23 paths: the baseline tries 0.5.23's first, so with sglang installed a stand-in at 0.5.22's path
-    alone leaves the real Triton kernel to run on these CPU tensors), each recording its call and returning an output
-    of sglang's shape."""
+    """A stand-in of sglang's chunk_kda, recording its call and returning an output of sglang's shape."""
     calls = {}
 
     def chunk_kda(**kwargs):
@@ -458,26 +384,13 @@ def sglang_kernels(monkeypatch):
         o = torch.zeros(kwargs["v"].shape)
         return (o, None) if kwargs["output_intermediate_states"] else o
 
-    def fused_sigmoid_gating_delta_rule_update(**kwargs):
-        calls["recurrent"] = kwargs
-        return torch.zeros(kwargs["v"].shape)
-
-    for name, attrs in {
-        "sglang.kernels.ops.attention.fla.kda": {"chunk_kda": chunk_kda},
-        "sglang.kernels.ops.attention.fla.fused_sigmoid_gating_recurrent": {
-            "fused_sigmoid_gating_delta_rule_update": fused_sigmoid_gating_delta_rule_update
-        },
-        "sglang.kernels.ops.attention.linear.fused_sigmoid_gating_recurrent": {
-            "fused_sigmoid_gating_delta_rule_update": fused_sigmoid_gating_delta_rule_update
-        },
-    }.items():
-        stand_in = ModuleType(name)
-        stand_in.__dict__.update(attrs)
-        monkeypatch.setitem(sys.modules, name, stand_in)
+    stand_in = ModuleType("sglang.kernels.ops.attention.fla.kda")
+    stand_in.chunk_kda = chunk_kda
+    monkeypatch.setitem(sys.modules, stand_in.__name__, stand_in)
     return calls
 
 
-def op_operands(n, n_seqs=None):
+def op_operands(n, n_seqs):
     gen = torch.Generator().manual_seed(2)
     bfa = randn(gen, n, BFA)
     return dict(
@@ -487,7 +400,7 @@ def op_operands(n, n_seqs=None):
         a_log=torch.zeros(HEADS),
         g_bias=torch.zeros(HEADS, DIM),
         state_cache=torch.zeros(SLOTS, HEADS * DIM, DIM),
-        state_indices=torch.arange(n if n_seqs is None else n_seqs, dtype=torch.int32),
+        state_indices=torch.arange(n_seqs, dtype=torch.int32),
     )
 
 
@@ -500,7 +413,7 @@ def sglang_views(kwargs, args):
         args["qkv"].data_ptr() + 2 * heads_dim,
     )
     assert kwargs["q"].shape[:1] == (1,) and kwargs["q"].stride()[1:] == (3 * HEADS * DIM, DIM, 1)
-    assert kwargs["initial_state" if "initial_state" in kwargs else "initial_state_source"].shape == (
+    assert kwargs["initial_state"].shape == (
         SLOTS,
         HEADS,
         DIM,
@@ -576,27 +489,3 @@ def test_the_track_baseline_asks_chunk_kda_for_the_snapshots(sglang_kernels):
         and call["track_state"].data_ptr() == snapshot.data_ptr()
     )
     assert call["track_chunk_idx"] is chunks
-
-
-def test_the_decode_baseline_calls_the_recurrent_kernel_as_sglang_does(sglang_kernels):
-    args = op_operands(3)
-    out = baseline.KimiK3SglKdaDecodeBaseline().baseline(**args)["out"]
-    call = sglang_kernels["recurrent"]
-    sglang_views(call, args)
-    assert out.shape == (3, HEADS, DIM)
-    assert (
-        call["a"].shape == (3, HEADS * DIM)
-        and call["b"].shape == (1, 3, HEADS)
-        and call["b"].stride(1) == BFA
-    )
-    assert call["initial_state_indices"] is args["state_indices"]
-    assert call["cu_seqlens"].tolist() == [0, 1, 2, 3]
-    flags = {n: call[n] for n in ("use_qk_l2norm_in_kernel", "is_kda", "lower_bound", "softplus_beta",
-                                  "softplus_threshold")}  # fmt: skip
-    assert flags == {
-        "use_qk_l2norm_in_kernel": True,
-        "is_kda": True,
-        "lower_bound": -5.0,
-        "softplus_beta": 1.0,
-        "softplus_threshold": 20.0,
-    }

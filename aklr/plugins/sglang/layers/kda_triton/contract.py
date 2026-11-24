@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Kimi-K3's KDA (Kimi Delta Attention) prefill and decode as sglang runs them on its Triton backend
+"""Kimi-K3's KDA (Kimi Delta Attention) prefill as sglang runs it on its Triton backend
 (``srt/layers/attention/linear/kernels/kda_triton.py``'s ``TritonKDAKernel``): ``extend`` calls fla's
-``chunk_kda``, ``decode`` calls ``fused_sigmoid_gating_delta_rule_update``.
+``chunk_kda``.
 
 The KDA backend hands over q, k and v as views of the short convolution's output rows (one packed
 q|k|v row a token), the full-rank gate projection and the beta projection before their activations;
@@ -22,7 +22,6 @@ from aklr.core.contract.semantics import (
     LecunNormalDistribution,
     StridedRows,
     ToleranceBound,
-    tolerance,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -36,20 +35,17 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 from aklr.plugins.sglang.layers.kda_triton.baseline import (
-    KimiK3SglKdaDecodeBaseline,
     KimiK3SglKdaPrefillBaseline,
     KimiK3SglKdaPrefillTrackBaseline,
 )
 from aklr.plugins.sglang.layers.kda_triton.reference import (
     TRACK_CHUNK,
-    KimiK3SglKdaDecodeReference,
     KimiK3SglKdaPrefillReference,
     KimiK3SglKdaPrefillTrackReference,
 )
 
 __all__ = [
     "CONTRACTS",
-    "KIMI_K3_SGL_KDA_DECODE",
     "KIMI_K3_SGL_KDA_PREFILL",
     "KIMI_K3_SGL_KDA_PREFILL_TRACK",
 ]
@@ -87,7 +83,7 @@ _LAYOUTS = LayoutVariantsSpec(
 
 
 def _common_inputs() -> dict[str, TensorSpec]:
-    """The token operands and the layer's gate weights, as both calls hand them over."""
+    """The token operands and the layer's gate weights, as the KDA backend hands them over."""
     return {
         "qkv": TensorSpec(
             description=(
@@ -152,17 +148,6 @@ def _scalars() -> dict[str, ScalarSpec]:
     }
 
 
-def _state_cache(description: str, error_bounds: ToleranceBound) -> TensorSpec:
-    return TensorSpec(
-        description=description,
-        shape=("n_slots", "state_rows", "head_dim"),
-        dtype=_FP32,
-        distribution=_FINITE,
-        mutable=True,
-        error_bounds=error_bounds,
-    )
-
-
 # sglang's chunk_kda, the engine's prefill, rounds the normalized q and k to bf16 and multiplies them and the state
 # chunk by chunk on bf16 operands (float32 sums), as any chunked kernel on bf16 tensor cores does: its states move off
 # the float32 recurrence by bf16 roundings (2**-8 of a product), past float32's common 1e-4; entries reach about 5 at
@@ -211,10 +196,16 @@ KIMI_K3_SGL_KDA_PREFILL = OpContract(
     ),
     inputs={
         **_common_inputs(),
-        "state_cache": _state_cache(
-            "sglang's state pool of the layer (temporal, [slots, heads, v, k] there): slot by slot, each head's "
-            "(v, k) state, the head's head_dim rows of head_dim keys.",
-            _CHUNKED_STATE,
+        "state_cache": TensorSpec(
+            description=(
+                "sglang's state pool of the layer (temporal, [slots, heads, v, k] there): slot by slot, each head's "
+                "(v, k) state, the head's head_dim rows of head_dim keys."
+            ),
+            shape=("n_slots", "state_rows", "head_dim"),
+            dtype=_FP32,
+            distribution=_FINITE,
+            mutable=True,
+            error_bounds=_CHUNKED_STATE,
         ),
         "state_indices": TensorSpec(
             description=(
@@ -296,57 +287,4 @@ def _with_track(contract: OpContract) -> OpContract:
 
 KIMI_K3_SGL_KDA_PREFILL_TRACK = _with_track(KIMI_K3_SGL_KDA_PREFILL)
 
-KIMI_K3_SGL_KDA_DECODE = OpContract(
-    contract_id="kimi_k3_sgl_kda_decode@1.0",
-    description=(
-        "Kimi-K3's KDA decode as sglang's fused_sigmoid_gating_delta_rule_update computes it, one step of the gated "
-        f"delta rule per token (each sequence decodes one): token t's slot is state_indices[t]. {_STEP} The step "
-        "starts from the slot's state and writes the new S back to it; where the slot is -1 (sglang's padded graph "
-        "rows) it starts from a zero state, still gives its out, and writes nowhere. Slots no token names are left "
-        "unchanged."
-    ),
-    op_type="kda_triton",
-    axes={
-        "n_tokens": axis("Tokens of the batch, one a sequence.", 1, 4096, is_var=True),
-        # the kernel reaches its slots through state_indices: any pool size serves
-        "n_slots": axis("Slots of the state pool.", 1, 65536, is_var=True, any_size=True),
-        **_HEAD_AXES,
-    },
-    constraints=("n_tokens <= n_slots",),  # the drawn slots are distinct
-    inputs={
-        **_common_inputs(),
-        "state_cache": _state_cache(
-            "sglang's state pool of the layer (temporal, [slots, heads, v, k] there): slot by slot, each head's "
-            "(v, k) state, the head's head_dim rows of head_dim keys.",
-            # one float32 step from float32 operands (bf16 inputs decode exactly), about 1e-6 off at N(0, 1)
-            # states: float32's common bound
-            tolerance(DType.FLOAT32),
-        ),
-        "state_indices": TensorSpec(
-            description=(
-                "Each token's slot, the ones >= 0 distinct; -1 (sglang's padded graph rows), any number of times, "
-                "reads a zero state and writes none."
-            ),
-            shape=("n_tokens",),
-            dtype=_INT32,
-            distribution=_SLOTS_DRAWN,
-        ),
-        **_scalars(),
-    },
-    outputs={
-        "out": TensorSpec(
-            description="Each token's S @ q after its update.",
-            shape=_HEADS,
-            dtype=_SAME_AS_QKV,
-            # a float32 result rounded to bf16, as the reference rounds its own (2**-7): a rounding that flips is
-            # one more half unit
-            error_bounds=ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-2 + 2**-7),
-        ),
-    },
-    layout_variants=_LAYOUTS,
-    compare=CompareSpec(determinism="bitwise"),
-    reference=KimiK3SglKdaDecodeReference(),
-    baseline=KimiK3SglKdaDecodeBaseline(),
-)
-
-CONTRACTS = (KIMI_K3_SGL_KDA_PREFILL, KIMI_K3_SGL_KDA_PREFILL_TRACK, KIMI_K3_SGL_KDA_DECODE)
+CONTRACTS = (KIMI_K3_SGL_KDA_PREFILL, KIMI_K3_SGL_KDA_PREFILL_TRACK)

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""KDA from its recurrence, token by token, in float32, in the order of sglang's recurrent kernel
-(q and k normalized, q scaled; the state decayed, then the delta, then the output); the one rounding is the
-output's, to its dtype (sglang's chunk_kda also rounds the normalized q and k to bf16, an error left to compare).
-A prefill walks all its sequences side by side, one token of each a step."""
+"""KDA from its recurrence, token by token, in float32 (q and k normalized, q scaled; the state decayed, then the
+delta, then the output); the one rounding is the output's, to its dtype (sglang's chunk_kda also rounds the
+normalized q and k to bf16, an error left to compare). A prefill walks all its sequences side by side, one token of
+each a step."""
 
 import torch
 
@@ -13,12 +13,11 @@ from aklr.core.contract.reference import OpReference
 __all__ = [
     "L2_NORM_EPS",
     "TRACK_CHUNK",
-    "KimiK3SglKdaDecodeReference",
     "KimiK3SglKdaPrefillReference",
     "KimiK3SglKdaPrefillTrackReference",
 ]
 
-# x / sqrt(sum(x**2) + eps): fla's l2norm_fwd and the recurrent kernel's in-kernel norm
+# x / sqrt(sum(x**2) + eps): fla's l2norm_fwd, chunk_kda's in-kernel norm
 L2_NORM_EPS = 1e-6
 # tokens of one chunk of chunk_kda, the unit of sglang's prefix-cache snapshots (track_chunk_idx)
 TRACK_CHUNK = 64
@@ -44,23 +43,6 @@ def _step(state, q, k, v, decay, beta):
     delta = (v - (state * k[..., None, :]).sum(-1)) * beta[..., None]
     state = state + delta[..., :, None] * k[..., None, :]
     return state, (state * q[..., None, :]).sum(-1)
-
-
-class KimiK3SglKdaDecodeReference(OpReference):
-    def reference(
-        self, *, qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indices, scale, lower_bound, **_
-    ):
-        """out and state_cache as the call leaves them."""
-        q, k, v, decay, beta, cache, states = _operands(
-            qkv, raw_g, raw_beta, a_log, g_bias, state_cache, scale, lower_bound
-        )
-        slots = state_indices.long()
-        taken = slots >= 0
-        # a -1 slot: a zero state, its out still given, nothing written
-        start = torch.where(taken[:, None, None, None], states[slots.clamp(min=0)], 0.0)
-        new, out = _step(start, q, k, v, decay, beta)
-        states[slots[taken]] = new[taken]
-        return {"out": out.to(qkv.dtype), "state_cache": cache}
 
 
 def _walk(qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indices, cu_seqlens, scale, lower_bound,

@@ -11,12 +11,11 @@ import torch
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.layers.kda_triton.contract import (
-    KIMI_K3_SGL_KDA_DECODE,
     KIMI_K3_SGL_KDA_PREFILL,
     KIMI_K3_SGL_KDA_PREFILL_TRACK,
 )
 
-__all__ = ["kimi_k3_sgl_kda_decode", "kimi_k3_sgl_kda_prefill", "kimi_k3_sgl_kda_prefill_track"]
+__all__ = ["kimi_k3_sgl_kda_prefill", "kimi_k3_sgl_kda_prefill_track"]
 
 _TRITON_KDA = "sglang.srt.layers.attention.linear.kernels.kda_triton.TritonKDAKernel"
 
@@ -59,23 +58,6 @@ def kimi_k3_sgl_kda_prefill_track(
 ): ...
 
 
-@api(KIMI_K3_SGL_KDA_DECODE)
-def kimi_k3_sgl_kda_decode(
-    qkv,
-    raw_g,
-    raw_beta,
-    a_log,
-    g_bias,
-    state_cache,
-    state_indices,
-    storage="row_major",
-    scale=128**-0.5,
-    lower_bound=-5.0,
-    out_dtype=None,
-    out=None,
-): ...
-
-
 def _packed(q, k, v, heads, dim):
     """q, k and v [1, n, heads, dim] as the one row-major (n, 3 heads, dim) view of the convolution rows they split,
     else None."""
@@ -95,7 +77,7 @@ def _packed(q, k, v, heads, dim):
 
 
 def _layer_operands(q, b, A_log, dt_bias, ssm_states, cache_indices):
-    """(name, failed) of what both routes take as sglang's KDA backend passes it: bf16 rows, beta [1, n, heads] dense
+    """(name, failed) of what the route takes as sglang's KDA backend passes it: bf16 rows, beta [1, n, heads] dense
     in its heads, A_log and dt_bias per head, the float32 pool [slots, heads, v, k] dense, int32 slots."""
     n, heads, dim = q.shape[1], q.shape[2], q.shape[3]
     return (
@@ -222,51 +204,3 @@ def _extend(
         return result
     out = result.unsqueeze(0)
     return (out, None) if return_intermediate_states else out
-
-
-@sglang_route(f"{_TRITON_KDA}.decode", versions=("0.5.22", "0.5.23"))
-def _decode(
-    self,
-    q,
-    k,
-    v,
-    a,
-    b,
-    *,
-    A_log,
-    dt_bias,
-    ssm_states,
-    cache_indices,
-    query_start_loc,
-    lower_bound=None,
-    **kwargs,
-):
-    """Kimi-K3's KDA decode as the KDA backend's forward_decode asks the Triton kernel for it after the convolution
-    update (fused_sigmoid_gating_delta_rule_update; K3's safe gate keeps it off sglang's packed decode): one token a
-    sequence, the packed convolution rows, the raw gate [n, heads * dim], beta [1, n, heads], the pool read and written
-    in place at the slots (-1 in padded graph rows). Graph capture too. Returns what sglang's does: the output [1, n,
-    heads, dim]."""
-    if lower_bound is None or kwargs or q.dim() != 4:
-        return FallbackReason.OUT_OF_CONTRACT
-    n, heads, dim = q.shape[1], q.shape[2], q.shape[3]
-    qkv = _packed(q, k, v, heads, dim)
-    checks = (
-        ("q|k|v not one packed row", qkv is None),
-        *_layer_operands(q, b, A_log, dt_bias, ssm_states, cache_indices),
-        ("gate", a.numel() != n * heads * dim or not a.is_contiguous() or a.dtype != torch.bfloat16),
-        # one token a sequence: query_start_loc is 0, 1, .., n in a decode batch
-        ("one token a sequence", tuple(cache_indices.shape) != (n,) or query_start_loc.numel() != n + 1),
-    )
-    if any(failed for _, failed in checks):
-        return FallbackReason.OUT_OF_CONTRACT
-    common = _common(qkv, a.view(n, heads, dim), b, A_log, dt_bias, ssm_states, heads, dim)
-    result = kimi_k3_sgl_kda_decode(
-        *common,
-        cache_indices,
-        storage=_storage(b),
-        scale=dim**-0.5,
-        lower_bound=float(lower_bound),
-    )
-    if isinstance(result, FallbackReason):
-        return result
-    return result.unsqueeze(0)

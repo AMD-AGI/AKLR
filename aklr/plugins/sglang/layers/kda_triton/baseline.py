@@ -2,27 +2,20 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """What sglang's Triton KDA backend runs (``TritonKDAKernel``), on the operands as ``KDAAttnBackend`` hands them
-over: q, k and v the [1, n, heads, dim] views of the packed convolution rows, the gate [1, n, heads, dim] (a prefill's)
-or [n, heads * dim] (a decode's), beta [1, n, heads], the layer's A_log and flat dt_bias, the state pool [slots,
-heads, v, k].
+over: q, k and v the [1, n, heads, dim] views of the packed convolution rows, the gate [1, n, heads, dim], beta
+[1, n, heads], the layer's A_log and flat dt_bias, the state pool [slots, heads, v, k].
 
 - Prefill: fla's ``chunk_kda`` with q and k normalized, the gate and beta activated inside (beta_is_raw), the state
   read and written in place at the slots, as ``TritonKDAKernel.extend`` calls it on sglang 0.5.22 (0.5.23 on gfx950
   first tries its HIP prefill, which is not this baseline); with a snapshot, its fp32 track_state written at
-  track_chunk_idx, as the KDA backend asks it under the mamba radix cache's extra buffer.
-- Decode: ``fused_sigmoid_gating_delta_rule_update`` with is_kda and the safe gate, one token a sequence through
-  sglang's query_start_loc (0, 1, .., n), as ``TritonKDAKernel.decode`` calls it."""
+  track_chunk_idx, as the KDA backend asks it under the mamba radix cache's extra buffer."""
 
 from aklr.core.contract.baseline import OpBaseline
 
 __all__ = [
-    "KimiK3SglKdaDecodeBaseline",
     "KimiK3SglKdaPrefillBaseline",
     "KimiK3SglKdaPrefillTrackBaseline",
 ]
-
-# each decode batch's query_start_loc (0, 1, .., n), by device and token count: made once, not in a timed call
-_DECODE_OFFSETS: dict = {}
 
 
 def _views(qkv, raw_g, raw_beta, a_log, g_bias, state_cache):
@@ -128,64 +121,4 @@ class KimiK3SglKdaPrefillTrackBaseline(OpBaseline):
         track_state, are dropped)."""
         o = _chunk_kda(qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indices, cu_seqlens, scale, lower_bound,
                        track_state=track_state, track_chunk_idx=track_chunk_idx)  # fmt: skip
-        return {"out": o[0]}
-
-
-def _fused_sigmoid_gating_delta_rule_update():
-    """sglang's recurrent KDA/GDN kernel: under ``kernels/ops/attention/linear`` from 0.5.23, ``fla`` before."""
-    try:
-        from sglang.kernels.ops.attention.linear.fused_sigmoid_gating_recurrent import (
-            fused_sigmoid_gating_delta_rule_update,
-        )
-    except ModuleNotFoundError:
-        from sglang.kernels.ops.attention.fla.fused_sigmoid_gating_recurrent import (
-            fused_sigmoid_gating_delta_rule_update,
-        )
-    return fused_sigmoid_gating_delta_rule_update
-
-
-class KimiK3SglKdaDecodeBaseline(OpBaseline):
-    def baseline(
-        self,
-        *,
-        qkv,
-        raw_g,
-        raw_beta,
-        a_log,
-        g_bias,
-        state_cache,
-        state_indices,
-        storage="row_major",
-        scale=128**-0.5,
-        lower_bound=-5.0,
-        out_dtype=None,
-        out=None,
-    ):
-        """sglang's out [n_tokens, n_heads, head_dim], which its kernel allocates; state_cache is written in place,
-        as in sglang."""
-        import torch
-
-        n_tokens = qkv.shape[0]
-        q, k, v, _, b, A_log, dt_bias, ssm_states = _views(qkv, raw_g, raw_beta, a_log, g_bias, state_cache)
-        key = (qkv.device, n_tokens)
-        if key not in _DECODE_OFFSETS:
-            _DECODE_OFFSETS[key] = torch.arange(n_tokens + 1, dtype=torch.int32, device=qkv.device)
-        o = _fused_sigmoid_gating_delta_rule_update()(
-            A_log=A_log,
-            dt_bias=dt_bias,
-            q=q,
-            k=k,
-            v=v,
-            a=raw_g.flatten(1),  # the decode gate as the KDA backend hands it over: [n, heads * dim]
-            b=b,
-            initial_state_source=ssm_states,
-            initial_state_indices=state_indices,
-            cu_seqlens=_DECODE_OFFSETS[key],
-            scale=scale,
-            use_qk_l2norm_in_kernel=True,
-            softplus_beta=1.0,
-            softplus_threshold=20.0,
-            is_kda=True,
-            lower_bound=lower_bound,
-        )
         return {"out": o[0]}

@@ -840,23 +840,6 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="strided_beta",
     ),
-    # and its decode: five tokens' steps
-    PointSpec(
-        contract_id="kimi_k3_sgl_kda_decode@1.0",
-        axes={"n_tokens": 5, "n_slots": 7, "n_heads": 2, "head_dim": 128},
-        dtypes={
-            "qkv": "bfloat16",
-            "raw_g": "bfloat16",
-            "raw_beta": "bfloat16",
-            "a_log": "float32",
-            "g_bias": "float32",
-            "state_cache": "float32",
-            "state_indices": "int32",
-            "out": "bfloat16",
-        },
-        attrs={},
-        layout_variant_name="strided_beta",
-    ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
 # tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
