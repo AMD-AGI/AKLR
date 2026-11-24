@@ -193,8 +193,9 @@ def _with_fp8_out(contract: OpContract) -> OpContract:
                 shape=_ROWS,
                 dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
                 # an element off by one fp8 step where its bf16 out (last bit free under kimi_k3_attn_res@1.0) or its
-                # row's scale crosses an fp8 rounding boundary: a step is 2**-3 relative for normals, 2**-9 below them
-                error_bounds=ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-3),
+                # row's scale crosses an fp8 rounding boundary: a step is 2**-3 relative for normals, 2**-9 below them;
+                # plus one fp8 rounding (2**-3), the output's own, which the compare no longer adds
+                error_bounds=ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-3 + 2**-3),
             ),
             "scale": TensorSpec(
                 description="Each token's dequantization scale.",

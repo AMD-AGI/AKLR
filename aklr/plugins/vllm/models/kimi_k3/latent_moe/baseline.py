@@ -6,9 +6,12 @@ deployment's), vLLM's RMSNorm layer, the addmm into this rank's columns of the s
 writes it), and the all-reduce of the shared output. vLLM's TP group is set up over the caller's process group on the
 first call."""
 
-from __future__ import annotations
+import torch
+import torch.distributed as dist
 
-__all__ = ["kimi_k3_latent_moe_tail_baseline"]
+from aklr.core.contract.baseline import DistOpBaseline
+
+__all__ = ["KimiK3LatentMoeTailBaseline"]
 
 # vLLM's RMSNorm layers by (width, eps, device): made once, not in a timed call
 _NORMS: dict = {}
@@ -16,8 +19,6 @@ _NORMS: dict = {}
 
 def _vllm_tp(tp_size, device):
     """(vLLM's TP all-reduce, this rank's TP rank); vLLM's TP group set up over torch.distributed's ranks if none is."""
-    import torch.distributed as dist
-
     if tp_size == 1:
         return (lambda x: x), 0
     try:
@@ -52,24 +53,36 @@ def _vllm_norm(width, eps, device):
     return _NORMS[key]
 
 
-def kimi_k3_latent_moe_tail_baseline(
-    routed,
-    shared,
-    up_weight,
-    norm_weight,
-    tp_size=8,
-    eps=1e-5,
-    out_dtype=None,
-    out=None,
-):
-    """vLLM's out [n_tokens, hidden_size]; shared's own columns are written in place, as in vLLM."""
-    all_reduce, rank = _vllm_tp(tp_size, routed.device)
-    norm = _vllm_norm(routed.shape[1], eps, routed.device)
-    norm.weight.data = norm_weight
-    latent = norm(all_reduce(routed))
-    shard = up_weight.shape[0]
-    shared.narrow(-1, rank * shard, shard).addmm_(latent, up_weight.t())
-    result = all_reduce(shared)
-    if out is None:
-        return result
-    return out.copy_(result)
+class KimiK3LatentMoeTailBaseline(DistOpBaseline):
+    def setup(self):
+        """The kernel's state over the group's process group (one rank a device), as the vLLM route sets it up over
+        vLLM's TP group before its first call: the peer buffer every rank maps, the launch counters and the health
+        words. Kept until the process ends, as in vLLM: a rank freeing its buffer could not know that no peer still
+        writes to it without a collective, which a peer stopped at a finding would never join."""
+        from aklr.plugins.vllm.models.kimi_k3.latent_moe import runtime
+
+        device = torch.device("cuda", torch.cuda.current_device())
+        if runtime.setup(dist.group.WORLD, dist.get_rank(), dist.get_world_size(), device) is None:
+            raise RuntimeError("latent-MoE tail: the group's peer memory could not be set up")
+
+    def baseline(
+        self,
+        *,
+        routed,
+        shared,
+        up_weight,
+        norm_weight,
+        tp_size=8,
+        eps=1e-5,
+        out_dtype=None,
+        out=None,
+    ):
+        """vLLM's out [n_tokens, hidden_size]; shared's own columns are written in place, as in vLLM."""
+        all_reduce, rank = _vllm_tp(tp_size, routed.device)
+        norm = _vllm_norm(routed.shape[1], eps, routed.device)
+        norm.weight.data = norm_weight
+        latent = norm(all_reduce(routed))
+        shard = up_weight.shape[0]
+        shared.narrow(-1, rank * shard, shard).addmm_(latent, up_weight.t())
+        result = all_reduce(shared)
+        return {"out": result if out is None else out.copy_(result)}

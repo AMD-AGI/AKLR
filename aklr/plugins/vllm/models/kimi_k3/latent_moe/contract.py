@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     LecunNormalDistribution,
@@ -22,6 +21,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -31,12 +31,16 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.vllm.models.kimi_k3.latent_moe.baseline import KimiK3LatentMoeTailBaseline
+from aklr.plugins.vllm.models.kimi_k3.latent_moe.reference import KimiK3LatentMoeTailReference
 
 __all__ = ["CONTRACTS", "KIMI_K3_LATENT_MOE_TAIL"]
 
 _SAME_AS_ROUTED = DTypeSpec(same_as_tensor="routed")
 _FINITE = FiniteDistribution()
-_ONE_ROUNDING = ToleranceBound(absolute_tolerance=2.0**-5, relative_tolerance=2.0**-8)
+# a kernel's bf16 rounding where the reference's differs (see each use), plus one bf16 rounding (2**-7): the
+# reference rounds its outputs to bf16 too, and the compare no longer adds the output's own
+_ONE_ROUNDING = ToleranceBound(absolute_tolerance=2.0**-5, relative_tolerance=2.0**-8 + 2.0**-7)
 
 KIMI_K3_LATENT_MOE_TAIL = OpContract(
     contract_id="kimi_k3_latent_moe_tail@1.0",
@@ -76,7 +80,7 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
             distribution=_FINITE,
             mutable=True,
             # one bf16 rounding of shared_r + n_r @ up_weight_r.T in its own columns, float32 sums in another order:
-            # one bf16 unit apart at a tie, below (2**-8 + u) |s_r|; the rest unchanged
+            # one bf16 unit apart at a tie, below 2**-7 |s_r|; the rest unchanged
             error_bounds=_ONE_ROUNDING,
         ),
         "up_weight": TensorSpec(
@@ -113,6 +117,8 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BITWISE),
     ranks="tp_size",
+    reference=KimiK3LatentMoeTailReference(),
+    baseline=KimiK3LatentMoeTailBaseline(),
 )
 
 CONTRACTS = (KIMI_K3_LATENT_MOE_TAIL,)

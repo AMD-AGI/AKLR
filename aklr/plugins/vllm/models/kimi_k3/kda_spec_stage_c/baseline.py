@@ -14,7 +14,11 @@ import struct
 import weakref
 from types import SimpleNamespace
 
-__all__ = ["kimi_k3_kda_spec_stage_c_baseline"]
+import torch
+
+from aklr.core.contract.baseline import OpBaseline
+
+__all__ = ["KimiK3KdaSpecStageCBaseline"]
 
 # the width-major copy of each convolution weight tensor, by the tensor's id while it lives (_staged_conv_weight)
 _STAGED: dict = {}
@@ -34,8 +38,6 @@ def _staged_conv_weight(conv_weight, width):
     stages it again from the weight's values (validation reloads weights in place, address and version kept). A
     capture, which is what the timed calls replay, reads the copy the eager call before it made and records no copy
     of its own; only a capture of a weight never seen eagerly stages it inside the capture."""
-    import torch
-
     key = id(conv_weight)
     staged = _STAGED.get(key)
     capturing = conv_weight.is_cuda and torch.cuda.is_current_stream_capturing()
@@ -51,70 +53,74 @@ def _staged_conv_weight(conv_weight, width):
     return staged
 
 
-def kimi_k3_kda_spec_stage_c_baseline(
-    qkv,
-    out_gate,
-    f_a,
-    raw_beta,
-    f_b_weight,
-    conv_weight,
-    conv_state,
-    a_log,
-    g_bias,
-    norm_weight,
-    state_cache,
-    state_indices,
-    num_accepted_tokens,
-    storage="row_major",
-    scale=128**-0.5,
-    lower_bound=-5.0,
-    eps=1e-5,
-    out_dtype=None,
-    out=None,
-):
-    """vLLM's out [n_tokens, n_heads, head_dim]; both caches are written in place, as in vLLM. Padding rows are
-    zeroed (vLLM leaves them unwritten)."""
-    import torch
-    from vllm._aiter_ops import rocm_aiter_ops
-    from vllm.model_executor.layers.utils import dispatch_unquantized_gemm
+class KimiK3KdaSpecStageCBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        qkv,
+        out_gate,
+        f_a,
+        raw_beta,
+        f_b_weight,
+        conv_weight,
+        conv_state,
+        a_log,
+        g_bias,
+        norm_weight,
+        state_cache,
+        state_indices,
+        num_accepted_tokens,
+        storage="row_major",
+        scale=128**-0.5,
+        lower_bound=-5.0,
+        eps=1e-5,
+        out_dtype=None,
+        out=None,
+    ):
+        """vLLM's out [n_tokens, n_heads, head_dim]; both caches are written in place, as in vLLM. Padding rows are
+        zeroed (vLLM leaves them unwritten)."""
+        from vllm._aiter_ops import rocm_aiter_ops
+        from vllm.model_executor.layers.utils import dispatch_unquantized_gemm
 
-    n_tokens, heads, dim = out_gate.shape
-    # aiter's kernel takes q's scale as head_dim ** -0.5 in float32; the workloads record that float32
-    if _float32(scale) != _float32(dim**-0.5):
-        raise NotImplementedError("vLLM's fused kernel scales q by head_dim ** -0.5")
-    n_seqs = num_accepted_tokens.shape[0]
-    width = conv_weight.shape[1]
-    window = conv_state.shape[1] - width + 2
-    rows = n_seqs * window
-    device = qkv.device
-    offsets_key = (device, n_seqs, window)
-    if offsets_key not in _OFFSETS:
-        _OFFSETS[offsets_key] = torch.arange(n_seqs + 1, dtype=torch.int32, device=device) * window
-    if out is None:
-        out = torch.empty(out_gate.shape, dtype=qkv.dtype, device=device)
-    # f_b_proj (ColumnParallelLinear, unquantized) as its quant method calls it
-    raw_g = dispatch_unquantized_gemm()(SimpleNamespace(weight=f_b_weight), f_a[:rows, 0], f_b_weight, None)
-    q, k, v = (qkv[None, :rows, i * heads : (i + 1) * heads] for i in range(3))
-    rocm_aiter_ops.kda_fused_recurrent_spec_decode(
-        q=q,
-        k=k,
-        v=v,
-        g=raw_g.view(1, rows, heads, dim),
-        beta=raw_beta[None, :rows, :, 0],
-        A_log=a_log,
-        dt_bias=g_bias.flatten(),
-        lower_bound=lower_bound,
-        initial_state=state_cache.unflatten(1, (heads, dim)),
-        cu_seqlens=_OFFSETS[offsets_key],
-        ssm_state_indices=state_indices[:rows].view(n_seqs, window),
-        num_accepted_tokens=num_accepted_tokens,
-        conv_state=conv_state.transpose(1, 2),
-        conv_weight=_staged_conv_weight(conv_weight, width),
-        out_gate=out_gate[None, :rows],
-        norm_weight=norm_weight,
-        norm_eps=eps,
-        out=out[None, :rows],
-    )
-    if n_tokens > rows:
-        out[rows:].zero_()
-    return out
+        n_tokens, heads, dim = out_gate.shape
+        # aiter's kernel takes q's scale as head_dim ** -0.5 in float32; the workloads record that float32
+        if _float32(scale) != _float32(dim**-0.5):
+            raise NotImplementedError("vLLM's fused kernel scales q by head_dim ** -0.5")
+        n_seqs = num_accepted_tokens.shape[0]
+        width = conv_weight.shape[1]
+        window = conv_state.shape[1] - width + 2
+        rows = n_seqs * window
+        device = qkv.device
+        offsets_key = (device, n_seqs, window)
+        if offsets_key not in _OFFSETS:
+            _OFFSETS[offsets_key] = torch.arange(n_seqs + 1, dtype=torch.int32, device=device) * window
+        if out is None:
+            out = torch.empty(out_gate.shape, dtype=qkv.dtype, device=device)
+        # f_b_proj (ColumnParallelLinear, unquantized) as its quant method calls it
+        raw_g = dispatch_unquantized_gemm()(
+            SimpleNamespace(weight=f_b_weight), f_a[:rows, 0], f_b_weight, None
+        )
+        q, k, v = (qkv[None, :rows, i * heads : (i + 1) * heads] for i in range(3))
+        rocm_aiter_ops.kda_fused_recurrent_spec_decode(
+            q=q,
+            k=k,
+            v=v,
+            g=raw_g.view(1, rows, heads, dim),
+            beta=raw_beta[None, :rows, :, 0],
+            A_log=a_log,
+            dt_bias=g_bias.flatten(),
+            lower_bound=lower_bound,
+            initial_state=state_cache.unflatten(1, (heads, dim)),
+            cu_seqlens=_OFFSETS[offsets_key],
+            ssm_state_indices=state_indices[:rows].view(n_seqs, window),
+            num_accepted_tokens=num_accepted_tokens,
+            conv_state=conv_state.transpose(1, 2),
+            conv_weight=_staged_conv_weight(conv_weight, width),
+            out_gate=out_gate[None, :rows],
+            norm_weight=norm_weight,
+            norm_eps=eps,
+            out=out[None, :rows],
+        )
+        if n_tokens > rows:
+            out[rows:].zero_()
+        return {"out": out}

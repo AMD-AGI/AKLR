@@ -28,7 +28,6 @@ from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins import vllm as plugin
 from aklr.plugins.vllm.models.kimi_k3.latent_moe import api, runtime
 from aklr.plugins.vllm.models.kimi_k3.latent_moe.contract import KIMI_K3_LATENT_MOE_TAIL
-from aklr.plugins.vllm.models.kimi_k3.latent_moe.reference import kimi_k3_latent_moe_tail_reference
 
 TP, HIDDEN, LATENT = 8, 7168, 3584
 BF16 = torch.bfloat16
@@ -54,19 +53,10 @@ def draw(n, hidden=HIDDEN, latent=LATENT, tp=TP, seed=0):
     ]
 
 
-def point(n, hidden=HIDDEN, latent=LATENT, tp=TP):
-    return SimpleNamespace(
-        axes={"n_tokens": n, "hidden_size": hidden, "latent_size": latent},
-        attrs={"tp_size": tp},
-        dtypes=dict.fromkeys(("routed", "shared", "up_weight", "norm_weight", "out"), "bfloat16"),
-    )
-
-
 def reference(group_args, rank=0):
-    """(out, shared as the call leaves it) of ``rank``'s call."""
-    n, latent = group_args[0]["routed"].shape
-    hidden = group_args[0]["shared"].shape[1]
-    return kimi_k3_latent_moe_tail_reference(point(n, hidden, latent, len(group_args)), group_args, rank)
+    """(out, shared as the call leaves it) of ``rank``'s call, in bf16."""
+    expected = KIMI_K3_LATENT_MOE_TAIL.reference.reference(group_args, rank)
+    return expected["out"], expected["shared"]
 
 
 # ---------------------------------------------------------------- the reference
@@ -85,10 +75,10 @@ def test_the_reference_is_vllms_ops_one_by_one():
         normed = bf16(latent * rstd * a["norm_weight"].float())
         s[:, r * 32 : (r + 1) * 32] = bf16(s[:, r * 32 : (r + 1) * 32] + normed @ a["up_weight"].float().T)
         outputs.append(s)
-    want = sum(outputs)
+    want = sum(outputs).to(BF16)
     for rank in (0, 5):
         out, shared = reference(group, rank)
-        assert torch.equal(out, want) and torch.equal(shared, outputs[rank])
+        assert torch.equal(out, want) and torch.equal(shared, outputs[rank].to(BF16))
     assert torch.equal(group[5]["shared"], draw(5, hidden=256, latent=128)[5]["shared"])  # written on a copy
 
 
@@ -404,12 +394,11 @@ def test_the_kernels_layout_computes_the_op_on_every_rank(layout, n):
         assert torch.equal(out, outs[0])
 
     def within(got, want, spec):
-        allowed = spec.error_bounds[0][1].allowed_error(want.double(), 2.0**-8, None, None)
-        return bool(((got.double() - want.double()).abs() <= allowed).all())
+        return spec.error_bounds[0][1].compare(got.to(BF16), want)[0]
 
-    assert within(bf16(outs[0]), reference(group)[0], KIMI_K3_LATENT_MOE_TAIL.outputs["out"])
+    assert within(outs[0], reference(group)[0], KIMI_K3_LATENT_MOE_TAIL.outputs["out"])
     for r in (0, 3, 7):
-        assert within(bf16(shared[r]), reference(group, r)[1], KIMI_K3_LATENT_MOE_TAIL.inputs["shared"])
+        assert within(shared[r], reference(group, r)[1], KIMI_K3_LATENT_MOE_TAIL.inputs["shared"])
 
 
 def test_the_up_sets_split_the_token_groups(layout):

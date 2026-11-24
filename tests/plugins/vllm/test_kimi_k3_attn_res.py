@@ -209,7 +209,7 @@ def _run_committed(builder_registry, path: Path, n_tokens: int, fill: Callable[[
     outputs = {n: call[n] for n in contract.mutable_tensors}
     for name, tensor in outputs.items():
         assert tensor.float().isfinite().all(), name
-    assert {o: r.detail for o, r in case.compare(outputs, args).items() if not r.is_passed} == {}
+    assert case.compare(outputs, args) == {}
 
 
 @pytest.mark.gfx950

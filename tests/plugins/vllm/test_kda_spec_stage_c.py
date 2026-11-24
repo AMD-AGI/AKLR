@@ -23,8 +23,7 @@ from aklr.core.contract.locate import committed_schema_paths, op_dir
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c import api
-from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.baseline import kimi_k3_kda_spec_stage_c_baseline
-from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.reference import kimi_k3_kda_spec_stage_c_reference
+from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.contract import KIMI_K3_KDA_SPEC_STAGE_C
 from tests.op_case import OpCase
 
 HEADS, DIM, TAPS, WINDOW = 2, 128, 4, 5
@@ -194,15 +193,6 @@ def vllm_chain(attn, slots=WINDOW_SLOTS, accepted=ACCEPTED):
     return out, conv, state
 
 
-def logical_dtypes(args):
-    """Each tensor operand's dtype as the contract names it (as torch does)."""
-    return {
-        name: str(value.dtype).removeprefix("torch.")
-        for name, value in args.items()
-        if torch.is_tensor(value)
-    }
-
-
 def stage_args(attn, slots=WINDOW_SLOTS, accepted=ACCEPTED, pad_slot=31):
     """The op's keyword arguments as the route hands them over (views of vLLM's tensors); each padding row past the
     windows names ``pad_slot`` (unread)."""
@@ -215,14 +205,15 @@ def stage_args(attn, slots=WINDOW_SLOTS, accepted=ACCEPTED, pad_slot=31):
     return args | {"scale": DIM**-0.5, "lower_bound": attn.gate_lower_bound, "eps": attn.o_norm.eps}
 
 
+def reference(**call):
+    """(out, conv_state, state_cache) of the reference on ``call``, in their dtypes."""
+    expected = KIMI_K3_KDA_SPEC_STAGE_C.reference.reference(**call)
+    return expected["out"], expected["conv_state"], expected["state_cache"]
+
+
 def reference_call(attn, slots, accepted, pad_slot=31):
     """The reference on the op's operands as the route hands them over (views of vLLM's tensors)."""
-    args = stage_args(attn, slots, accepted, pad_slot)
-    n_seqs = len(accepted)
-    axes = {"n_heads": HEADS, "head_dim": DIM, "width": TAPS, "conv_len": CONV_LEN, "n_seqs": n_seqs,
-            "n_tokens": attn.proj.shape[0], "n_slots": SLOTS}  # fmt: skip
-    point = SimpleNamespace(axes=axes, dtypes=logical_dtypes(args))
-    return kimi_k3_kda_spec_stage_c_reference(point, args)
+    return reference(**stage_args(attn, slots, accepted, pad_slot))
 
 
 def test_the_reference_is_vllms_ops_in_their_order():
@@ -294,11 +285,7 @@ class _Op:
         if self.result is not None:
             return self.result
         bound = dict(zip(API.parameters, args)) | kwargs
-        n_seqs = bound["num_accepted_tokens"].shape[0]
-        axes = {"n_heads": HEADS, "head_dim": DIM, "width": TAPS, "conv_len": bound["conv_state"].shape[1],
-                "n_seqs": n_seqs, "n_tokens": bound["qkv"].shape[0], "n_slots": SLOTS}  # fmt: skip
-        point = SimpleNamespace(axes=axes, dtypes=logical_dtypes(bound))
-        out, conv, state = kimi_k3_kda_spec_stage_c_reference(point, bound)
+        out, conv, state = reference(**bound)
         bound["conv_state"].copy_(conv)
         bound["state_cache"].copy_(state)
         return bound["out"].copy_(out)
@@ -582,10 +569,10 @@ def test_the_baseline_takes_the_float32_scale_the_workloads_record(vllm_calls):
     (scale,) = {w["scalars"]["scale"] for w in json.loads(path.read_text())["workloads"]}
     assert scale != DIM**-0.5
     args = stage_args(FakeKDA(len(ACCEPTED) * WINDOW)) | {"storage": "strided_rows"}
-    kimi_k3_kda_spec_stage_c_baseline(**args | {"scale": scale})
+    KIMI_K3_KDA_SPEC_STAGE_C.baseline.baseline(**args | {"scale": scale})
     assert len(vllm_calls) == 1
     with pytest.raises(NotImplementedError, match="head_dim"):
-        kimi_k3_kda_spec_stage_c_baseline(**args | {"scale": 0.0883883})
+        KIMI_K3_KDA_SPEC_STAGE_C.baseline.baseline(**args | {"scale": 0.0883883})
 
 
 def test_the_baseline_restages_a_convolution_weight_reloaded_in_place(vllm_calls):
@@ -594,10 +581,10 @@ def test_the_baseline_restages_a_convolution_weight_reloaded_in_place(vllm_calls
     process_weights_after_loading stages), not of the old."""
     args = stage_args(FakeKDA(len(ACCEPTED) * WINDOW)) | {"storage": "strided_rows"}
     weight = args["conv_weight"]
-    kimi_k3_kda_spec_stage_c_baseline(**args)
+    KIMI_K3_KDA_SPEC_STAGE_C.baseline.baseline(**args)
     assert torch.equal(vllm_calls[0]["conv_weight"], _width_major(weight))
     weight.data.copy_(torch.randn(weight.shape, generator=torch.Generator().manual_seed(7)))
-    kimi_k3_kda_spec_stage_c_baseline(**args)
+    KIMI_K3_KDA_SPEC_STAGE_C.baseline.baseline(**args)
     staged = vllm_calls[1]["conv_weight"]
     assert staged.is_contiguous() and torch.equal(staged, _width_major(weight))
 
@@ -606,7 +593,7 @@ def test_the_staged_convolution_weight_goes_with_its_weight(vllm_calls):
     """The width-major copy belongs to the weight tensor it was made from and is freed with it: an allocation that
     reuses the weight's address never finds it."""
     args = stage_args(FakeKDA(len(ACCEPTED) * WINDOW)) | {"storage": "strided_rows"}
-    kimi_k3_kda_spec_stage_c_baseline(**args)
+    KIMI_K3_KDA_SPEC_STAGE_C.baseline.baseline(**args)
     staged = weakref.ref(vllm_calls.pop()["conv_weight"])
     assert staged() is not None
     del args
@@ -622,17 +609,17 @@ def test_a_capture_reads_the_weight_the_last_eager_call_staged(vllm_calls):
     args = stage_args(FakeKDA(len(ACCEPTED) * WINDOW)) | {"storage": "strided_rows"}
     args = {n: v.cuda() if torch.is_tensor(v) else v for n, v in args.items()}
     weight = args["conv_weight"]
-    kimi_k3_kda_spec_stage_c_baseline(**args)
+    KIMI_K3_KDA_SPEC_STAGE_C.baseline.baseline(**args)
     staged = vllm_calls[-1]["conv_weight"]
     eager = staged.clone()
     weight.data.copy_(torch.randn_like(weight))
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
-        kimi_k3_kda_spec_stage_c_baseline(**args)
+        KIMI_K3_KDA_SPEC_STAGE_C.baseline.baseline(**args)
     graph.replay()
     torch.cuda.synchronize()
     assert vllm_calls[-1]["conv_weight"] is staged and torch.equal(staged, eager)
-    kimi_k3_kda_spec_stage_c_baseline(**args)
+    KIMI_K3_KDA_SPEC_STAGE_C.baseline.baseline(**args)
     assert vllm_calls[-1]["conv_weight"] is staged and torch.equal(staged, _width_major(weight))
 
 
@@ -729,8 +716,7 @@ def test_the_kernel_meets_the_reference_on_padding_windows_and_rows(kernel_modul
     kernel_module.run(**{k: call[k] for k in case.contract.kernel_call_keys} | {"out": out})
     torch.cuda.synchronize()
     outputs = case.contract.call_mutable_tensors(out, call)
-    results = case.compare(outputs, args)
-    assert {o: r for o, r in results.items() if not r.is_passed} == {}
+    assert case.compare(outputs, args) == {}
     assert not out[window:].any()
     live = set(args["state_indices"][:window].tolist())
     for name, cache in before.items():

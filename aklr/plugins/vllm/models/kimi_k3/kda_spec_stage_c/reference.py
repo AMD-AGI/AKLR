@@ -8,22 +8,23 @@ then ``FusedRMSNormGated`` with the sigmoid."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from aklr.core.contract.semantics import to_float32
-from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.contract import L2_NORM_EPS
+import torch
+
+from aklr.core.contract.reference import OpReference
 
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["kimi_k3_kda_spec_stage_c_reference", "spec_conv_update"]
+__all__ = ["L2_NORM_EPS", "KimiK3KdaSpecStageCReference", "spec_conv_update"]
+
+# x * rsqrt(sum(x**2) + eps): vLLM's recurrent kernels
+L2_NORM_EPS = 1e-6
 
 
 def _bf16(x: Tensor) -> Tensor:
     """x rounded to bf16, in x's dtype: a bf16 tensor vLLM writes and its next kernel reads."""
-    import torch
-
     return x.to(torch.bfloat16).to(x.dtype)
 
 
@@ -34,8 +35,6 @@ def spec_conv_update(
     bf16: window s reads conv_state[slots[s], a .. a + width - 2] (a = accepted[s] - 1), then its inputs, and leaves
     the history after a, then its inputs, in the slot. ``conv_state`` (slot, conv_len, channel) is written in place
     where the slot is positive and the window ``live``; a window not live gives zeros. x: (rows, channel)."""
-    import torch
-
     width = weight.shape[1]
     window = x.shape[0] // len(slots)
     y = torch.zeros_like(x)
@@ -73,8 +72,6 @@ def _spec_recurrence(
     that is positive; one whose start slot is <= 0 (vLLM's padding) gives zeros and touches no slot. qkv (rows,
     3 * heads, dim), raw_g (rows, heads, dim), raw_beta (rows, heads, 1), state_cache (slot, heads * dim, dim): (out
     (rows, heads, dim), a copy of state_cache as the windows leave it)."""
-    import torch
-
     heads, dim = g_bias.shape
     q, k, v = qkv.unflatten(1, (3, heads)).unbind(1)
     q = q * torch.rsqrt((q * q).sum(-1, keepdim=True) + L2_NORM_EPS) * scale
@@ -101,53 +98,73 @@ def _spec_recurrence(
     return out, state_cache
 
 
-def kimi_k3_kda_spec_stage_c_reference(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-) -> tuple[Tensor, Tensor, Tensor]:
-    """(out, conv_state, state_cache) as the call leaves them."""
-    import torch
+class KimiK3KdaSpecStageCReference(OpReference):
+    def reference(
+        self,
+        *,
+        qkv,
+        out_gate,
+        f_a,
+        raw_beta,
+        f_b_weight,
+        conv_weight,
+        conv_state,
+        a_log,
+        g_bias,
+        norm_weight,
+        state_cache,
+        state_indices,
+        num_accepted_tokens,
+        scale,
+        lower_bound,
+        eps,
+        **_,
+    ):
+        """out, conv_state and state_cache as the call leaves them."""
+        n_tokens, heads, dim = out_gate.shape
+        n_seqs, width = num_accepted_tokens.shape[0], conv_weight.shape[1]
+        window = conv_state.shape[1] - width + 2
+        rows = n_seqs * window
+        accepted = num_accepted_tokens.tolist()
+        slots = state_indices[:rows].tolist()
+        starts = [slots[s * window + n_acc - 1] for s, n_acc in enumerate(accepted)]
+        live = [start > 0 for start in starts]
 
-    args, dtypes = row_major_args, point.dtypes
-    heads, dim = point.axes["n_heads"], point.axes["head_dim"]
-    n_seqs, n_tokens = point.axes["n_seqs"], point.axes["n_tokens"]
-    window = point.axes["conv_len"] - point.axes["width"] + 2
-    rows = n_seqs * window
-    accepted = args["num_accepted_tokens"].tolist()
-    slots = args["state_indices"][:rows].tolist()
-    starts = [slots[s * window + n_acc - 1] for s, n_acc in enumerate(accepted)]
-    live = [start > 0 for start in starts]
-
-    # (1) f_b_proj: vLLM's GEMM writes bf16
-    f_a = to_float32(args["f_a"], dtypes["f_a"])[:rows, 0]
-    raw_g = _bf16(f_a @ to_float32(args["f_b_weight"], dtypes["f_b_weight"]).T).view(rows, heads, dim)
-    # (2) the convolution of the windows' packed q|k|v columns
-    conv_state = to_float32(args["conv_state"], dtypes["conv_state"]).clone()
-    qkv = to_float32(args["qkv"], dtypes["qkv"])[:rows].flatten(1)
-    conv_weight = to_float32(args["conv_weight"], dtypes["conv_weight"])
-    y = spec_conv_update(
-        qkv, conv_weight, conv_state, [slots[s * window] for s in range(n_seqs)], accepted, live
-    )
-    # (3) the speculative recurrence through each window
-    o, state_cache = _spec_recurrence(
-        y.view(rows, 3 * heads, dim),
-        raw_g,
-        to_float32(args["raw_beta"], dtypes["raw_beta"])[:rows],
-        to_float32(args["a_log"], dtypes["a_log"]),
-        to_float32(args["g_bias"], dtypes["g_bias"]),
-        to_float32(args["state_cache"], dtypes["state_cache"]),
-        slots,
-        accepted,
-        args["scale"],
-        args["lower_bound"],
-    )
-    # (4) the gated RMSNorm of vLLM's bf16 core_attn_out
-    o = _bf16(o)
-    gate = to_float32(args["out_gate"], dtypes["out_gate"])[:rows]
-    norm_weight = to_float32(args["norm_weight"], dtypes["norm_weight"])
-    rstd = 1 / torch.sqrt((o * o).sum(-1, keepdim=True) / dim + args["eps"])  # FLA's layer_norm_gated, RMS
-    normed = o * rstd * norm_weight * torch.sigmoid(gate)
-    is_live = torch.tensor(live, device=o.device).repeat_interleave(window)[:, None, None]
-    out = torch.zeros((n_tokens, heads, dim), dtype=o.dtype, device=o.device)
-    out[:rows] = torch.where(is_live, normed, 0.0)
-    return out, conv_state, state_cache
+        # (1) f_b_proj: vLLM's GEMM writes bf16
+        raw_g = _bf16(f_a.float()[:rows, 0] @ f_b_weight.float().T).view(rows, heads, dim)
+        # (2) the convolution of the windows' packed q|k|v columns, on a copy of the state
+        conv = conv_state.float().clone()
+        y = spec_conv_update(
+            qkv.float()[:rows].flatten(1),
+            conv_weight.float(),
+            conv,
+            [slots[s * window] for s in range(n_seqs)],
+            accepted,
+            live,
+        )
+        # (3) the speculative recurrence through each window
+        o, state = _spec_recurrence(
+            y.view(rows, 3 * heads, dim),
+            raw_g,
+            raw_beta.float()[:rows],
+            a_log.float(),
+            g_bias.float(),
+            state_cache.float(),
+            slots,
+            accepted,
+            scale,
+            lower_bound,
+        )
+        # (4) the gated RMSNorm of vLLM's bf16 core_attn_out
+        o = _bf16(o)
+        gate = out_gate.float()[:rows]
+        rstd = 1 / torch.sqrt((o * o).sum(-1, keepdim=True) / dim + eps)  # FLA's layer_norm_gated, RMS
+        normed = o * rstd * norm_weight.float() * torch.sigmoid(gate)
+        is_live = torch.tensor(live, device=o.device).repeat_interleave(window)[:, None, None]
+        out = torch.zeros((n_tokens, heads, dim), dtype=o.dtype, device=o.device)
+        out[:rows] = torch.where(is_live, normed, 0.0)
+        return {
+            "out": out.to(qkv.dtype),
+            "conv_state": conv.to(conv_state.dtype),
+            "state_cache": state.to(state_cache.dtype),
+        }

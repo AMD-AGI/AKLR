@@ -662,9 +662,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.001,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "flydsl",

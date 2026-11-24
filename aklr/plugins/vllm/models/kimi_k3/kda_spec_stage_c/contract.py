@@ -16,7 +16,6 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
@@ -27,6 +26,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -36,11 +36,11 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.baseline import KimiK3KdaSpecStageCBaseline
+from aklr.plugins.vllm.models.kimi_k3.kda_spec_stage_c.reference import KimiK3KdaSpecStageCReference
 
-__all__ = ["CONTRACTS", "KIMI_K3_KDA_SPEC_STAGE_C", "L2_NORM_EPS", "MAX_WINDOW"]
+__all__ = ["CONTRACTS", "KIMI_K3_KDA_SPEC_STAGE_C", "MAX_WINDOW"]
 
-# x * rsqrt(sum(x**2) + eps): vLLM's recurrent kernels
-L2_NORM_EPS = 1e-6
 # tokens of a window: DSpark's 8 (7 drafts) at most
 MAX_WINDOW = 8
 
@@ -194,8 +194,8 @@ KIMI_K3_KDA_SPEC_STAGE_C = OpContract(
             distribution=_FINITE,
             mutable=True,
             # a window's float32 steps; a bf16 rounding of raw_g (or of a convolution output) that flips with the
-            # summation order moves a decay by up to a few percent: that column's elements, rarely beyond the
-            # relative bound (max_violation_fraction)
+            # summation order moves a decay by up to a few percent: that column's elements. The committed kernel
+            # peaks at 0.19 of the bound, no element past it (MI355X, 1 to 32 windows, chained steps)
             error_bounds=ToleranceBound(absolute_tolerance=2e-3, relative_tolerance=5e-2),
         ),
         "state_indices": TensorSpec(
@@ -243,8 +243,8 @@ KIMI_K3_KDA_SPEC_STAGE_C = OpContract(
             shape=_HEADS,
             dtype=_SAME_AS_QKV,
             # a normalized bf16 output from bf16 hand-offs (raw_g, y, o): a flipped rounding upstream is a few
-            # parts in 1e3 of a head
-            error_bounds=ToleranceBound(absolute_tolerance=2e-3, relative_tolerance=2e-2),
+            # parts in 1e3 of a head; and one bf16 rounding (2**-7) for the reference's own out
+            error_bounds=ToleranceBound(absolute_tolerance=2e-3, relative_tolerance=2e-2 + 2**-7),
         ),
     },
     layout_variants=LayoutVariantsSpec(
@@ -265,7 +265,9 @@ KIMI_K3_KDA_SPEC_STAGE_C = OpContract(
             ),
         }
     ),
-    compare=CompareSpec(determinism=DeterminismLevel.BITWISE, max_violation_fraction=1e-3),
+    compare=CompareSpec(determinism=DeterminismLevel.BITWISE),
+    reference=KimiK3KdaSpecStageCReference(),
+    baseline=KimiK3KdaSpecStageCBaseline(),
 )
 
 CONTRACTS = (KIMI_K3_KDA_SPEC_STAGE_C,)
