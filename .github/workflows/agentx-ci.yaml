@@ -38,7 +38,7 @@ permissions:
 
 concurrency:
   # Ignored PR events and refused manual runs must not replace a requested run waiting for the
-  # GPU runner. The allowlist here must match benchmarks/agentx/allowlist.yaml (a test checks it);
+  # GPU runner. The allowlist here must match benchmarks/perf/allowlist.yaml (a test checks it);
   # the plan job still authorizes against main's allowlist.yaml.
   group: >-
     ${{ github.event_name == 'pull_request' &&
@@ -60,7 +60,7 @@ concurrency:
 defaults:
   run:
     shell: bash
-    working-directory: benchmarks/agentx
+    working-directory: benchmarks/perf
 
 env:
   PYTHONDONTWRITEBYTECODE: '1'
@@ -68,7 +68,7 @@ env:
 jobs:
   plan:
     if: >-
-      (github.event_name != 'schedule' || vars.AGENTX_SCHEDULE_ENABLED == 'true') &&
+      (github.event_name != 'schedule' || vars.AKLR_AGENTX_SCHEDULE_ENABLED == 'true') &&
       (github.event_name != 'pull_request' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         contains(github.event.pull_request.labels.*.name, 'ci:agentx-mi355x') &&
@@ -100,7 +100,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api -H 'Accept: application/vnd.github.raw+json' \
-            "repos/$GITHUB_REPOSITORY/contents/benchmarks/agentx/allowlist.yaml?ref=main" > "$RUNNER_TEMP/allowlist.yaml"
+            "repos/$GITHUB_REPOSITORY/contents/benchmarks/perf/allowlist.yaml?ref=main" > "$RUNNER_TEMP/allowlist.yaml"
       - name: Read the PR comments that may authorize AgentX
         # Read them now rather than from the event, so a re-run after a reviewer's comment uses it.
         if: github.event_name == 'pull_request'
@@ -126,7 +126,7 @@ jobs:
           MANUAL_ACTOR: ${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || '' }}
           ALLOWLIST: ${{ github.event_name != 'schedule' && 'allowlist.yaml' || '' }}
         run: |
-          python3 -m agentx_bench plan --models "$MODELS" --targets "$TARGETS" --frameworks "$FRAMEWORKS" \
+          python3 -m agentx plan --models "$MODELS" --targets "$TARGETS" --frameworks "$FRAMEWORKS" \
             ${RUNNER_LABEL:+--runner-label "$RUNNER_LABEL"} \
             ${POINTS:+--points "$POINTS"} ${DURATION_S:+--duration "$DURATION_S"} \
             ${REQUIRE_RECIPE_DURATION:+--require-recipe-duration "$REQUIRE_RECIPE_DURATION"} \
@@ -169,11 +169,11 @@ jobs:
           MODEL_ID: ${{ matrix.model }}
           TARGET_ID: ${{ matrix.target }}
           FRAMEWORK_ID: ${{ matrix.framework }}
-          HF_HUB_DIR: ${{ vars.AGENTX_HF_HUB_DIR }}
+          HF_HUB_DIR: ${{ vars.AKLR_AGENTX_HF_HUB_DIR }}
         # exec: a cancelled run's SIGINT must reach the sweep, which then stops its container.
         run: |
           run="models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID"
-          exec python3 -m agentx_bench sweep --serving "$RUNNER_TEMP/plan/$run/serving.json" \
+          exec python3 -m agentx sweep --serving "$RUNNER_TEMP/plan/$run/serving.json" \
             --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/aklr-cache/$run" \
             --work "$RUNNER_TEMP/agentx/$run" --out "$RUNNER_TEMP/results/$run"
       - name: Remove the sweep container left by a cancelled run
@@ -228,7 +228,7 @@ jobs:
       # Only this run: no previous site or baselines are read, so nothing is compared across runs.
       - name: Render this run's target reports and index
         run: |
-          python3 -m agentx_bench report --plan "$RUNNER_TEMP/plan/manifest.json" \
+          python3 -m agentx report --plan "$RUNNER_TEMP/plan/manifest.json" \
             --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/site"
       - uses: actions/upload-artifact@v4
         id: site_artifact
@@ -259,10 +259,8 @@ jobs:
     # Writes use the App token, not GITHUB_TOKEN.
     permissions:
       contents: read
-    # Every CI that writes site-data shares this group.
-    concurrency:
-      group: site-data
-      cancel-in-progress: false
+    # No concurrency group: a group keeps one pending job and would cancel a queued publish;
+    # commit_site_data.sh rebuilds on the new tip when its push is rejected.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -296,5 +294,5 @@ jobs:
         run: |
           bash ../../.github/scripts/commit_site_data.sh agentx \
             "agentx: publish run $GITHUB_RUN_ID of ${GITHUB_SHA::12}" \
-            python3 -m agentx_bench publish --site "$RUNNER_TEMP/site" --run-id "$GITHUB_RUN_ID" \
+            python3 -m agentx publish --site "$RUNNER_TEMP/site" --run-id "$GITHUB_RUN_ID" \
             --run-url "$RUN_URL" --commit "$GITHUB_SHA" --ref "$GITHUB_REF" --event "$GITHUB_EVENT_NAME" --section

@@ -626,10 +626,6 @@ jobs:
     # Writes use the App token, not GITHUB_TOKEN.
     permissions:
       contents: read
-    # Every CI that writes site-data shares this group.
-    concurrency:
-      group: site-data
-      cancel-in-progress: false
     steps:
       - name: Mint the bot token
         id: token

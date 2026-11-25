@@ -13,9 +13,10 @@ from unittest import mock
 import pytest
 import yaml
 
-AGENTX = Path(__file__).resolve().parents[2] / "benchmarks/agentx"
-from agentx_ci import ci_image, plan
-from agentx_ci import serving_config as sc
+AGENTX = Path(__file__).resolve().parents[2] / "benchmarks/perf/agentx"
+from agentx import plan
+from agentx import serving_config as sc
+from perf_utils import image as ci_image
 
 RUNNER_LABEL = "agentx-mi355x"
 IMAGE = "example.invalid/server@sha256:" + "a" * 64
@@ -805,7 +806,7 @@ def test_reviewers_file_must_list_distinct_github_logins(tmp_path, text):
 
 
 def agentx_workflow():
-    return yaml.safe_load((AGENTX.parents[1] / ".github/workflows/agentx-ci.yaml").read_text())
+    return yaml.safe_load((AGENTX.parents[2] / ".github/workflows/agentx-ci.yaml").read_text())
 
 
 def test_allowlist_and_workflow_read_the_pr_comments():
@@ -825,7 +826,7 @@ def test_allowlist_and_workflow_read_the_pr_comments():
     )
     main_allowlist = next(step for step in steps if step.get("name") == "Read main's AgentX allowlist")
     assert main_allowlist["if"] == "github.event_name != 'schedule'"
-    assert "contents/benchmarks/agentx/allowlist.yaml?ref=main" in main_allowlist["run"]
+    assert "contents/benchmarks/perf/allowlist.yaml?ref=main" in main_allowlist["run"]
     assert '> "$RUNNER_TEMP/allowlist.yaml"' in main_allowlist["run"]
     assert '--allowlist "$RUNNER_TEMP/$ALLOWLIST"' in resolve["run"]
 

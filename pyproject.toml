@@ -62,9 +62,9 @@ ignore = [
 "__init__.py" = ["F401"]
 
 [tool.pytest.ini_options]
-# The AgentX tests import the agentx_ci package from benchmarks/agentx, the kernels report tests
+# The AgentX tests import the agentx package from benchmarks/perf, the kernels report tests
 # kernels_report from benchmarks/kernels.
-pythonpath = ["benchmarks/agentx", "benchmarks/kernels"]
+pythonpath = ["benchmarks/perf", "benchmarks/kernels"]
 
 [tool.coverage.run]
 branch = true
