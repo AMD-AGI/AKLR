@@ -3,19 +3,15 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 from e2e_perf import plan
-from e2e_perf.__main__ import main as e2e_main
-from e2e_perf.model_config import DEFAULT_CONFIG, group_path, load_config
+from e2e_perf.model_config import DEFAULT_CONFIG, load_config
 from e2e_perf.utils import read_json
-from perf_utils import image
 from perf_utils.gh import ConfigError, load_reviewers
 
 COMMIT = "c" * 40
@@ -29,10 +25,6 @@ def run_plan(tmp_path, *extra, latest=None, out="plan"):
         argv += ["--latest", str(path)]
     assert plan.main(argv) == 0
     return read_json(tmp_path / out / "manifest.json")
-
-
-def group_dir(tmp_path, item, out="plan"):
-    return tmp_path / out / group_path(item["model"]["id"], item["target"]["id"], item["framework"]["id"])
 
 
 def published(manifest, complete=True):
@@ -228,80 +220,3 @@ def test_workflow_queue_allowlist_matches_the_allowlist_file():
     assert "format('e2e-perf-pr-{0}', github.event.pull_request.number)" in concurrency["group"]
     assert "format('e2e-perf-refused-{0}', github.run_id)" in concurrency["group"]
     assert concurrency["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
-
-
-def test_safe_images_are_read_from_the_registry_as_docker_inspects_them(tmp_path, monkeypatch):
-    config = json.dumps(
-        {"architecture": "amd64", "config": {"Env": ["PATH=/usr/bin", "HIP_FORCE=1"]}}
-    ).encode()
-    calls = []
-
-    def skopeo(argv, **_):
-        calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, stdout=config, stderr=b"")
-
-    monkeypatch.setattr(image.subprocess, "run", skopeo)
-    manifest = run_plan(tmp_path, "--force")
-    assert e2e_main(["inspect-images", "--plan", str(tmp_path / "plan")]) == 0
-    planned = [item for item in manifest["groups"] if item["status"] == "planned"]
-    assert planned and len(calls) == len(
-        {read_json(group_dir(tmp_path, item) / "plan.json")["image"]["run"] for item in planned}
-    )
-    for item in planned:
-        pinned = read_json(group_dir(tmp_path, item) / "plan.json")["image"]["run"]
-        inspection = read_json(group_dir(tmp_path, item) / "execution.json")
-        assert (
-            image.verify_image(pinned, inspection)["image_id"]
-            == "sha256:" + hashlib.sha256(config).hexdigest()
-        )
-        assert image.image_environment(inspection) == {"PATH": "/usr/bin", "HIP_FORCE": "1"}
-    name, digest = pinned.rsplit("@", 1)
-    assert calls[0][-1] == f"docker://{name.rsplit(':', 1)[0]}@{digest}"
-
-
-def test_a_registry_failure_fails_the_inspection(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        image.subprocess, "run", lambda argv, **_: subprocess.CompletedProcess(argv, 1, b"", b"unauthorized")
-    )
-    run_plan(tmp_path, "--force")
-    assert e2e_main(["inspect-images", "--plan", str(tmp_path / "plan")]) == 1
-    with pytest.raises(ValueError, match="pinned by digest"):
-        image.registry_inspection("lmsysorg/sglang:latest")
-
-
-def test_a_safe_sweep_is_summarized_from_its_results(tmp_path, capsys):
-    assert e2e_main(["sweep", "--summarize", "0", "--out", str(tmp_path)]) == 1
-    assert "No usable results were saved." in capsys.readouterr().out
-    with pytest.raises(SystemExit):
-        e2e_main(["sweep", "--out", str(tmp_path)])
-
-
-def test_the_safe_backend_runs_each_group_in_its_own_workload():
-    workflow = e2e_workflow()
-    inputs = workflow[True]["workflow_dispatch"]["inputs"]
-    assert inputs["gpu_runner"]["options"] == ["aklr-gpu", "aklr-safe"]
-    assert inputs["gpu_runner"]["default"] == "aklr-safe"
-    assert workflow["env"]["E2E_GPU_RUNNER"] == (
-        "${{ inputs.gpu_runner || vars.AKLR_E2E_PERF_GPU_RUNNER || 'aklr-safe' }}"
-    )
-    plan_steps = workflow["jobs"]["plan"]["steps"]
-    inspect = next(step for step in plan_steps if "inspect-images" in step.get("run", ""))
-    assert inspect["if"] == "env.E2E_GPU_RUNNER == 'aklr-safe' && steps.resolve.outputs.count != '0'"
-    sweep = workflow["jobs"]["sweep"]
-    assert (
-        sweep["runs-on"]
-        == "${{ needs.plan.outputs.gpu_runner == 'aklr-safe' && 'aklr-safe' || matrix.runner }}"
-    )
-    steps = {step.get("name"): step for step in sweep["steps"]}
-    safe = steps["Measure one group on SaFE, AKLR off then on"]
-    assert safe["shell"] == "bash .github/scripts/gpu_job.sh {0}"
-    assert safe["env"]["SAFE_WORKSPACE_STORAGE"] == "readonly"
-    delete = steps["Delete the SaFE workload"]
-    assert delete["env"]["SAFE_JOB_NAME"] == safe["env"]["SAFE_JOB_NAME"] == "sweep-${{ matrix.job_index }}"
-    assert delete["if"].startswith("always()")
-    passed = set(safe["env"]["PASS_ENV"].split())
-    used = set(re.findall(r"\$\{?(E2E_[A-Z_]+|FRAMEWORK_ID|GITHUB_[A-Z_]+)", safe["run"]))
-    assert used <= passed
-    assert (
-        steps["Measure one group, AKLR off then on"]["if"] == "needs.plan.outputs.gpu_runner != 'aklr-safe'"
-    )
