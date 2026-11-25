@@ -179,8 +179,8 @@ def test_a_committed_kernel_tells_its_writes_from_leftover_memory_without_a_laun
     """The workgroups coordinate through scratch the call allocates: the counter a walk claims tokens from, the tags
     under which column shares publish their partials. A tag taken from the launch (its dispatch id and queue) and
     compared with the scratch as allocated can match words an earlier tensor left there, and then rows are skipped or
-    partials read unwritten; the call zeroes those words instead (aklr/ops/README.md: scratch is written before it is
-    read), so no kernel reads its launch's ids."""
+    partials read unwritten; the call zeroes those words instead (aklr/plugins/aiter/README.md: scratch is written before
+    it is read), so no kernel reads its launch's ids."""
     for source in json.loads(path.read_text())["kernel"]["sources"]:
         strings = {n.value for n in ast.walk(ast.parse(source["content"])) if isinstance(n, ast.Constant)}
         assert not strings & _LAUNCH_IDS, source["path"]
