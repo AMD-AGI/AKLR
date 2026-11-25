@@ -11,19 +11,11 @@ import uuid
 from pathlib import Path
 
 from perf_utils import image as ci_image
-from perf_utils.gh import (
-    ALLOWLIST_FILE,
-    annotate,
-    check_manual_trigger,
-    load_reviewers,
-    refuse,
-    summarize,
-    write_outputs,
-)
+from perf_utils import pr_scope
+from perf_utils.gh import ALLOWLIST_FILE, check_manual_trigger, summarize, write_outputs
 
 from agentx import serving_config as sc
 from agentx.model_config import ConfigError, model_config, select_models, select_runs
-from agentx.pr_scope import COMMAND, authorized_request, requested_models
 from agentx.utils import (
     DEFAULT_CONFIG,
     SCHEMA,
@@ -34,6 +26,8 @@ from agentx.utils import (
     utc_now,
     write_json,
 )
+
+COMMAND = "/agentx-mi355x"
 
 
 def load_recipe(config: str | Path, definition: dict, images: dict[str, str] | None = None) -> dict:
@@ -49,42 +43,10 @@ def load_recipe(config: str | Path, definition: dict, images: dict[str, str] | N
 
 
 def apply_pr_scope(args: argparse.Namespace) -> tuple[str | None, bool]:
-    """Narrow --models to the latest `/agentx-mi355x` request of an allowlisted reviewer on the PR.
-
-    Return a note for the job summary and whether to skip AgentX, as when the request selects no model.
-    Raise ConfigError when no allowlisted reviewer has requested AgentX on the PR.
-    """
+    """Narrow --models to the latest `/agentx-mi355x` request of an allowlisted reviewer on the PR."""
     if args.pr_comments is None:
         return None, False
-    if args.models != "all":
-        raise ConfigError("--pr-comments cannot be combined with --models")
-    allowlist = load_reviewers(args.allowlist)
-    request = authorized_request(json.loads(args.pr_comments.read_text()), allowlist)
-    if request is None:
-        reviewers = ", ".join(f"@{login}" for login in allowlist)
-        refuse(
-            f"No AgentX reviewer has authorized this PR. Ask one of {reviewers} to review it and comment "
-            f"`{COMMAND} <model ids or all>` on it, then re-run this workflow."
-        )
-    declared, unmatched = requested_models(request["body"], select_models(load_config(args.config)))
-    source = f"@{request['user']}'s `{COMMAND}` comment" + (
-        f" ({request['url']})" if request.get("url") else ""
-    )
-    missed = (
-        f" Not an enabled model id, skipped: {', '.join(f'`{name}`' for name in unmatched)}."
-        if unmatched
-        else ""
-    )
-    if not declared:
-        note = f"{source} selects no model; skipping AgentX.{missed}"
-        annotate(note)
-        return note, True
-    if unmatched:
-        annotate(missed.strip())
-    args.models = declared
-    if declared == "all":
-        return f"{source} requests `all`; running every enabled model.", False
-    return f"{source} selects {declared}; skipping the other models.{missed}", False
+    return pr_scope.apply_pr_scope(args, COMMAND, "AgentX", select_models(load_config(args.config)))
 
 
 def build(args: argparse.Namespace) -> dict:

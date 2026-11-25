@@ -10,6 +10,7 @@ from pathlib import Path
 
 from perf_utils import image as ci_image
 from perf_utils.gh import ALLOWLIST_FILE, ConfigError, check_manual_trigger, summarize, write_outputs
+from perf_utils.pr_scope import apply_pr_scope
 
 from e2e_perf.model_config import (
     DEFAULT_CONFIG,
@@ -22,6 +23,7 @@ from e2e_perf.model_config import (
 from e2e_perf.utils import SCHEMA, read_json, sha256_json, utc_now, write_json
 
 NAME = "Daily end-to-end performance"
+COMMAND = "/e2e-perf-mi355x"
 
 
 def run_key(aklr_sha: str, image: str, recipe: dict, workloads: list, client: dict, weights: dict) -> str:
@@ -113,6 +115,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="measure every selected group, skipping none")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--run-id", default=os.environ.get("GITHUB_RUN_ID", "local"))
+    parser.add_argument(
+        "--pr-comments",
+        type=Path,
+        help=f"JSON list of PR comments ({{user, body, url}}, oldest first); the latest allowlisted reviewer's "
+        f"`{COMMAND} <model ids or all>` selects the models, and without one the plan fails",
+    )
     parser.add_argument("--allowlist", type=Path, default=ALLOWLIST_FILE)
     parser.add_argument("--manual-actor", help="GitHub login that started a manual run")
     parser.add_argument("--manual-ref", help="Git ref of a manual run (with --manual-actor)")
@@ -121,6 +129,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--manual-actor and --manual-ref go together")
     try:
         check_manual_trigger(args, NAME)
+        if args.pr_comments is not None:
+            note, skip = apply_pr_scope(args, COMMAND, "e2e perf", list(load_config(args.config)["models"]))
+            summarize(note)
+            if skip:
+                write_outputs([], skipped=True)
+                return 0
         manifest = build(args)
     except (ConfigError, ValueError, OSError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

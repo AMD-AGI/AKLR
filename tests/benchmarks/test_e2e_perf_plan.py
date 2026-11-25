@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 import pytest
 import yaml
 from e2e_perf import plan
 from e2e_perf.model_config import DEFAULT_CONFIG, load_config
 from e2e_perf.utils import read_json
-from perf_utils.gh import ConfigError
+from perf_utils.gh import ConfigError, load_reviewers
 
 COMMIT = "c" * 40
 
@@ -134,3 +136,87 @@ def test_workloads_must_be_a_list_of_valid_distinct_workloads(tmp_path, workload
     path.write_text(yaml.safe_dump(config))
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+def run_pr(tmp_path, comments, out="plan"):
+    allowlist = tmp_path / "allowlist.yaml"
+    allowlist.write_text("reviewers: [alice, bob]\n")
+    path = tmp_path / f"{out}-comments.json"
+    path.write_text(json.dumps(comments))
+    argv = ["--commit", COMMIT, "--out", str(tmp_path / out), "--run-id", "7", "--force"]
+    return plan.main([*argv, "--pr-comments", str(path), "--allowlist", str(allowlist)])
+
+
+def test_the_latest_reviewer_comment_selects_the_pr_models(tmp_path):
+    comments = [
+        {"user": "alice", "body": "/e2e-perf-mi355x all"},
+        {"user": "BOB", "body": "/e2e-perf-mi355x GLM52-FP8, missing"},
+        {"user": "mallory", "body": "/e2e-perf-mi355x glm52-fp4"},
+        {"user": "alice", "body": "/agentx-mi355x glm52-fp4"},
+    ]
+    assert run_pr(tmp_path, comments) == 0
+    manifest = read_json(tmp_path / "plan/manifest.json")
+    assert [g["model"]["id"] for g in manifest["groups"]] == ["glm52-fp8"]
+
+
+@pytest.mark.parametrize(
+    "comments",
+    [
+        [],
+        [{"user": "mallory", "body": "/e2e-perf-mi355x all"}],
+        [{"user": "alice", "body": "/agentx-mi355x all"}],
+    ],
+    ids=["none", "outsider", "agentx-command"],
+)
+def test_a_pr_run_needs_an_allowlisted_reviewers_request(tmp_path, capsys, comments):
+    assert run_pr(tmp_path, comments) == 1
+    assert not (tmp_path / "plan").exists()
+    assert "No e2e perf reviewer has authorized this PR" in capsys.readouterr().err
+
+
+def test_a_request_that_selects_no_model_skips_the_pr_run(tmp_path, monkeypatch):
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    assert run_pr(tmp_path, [{"user": "alice", "body": "/e2e-perf-mi355x missing"}]) == 0
+    assert not (tmp_path / "plan").exists()
+    assert "count=0" in output.read_text() and "skipped=true" in output.read_text()
+
+
+def e2e_workflow():
+    return yaml.safe_load(
+        (Path(DEFAULT_CONFIG).parents[3] / ".github/workflows/e2e-perf-ci.yaml").read_text()
+    )
+
+
+def test_a_labeled_pr_from_this_repository_starts_the_workflow():
+    workflow = e2e_workflow()
+    assert workflow[True]["pull_request"] == {
+        "branches": ["main"],
+        "types": ["opened", "synchronize", "reopened", "labeled"],
+    }
+    gate = workflow["jobs"]["plan"]["if"]
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in gate
+    assert gate.count("'ci:e2e-perf-mi355x'") == 2
+    assert workflow["jobs"]["plan"]["permissions"] == {"contents": "read", "pull-requests": "read"}
+    steps = workflow["jobs"]["plan"]["steps"]
+    comments = next(
+        step for step in steps if step.get("name") == "Read the PR comments that may authorize e2e perf"
+    )
+    assert "issues/$PR_NUMBER/comments" in comments["run"] and "--paginate" in comments["run"]
+    allowlist = next(step for step in steps if step.get("name") == "Read main's allowlist")
+    assert allowlist["if"] == "github.event_name != 'schedule'"
+    resolve = next(step for step in steps if step.get("id") == "resolve")
+    assert '--pr-comments "$RUNNER_TEMP/$PR_COMMENTS"' in resolve["run"]
+    assert '--allowlist "$RUNNER_TEMP/$ALLOWLIST"' in resolve["run"]
+    publish = workflow["jobs"]["publish"]["if"]
+    assert "github.ref == 'refs/heads/main'" in publish and "pull_request" not in publish
+
+
+def test_workflow_queue_allowlist_matches_the_allowlist_file():
+    concurrency = e2e_workflow()["concurrency"]
+    lists = re.findall(r"fromJSON\('(\[[^']*\])'\),\s*github\.triggering_actor\)", concurrency["group"])
+    assert len(lists) == 1
+    assert json.loads(lists[0]) == load_reviewers()
+    assert "format('e2e-perf-pr-{0}', github.event.pull_request.number)" in concurrency["group"]
+    assert "format('e2e-perf-refused-{0}', github.run_id)" in concurrency["group"]
+    assert concurrency["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"

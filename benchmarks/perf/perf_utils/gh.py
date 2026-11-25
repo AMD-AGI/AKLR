@@ -21,7 +21,7 @@ class ConfigError(ValueError):
 
 
 def load_reviewers(path: str | Path = ALLOWLIST_FILE) -> list[str]:
-    """Read the GitHub logins whose `/agentx-mi355x` comment authorizes AgentX on a PR."""
+    """Read the GitHub logins whose PR comment or manual dispatch authorizes AgentX or e2e perf."""
     data = yaml.safe_load(Path(path).read_text()) or {}
     reviewers = data.get("reviewers") if isinstance(data, dict) else None
     if not isinstance(reviewers, list) or not reviewers:

@@ -17,6 +17,8 @@ AGENTX = Path(__file__).resolve().parents[2] / "benchmarks/perf/agentx"
 from agentx import plan
 from agentx import serving_config as sc
 from perf_utils import image as ci_image
+from perf_utils.gh import load_reviewers
+from perf_utils.pr_scope import requested_models
 
 RUNNER_LABEL = "conductor-mi355x"
 IMAGE = "example.invalid/server@sha256:" + "a" * 64
@@ -691,14 +693,14 @@ def test_comment_with_explicit_models_is_a_cli_error(planned):
     ],
 )
 def test_comment_parsing(body, expected):
-    assert plan.requested_models(body, ["first", "second"]) == expected
+    assert requested_models(body, ["first", "second"], plan.COMMAND) == expected
 
 
 def test_comment_matches_model_ids_ignoring_case():
     enabled = ["glm52-fp4", "minimaxm31flash-fp4"]
     body = "/agentx-mi355x glm52, GLM52-FP4, minimax, glm52-fp4\n"
-    assert plan.requested_models(body, enabled) == ("glm52-fp4", ["glm52", "minimax"])
-    assert plan.requested_models("/agentx-mi355x glm52-fp4 not all of them\n", enabled) == (
+    assert requested_models(body, enabled, plan.COMMAND) == ("glm52-fp4", ["glm52", "minimax"])
+    assert requested_models("/agentx-mi355x glm52-fp4 not all of them\n", enabled, plan.COMMAND) == (
         "glm52-fp4",
         ["not", "all", "of", "them"],
     )
@@ -801,7 +803,7 @@ def test_reviewers_file_must_list_distinct_github_logins(tmp_path, text):
     path = tmp_path / "allowlist.yaml"
     path.write_text(text)
     with pytest.raises(plan.ConfigError, match=re.escape(str(path))):
-        plan.load_reviewers(path)
+        load_reviewers(path)
 
 
 def agentx_workflow():
@@ -809,7 +811,7 @@ def agentx_workflow():
 
 
 def test_allowlist_and_workflow_read_the_pr_comments():
-    assert "RuibinCheung" in plan.load_reviewers()
+    assert "RuibinCheung" in load_reviewers()
     steps = agentx_workflow()["jobs"]["plan"]["steps"]
     read = next(
         step for step in steps if step.get("name") == "Read the PR comments that may authorize AgentX"
@@ -834,7 +836,7 @@ def test_workflow_queue_allowlist_matches_the_allowlist_file():
     group = agentx_workflow()["concurrency"]["group"]
     lists = re.findall(r"fromJSON\('(\[[^']*\])'\),\s*github\.triggering_actor\)", group)
     assert len(lists) == 1
-    assert json.loads(lists[0]) == plan.load_reviewers()
+    assert json.loads(lists[0]) == load_reviewers()
     assert "github.ref != 'refs/heads/main'" in group
     assert "format('agentx-refused-{0}', github.run_id)" in group
 
