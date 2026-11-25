@@ -1,8 +1,9 @@
 *	@xiaobochen-amd @jiejingzhangamd @zhenhuang12 @irvineoy @kyle-256 @RuibinCheung
 
-# AgentX CI authorization: the allowlist and the workflow that enforces it.
+# AgentX and e2e perf CI authorization: the allowlist and the workflows that enforce it.
 /benchmarks/perf/allowlist.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
 /.github/workflows/agentx-ci.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
+/.github/workflows/e2e-perf-ci.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
 
 # Results site: the only Pages deploy and the site-data writer.
 /.github/workflows/site.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
