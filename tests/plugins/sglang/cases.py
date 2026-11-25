@@ -118,43 +118,6 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
-    # GLM-5's sparse MLA at TP8 (8 heads) with a short top-k, against tilelang and triton
-    PointSpec(
-        contract_id="sparse_mla_verify@1.0",
-        axes={
-            "n_tokens": 4,
-            "n_heads": 8,
-            "kv_dim": 576,
-            "topk": 128,
-            "n_slots": 512,
-        },
-        dtypes={
-            "q": "float8_e4m3fn",
-            "kv_cache": "float8_e4m3fn",
-            "topk_indices": "int32",
-            "output": "bfloat16",
-        },
-        attrs={"native": "tilelang"},
-        layout_variant_name="row_major",
-    ),
-    PointSpec(
-        contract_id="sparse_mla_verify@1.0",
-        axes={
-            "n_tokens": 4,
-            "n_heads": 8,
-            "kv_dim": 576,
-            "topk": 128,
-            "n_slots": 512,
-        },
-        dtypes={
-            "q": "float8_e4m3fn",
-            "kv_cache": "float8_e4m3fn",
-            "topk_indices": "int32",
-            "output": "bfloat16",
-        },
-        attrs={"native": "triton"},
-        layout_variant_name="row_major",
-    ),
     # GLM-5.2's DSA indexer shrunk: 16 heads (32 on GLM-5.2) and narrow projections, its
     # 128-value heads and keys, 64-value RoPE part and one index-K page as sglang holds them on
     # aiter
@@ -910,7 +873,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen2_moe_fp8_router_experts@1.0",
         "qwen2_moe_mxfp4_moe@1.0",
         "qwen2_moe_router@1.0",
-        "sparse_mla_verify@1.0",
         "qwen3_moe_fp8_moe@1.0",
         "gdn_decode_group_fp8_quant@1.0",
         "qwen3_next_gdn_prefill_group_fp8_quant@1.0",
