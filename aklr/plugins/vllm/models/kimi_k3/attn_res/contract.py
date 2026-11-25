@@ -159,7 +159,7 @@ KIMI_K3_ATTN_RES = OpContract(
         "out": TensorSpec(
             description="The normalized mix scaled by norm_weight, or the mix without one.",
             shape=_ROWS,
-            dtype=_SAME_AS_PREFIX,
+            dtype=_SAME_AS_PREFIX.model_copy(update={"param_name": "out_dtype"}),
             # the mix cancels: an element near 0 carries the float32 rounding of its row's
             # terms, about 1e-6 at N(0, 1) rows, which a bound relative to the element alone
             # rejects

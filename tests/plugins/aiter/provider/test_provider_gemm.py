@@ -19,7 +19,7 @@ from aklr.core.runtime.dispatch import FallbackReason
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
-gemm = importlib.import_module("aklr.plugins.aiter.provider.gemm")
+gemm = importlib.import_module("aklr.plugins.aiter.provider.gemm.selector")
 
 FP8, BF16, FP16, F32, I8 = torch.float8_e4m3fn, torch.bfloat16, torch.float16, torch.float32, torch.int8
 E5M2 = torch.float8_e5m2

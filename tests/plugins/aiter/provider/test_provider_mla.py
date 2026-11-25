@@ -2,7 +2,7 @@
 # Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """AKLR as aiter's kernel plugin for aiter's MLA and mHC routes: mla_decode_fwd, mla_paged_decode,
-fp8_paged_mqa_logits, mla_sparse_prefill_v4, flash_attn_varlen and mhc_fused_post_pre. What each
+fp8_paged_mqa_logits, mla_sparse_prefill_v4, flash_attn_varlen, mhc_post and mhc_fused_post_pre. What each
 selector takes, what it declines, the AKLR call its run makes, and, with an aiter that has the plugin
 interface, that aiter hands such a call to AKLR."""
 
@@ -18,9 +18,9 @@ from aklr.core.runtime.dispatch import FallbackReason
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
-mla = importlib.import_module("aklr.plugins.aiter.provider.mla")
-mla_prefill = importlib.import_module("aklr.plugins.aiter.provider.mla_prefill")
-mhc = importlib.import_module("aklr.plugins.aiter.provider.mhc")
+mla = importlib.import_module("aklr.plugins.aiter.provider.mla.selector")
+mla_prefill = importlib.import_module("aklr.plugins.aiter.provider.mla_prefill.selector")
+mhc = importlib.import_module("aklr.plugins.aiter.provider.mhc.selector")
 
 FP8, BF16, F32, I32 = torch.float8_e4m3fn, torch.bfloat16, torch.float32, torch.int32
 KERNEL = RunnableMetadata(
@@ -125,6 +125,18 @@ AITER_SIGNATURES = {
             ("softmax_scale", _REQUIRED),
             ("out", None),
             ("num_kv_splits", None),
+        ),
+    ),
+    "mhc_post": (
+        1,
+        (
+            ("out", _REQUIRED),
+            ("x", _REQUIRED),
+            ("residual", _REQUIRED),
+            ("post_layer_mix", _REQUIRED),
+            ("comb_res_mix", _REQUIRED),
+            ("store_nt", -1),
+            ("res_preshuffle", False),
         ),
     ),
     "mhc_fused_post_pre": (
@@ -298,6 +310,15 @@ def _calls():
             "out": z(2, 16, 512, dtype=BF16),
             "num_kv_splits": 4,
         },
+        "mhc_post": {
+            "out": z(4, 4, 8, dtype=BF16),
+            "x": z(4, 8, dtype=BF16),
+            "residual": z(4, 4, 8, dtype=BF16),
+            "post_layer_mix": z(4, 4, 1),
+            "comb_res_mix": z(4, 4, 4),
+            "store_nt": -1,
+            "res_preshuffle": False,
+        },
         "mhc_fused_post_pre": {
             "layer_input": z(4, 8, dtype=BF16),
             "residual_in": z(4, 4, 8, dtype=BF16),
@@ -318,6 +339,8 @@ def _calls():
         },
         "flash_attn_varlen": {**new_tokens, "causal": True, "softmax_scale": 0.1},
         "flash_attn_varlen_chunk": _varlen(300, 900),
+        # a prefill with no context to merge
+        "flash_attn_varlen_alone": {**new_tokens, "causal": True, "softmax_scale": 0.1, "return_lse": False},
     }
 
 
@@ -353,9 +376,9 @@ def _select(case: str, call=None, **changes):
 
 def _selector_modules():
     return [
-        module
-        for _, module in inspect.getmembers(provider, inspect.ismodule)
-        if module.__name__.startswith(f"{provider.__name__}.") and module is not base
+        family.selector
+        for _, family in inspect.getmembers(provider, inspect.ismodule)
+        if family is not base and hasattr(family, "selector")
     ]
 
 
@@ -461,7 +484,10 @@ DECLINED = [
     ("mhc_fused_post_pre", {"w_preshuffle_bf16": True}),
     ("mhc_fused_post_pre", {"res_preshuffle": True}),
     ("mhc_fused_post_pre", {"post_layer_mix": torch.zeros(4, 4, 2)}),
-    ("flash_attn_varlen", {"return_lse": False}),  # a prefill with no context to merge
+    ("mhc_post", {"res_preshuffle": True}),
+    ("mhc_post", {"out": torch.zeros(4, 4, 8)}),
+    ("mhc_post", {"out": torch.zeros(4, 8, dtype=BF16)}),
+    ("flash_attn_varlen_alone", {"causal": False}),  # AKLR's prefill without the lse is causal
     ("flash_attn_varlen", {"return_attn_probs": True}),
     ("flash_attn_varlen", {"dropout_p": 0.1}),
     ("flash_attn_varlen", {"logits_soft_cap": 30.0}),
@@ -624,39 +650,34 @@ DRAFT_TOKENS, REQUESTS = 5, 2
 VERIFY_ROWS = DRAFT_TOKENS * REQUESTS
 
 
-def _verify_call():
+def _verify_call(**changes):
     """fp8_paged_mqa_logits as sglang's indexer calls it for a target verify under DCP: DRAFT_TOKENS rows a
     request, each passed its request's block table row."""
     tables = torch.arange(REQUESTS * 2, dtype=I32).view(REQUESTS, 2).repeat_interleave(DRAFT_TOKENS, dim=0)
-    return _call(
-        "fp8_paged_mqa_logits",
-        q_fp8=torch.zeros(VERIFY_ROWS, 1, 4, 128, dtype=FP8),
-        weights=torch.zeros(VERIFY_ROWS, 4),
-        out_logits=torch.zeros(VERIFY_ROWS, 128),
-        context_lens=torch.ones(VERIFY_ROWS, 1, dtype=I32),
-        kv_indices=tables,
-    )
+    call = {
+        "q_fp8": torch.zeros(VERIFY_ROWS, 1, 4, 128, dtype=FP8),
+        "weights": torch.zeros(VERIFY_ROWS, 4),
+        "out_logits": torch.zeros(VERIFY_ROWS, 128),
+        "context_lens": torch.ones(VERIFY_ROWS, 1, dtype=I32),
+        "kv_indices": tables,
+    }
+    return _call("fp8_paged_mqa_logits", **call | changes)
 
 
 @pytest.fixture
 def logits_ops(monkeypatch, aklr_serves):
-    """Both logits ops of AKLR faked, and no target verify noted."""
-    monkeypatch.setattr(mla, "_TARGET_VERIFY", [None])
+    """Both logits ops of AKLR faked: no kernel for the rows as rows, one for a verify."""
     ops = SimpleNamespace(rows=_Api(), verify=_Api())
+    ops.rows.serving = lambda *a, **k: FallbackReason.NO_WORKLOAD
     monkeypatch.setattr(mla, "fp8_paged_mqa_logits", ops.rows)
     monkeypatch.setattr(mla, "fp8_paged_mqa_logits_verify", ops.verify)
     return ops
 
 
-def _run_logits(call):
-    _, run = _select("fp8_paged_mqa_logits", call)
-    return run(*_args("fp8_paged_mqa_logits", call))
-
-
-def test_a_noted_target_verify_is_scored_by_request_into_aiters_out_logits(logits_ops):
+def test_rows_repeating_their_requests_table_are_scored_by_request_into_aiters_out_logits(logits_ops):
     call = _verify_call()
-    mla.note_target_verify(VERIFY_ROWS, DRAFT_TOKENS)
-    assert _run_logits(call) is None
+    _, run = _select("fp8_paged_mqa_logits", call)
+    assert run(*_args("fp8_paged_mqa_logits", call)) is None
     assert logits_ops.rows.calls == []
     ((args, kwargs),) = logits_ops.verify.calls
     assert args == ()
@@ -671,44 +692,38 @@ def test_a_noted_target_verify_is_scored_by_request_into_aiters_out_logits(logit
     assert kwargs["block_tables"].is_contiguous() and kwargs["block_tables"].tolist() == [[0, 1], [2, 3]]
     assert kwargs["kv_cache"].dtype == torch.uint8
     assert (kwargs["page_size"], kwargs["preshuffled"]) == (64, True)
-    # the note is taken: the next call, unnoted, is a row call
-    assert mla._TARGET_VERIFY[0] is None
-    _run_logits(call)
-    assert len(logits_ops.rows.calls) == 1 and len(logits_ops.verify.calls) == 1
 
 
-def test_a_select_that_runs_nothing_leaves_the_note_to_the_call_that_runs(logits_ops):
+def test_rows_aklr_serves_as_rows_are_not_asked_as_a_verify(logits_ops):
+    logits_ops.rows.serving = lambda *a, **k: KERNEL
+    logits_ops.verify.serving = lambda *a, **k: pytest.fail("the verify asked")
     call = _verify_call()
-    mla.note_target_verify(VERIFY_ROWS, DRAFT_TOKENS)
-    _select("fp8_paged_mqa_logits", call)  # as aiter's explain() asks
-    assert _run_logits(call) is None
-    assert logits_ops.rows.calls == [] and len(logits_ops.verify.calls) == 1
+    _, run = _select("fp8_paged_mqa_logits", call)
+    run(*_args("fp8_paged_mqa_logits", call))
+    assert len(logits_ops.rows.calls) == 1 and logits_ops.verify.calls == []
 
 
 @pytest.mark.parametrize(
-    "note",
-    [None, (VERIFY_ROWS + DRAFT_TOKENS, DRAFT_TOKENS), (VERIFY_ROWS, 3), (VERIFY_ROWS, 1)],
-    ids=["unnoted", "other_rows", "rows_not_whole_requests", "one_row_a_request"],
+    "tables",
+    [
+        torch.arange(VERIFY_ROWS * 2, dtype=I32).view(VERIFY_ROWS, 2),
+        torch.tensor([0] * 4 + [1] * 6, dtype=I32).view(VERIFY_ROWS, 1).expand(VERIFY_ROWS, 2),
+        torch.tensor([0] * 5 + [1] * 4 + [2], dtype=I32).view(VERIFY_ROWS, 1).expand(VERIFY_ROWS, 2),
+    ],
+    ids=["a_table_a_row", "rows_not_whole_requests", "a_later_request_of_fewer_rows"],
 )
-def test_rows_not_noted_as_this_verify_stay_on_the_row_op(logits_ops, note):
-    if note is not None:
-        mla.note_target_verify(*note)
-    _run_logits(_verify_call())
-    assert len(logits_ops.rows.calls) == 1 and logits_ops.verify.calls == []
+def test_rows_not_repeating_a_table_by_request_are_declined_unasked(logits_ops, tables):
+    logits_ops.verify.serving = lambda *a, **k: pytest.fail("the verify asked")
+    assert _select("fp8_paged_mqa_logits", _verify_call(kv_indices=tables)) is None
 
 
-def test_a_verify_aklr_falls_back_on_stays_on_the_row_op(logits_ops):
+def test_a_verify_aklr_falls_back_on_is_declined(logits_ops):
     logits_ops.verify.serving = lambda *a, **k: FallbackReason.NO_WORKLOAD
-    mla.note_target_verify(VERIFY_ROWS, DRAFT_TOKENS)
-    _run_logits(_verify_call())
-    assert len(logits_ops.rows.calls) == 1 and logits_ops.verify.calls == []
+    assert _select("fp8_paged_mqa_logits", _verify_call()) is None
 
 
-def test_a_verify_with_strided_rows_stays_on_the_row_op(logits_ops):
-    weights = torch.zeros(4, VERIFY_ROWS).t()
-    mla.note_target_verify(VERIFY_ROWS, DRAFT_TOKENS)
-    _run_logits({**_verify_call(), "weights": weights})
-    assert len(logits_ops.rows.calls) == 1 and logits_ops.verify.calls == []
+def test_a_verify_with_strided_rows_is_declined(logits_ops):
+    assert _select("fp8_paged_mqa_logits", _verify_call(weights=torch.zeros(4, VERIFY_ROWS).t())) is None
 
 
 @pytest.mark.parametrize("has_out", [True, False])
@@ -751,6 +766,19 @@ def test_mhc_fused_post_pre_hands_aklr_its_post_mix_per_stream(monkeypatch, aklr
     }
 
 
+def test_mhc_post_writes_aiters_out(monkeypatch, aklr_serves):
+    api = _Api()
+    monkeypatch.setattr(mhc, "mhc_post", api)
+    call = _call("mhc_post")
+    _, run = _select("mhc_post", call)
+    assert run(*_args("mhc_post", call)) is None
+    args, kwargs = api.calls[0]
+    assert [a is call[n] for a, n in zip(args, ("x", "residual", "post_layer_mix", "comb_res_mix"))] == [
+        True
+    ] * 4
+    assert set(kwargs) == {"out"} and kwargs["out"] is call["out"]
+
+
 def _varlen_result(q, k, v, offsets, **kwargs):
     """mla_prefill_varlen_lse's (output, lse as [tokens, heads]), the lse numbering its entries."""
     rows = q.shape[0]
@@ -774,6 +802,20 @@ def test_flash_attn_varlen_over_new_tokens_reaches_aklr_causal_in_fp8(monkeypatc
     assert (
         lse.shape == (VARLEN_HEADS, 300) and lse.is_contiguous() and lse[3, 2].item() == 2 * VARLEN_HEADS + 3
     )
+
+
+def test_flash_attn_varlen_without_the_lse_reaches_aklrs_causal_prefill(monkeypatch, aklr_serves):
+    api = _Api(
+        lambda q, k, v, offsets, **kwargs: torch.zeros(q.shape[0], VARLEN_HEADS, v.shape[-1], dtype=BF16)
+    )
+    monkeypatch.setattr(mla_prefill, "mla_prefill_varlen", api)
+    call = _call("flash_attn_varlen_alone")
+    _, run = _select("flash_attn_varlen_alone", call)
+    # aiter returns the output alone
+    assert run(*_args("flash_attn_varlen_alone", call)).shape == (300, VARLEN_HEADS, 128)
+    (q, k, v, offsets), kwargs = api.calls[0]
+    assert q is call["q"] and k is call["k"] and v.is_contiguous() and offsets is call["cu_seqlens_q"]
+    assert kwargs == {"qkv_fp8": True, "cu_seqlens_k": None, "sm_scale": 0.1}
 
 
 def test_flash_attn_varlen_over_a_context_chunk_reaches_aklr_without_the_mask(monkeypatch, aklr_serves):
@@ -876,8 +918,10 @@ def test_aiter_hands_a_call_aklr_serves_to_aklrs_run(monkeypatch, aiter_plugin, 
         (mla, "flash_mla_with_kvcache"),
         (mla, "fp8_paged_mqa_logits"),
         (mla_prefill, "sparse_prefill_mxfp8"),
+        (mhc, "mhc_post"),
         (mhc, "mhc_fused_post_pre"),
         (mla_prefill, "mla_prefill_varlen_lse"),
+        (mla_prefill, "mla_prefill_varlen"),
     ):
         monkeypatch.setattr(module, name, _Api(_fake_result(name)))
     plugin, op = aiter_plugin.plugin, _op(case)
@@ -898,6 +942,8 @@ def _fake_result(api_name):
         return lambda q, *a, **k: (torch.zeros(*q.shape[:-1], 512, dtype=BF16), torch.zeros(q.shape[:-1]))
     if api_name == "mla_prefill_varlen_lse":
         return _varlen_result
+    if api_name == "mla_prefill_varlen":
+        return lambda q, k, v, *a, **kw: torch.zeros(q.shape[0], VARLEN_HEADS, v.shape[-1], dtype=BF16)
     if api_name == "sparse_prefill_mxfp8":
         return lambda q_nope, *a, **k: torch.zeros(*q_nope.shape, dtype=BF16)
     return ("aklr",)

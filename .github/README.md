@@ -59,7 +59,7 @@ pip install -e .
 
 ## Usage
 
-SGLang loads AKLR at startup and, with `AKLR_SGLANG_PLUGIN=1`, runs AKLR's kernels through the SGLang plugin. vLLM also loads AKLR, but no vLLM code calls AKLR's ops yet. Other code starts AKLR once (`DispatcherRegistry.default().init()`, from `aklr.core.runtime.dispatch`), then calls an op's api (`aklr.plugins.aiter.<op>.api`) and runs its own code when one returns a `FallbackReason`.
+SGLang loads AKLR at startup and, with `AKLR_SGLANG_PLUGIN=1`, runs AKLR's kernels through the SGLang plugin. vLLM also loads AKLR, but no vLLM code calls AKLR's ops yet. Other code starts AKLR once (`DispatcherRegistry.default().init()`, from `aklr.core.runtime.dispatch`), then calls an op's api (`aklr.plugins.aiter.provider.<op>.api`) and runs its own code when one returns a `FallbackReason`.
 
 | Variable | Effect |
 |---|---|

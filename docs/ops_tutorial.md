@@ -10,7 +10,7 @@ An op has five parts:
 
 | Part | Where | What it is |
 |---|---|---|
-| contract | `aklr/plugins/aiter/<op>/contract.py`, an `OpContract` | the op's definition: inputs, outputs, shapes, dtypes, how much error each output may have, and the reference and baseline below |
+| contract | `aklr/plugins/aiter/provider/<op>/contract.py`, an `OpContract` | the op's definition: inputs, outputs, shapes, dtypes, how much error each output may have, and the reference and baseline below |
 | reference | `reference.py`, an `OpReference` class | the right answer, computed in torch from the math |
 | baseline | `baseline.py`, an `OpBaseline` class | the code the inference engine (aiter, sglang, vLLM) runs for the op today |
 | api | `api.py`, an `@api` function | the entry the inference engine calls |
@@ -31,7 +31,7 @@ At inference the api takes a call and finds its scenario and workload: when a ke
 
 ## 1. Find the op and the scenario
 
-Find the contract in `aklr/plugins/aiter/<op>/contract.py`. gemm's is in `aklr/plugins/aiter/gemm/contract.py`:
+Find the contract in `aklr/plugins/aiter/provider/<op>/contract.py`. gemm's is in `aklr/plugins/aiter/provider/gemm/contract.py`:
 
 ```python
 GEMM = OpContract(
@@ -167,23 +167,23 @@ With the kernel written, run the script again, this time with the kernel's direc
 ```bash
 PYTHONPATH=. python ~/make_gemm_schema.py ~/gemm_kernel
 # run's parameters: a, b, trans_b, bias, out_dtype, out
-# aklr/plugins/aiter/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+# aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
-The file name `<uuid>` comes from the file's content: after a change to the kernel, the workloads or the author, running the script again gives a new name, and the old file is yours to delete. The repository already has a FlyDSL kernel for this scenario (`aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1024_k4096/`) to compare with: but for the `kernel` section and the measurements CI wrote into the committed file (`accuracy`, `speedup`, `microseconds`), the two files are the same.
+The file name `<uuid>` comes from the file's content: after a change to the kernel, the workloads or the author, running the script again gives a new name, and the old file is yours to delete. The repository already has a FlyDSL kernel for this scenario (`aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k4096/`) to compare with: but for the `kernel` section and the measurements CI wrote into the committed file (`accuracy`, `speedup`, `microseconds`), the two files are the same.
 
 ## 4. Validate locally
 
 Validation has two stages: audit checks the file's format, its agreement with the contract and the rules of step 3, without a GPU; bench checks on a GPU that the kernel is correct and fast. First the audit alone:
 
 ```bash
-python -m aklr validate --stages audit aklr/plugins/aiter/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+python -m aklr validate --stages audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
 Then audit and bench on an MI355X. Bench draws inputs for each workload, compares the kernel's outputs with the reference's, then runs the kernel and the baseline (aiter's `gemm_a16w16` here) in turns, timing both:
 
 ```bash
-python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
 `--base origin/main` judges the file as a new kernel: it has to reach the bar over the baseline (1.05 by default), and not be slower than the kernel already in the same directory on main. Without it the bar is lower, and a file passing locally can still fail CI.
@@ -234,7 +234,7 @@ At inference a call runs your kernel when all of these hold: the engine has the 
 
 ## 6. Create an op
 
-When no op fits, create one first. An op is five files under `aklr/plugins/aiter/<op>/`. gemm is the example below; its full code is in `aklr/plugins/aiter/gemm/`.
+When no op fits, create one first. An op is five files under `aklr/plugins/aiter/provider/<op>/`. gemm is the example below; its full code is in `aklr/plugins/aiter/provider/gemm/`.
 
 1. **`contract.py`**: defines the `OpContract`, and lists it in the file's `CONTRACTS` (AKLR finds it there; there is nothing else to register).
    - `op_type` is the directory's name, `<op>`.
@@ -283,7 +283,7 @@ When no op fits, create one first. An op is five files under `aklr/plugins/aiter
 
 5. **`__init__.py`**: exports the api functions.
 
-6. **Tests**: add a small-shaped `PointSpec` (written like `point` in step 2's script) to `SMALL_POINTS` in `tests/plugins/aiter/cases.py`, in contract order, then run `AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py` to regenerate `tests/plugins/aiter/names.txt`, and commit it too.
+6. **Tests**: add a small-shaped `PointSpec` (written like `point` in step 2's script) to `SMALL_POINTS` in `tests/plugins/aiter/provider/cases.py`, in contract order, then run `AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/provider/test_contracts.py` to regenerate `tests/plugins/aiter/names.txt`, and commit it too.
 
 An op several GPUs call together (expert parallelism, for example) sets the contract's `ranks`, and its reference and baseline are a `DistOpReference` and a `DistOpBaseline` (`aklr/plugins/aiter/README.md`).
 

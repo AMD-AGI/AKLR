@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import torch
 
-import aklr.plugins.aiter.gemm
+import aklr.plugins.aiter.provider.gemm
 from aklr.core.contract.export import read_calls
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
@@ -92,7 +92,7 @@ class TestKernelDispatcher:
         caller_out = served == "caller"
         case = OpCase.of("gemm@1.0")
         dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
-        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.gemm.gemm.__wrapped__)
+        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.provider.gemm.gemm.__wrapped__)
         call = case.call(case.inputs())
         if caller_out:
             call["out"] = torch.empty(
@@ -324,7 +324,7 @@ class TestKernelDispatcher:
         dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
         recorder = CallRecorder(tmp_path, DeviceTarget.from_names(**KERNEL_TARGET))
         dispatcher.set_table(dispatcher.table, recorder)
-        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.gemm.gemm.__wrapped__)
+        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.provider.gemm.gemm.__wrapped__)
         call = case.call(case.inputs())
         call["out"] = torch.full(
             case.contract.storage_shape_of("out", case.point),
@@ -342,7 +342,7 @@ class TestKernelDispatcher:
         ``fallback_reason``'s reason."""
         case = OpCase.of("gemm@1.0")
         dispatcher = self._dispatcher(builder_registry, (case.schema(GEMM_KERNEL_SOURCE),))
-        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.gemm.gemm.__wrapped__)
+        api_fn = dispatcher.make_api_fn(aklr.plugins.aiter.provider.gemm.gemm.__wrapped__)
         call = case.call(case.inputs())
         call["out"] = torch.full(
             case.contract.storage_shape_of("out", case.point),
@@ -417,7 +417,7 @@ class TestDispatcherRegistry:
         assert set(dispatchers) == {c.contract_id for c in ContractRegistry.default().contracts()}
         assert {d.dispatch({}) for d in dispatchers.values()} == {FallbackReason.DISABLED}
         case = OpCase.of("gemm@1.0")
-        assert aklr.plugins.aiter.gemm.gemm(**case.call(case.inputs())) is FallbackReason.DISABLED
+        assert aklr.plugins.aiter.provider.gemm.gemm(**case.call(case.inputs())) is FallbackReason.DISABLED
         # an init failing partway leaves every dispatcher closed
         (tmp_path / "file").touch()
         monkeypatch.setenv(ENV_EXPORT, "1")
@@ -466,7 +466,7 @@ class TestDispatcherRegistry:
         monkeypatch.setattr(toolchain, "toolchain_version", lambda name: installed)
         with caplog.at_level(logging.INFO):
             default_dispatchers.init()
-        result = aklr.plugins.aiter.gemm.gemm(**case.call(case.inputs()))
+        result = aklr.plugins.aiter.provider.gemm.gemm(**case.call(case.inputs()))
         assert isinstance(result, torch.Tensor) is is_served
         skipped = "skipped 1 schemas: flydsl 0.3.1 is not >=0.3.2"
         assert (skipped in caplog.text) is not is_served
@@ -500,7 +500,7 @@ class TestDispatcherRegistry:
         )
         case = OpCase(schema.point(workload.axes))
         args = case.inputs()
-        result = aklr.plugins.aiter.gemm.gemm(**case.call(args, "cuda"))
+        result = aklr.plugins.aiter.provider.gemm.gemm(**case.call(args, "cuda"))
         assert not isinstance(result, FallbackReason)
         comparisons = case.compare(case.contract.outputs_by_name(result), args)
         assert comparisons == {}

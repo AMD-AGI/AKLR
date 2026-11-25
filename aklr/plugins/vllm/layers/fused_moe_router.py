@@ -6,17 +6,15 @@ output that gfx950 runs for a few tokens (Kimi-K3's router)."""
 
 from __future__ import annotations
 
-import os
-
 import torch
 
-from aklr.core.contract.fastkey._fast_key_fn import MIN_PTR_ALIGN_BYTES
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.aiter.gemm.api import gemm
-from aklr.plugins.vllm.hook import _original, vllm_route
+from aklr.plugins.vllm.hook import _original, aiter_asks_aklr, vllm_route
 
 __all__: list[str] = []
 
+# aiter's GEMM is AKLR's only through AKLR's aiter provider: without it vLLM keeps its own
+_IS_PROVIDER_ON = aiter_asks_aklr()
 _VERSIONS = ("0.34.0", "0.32.1rc1.dev276")
 _CALLER = "vllm.model_executor.layers.fused_moe.router.gate_linear.fp32_router_gemm_dispatch_impl"
 _ROUTER = "vllm.model_executor.layers.fused_moe.router.rocm_fp32_router_gemm"
@@ -25,51 +23,36 @@ _ROUTER = "vllm.model_executor.layers.fused_moe.router.rocm_fp32_router_gemm"
 @vllm_route(_CALLER, f"{_ROUTER}.rocm_fp32_router_gemm", versions=_VERSIONS)
 def _rocm_fp32_router_gemm(hidden_states, router_weight):
     """The gate's ``hidden_states @ router_weight.T`` in fp32: vLLM's own kernel where vLLM takes the call (at
-    most 9 tokens for Kimi-K3's 896 bf16 experts), else AKLR's, which ``_can_use_rocm_fp32_router_gemm`` let in."""
-    if _native_can_use(hidden_states, router_weight):
-        # AKLR's gemm is qualified against aiter's GEMM, not against this kernel of vLLM's
-        return FallbackReason.NOT_QUALIFIED
-    out = gemm(hidden_states, router_weight, out_dtype=torch.float32)
-    # a call AKLR declines after all (a remembered answer of another call): vLLM's kernel would reject it
-    return _unrouted(hidden_states, router_weight) if isinstance(out, FallbackReason) else out
+    most 9 tokens for Kimi-K3's 896 bf16 experts), else aiter's GEMM, which AKLR's aiter provider answers."""
+    reason = _keeps_vllms(hidden_states, router_weight)
+    if reason is not None:
+        return reason
+    from aiter.tuned_gemm import gemm_a16w16
+
+    return gemm_a16w16(hidden_states, router_weight, None, torch.float32)
 
 
 @vllm_route(_CALLER, f"{_ROUTER}.can_use_rocm_fp32_router_gemm", versions=_VERSIONS)
 def _can_use_rocm_fp32_router_gemm(hidden_states, router_weight):
-    """Whether vLLM takes its fp32 router GEMM: vLLM's own answer where it takes the call itself, else yes where
-    AKLR serves it. For Kimi-K3's router vLLM's kernel stops at 9 tokens (hipBLASLt from 10, its decode's 16
-    tokens included); AKLR's gemm serves the counts its workloads measured faster."""
+    """Whether vLLM takes its fp32 router GEMM: vLLM's own answer where it takes the call itself, else yes for
+    the bf16 gate, which ``_rocm_fp32_router_gemm`` then hands to aiter's GEMM. For Kimi-K3's router vLLM's
+    kernel stops at 9 tokens (hipBLASLt from 10, its decode's 16 tokens included)."""
+    reason = _keeps_vllms(hidden_states, router_weight)
+    return True if reason is None else reason
+
+
+def _keeps_vllms(hidden_states, router_weight) -> FallbackReason | None:
+    """Why vLLM keeps its own answer and kernel for the call; ``None`` where the call is aiter's GEMM's."""
+    if not _IS_PROVIDER_ON:
+        return FallbackReason.DISABLED
     if _native_can_use(hidden_states, router_weight):
         return FallbackReason.NOT_QUALIFIED  # vLLM's own answer: yes
-    key = (
-        tuple(hidden_states.shape), hidden_states.stride(), hidden_states.dtype, hidden_states.device,
-        hidden_states.data_ptr() % MIN_PTR_ALIGN_BYTES == 0,
-        tuple(router_weight.shape), router_weight.stride(), router_weight.dtype,
-        router_weight.data_ptr() % MIN_PTR_ALIGN_BYTES == 0,
-    )  # fmt: skip
-    reason = _REASONS.get(key, _UNASKED)
-    if reason is _UNASKED:
-        # one dispatch lookup per call shape: vLLM asks on every MoE layer, every step
-        reason = gemm.fallback_reason(hidden_states, router_weight, out_dtype=torch.float32)
-        # a capture's not-warmed answer changes once the call runs outside one
-        if _REMEMBER and reason is not FallbackReason.NOT_WARMED:
-            _REASONS[key] = reason
-    return True if reason is None else reason
+    # vLLM runs an fp32 router weight through F.linear on fp32 rows, which is no 16-bit GEMM
+    if hidden_states.dtype != torch.bfloat16 or router_weight.dtype != torch.bfloat16:
+        return FallbackReason.OUT_OF_CONTRACT
+    return None
 
 
 def _native_can_use(hidden_states, router_weight) -> bool:
     """vLLM's own answer: whether its fp32 router kernel takes the call."""
     return _original(_can_use_rocm_fp32_router_gemm)(hidden_states, router_weight)
-
-
-def _unrouted(hidden_states, router_weight):
-    """What vLLM's fp32_router_gemm_dispatch_impl runs when its fp32 router kernel does not take the call."""
-    if router_weight.dtype == torch.bfloat16:
-        return torch.mm(hidden_states, router_weight.T, out_dtype=torch.float32)
-    return torch.nn.functional.linear(hidden_states.float(), router_weight)
-
-
-# gemm's answer per call shape (None: served); not kept while exporting, which counts every call
-_REASONS: dict[tuple, FallbackReason | None] = {}
-_UNASKED = object()
-_REMEMBER = os.environ.get("AKLR_EXPORT") != "1"

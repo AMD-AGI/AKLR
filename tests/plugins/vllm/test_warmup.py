@@ -13,8 +13,8 @@ from aklr.plugins.vllm import warmup
 GRAPH_TOKENS, MAX_TOKENS = 8, 64
 
 
-def point(m, n, k):
-    return SimpleNamespace(axes={"m": m, "n": n, "k": k})
+def point(m, n, k, trans_b=True):
+    return SimpleNamespace(axes={"m": m, "n": n, "k": k}, attrs={"trans_b": trans_b})
 
 
 class Model(torch.nn.Module):
@@ -50,6 +50,7 @@ def served(monkeypatch):
         return True
 
     monkeypatch.setattr(warmup, "_call_once", call_once)
+    monkeypatch.setattr(warmup, "_IS_PROVIDER_ON", True)
     monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
     return state
@@ -67,6 +68,20 @@ def test_only_the_rank_models_weight_shapes_past_the_graphs_are_warmed(served):
     ]
     warmup.warm_up(worker(Model((32, 48), lm_head=(1000, 32)), drafter=Model((24, 40))))
     assert [c[:3] for c in served.calls] == [(16, 32, 48), (16, 48, 32), (16, 24, 40), (2, 1000, 32)]
+
+
+def test_a_kernel_aiter_cannot_ask_for_is_not_warmed(served):
+    """aiter's GEMM takes the weight as [n, k] alone."""
+    served.points = [point(16, 32, 48, trans_b=False)]
+    warmup.warm_up(worker(Model((32, 48))))
+    assert served.calls == []
+
+
+def test_nothing_is_warmed_without_aklrs_aiter_provider(served, monkeypatch):
+    monkeypatch.setattr(warmup, "_IS_PROVIDER_ON", False)
+    served.points = [point(16, 32, 48)]
+    warmup.warm_up(worker(Model((32, 48))))
+    assert served.calls == []
 
 
 def test_export_records_no_scratch_call_and_gets_its_recorder_back(served):

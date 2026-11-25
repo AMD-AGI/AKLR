@@ -14,12 +14,12 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "0.355–1.198; 2 of 13 Points ≥ 1.03 (m 1, 2), 1 served (m 1); at m 2–64 a Triton kernel of the same name is served", gpu: MI355X, workload: "gemm_n6144_k2048, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
   - {metric: "speedup over aiter, CI, per Point", value: "0.418–1.208; 2 of 13 Points ≥ 1.03 (m 1, 2)", gpu: MI355X, workload: "gemm_n6144_k3072, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
-  - aklr/plugins/aiter/gemm/impls/triton/gemm_n2624_k6144/7511d8bbfacd4d06.json
-  - aklr/plugins/aiter/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
+  - aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n2624_k6144/7511d8bbfacd4d06.json
+  - aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json
 ---
 
 # bf16 GEMM at wide N: a wave per output column at M ≤ 2
@@ -33,7 +33,7 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`;
-  `GEMM` in `aklr/plugins/aiter/gemm/contract.py`). The served FlyDSL paths keep each output's whole K in one wave; the served
+  `GEMM` in `aklr/plugins/aiter/provider/gemm/contract.py`). The served FlyDSL paths keep each output's whole K in one wave; the served
   Triton n2624 kernel at m = 64 splits K six ways across workgroups and a second kernel adds the six fp32 slices in
   slice order.
 - N × K = 2624 × 6144, 3072 × 6144, 6144 × 2048, 6144 × 3072: a weight of 30.75, 36, 24 and 36 MiB, a streaming
@@ -117,10 +117,10 @@ m = 2, the FlyDSL file passes 1.03 but the Triton file is served.
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root:
 
 ```
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
 ```
 
 The Triton files validate the same way. The report goes to `aklr_validation/report.md`; a run outside CI checks the file,

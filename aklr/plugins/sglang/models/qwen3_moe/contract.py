@@ -139,7 +139,7 @@ QWEN3_MOE_FP8_MOE = OpContract(
         "out": TensorSpec(
             description="This rank's share of the MoE block's output.",
             shape=("n_tokens", "model_dim"),
-            dtype=DTypeSpec(same_as_tensor="hidden_states"),
+            dtype=DTypeSpec(same_as_tensor="hidden_states", param_name="out_dtype"),
             error_bounds=SqnrBound(min_sqnr_db=30.0),
         )
     },

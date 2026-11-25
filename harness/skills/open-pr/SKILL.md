@@ -17,7 +17,7 @@ them before opening the pull request.
 ## Procedure
 
 1. **Find the kinds** in `git diff --name-status origin/main...HEAD`:
-   - `aklr/plugins/aiter/<op>/impls/<language>/<name>/<16 hex>.json`: deleted is a **withdrawn kernel**;
+   - `aklr/plugins/aiter/provider/<op>/impls/<language>/<name>/<16 hex>.json`: deleted is a **withdrawn kernel**;
      empty `kernel.sources` is a **contract**; otherwise a **kernel**.
    - `docs/`, `harness/`, `.claude/` or `*.md`: a **document** (docs and agent skills).
      Anything else: **code**.

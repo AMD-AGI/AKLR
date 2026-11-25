@@ -1,5 +1,3 @@
-add_rms_norm_hidden_size#
-add_rms_norm_x_float16_hidden_size#
 biased_grouped_topk_n_experts#_topk#
 biased_grouped_topk_router_logits_float32_n_experts#_topk#
 biased_grouped_topk_renormalize_n_experts#_topk#
@@ -542,8 +540,10 @@ paged_attention_decode_query_float16_n_heads#_n_kv_heads#_head_dim#_block_size#
 paged_attention_decode_query_float16_kv_split_pages_n_heads#_n_kv_heads#_head_dim#_block_size#
 per_group_quant_fp8_hidden_size#
 per_group_quant_mxfp8_hidden_size#
-rms_norm_hidden_size#
-rms_norm_x_float16_hidden_size#
+rmsnorm_hidden_size#
+rmsnorm_input_float16_hidden_size#
+rmsnorm_with_add_hidden_size#
+rmsnorm_with_add_input_float16_hidden_size#
 situv2_a4w4_moe_model_dim#_n_experts#_topk#_inter_dim#
 situv2_a4w4_moe_a16w4_shuffled_model_dim#_n_experts#_topk#_inter_dim#
 sparse_prefill_mxfp8_n_heads#

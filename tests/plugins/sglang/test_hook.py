@@ -248,7 +248,9 @@ def register_calls(monkeypatch):
     """What register() did, in order."""
     calls = []
     monkeypatch.setattr(plugin, "register_sglang_plugin", lambda: calls.append("aklr starts"))
-    monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.plugins.aiter.gemm", "aklr.plugins.sglang.x.y"))
+    monkeypatch.setattr(
+        plugin, "op_packages", lambda: ("aklr.plugins.aiter.provider.gemm", "aklr.plugins.sglang.x.y")
+    )
     monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
     monkeypatch.setattr(hook, "install", lambda: calls.append("install"))
     return calls

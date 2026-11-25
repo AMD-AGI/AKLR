@@ -107,7 +107,7 @@ wins. Check a plan against this table before writing code.
 - **The aiter these cards describe is the baseline**, ROCm/aiter at the commit `aiter`
   in `stack.json`: AKLR does not ship, patch or fall back to it, so its `aiter/` paths are that
   revision's, read as reference code. Price aiter through the contract's baseline class
-  (`aklr/plugins/aiter/<op>/baseline.py`), the call bench times. At a Point no kernel serves, the api returns a
+  (`aklr/plugins/aiter/provider/<op>/baseline.py`), the call bench times. At a Point no kernel serves, the api returns a
   `FallbackReason` and its caller runs its own path. AKLR's plugins route a model to plugin ops and to some
   `aklr/plugins/aiter` ops (vLLM's GEMM and MoE layers, sglang's DSA paged MQA logits; `aklr/plugins/README.md`), so an
   `aklr/plugins/aiter` kernel runs in a model only where such a route or the engine calls its api.

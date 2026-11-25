@@ -10,7 +10,7 @@
 
 | 部分 | 在哪里 | 是什么 |
 |---|---|---|
-| contract | `aklr/plugins/aiter/<op>/contract.py`，一个 `OpContract` | 算子的定义：输入、输出、形状、dtype，每个输出允许多大误差，以及下面的 reference 和 baseline |
+| contract | `aklr/plugins/aiter/provider/<op>/contract.py`，一个 `OpContract` | 算子的定义：输入、输出、形状、dtype，每个输出允许多大误差，以及下面的 reference 和 baseline |
 | reference | `reference.py`，一个 `OpReference` 类 | 用 torch 按数学定义算出的正确答案 |
 | baseline | `baseline.py`，一个 `OpBaseline` 类 | 推理引擎（aiter、sglang、vLLM）现在对这个算子实际跑的代码 |
 | api | `api.py`，一个 `@api` 函数 | 推理引擎调用 AKLR 的入口 |
@@ -31,7 +31,7 @@ kernel 要过两关：
 
 ## 1. 找到算子和场景
 
-在 `aklr/plugins/aiter/<op>/contract.py` 里找到对应的 contract。gemm 在 `aklr/plugins/aiter/gemm/contract.py`：
+在 `aklr/plugins/aiter/provider/<op>/contract.py` 里找到对应的 contract。gemm 在 `aklr/plugins/aiter/provider/gemm/contract.py`：
 
 ```python
 GEMM = OpContract(
@@ -167,23 +167,23 @@ kernel 写好后，再运行一次脚本，这次带上 kernel 目录：
 ```bash
 PYTHONPATH=. python ~/make_gemm_schema.py ~/gemm_kernel
 # run 的参数： a, b, trans_b, bias, out_dtype, out
-# aklr/plugins/aiter/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+# aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
-文件名 `<uuid>` 由文件内容算出：改了 kernel、workload 或作者后再运行，会得到新文件名，旧文件要自己删掉。仓库里已经有这个场景的一个 FlyDSL kernel（`aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1024_k4096/`），可以对照：除了 `kernel` 一段，以及已提交文件里 CI 写入的测量结果（`accuracy`、`speedup`、`microseconds`），两个文件完全一样。
+文件名 `<uuid>` 由文件内容算出：改了 kernel、workload 或作者后再运行，会得到新文件名，旧文件要自己删掉。仓库里已经有这个场景的一个 FlyDSL kernel（`aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k4096/`），可以对照：除了 `kernel` 一段，以及已提交文件里 CI 写入的测量结果（`accuracy`、`speedup`、`microseconds`），两个文件完全一样。
 
 ## 4. 本地验证
 
 验证分两步：audit 检查文件格式、和 contract 是否一致、第 3 步的规则，不需要 GPU；bench 在 GPU 上检查对不对、快不快。先只跑 audit：
 
 ```bash
-python -m aklr validate --stages audit aklr/plugins/aiter/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+python -m aklr validate --stages audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
 再在 MI355X 上跑 audit 和 bench。bench 对每个 workload 生成输入，比较 kernel 和 reference 的输出，再把 kernel 和 baseline（这里是 aiter 的 `gemm_a16w16`）交替运行、计时：
 
 ```bash
-python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
 `--base origin/main` 表示按新 kernel 的标准判：要达到对 baseline 的门槛（默认 1.05），也不能比 main 上同一目录里已有的 kernel 慢。不加的话门槛会松一些，本地过了，CI 也可能不过。
@@ -234,7 +234,7 @@ PR 合入后，CI 在 main 上再测一遍，由机器人在 `aklr-perf/main` �
 
 ## 6. 新建一个算子
 
-没有对应的算子时，先新建。一个算子就是 `aklr/plugins/aiter/<op>/` 下的五个文件。下面以 gemm 为例，完整代码见 `aklr/plugins/aiter/gemm/`。
+没有对应的算子时，先新建。一个算子就是 `aklr/plugins/aiter/provider/<op>/` 下的五个文件。下面以 gemm 为例，完整代码见 `aklr/plugins/aiter/provider/gemm/`。
 
 1. **`contract.py`**：定义 `OpContract`，并把它放进文件里的 `CONTRACTS`（AKLR 会自动找到，不用另外注册）。
    - `op_type` 写目录名 `<op>`。
@@ -283,7 +283,7 @@ PR 合入后，CI 在 main 上再测一遍，由机器人在 `aklr-perf/main` �
 
 5. **`__init__.py`**：导出 api 函数。
 
-6. **测试**：在 `tests/plugins/aiter/cases.py` 的 `SMALL_POINTS` 里，按 contract 的顺序加一个小形状的 `PointSpec`（写法同第 2 步脚本里的 `point`），再运行 `AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py`，重新生成 `tests/plugins/aiter/names.txt`，一起提交。
+6. **测试**：在 `tests/plugins/aiter/provider/cases.py` 的 `SMALL_POINTS` 里，按 contract 的顺序加一个小形状的 `PointSpec`（写法同第 2 步脚本里的 `point`），再运行 `AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/provider/test_contracts.py`，重新生成 `tests/plugins/aiter/names.txt`，一起提交。
 
 多张卡一起调用的算子（比如专家并行），在 contract 里设 `ranks`，reference 和 baseline 改用 `DistOpReference`、`DistOpBaseline`，见 `aklr/plugins/aiter/README.md`。
 

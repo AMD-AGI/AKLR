@@ -99,6 +99,6 @@ The two numbers come from different rulers, and the description's number is a me
 - S2 aklr/core/validation/stages/_bench/_report.py:85: `speedup` is the graph ratio lower bound against the baseline, `ratio_lower_bound` at aklr/core/validation/stages/_measure.py:144, 32 rounds
 - S3 aklr/core/utils/testing.py:136: `bench_cudagraph`, the flush at :70-82, the median of 10 replays
 - S4 aklr/core/validation/stages/_measure.py:286: a seeded shuffle of the participants every round
-- S5 aklr/plugins/aiter/gemm/baseline.py:58 `GemmA8w8BlockwiseScaledBaseline` relays out a row-major `a_scale` (`a_scale.T.contiguous().T`, :59) inside the timed call
+- S5 aklr/plugins/aiter/provider/gemm/baseline.py:58 `GemmA8w8BlockwiseScaledBaseline` relays out a row-major `a_scale` (`a_scale.T.contiguous().T`, :59) inside the timed call
 - S6 `pip install --no-build-isolation --no-deps -e .` in the image `AKLR_CI_IMAGE`
 - S7 setup.py, in the repository before this one: an editable install (`is_develop_mode`) without `AITER_TRITON_ONLY` runs `pip install flydsl==0.3.2` (`FLYDSL_VERSION`) whenever another FlyDSL version is installed; the parents of the four runs of E1 carry the same block and pin and install the checkout as S6 does

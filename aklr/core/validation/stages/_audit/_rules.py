@@ -155,13 +155,22 @@ class _SideEffectRule(SourceRule):
     number = 3
 
     def source_rejections(self, source: ParsedSource) -> Iterable[Rejection]:
+        # a function's own param is not the builtin of its name: aiter's ops take an ``input``
+        params = {
+            id(name)
+            for fn in ast.walk(source.tree)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+            for name in ast.walk(fn)
+            if isinstance(name, ast.Name)
+            and name.id in {a.arg for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)}
+        }
         for node in ast.walk(source.tree):
             if isinstance(node, ast.Call):
                 qualname = source.qualname(node.func) or ""
                 if qualname.startswith(_GLOBAL_STATE_CALLS):
                     what = f"process-wide torch state {qualname}"
                     yield Rejection.from_node(source.path, node, what)
-            if not isinstance(node, (ast.Name, ast.Attribute)):
+            if not isinstance(node, (ast.Name, ast.Attribute)) or id(node) in params:
                 continue
             qualname = source.qualname(node)
             if qualname in _FILE_CALLS or getattr(node, "id", None) in _INPUT_OUTPUT_CALLS:

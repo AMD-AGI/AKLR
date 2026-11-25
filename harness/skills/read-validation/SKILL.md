@@ -32,7 +32,7 @@ Read [references/ruler.md](references/ruler.md) (how a Point is timed and judged
 3. **Read an accuracy failure.** The detail names each tensor past its bound: a `tolerance` bound gives
    the `violation_fraction` (elements past it; one fails it) and the `peak_bound_multiple` (the worst
    error over the bound), an `sqnr` bound the SQNR against its minimum. The bound is the contract's
-   (`error_bounds` in `aklr/plugins/aiter/<op>/contract.py`), the expected values the reference's (`reference.py`),
+   (`error_bounds` in `aklr/plugins/aiter/provider/<op>/contract.py`), the expected values the reference's (`reference.py`),
    and the judgment its `check`, which an op may override ("Reference and baseline" in
    `aklr/plugins/aiter/README.md`). Before blaming the bound, compute the baseline's error on the same inputs: when
    the engine's own code is within the bound and the kernel is not, the kernel is wrong.

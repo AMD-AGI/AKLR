@@ -81,6 +81,7 @@ class TestCheckKernel:
                 id="getattr_optional_dtype",
             ),
             pytest.param("_X: tuple[int, ...] = (1,)\n", id="annotated_constant"),
+            pytest.param("def _rows(input):\n    return input.shape[0]\n", id="param_named_input"),
             pytest.param(
                 "import flydsl.expr as fx\n\n_N = fx.Int32(fx.Int32(4) * 2)\n",
                 id="nested_flydsl_constant",
@@ -200,6 +201,13 @@ class TestCheckKernel:
                 id="augmented_assignment_to_input",
             ),
             pytest.param(
+                '"""K."""\ndef _rows(input):\n    return input.shape[0]\n\n\n'
+                + _SIGNATURE
+                + "\n    input()\n    out.copy_(a @ b.mT)\n",
+                "SA3",
+                id="builtin_input_beside_a_param_of_that_name",
+            ),
+            pytest.param(
                 '"""K."""\nimport functools\nimport torch\n\n\n'
                 + "@functools.cache\ndef _compile(n):\n"
                 + '    torch.set_float32_matmul_precision("medium")\n    return n\n\n\n'
@@ -244,7 +252,7 @@ class TestCheckKernel:
                 id="extra_kwargs",
             ),
             pytest.param(
-                '"""K."""\nfrom aklr.plugins.aiter.gemm.baseline import GemmBaseline\n\n\n'
+                '"""K."""\nfrom aklr.plugins.aiter.provider.gemm.baseline import GemmBaseline\n\n\n'
                 + _SIGNATURE
                 + "\n    out.copy_(a @ b.mT)\n",
                 "SA5",
@@ -253,7 +261,7 @@ class TestCheckKernel:
             pytest.param(
                 '"""K."""\n'
                 + _SIGNATURE
-                + "\n    import aklr.plugins.aiter.gemm.reference\n    out.copy_(a @ b.mT)\n",
+                + "\n    import aklr.plugins.aiter.provider.gemm.reference\n    out.copy_(a @ b.mT)\n",
                 "SA5",
                 id="imports_aklr_in_launch",
             ),
@@ -399,9 +407,9 @@ class TestCheckHsacoKernel:
 
 
 _BAD_SOURCE = '"""K."""\n' + _SIGNATURE + "\n    a.zero_()\n"
-_OLD_FORMAT_PATH = "aklr/plugins/aiter/gemm/kernels/gemm.py"  # a base that predates the format
+_OLD_FORMAT_PATH = "aklr/plugins/aiter/provider/gemm/kernels/gemm.py"  # a base that predates the format
 # origin/main's solution file layout: under impls/, but its stem is not a schema uuid
-_LEGACY_SOLUTION_PATH = "aklr/plugins/aiter/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
+_LEGACY_SOLUTION_PATH = "aklr/plugins/aiter/provider/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
 
 
 class TestAuditStage:
@@ -468,7 +476,7 @@ class TestAuditStage:
                 workloads=[{"axes": {"m": m}, **measurement} for m in ms],
                 kernel=case.schema(source).kernel.model_copy(update={"author": author}),
             )
-            return f"aklr/plugins/aiter/{op_type}/{schema.relative_path()}", schema.schema_text()
+            return f"aklr/plugins/aiter/provider/{op_type}/{schema.relative_path()}", schema.schema_text()
 
         head_path, head_text = schema_at(head_source, head_ms, head_author)
         (tmp_path / head_path).parent.mkdir(parents=True)
