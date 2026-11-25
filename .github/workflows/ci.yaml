@@ -206,7 +206,7 @@ jobs:
           echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
           echo "AITER op baseline/reference tests: ${contracts:-all contracts}" >> "$GITHUB_STEP_SUMMARY"
 
-  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; beside it sglang-test and
+  # aiter-test: aklr/plugins/aiter timed against the baseline AITER, in aiter_image; beside it sglang-test and
   # vllm-test. No secrets and no actions/cache: they run the PR's code and kernels.
   aiter-test:
     needs: code-lint
@@ -218,7 +218,7 @@ jobs:
     env:
       TIMEOUT_MINUTES: 180
       IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
-      TESTS: tests/core tests/ops tests/benchmarks
+      TESTS: tests/core tests/plugins/aiter tests/benchmarks
       AKLR_REFERENCE_CONTRACTS: ${{ needs.code-lint.outputs.reference_contracts }}
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
     steps:
@@ -296,7 +296,7 @@ jobs:
           echo "::group::Run unit tests ($TESTS)"
           tests=0
           # shellcheck disable=SC2086 # TESTS is a list of paths
-          timeout -k 60s 25m python3 -m coverage run -m pytest -v $TESTS \
+          timeout -k 60s 45m python3 -m coverage run -m pytest -v $TESTS \
             --timeout=600 --timeout-method=thread \
             --junitxml="$reports/test-reports/aklr.xml" \
             2>&1 | tee "$reports/test-reports/aklr.log" || tests=$?
@@ -312,19 +312,15 @@ jobs:
           flags=(${BASE:+--base "$BASE"})
           [[ ${MEASURED_BY_BOT:-} != true ]] || flags+=(--allow-measured-edits)
           if [[ -n ${AKLR_BASELINE_AITER:-} ]]; then
-            echo '::group::Validate aklr/ops'
-            # FIXME: mega_moe's baseline JIT-builds mori's device bitcode, which misses TheRock's
-            # <libdrm/drm.h> (mori/jit/core.py::_collect_include_dirs, ROCm/mori 29e0c086); measure
-            # mega_moe again once the image ships a mori that finds it.
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --exclude aklr/ops/mega_moe \
-              --out "$reports/validation-report"
+            echo '::group::Validate aklr/plugins/aiter'
+            python3 -m aklr validate "${flags[@]}" --under aklr/plugins/aiter --out "$reports/validation-report"
           else
             : "${PLUGINS:?}"
-            echo "::group::Validate plugins ($PLUGINS), check aklr/ops"
+            echo "::group::Validate plugins ($PLUGINS), check aklr/plugins/aiter"
             plugins=0 ops=0
             # shellcheck disable=SC2086 # PLUGINS is a list of flags
             python3 -m aklr validate "${flags[@]}" $PLUGINS --out "$reports/validation-report" || plugins=$?
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --no-timing --out "$reports/validation-check" || ops=$?
+            python3 -m aklr validate "${flags[@]}" --under aklr/plugins/aiter --no-timing --out "$reports/validation-check" || ops=$?
             exit $((plugins ? plugins : ops))
           fi
       - &finish_gpu_tests
@@ -368,7 +364,7 @@ jobs:
           retention-days: 90
 
   # sglang-test: the sglang image as it ships, AKLR alone installed. Its plugins are timed against
-  # sglang's own code; aklr/ops is built and checked only, its timing being aiter-test's.
+  # sglang's own code; aklr/plugins/aiter is built and checked only, its timing being aiter-test's.
   # aklr/plugins/vllm is vllm-test's.
   sglang-test:
     needs: code-lint
@@ -378,8 +374,8 @@ jobs:
     env:
       TIMEOUT_MINUTES: 150
       IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
-      TESTS: tests/plugins/aiter tests/plugins/sglang
-      PLUGINS: --under aklr/plugins --exclude aklr/plugins/vllm
+      TESTS: tests/plugins/aiter/provider tests/plugins/sglang
+      PLUGINS: --under aklr/plugins/sglang
     steps:
       - *checkout_source
       - *gpu_tests
@@ -389,7 +385,7 @@ jobs:
       - *summarize
       - *upload_report
       - &upload_check
-        name: Upload the check of aklr/ops (validation-check-${{ github.job }}-<attempt>)
+        name: Upload the check of aklr/plugins/aiter (validation-check-${{ github.job }}-<attempt>)
         if: always() && needs.code-lint.outputs.has_bench_paths == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -398,7 +394,7 @@ jobs:
           retention-days: 90
 
   # vllm-test: the vllm image as it ships, AKLR alone installed. aklr/plugins/vllm is timed in it;
-  # aklr/ops is built and checked only, as in sglang-test.
+  # aklr/plugins/aiter is built and checked only, as in sglang-test.
   vllm-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
@@ -555,8 +551,8 @@ jobs:
       - *setup_python
       - *install_cpu_deps
       # A missed measurement is not retried; the next aklr/core or stack.json change on main re-benches every schema.
-      # A test job can fail before write_schemas: no artifact is nothing to write. aklr/ops is
-      # aiter-test's, aklr/plugins/vllm vllm-test's, the rest of aklr/plugins sglang-test's (validate --under).
+      # A test job can fail before write_schemas: no artifact is nothing to write. aklr/plugins/aiter is
+      # aiter-test's, aklr/plugins/vllm vllm-test's, aklr/plugins/sglang sglang-test's (validate --under).
       - name: Download aiter-test's validation report
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -616,3 +612,44 @@ jobs:
           else
             echo '::warning::Bot PR checks did not pass; left open for review'
           fi
+
+  # Rebuilds site-data/kernels from main's tip after every main push run, after publish-measurement
+  # (a bot squash merged there is on main by then; its [skip ci] starts no run of its own) and with
+  # nothing measured too: a PR may add or withdraw kernels. Reads only main's committed schemas.
+  publish-kernels:
+    needs: publish-measurement
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AKLR_BOT_LOGIN != ''
+    runs-on: ubuntu-latest
+    environment: bot
+    timeout-minutes: 15
+    # Writes use the App token, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      # main's tip, not this run's commit; the history holds the bot's measurement commits.
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - *setup_python
+      - *install_cpu_deps
+      - name: Rebuild site-data/kernels
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          PYTHONPATH=benchmarks/kernels bash .github/scripts/commit_site_data.sh kernels \
+            "kernels: main ${sha::12} (run $GITHUB_RUN_ID)" \
+            python3 -m kernels_report --run-id "$GITHUB_RUN_ID" --run-url "$RUN_URL"

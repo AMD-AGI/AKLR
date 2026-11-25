@@ -23,7 +23,7 @@ import torch
 from aklr.core.contract import semantics
 from aklr.core.contract.fastkey import FastKeyCodec
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
-from aklr.ops.gemm.api import gemm
+from aklr.plugins.aiter.gemm.api import gemm
 
 __all__ = ["warm_up"]
 

@@ -6,7 +6,7 @@ gates. Concrete values will be set when the execution environment is defined.
 ## Required Configuration
 
 - AKLR base and candidate revisions.
-- Performance baseline (`<contract>_baseline`, at `aiter` in `stack.json`).
+- Performance baseline (each contract's baseline class, at `aiter` in `stack.json`).
 - Supported AMD GPU architectures and node topology.
 - ROCm, Python, PyTorch, and compiler versions.
 - Correctness tolerances by operator and data type.

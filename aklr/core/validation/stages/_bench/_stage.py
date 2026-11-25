@@ -160,10 +160,8 @@ class BenchStage(PipelineStage[BenchReport]):
         if (unmet := unmet_requirement(schema.kernel.requires)) is not None:
             raise UnmetRequirement(unmet)
         contract = registry.get(schema.contract_id)
-        baseline = contract.baseline()
-        defined_baseline = None if baseline is None else f"{baseline.__module__}.{baseline.__qualname__}"
-        # dispatch's rule: a kernel must beat the defined baseline, if there is one
-        min_speedup = RuntimeEnv().min_speedup if defined_baseline is not None else 0
+        # dispatch's rule: a kernel must beat the baseline
+        min_speedup = RuntimeEnv().min_speedup
         incumbents = {}
         if base_sha and self._timed:  # untimed: no incumbent to compare with
             incumbents = self._incumbents(scope, schema_path, schema, contract, min_speedup)
@@ -185,7 +183,7 @@ class BenchStage(PipelineStage[BenchReport]):
             workload_axes_text = axes_text(workload.axes)
             point = schema.point_with_contract_id(workload.axes, contract.contract_id)
             contract.check_point(point)
-            incumbent, incumbent_path, is_served = incumbents.get(workload_axes_text, (None, None, False))
+            incumbent = incumbents.get(workload_axes_text)
             is_kept = (
                 not base_sha
                 or first_release
@@ -196,9 +194,6 @@ class BenchStage(PipelineStage[BenchReport]):
                 thresholds["incumbent"] = "retain"
             else:
                 incumbent = None  # this very kernel: never timed against itself
-            if defined_baseline is None:
-                # the incumbent times as the baseline; with none, nothing is timed
-                thresholds = {"baseline": "retain"} if incumbent is not None else {}
             if not self._timed:
                 thresholds = {}
             request = TrialRequest(
@@ -214,8 +209,6 @@ class BenchStage(PipelineStage[BenchReport]):
                 thresholds=thresholds,
                 min_speedup=min_speedup,
                 incumbent=incumbent,
-                # what users run today: the served base kernel, this one included
-                baseline=(incumbent_path if is_served else None) or defined_baseline,
             )
             n_bytes = request.output_bytes
             if batch and (
@@ -237,16 +230,15 @@ class BenchStage(PipelineStage[BenchReport]):
         schema: OpContract,
         contract: OpContract,
         min_speedup: float,
-    ) -> dict[str, tuple[OpContract, str, bool]]:
-        """Per workload, the base kernel dispatch serves at its Point (or this very
-        kernel at base), its path, and whether dispatch serves it."""
+    ) -> dict[str, OpContract]:
+        """Per workload, the base kernel dispatch serves at its Point, or this very kernel at base."""
         impls_dir = (schema_op_dir(Path(schema_path)) / "impls").as_posix()
         paths = [
             p
             for p in scope.paths_at_base(impls_dir)
             if ValidationScope.path_kind(p) == "schema_data" and PurePosixPath(p).parent.name == schema.name
         ]
-        served: dict[Any, list[tuple[OpContract, WorkloadSpec, str]]] = {}
+        served: dict[Any, list[tuple[OpContract, WorkloadSpec]]] = {}
         for path in paths:
             text = scope.text_at_base(path)
             try:
@@ -269,23 +261,19 @@ class BenchStage(PipelineStage[BenchReport]):
             if base.kernel.sources:
                 for key, workload in entries:
                     if workload.qualifies(min_speedup) or base.kernel.same_kernel(schema.kernel):
-                        served.setdefault(key, []).append((base, workload, path))
+                        served.setdefault(key, []).append((base, workload))
         incumbents = {}
         for workload in schema.workloads:
             key = schema.point_with_contract_id(workload.axes, contract.contract_id).key()
             if key in served:
-                base, served_workload, path = max(
+                base, _ = max(
                     served[key],
                     key=lambda entry: (
                         entry[0].kernel.same_kernel(schema.kernel),
                         entry[0].rank_key(entry[1]),
                     ),
                 )
-                incumbents[axes_text(workload.axes)] = (
-                    base,
-                    path,
-                    served_workload.qualifies(min_speedup),
-                )
+                incumbents[axes_text(workload.axes)] = base
         return incumbents
 
     def _run_batch(
@@ -341,14 +329,14 @@ class BenchStage(PipelineStage[BenchReport]):
         findings: list[Finding] = []
         records: list[WorkloadRecord] = []
         for request in batch:
-            found, timings, worst_violation_fraction = list(batch_findings), (), None
+            found, timings, is_compared = list(batch_findings), (), False
             if not batch_findings:
                 candidate_result = candidate_results[request.axes_text]
                 # absent: declined by the baseline, the candidate's finding alone
                 reference_result = reference_results.get(request.axes_text)
                 found = list(candidate_result.findings)
                 if reference_result is not None:
-                    worst_violation_fraction = reference_result.worst_violation_fraction
+                    is_compared = reference_result.is_compared
                     found[:0] = reference_result.findings
                     if not candidate_result.findings:
                         if not reference_result.is_complete:
@@ -360,19 +348,14 @@ class BenchStage(PipelineStage[BenchReport]):
                         if gated is not None:
                             found.append(gated)
             located = {"schema_path": schema_path, "axes": request.workload.axes}
-            # a defined baseline is named once it timed; untimed: nothing to export
-            baseline = request.baseline
-            if baseline is not None and not baseline.endswith(".json"):
-                baseline = None if batch_findings or not candidate_result.rounds else baseline
             findings += [f.model_copy(update=located) for f in found]
             records.append(
                 WorkloadRecord(
                     **located,
                     batch_stopped=bool(batch_findings),
                     kernel_content_hash=request.schema.kernel.content_hash,
-                    baseline=baseline,
                     is_timed="baseline" in request.thresholds,
-                    worst_violation_fraction=worst_violation_fraction,
+                    is_compared=is_compared,
                     timings=timings,
                 )
             )

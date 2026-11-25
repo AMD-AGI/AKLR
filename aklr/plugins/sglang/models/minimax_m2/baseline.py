@@ -6,14 +6,16 @@ through UnquantizedLinearMethod (aiter's tgemm.mm), TopK's sigmoid routing with 
 correction bias (select_experts' moe_fused_gate) and FusedMoE on aiter's fused_moe runner,
 with the expert mask sglang's dispatcher builds under expert parallelism."""
 
-from __future__ import annotations
-
 import functools
 
-__all__ = ["minimax_m2_fp8_moe_baseline", "minimax_m2_mxfp4_moe_baseline"]
+import torch
+
+from aklr.core.contract.baseline import OpBaseline
+
+__all__ = ["MinimaxM2Fp8MoeBaseline", "MinimaxM2Mxfp4MoeBaseline"]
 
 
-def _check_aiter_path() -> None:
+def _check_aiter_path():
     """Raise unless sglang takes the aiter MoE path the baselines replay: it is chosen at
     import, from SGLANG_USE_AITER=1 on HIP."""
     from sglang.srt.layers.quantization import unquant
@@ -23,11 +25,9 @@ def _check_aiter_path() -> None:
 
 
 @functools.cache
-def _expert_mask(device, n_routed: int, first: int, n_held: int):
+def _expert_mask(device, n_routed, first, n_held):
     """sglang's StandardDispatcher.expert_mask_gpu for an expert-parallel rank: 1 for the
     experts it holds, built once per rank as sglang builds it."""
-    import torch
-
     mask = torch.zeros(n_routed, dtype=torch.int32, device=device)
     mask[first : first + n_held] = 1
     return mask
@@ -37,7 +37,6 @@ def _route(hidden_states, router_weight, correction_bias, topk):
     """MiniMaxM2MoE's gate on fp32 activations (aiter's tgemm.mm) and TopK's routing on
     HIP (select_experts -> biased_topk_jit_kernel_impl -> moe_fused_gate): the routing
     weights, then the expert ids."""
-    import torch
     from aiter.tuned_gemm import tgemm
     from sglang.kernels.ops.moe.moe_fused_gate import moe_fused_gate
 
@@ -77,71 +76,81 @@ def _experts(quant_type, hidden_states, router_weight, expert_offset, w1, **kwar
     )
 
 
-def minimax_m2_fp8_moe_baseline(
-    hidden_states,
-    router_weight,
-    correction_bias,
-    w1,
-    w1_scale,
-    w2,
-    w2_scale,
-    topk,
-    expert_offset=0,
-    out_dtype=None,
-    out=None,
-):
-    """forward_normal with fp8 experts: fused_moe at per_128x128 (it quantizes the
-    activations per 1 x 128)."""
-    _check_aiter_path()
-    from aiter import QuantType
-
-    weights, ids = _route(hidden_states, router_weight, correction_bias, topk)
-    return _experts(
-        QuantType.per_128x128,
+class MinimaxM2Fp8MoeBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         hidden_states,
         router_weight,
-        expert_offset,
+        correction_bias,
         w1,
-        w2=w2,
-        topk_weight=weights,
-        topk_ids=ids,
-        w1_scale=w1_scale,
-        w2_scale=w2_scale,
-    )
+        w1_scale,
+        w2,
+        w2_scale,
+        topk,
+        expert_offset=0,
+        out_dtype=None,
+        out=None,
+    ):
+        """forward_normal with fp8 experts: fused_moe at per_128x128 (it quantizes the
+        activations per 1 x 128)."""
+        _check_aiter_path()
+        from aiter import QuantType
+
+        weights, ids = _route(hidden_states, router_weight, correction_bias, topk)
+        return {
+            "out": _experts(
+                QuantType.per_128x128,
+                hidden_states,
+                router_weight,
+                expert_offset,
+                w1,
+                w2=w2,
+                topk_weight=weights,
+                topk_ids=ids,
+                w1_scale=w1_scale,
+                w2_scale=w2_scale,
+            )
+        }
 
 
-def minimax_m2_mxfp4_moe_baseline(
-    hidden_states,
-    router_weight,
-    correction_bias,
-    w1,
-    w1_scale,
-    w2,
-    w2_scale,
-    topk,
-    expert_offset=0,
-    out_dtype=None,
-    out=None,
-):
-    """forward_normal with MXFP4 experts (QuarkW4A4MXFp4MoE on gfx950): fused_moe at
-    per_1x32 with the gate and up rows apart. sglang also passes its intermediate_pad (128
-    at TP4 EP1, where the stored width 512 holds 384 columns of the checkpoint); the
-    contract computes the stored width, so does this baseline."""
-    _check_aiter_path()
-    from aiter import QuantType
-    from aiter.ops.flydsl.moe_common import GateMode
-
-    weights, ids = _route(hidden_states, router_weight, correction_bias, topk)
-    return _experts(
-        QuantType.per_1x32,
+class MinimaxM2Mxfp4MoeBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         hidden_states,
         router_weight,
-        expert_offset,
+        correction_bias,
         w1,
-        w2=w2,
-        topk_weight=weights,
-        topk_ids=ids,
-        w1_scale=w1_scale,
-        w2_scale=w2_scale,
-        gate_mode=GateMode.SEPARATED.value,
-    )
+        w1_scale,
+        w2,
+        w2_scale,
+        topk,
+        expert_offset=0,
+        out_dtype=None,
+        out=None,
+    ):
+        """forward_normal with MXFP4 experts (QuarkW4A4MXFp4MoE on gfx950): fused_moe at
+        per_1x32 with the gate and up rows apart. sglang also passes its intermediate_pad (128
+        at TP4 EP1, where the stored width 512 holds 384 columns of the checkpoint); the
+        contract computes the stored width, so does this baseline."""
+        _check_aiter_path()
+        from aiter import QuantType
+        from aiter.ops.flydsl.moe_common import GateMode
+
+        weights, ids = _route(hidden_states, router_weight, correction_bias, topk)
+        return {
+            "out": _experts(
+                QuantType.per_1x32,
+                hidden_states,
+                router_weight,
+                expert_offset,
+                w1,
+                w2=w2,
+                topk_weight=weights,
+                topk_ids=ids,
+                w1_scale=w1_scale,
+                w2_scale=w2_scale,
+                gate_mode=GateMode.SEPARATED.value,
+            )
+        }

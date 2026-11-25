@@ -17,7 +17,7 @@ possible, keeping every one of them correct: a candidate that wins on time and l
 - AKLR compares the outputs with `@COMPARE@`.
 - Every shape, dtype, layout and error bound is in the schema: `@SCHEMA_JSON@`.
 - What a kernel may and may not do (the audit, the ABI, determinism) is AKLR's rule:
-  `@AKLR_ROOT@/aklr/ops/README.md`.
+  `@AKLR_ROOT@/aklr/plugins/aiter/README.md`.
 
 ## Workloads
 

@@ -5,7 +5,7 @@ description: Qualify an exact AKLR build with supported SGLang, vLLM, and ATOM r
 
 # Qualify Downstream Engines
 
-Verify that AKLR's interfaces (`aklr.ops` and the SGLang plugin) remain usable
+Verify that AKLR's interfaces (`aklr.plugins.aiter` and the SGLang plugin) remain usable
 by real engine paths and that kernel improvements survive end-to-end integration.
 
 ## Required Context

@@ -14,7 +14,7 @@ from pathlib import Path
 
 SECTION_SCHEMA = 1
 SECTION_ID = re.compile(r"[a-z][a-z0-9-]*")
-TITLE = {"en": "AKLR Weekly Report", "zh": "AKLR 每周报告"}
+TITLE = {"en": "AKLR Dashboard", "zh": "AKLR 看板"}
 # Status keys a section's status_counts may hold, in display order; any other key is shown as is.
 STATUS_LABELS = {
     "ok": ("OK", "成功"),
@@ -22,10 +22,12 @@ STATUS_LABELS = {
     "failed": ("Failed", "失败"),
     "resolve-failed": ("Resolve failed", "解析失败"),
     "not-run": ("Not selected", "本轮未选择"),
+    "not-served": ("Not served", "未生效"),
+    "not-measured": ("Not measured", "未测量"),
 }
 
 # Dark console theme. The palette, header and language switch are copied in
-# benchmarks/agentx/agentx_ci/report.py (STYLE); keep the two in sync.
+# benchmarks/perf/agentx/report.py (STYLE); keep the two in sync.
 STYLE = """
 :root{color-scheme:dark;--bg:#070b14;--panel:#0e1525;--panel2:#121b2e;--fg:#e6edf7;--muted:#8a97ad;--line:#1e2a40;--edge:#2b3d5c;--cyan:#22d3ee;--ok:#34d399;--warn:#fbbf24;--bad:#f87171}
 *{box-sizing:border-box}
@@ -65,7 +67,7 @@ footer{color:var(--muted);font-size:12px;padding:0 0 40px}
 """
 
 
-# Language choice shared with the AgentX pages (benchmarks/agentx/agentx_ci/report.py SCRIPT): ?lang=
+# Language choice shared with the AgentX pages (benchmarks/perf/agentx/report.py SCRIPT): ?lang=
 # first, then localStorage "agentx-lang"; on a first visit the browser language, where the AgentX pages
 # take English. Links marked data-href carry the choice on as ?lang=.
 SCRIPT = """

@@ -102,8 +102,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.194,
-      "microseconds": 4.93
+      "speedup": 2.205,
+      "microseconds": 4.9
     },
     {
       "axes": {
@@ -114,8 +114,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.149,
-      "microseconds": 4.98
+      "speedup": 2.151,
+      "microseconds": 4.97
     },
     {
       "axes": {
@@ -126,8 +126,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.119,
-      "microseconds": 5.04
+      "speedup": 2.134,
+      "microseconds": 5.01
     },
     {
       "axes": {
@@ -138,8 +138,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.102,
-      "microseconds": 5.11
+      "speedup": 2.126,
+      "microseconds": 5.05
     },
     {
       "axes": {
@@ -150,8 +150,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.079,
-      "microseconds": 5.21
+      "speedup": 2.093,
+      "microseconds": 5.18
     },
     {
       "axes": {
@@ -162,8 +162,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 2.03,
-      "microseconds": 5.39
+      "speedup": 2.037,
+      "microseconds": 5.38
     },
     {
       "axes": {
@@ -174,8 +174,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.644,
-      "microseconds": 48.6
+      "speedup": 1.638,
+      "microseconds": 48.9
     },
     {
       "axes": {
@@ -186,8 +186,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.694,
-      "microseconds": 411.0
+      "speedup": 1.754,
+      "microseconds": 403.0
     }
   ],
   "layout_variants": {
@@ -199,9 +199,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "flydsl",

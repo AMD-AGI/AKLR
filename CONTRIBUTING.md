@@ -39,7 +39,7 @@ for kernel lifecycle changes.
 performance tests, at the commit `aiter` in `stack.json`, which CI installs over the image's
 AITER (with the FlyDSL it pins). Install it the same way before validating locally:
 `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<that commit>"`.
-To time an op against an AITER function, call it from the op's `<contract>_baseline` in its
+To time an op against an AITER function, call it from the contract's baseline class in the op's
 `baseline.py`. To move the baseline, change that commit: the next validation re-measures every
 kernel against it.
 
@@ -57,8 +57,8 @@ run, after the lint/audit job passes:
 | Push to `main` | `aklr-safe` (existing default) |
 | Manual run | Choose `aklr-safe` or `aklr-gpu` in the `gpu_runner` dropdown; defaults to SaFE |
 
-Selection is defined in `.github/workflows/ci.yaml`; no repository Actions variable is
-needed. Adding or removing a label restarts the PR workflow and cancels its previous run.
+Selection is defined in `.github/workflows/ci.yaml`. Adding or removing a label restarts the PR
+workflow and cancels its previous run.
 To switch a direct PR run back to SaFE, remove `ci:gpu-direct` and keep `ci:gpu`.
 
 SaFE workloads carry a priority; `aklr-gpu` has none:
@@ -85,7 +85,7 @@ Its per-stage timeout is unchanged, failing tests still upload reports, and the 
 step removes the job's container. This does not change the separate AgentX workflow.
 There is no automatic fallback between backends when the selected runners are busy or offline.
 
-For PRs changing only kernel schemas under `aklr/ops` (optionally with Markdown case
+For PRs changing only kernel schemas under `aklr/plugins/aiter` (optionally with Markdown case
 notes under `harness/skills/kb/cases/`), AITER's GPU baseline/reference comparison
 runs every small point for the affected contract IDs. A replacement includes the IDs
 from both versions. Unrecognized changes or a contract without a small point use the

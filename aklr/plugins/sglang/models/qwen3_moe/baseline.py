@@ -10,12 +10,12 @@ a Qwen3-MoE call. sglang's runner also patches aiter's MoE sorting for decode-si
 (apply_aiter_small_moe_sort_patch); the baseline leaves aiter's process state alone and times
 aiter's own sorting."""
 
-from __future__ import annotations
+from aklr.core.contract.baseline import OpBaseline
 
-__all__ = ["qwen3_moe_fp8_moe_baseline"]
+__all__ = ["Qwen3MoeFp8MoeBaseline"]
 
 
-def _check_aiter_path() -> None:
+def _check_aiter_path():
     """Raise unless sglang takes the aiter path the baseline replays: it is chosen at
     import, from SGLANG_USE_AITER=1 on gfx950."""
     from sglang.srt.layers.quantization import unquant
@@ -37,36 +37,41 @@ def _gate(hidden_states, router_weight):
     return tgemm.mm(hidden_states, router_weight, None, otype=hidden_states.dtype)
 
 
-def qwen3_moe_fp8_moe_baseline(
-    hidden_states,
-    router_weight,
-    w1,
-    w1_scale,
-    w2,
-    w2_scale,
-    topk=8,
-    out_dtype=None,
-    out=None,
-):
-    """forward_normal on one rank: the gate's bf16 logits, fused_topk's renormalized softmax
-    top-k, and aiter's fused_moe on the experts at sglang's sorting dispatch policy."""
-    _check_aiter_path()
-    from aiter import ActivationType, QuantType
-    from aiter.fused_moe import fused_moe
-    from sglang.srt.layers.moe.moe_runner.aiter import _MOE_SORTING_DISPATCH_POLICY
-    from sglang.srt.layers.moe.topk import fused_topk
-
-    logits = _gate(hidden_states, router_weight)
-    weights, ids = fused_topk(hidden_states, logits, topk, renormalize=True)
-    return fused_moe(
+class Qwen3MoeFp8MoeBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         hidden_states,
+        router_weight,
         w1,
+        w1_scale,
         w2,
-        weights,
-        ids,
-        activation=ActivationType.Silu,
-        quant_type=QuantType.per_128x128,
-        w1_scale=w1_scale,
-        w2_scale=w2_scale,
-        moe_sorting_dispatch_policy=_MOE_SORTING_DISPATCH_POLICY,
-    )
+        w2_scale,
+        topk=8,
+        out_dtype=None,
+        out=None,
+    ):
+        """forward_normal on one rank: the gate's bf16 logits, fused_topk's renormalized softmax
+        top-k, and aiter's fused_moe on the experts at sglang's sorting dispatch policy."""
+        _check_aiter_path()
+        from aiter import ActivationType, QuantType
+        from aiter.fused_moe import fused_moe
+        from sglang.srt.layers.moe.moe_runner.aiter import _MOE_SORTING_DISPATCH_POLICY
+        from sglang.srt.layers.moe.topk import fused_topk
+
+        logits = _gate(hidden_states, router_weight)
+        weights, ids = fused_topk(hidden_states, logits, topk, renormalize=True)
+        return {
+            "out": fused_moe(
+                hidden_states,
+                w1,
+                w2,
+                weights,
+                ids,
+                activation=ActivationType.Silu,
+                quant_type=QuantType.per_128x128,
+                w1_scale=w1_scale,
+                w2_scale=w2_scale,
+                moe_sorting_dispatch_policy=_MOE_SORTING_DISPATCH_POLICY,
+            )
+        }

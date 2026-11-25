@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    DeterminismLevel,
+    MOE_MXFP4_SNR,
     DType,
     E8M0Scales,
     ExpertMaskDistribution,
@@ -13,10 +13,10 @@ from aklr.core.contract.semantics import (
     IntRangeDistribution,
     LogUniformDistribution,
     Preshuffle,
-    SqnrBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -26,6 +26,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.vllm.models.muse_spark.baseline import MuseSparkMoeBaseline
+from aklr.plugins.vllm.models.muse_spark.reference import MuseSparkMoeReference
 
 __all__ = ["CONTRACTS", "MUSE_SPARK_MOE"]
 
@@ -147,8 +149,8 @@ MUSE_SPARK_MOE = OpContract(
             description="Each route's expert output, unweighted; zeros off this rank.",
             shape=("n_tokens", "topk", "model_dim"),
             dtype=DTypeSpec(same_as_tensor="hidden_states"),
-            # fused_moe's bound: its MXFP4 activations
-            error_bounds=SqnrBound(min_sqnr_db=13.0),
+            # its MXFP4 activations, as fused_moe's
+            error_bounds=MOE_MXFP4_SNR,
         )
     },
     # as vLLM holds the experts for aiter: shuffle_weight's 16 x 16 tiles, the scales shuffled
@@ -167,7 +169,9 @@ MUSE_SPARK_MOE = OpContract(
         }
     ),
     # stage 2 combines with atomics
-    compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=MuseSparkMoeReference(),
+    baseline=MuseSparkMoeBaseline(),
 )
 
 CONTRACTS = (MUSE_SPARK_MOE,)

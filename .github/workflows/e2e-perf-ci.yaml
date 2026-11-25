@@ -1,0 +1,293 @@
+name: AKLR-e2e-perf-ci
+
+# Daily end-to-end performance: AKLR on / off at random 8K/1K input, c1, c2, c8, c16, c48, per model × target ×
+# framework group (benchmarks/perf/e2e_perf). A scheduled run measures only the groups whose
+# run key changed since site-data's e2e/latest.json; a manual run measures every selected group unless
+# force is off; a PR run (the ci:e2e-perf-mi355x label) measures the models an allowlisted reviewer's
+# /e2e-perf-mi355x comment names and never publishes.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+    inputs:
+      models:
+        description: Model ids in e2e.yaml, comma-separated, or all
+        type: string
+        default: all
+      frameworks:
+        description: Serving frameworks (sglang, vllm), comma-separated, or all
+        type: string
+        default: all
+      force:
+        description: Measure every selected group, even if unchanged since its published result
+        type: boolean
+        default: true
+      publish:
+        description: Publish the measured groups to the site (scheduled runs always do)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Not AgentX's group: a group holds one pending run, so sharing it would let a daily run replace a
+  # queued AgentX run. The GPU runner still runs one job at a time. Ignored PR events and refused manual
+  # runs must not replace a requested run either. The allowlist here must match
+  # benchmarks/perf/allowlist.yaml (a test checks it); the plan job still authorizes against main's.
+  group: >-
+    ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'ci:e2e-perf-mi355x') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'ci:e2e-perf-mi355x') &&
+        format('e2e-perf-pr-{0}', github.event.pull_request.number) ||
+        github.event_name == 'pull_request' && format('e2e-perf-ignored-{0}', github.run_id) ||
+        github.event_name == 'workflow_dispatch' &&
+        (github.ref != 'refs/heads/main' ||
+         !contains(fromJSON('["RuibinCheung", "xiaobochen-amd", "jiejingzhangamd", "zhenhuang12", "kyle-256"]'),
+                   github.triggering_actor)) &&
+        format('e2e-perf-refused-{0}', github.run_id) ||
+        'e2e-perf' }}
+  # A new commit on a labeled PR supersedes its running e2e run; ignored PR events have a group of
+  # their own, and scheduled and manual runs still queue.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+    working-directory: benchmarks/perf
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  plan:
+    if: >-
+      (github.event_name != 'schedule' || vars.AKLR_E2E_SCHEDULE_ENABLED == 'true') &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'ci:e2e-perf-mi355x') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'ci:e2e-perf-mi355x')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      count: ${{ steps.resolve.outputs.count }}
+      skipped: ${{ steps.resolve.outputs.skipped }}
+      # "Re-run failed jobs" reuses this plan without its checks; later jobs need this attempt's plan.
+      attempt: ${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - name: Read main's allowlist
+        # Authorize against main, not the checked-out copy a PR or an older commit can carry.
+        if: github.event_name != 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -H 'Accept: application/vnd.github.raw+json' \
+            "repos/$GITHUB_REPOSITORY/contents/benchmarks/perf/allowlist.yaml?ref=main" > "$RUNNER_TEMP/allowlist.yaml"
+      - name: Read the PR comments that may authorize e2e perf
+        # Read them now rather than from the event, so a re-run after a reviewer's comment uses it.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | {user: .user.login, body: (.body // ""), url: .html_url}' | jq -s . > "$RUNNER_TEMP/pr-comments.json"
+      - name: Read the published run keys
+        # A missing file or branch means nothing is published yet; any other error fails the plan.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api -H 'Accept: application/vnd.github.raw+json' \
+            "repos/$GITHUB_REPOSITORY/contents/e2e/latest.json?ref=site-data" \
+            > "$RUNNER_TEMP/latest.json" 2> "$RUNNER_TEMP/latest.err"; then
+            grep -q 'HTTP 404' "$RUNNER_TEMP/latest.err" || { cat "$RUNNER_TEMP/latest.err" >&2; exit 1; }
+            : > "$RUNNER_TEMP/latest.json"
+          fi
+      - name: Plan the changed groups
+        id: resolve
+        env:
+          MODELS: ${{ inputs.models || 'all' }}
+          FRAMEWORKS: ${{ inputs.frameworks || 'all' }}
+          # A PR run measures every requested group; it never publishes, so nothing to skip against.
+          FORCE: ${{ (github.event_name == 'pull_request' || inputs.force) && 'true' || '' }}
+          PR_COMMENTS: ${{ github.event_name == 'pull_request' && 'pr-comments.json' || '' }}
+          # A manual run needs an allowlisted reviewer (who clicked Run or Re-run) and main.
+          MANUAL_ACTOR: ${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || '' }}
+          ALLOWLIST: ${{ github.event_name != 'schedule' && 'allowlist.yaml' || '' }}
+        run: |
+          python3 -m e2e_perf plan --models "$MODELS" --frameworks "$FRAMEWORKS" \
+            --commit "$GITHUB_SHA" --latest "$RUNNER_TEMP/latest.json" ${FORCE:+--force} \
+            ${PR_COMMENTS:+--pr-comments "$RUNNER_TEMP/$PR_COMMENTS"} \
+            ${MANUAL_ACTOR:+--manual-actor "$MANUAL_ACTOR" --manual-ref "$GITHUB_REF"} \
+            ${ALLOWLIST:+--allowlist "$RUNNER_TEMP/$ALLOWLIST"} \
+            --out "$RUNNER_TEMP/plan"
+      - uses: actions/upload-artifact@v4
+        if: steps.resolve.outputs.skipped != 'true'
+        with:
+          name: e2e-plan
+          path: ${{ runner.temp }}/plan/
+
+  sweep:
+    needs: plan
+    if: ${{ needs.plan.outputs.count != '0' && needs.plan.outputs.attempt == github.run_attempt }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 1080
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-plan
+          path: ${{ runner.temp }}/plan
+      - name: Measure one group, AKLR off then on
+        env:
+          MODEL_ID: ${{ matrix.model }}
+          TARGET_ID: ${{ matrix.target }}
+          FRAMEWORK_ID: ${{ matrix.framework }}
+          HF_HUB_DIR: ${{ vars.AKLR_E2E_PERF_HF_HUB_DIR }}
+        # exec: a cancelled run's SIGINT must reach the sweep, which then stops its container.
+        run: |
+          : "${HF_HUB_DIR:?set the repository variable AKLR_E2E_PERF_HF_HUB_DIR to the HF hub cache on the runner}"
+          run="models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID"
+          exec python3 -m e2e_perf sweep --plan "$RUNNER_TEMP/plan/$run/plan.json" \
+            --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/e2e-cache/$run" \
+            --work "$RUNNER_TEMP/e2e-work/$run" --out "$RUNNER_TEMP/results/$run"
+      - name: Remove the sweep container left by a cancelled run
+        # The runner kills the sweep 10 s after cancelling, which can be before its own cleanup ends.
+        if: always()
+        env:
+          MODEL_ID: ${{ matrix.model }}
+          TARGET_ID: ${{ matrix.target }}
+          FRAMEWORK_ID: ${{ matrix.framework }}
+        run: |
+          out=$(realpath -m "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID")
+          docker ps --all --quiet --filter "label=e2e.out=$out" | xargs --no-run-if-empty docker rm --force
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results-${{ matrix.job_index }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: ignore
+
+  report:
+    needs: [plan, sweep]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.skipped != 'true' &&
+          needs.plan.outputs.attempt == github.run_attempt }}
+    outputs:
+      site_ready: ${{ steps.site_artifact.outcome == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.count != '0'
+        # No matching artifact is not an error; a failed download must not publish its groups as failed.
+        with:
+          pattern: e2e-results-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/results
+      - name: Render the measured groups and the index
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 -m e2e_perf report --plan "$RUNNER_TEMP/plan/manifest.json" \
+            --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/site" --run-url "$RUN_URL"
+      - uses: actions/upload-artifact@v4
+        id: site_artifact
+        with:
+          name: e2e-site
+          path: ${{ runner.temp }}/site/
+      - name: Check that every planned group compared AKLR on and off
+        # Partial measurements pass; a group without one matched on / off pair fails the run.
+        run: |
+          jq -r '.groups[] | "\(.key): \(.status), \(.matched)/\(.expected // "—") matched"' "$RUNNER_TEMP/site/manifest.json"
+          jq -e 'all(.groups[]; .report and .matched > 0)' "$RUNNER_TEMP/site/manifest.json"
+
+  # Every result on the site comes from main: a PR run (the ci:e2e-perf-mi355x label) only uploads e2e-site.
+  # The e2e-perf-bot environment holds the bot App key and deploys only from main; site.yaml then deploys
+  # site-data to Pages after this workflow completes.
+  publish:
+    needs: report
+    if: >-
+      ${{ !cancelled() && needs.report.outputs.site_ready == 'true' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    runs-on: ubuntu-latest
+    environment: e2e-perf-bot
+    timeout-minutes: 15
+    # Writes use the App token, not GITHUB_TOKEN. No concurrency group: a group keeps one pending job and
+    # would cancel a queued publish; commit_site_data.sh rebuilds on the new tip when its push is rejected.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check that this run measured a commit on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-site
+          path: ${{ runner.temp }}/site
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_E2E_PERF_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_E2E_PERF_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Replace this run's groups in site-data/e2e
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_E2E_PERF_BOT_LOGIN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bash ../../.github/scripts/commit_site_data.sh e2e \
+            "e2e: publish run $GITHUB_RUN_ID of ${GITHUB_SHA::12}" \
+            python3 -m e2e_perf publish --site "$RUNNER_TEMP/site" --run-id "$GITHUB_RUN_ID" \
+            --run-url "$RUN_URL" --commit "$GITHUB_SHA" --ref "$GITHUB_REF" --event "$GITHUB_EVENT_NAME" --section

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
-OPS = PurePosixPath("aklr/ops")
+OPS = PurePosixPath("aklr/plugins/aiter")
 
 
 def git(*args, stdin=None, check=True):
@@ -210,7 +210,7 @@ class Candidate:
             return (len(path.parts) == 1 and not path.name.startswith(".")) or path == PurePosixPath(
                 ".github/workflows/ci.yaml"
             )
-        if path.parts[1] not in ("ops", "plugins"):
+        if path.parts[1] != "plugins":
             return True
         if not path.is_relative_to(self.op_dir):
             # Another op's code may be imported by this op's reference or baseline; its kernels are not.

@@ -6,12 +6,10 @@
 from __future__ import annotations
 
 import contextlib
-import inspect
-import json
 import shutil
 import time
 from collections.abc import Sequence
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Final
 
 from pydantic import SerializeAsAny
@@ -220,59 +218,3 @@ class PipelineReport(FrozenModel):
                         encoding="utf-8",
                     )
                     break
-
-    def write_baselines(self, scope: ValidationScope, directory: Path) -> None:
-        """Re-export, replacing the last run's, what each benched workload was compared
-        with: an incumbent's base schema, else the defined baseline in main's Solution
-        shape (``<op_type>/<name>/<name>__baseline.json``); never committed."""
-        shutil.rmtree(directory, ignore_errors=True)  # a changed baseline replaces it
-        bench = next((s for s in self.stages if isinstance(s, BenchReport)), None)
-        if bench is None:
-            return
-        registry = ContractRegistry.default()
-        schemas = {
-            path: registry.parse_schema((scope.root / path).read_bytes(), path) for path in self.bench_paths
-        }
-        # same-named schemas share a definition: (op_type, name, baseline) -> workloads
-        groups: dict[tuple[str, str, str], dict[str, dict]] = {}
-        for r in bench.workload_records:
-            if r.baseline is None:  # the new case is its own baseline: nothing to show
-                continue
-            schema = schemas[r.schema_path]
-            key = axes_text(r.axes)
-            workload = next(
-                w for w in schema.model_dump(mode="json")["workloads"] if axes_text(w["axes"]) == key
-            )
-            group = (schema.op_type, schema.name, r.baseline)
-            groups.setdefault(group, {})[key] = workload
-        for (op_type, name, baseline), workloads in groups.items():
-            if baseline.endswith(".json"):  # an incumbent at base, kernel as committed
-                data = json.loads(scope.text_at_base(baseline))
-                data["workloads"] = [w for w in data["workloads"] if axes_text(w["axes"]) in workloads]
-                file_name = PurePosixPath(baseline).name
-            else:
-                contract = registry.get(next(s for s in schemas.values() if s.name == name).contract_id)
-                fn = contract.baseline()
-                data = {
-                    "name": f"{name}__baseline",
-                    "definition": name,
-                    "author": "baseline",
-                    "spec": {
-                        "language": "python",
-                        "target": [str(DeviceTarget.from_names(self.platform.arch, self.platform.hardware))],
-                        "entry_point": "main.py::run",
-                        "destination_passing_style": False,
-                    },
-                    "sources": [
-                        {
-                            "path": "main.py",
-                            "content": f"{inspect.getsource(fn)}\nrun = {fn.__name__}\n",
-                        }
-                    ],
-                    "description": f"The baseline of {name}: {baseline}.",
-                    "workloads": list(workloads.values()),
-                }
-                file_name = f"{name}__baseline.json"
-            out = directory / op_type / name / file_name
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
