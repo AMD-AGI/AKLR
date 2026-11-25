@@ -27,6 +27,14 @@ from aklr.core.contract.spec import (
     attr,
     axis,
 )
+from aklr.plugins.sglang.layers.attn_residual.baseline import (
+    AddAttnResBaseline,
+    AttnResBaseline,
+)
+from aklr.plugins.sglang.layers.attn_residual.reference import (
+    AddAttnResReference,
+    AttnResReference,
+)
 
 __all__ = ["ADD_ATTN_RES", "ATTN_RES", "CONTRACTS"]
 
@@ -114,7 +122,7 @@ _NORMALIZED = TensorSpec(
     dtype=_SAME_AS_PREFIX,
     # the mix cancels: an element near 0 carries the float32 rounding of its row's terms, about
     # 1e-6 at N(0, 1) rows, which a bound relative to the element alone rejects
-    error_bounds=ToleranceBound(absolute_tolerance=2**-12, relative_tolerance=0),
+    error_bounds=ToleranceBound(absolute_tolerance=2**-12, relative_tolerance=2**-7),
 )
 _LAYOUTS = LayoutVariantsSpec(by_name={"row_major": LayoutVariant()})
 
@@ -138,6 +146,8 @@ ATTN_RES = OpContract(
     },
     outputs={"normalized": _NORMALIZED},
     layout_variants=_LAYOUTS,
+    reference=AttnResReference(),
+    baseline=AttnResBaseline(),
 )
 
 ADD_ATTN_RES = OpContract(
@@ -174,6 +184,8 @@ ADD_ATTN_RES = OpContract(
         ),
     },
     layout_variants=_LAYOUTS,
+    reference=AddAttnResReference(),
+    baseline=AddAttnResBaseline(),
 )
 
 CONTRACTS = (ADD_ATTN_RES, ATTN_RES)

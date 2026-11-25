@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    DotProductBound,
+    GEMM_BF16_SNR,
     DType,
     FiniteDistribution,
     LecunNormalDistribution,
 )
 from aklr.core.contract.spec import DTypeSpec, LayoutVariant, LayoutVariantsSpec, TensorSpec, axis
+from aklr.plugins.sglang.models.forward_mla_rocm.baseline import MlaVAbsorbBaseline
+from aklr.plugins.sglang.models.forward_mla_rocm.reference import MlaVAbsorbReference
 
 __all__ = ["CONTRACTS", "MLA_V_ABSORB"]
 
@@ -58,11 +60,12 @@ MLA_V_ABSORB = OpContract(
             description="Per token and head, attn_output . w_vc^T: o_proj's input before its flatten.",
             shape=("n_tokens", "n_heads", "v_head_dim"),
             dtype=_BF16,
-            # bmm@1.0's bound
-            error_bounds=DotProductBound(length=512, accumulate_dtype=DType.FLOAT32, max_split_k=16),
+            error_bounds=GEMM_BF16_SNR,
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=MlaVAbsorbReference(),
+    baseline=MlaVAbsorbBaseline(),
 )
 
 CONTRACTS = (MLA_V_ABSORB,)

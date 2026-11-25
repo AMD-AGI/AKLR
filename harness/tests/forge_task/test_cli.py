@@ -139,7 +139,7 @@ def test_a_relative_aklr_root_reaches_the_driver_and_the_brief_absolute(
     driver = (workspace_dir / "driver.py").read_text(encoding="utf-8")
     assert f'AKLR_ROOT = Path("{aklr_root.resolve()}")' in driver
     brief = (workspace_dir / "program.md").read_text(encoding="utf-8")
-    assert f"{aklr_root.resolve()}/aklr/ops/README.md" in brief
+    assert f"{aklr_root.resolve()}/aklr/plugins/aiter/README.md" in brief
 
 
 def test_a_schema_file_from_another_checkout_is_read_with_this_ones_contracts(
@@ -158,14 +158,6 @@ def test_a_starting_kernel_aklr_fails_exits_two_before_the_first_commit(
     assert _prepare(aklr_root, tmp_path, "--starting-kernel", str(wrong)) == 2
     assert "does not pass the starting kernel" in capsys.readouterr().err
     assert not (tmp_path / "run" / "workspace" / ".git").exists()
-
-
-def test_an_op_without_a_baseline_needs_a_start_given(tmp_path: Path, capsys):
-    root = install_aklr(tmp_path / "aklr")
-    write_schema(root, schema_payload("topk_demo", op_type="topk"))
-    argv = ["prepare", "--aklr-root", str(root), "--schema", "topk_demo"]
-    assert cli.main([*argv, "--run-dir", str(tmp_path / "run")]) == 2
-    assert "pass --starting-kernel" in capsys.readouterr().err
 
 
 def test_an_unknown_schema_exits_two(aklr_root: Path, tmp_path: Path, capsys):

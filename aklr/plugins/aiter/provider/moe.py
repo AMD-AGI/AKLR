@@ -13,10 +13,10 @@ import inspect
 
 from aklr.core.contract.spec import attr_value
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.fused_moe.api import fused_moe
-from aklr.ops.fused_moe.reference import _SWIGLU_BF16_ROWS
-from aklr.ops.situv2_a4w4_moe.api import situv2_a4w4_moe
+from aklr.plugins.aiter.fused_moe.api import fused_moe
+from aklr.plugins.aiter.fused_moe.reference import SWIGLU_BF16_ROWS
 from aklr.plugins.aiter.provider._base import offer, selector, served
+from aklr.plugins.aiter.situv2_a4w4_moe.api import situv2_a4w4_moe
 
 
 @selector("fused_moe")
@@ -358,11 +358,11 @@ def op_kwargs(
             act_quant = 8
         else:
             return FallbackReason.OUT_OF_CONTRACT
-    # fused_moe rounds SwiGLU's activations to fp4 from _SWIGLU_BF16_ROWS rows on, aiter from its
+    # fused_moe rounds SwiGLU's activations to fp4 from SWIGLU_BF16_ROWS rows on, aiter from its
     # GPTOSS_SWIGLU_MXFP4_BF16_BOUND: a call they would round differently goes back to aiter
     elif name == "swiglu" and attr_value(gate_mode) == "separated":
         rounds = _aiter_rounds_swiglu(hidden_states, w1, activation=activation, quant_type=quant_type)
-        if rounds != (hidden_states.shape[0] >= _SWIGLU_BF16_ROWS):
+        if rounds != (hidden_states.shape[0] >= SWIGLU_BF16_ROWS):
             return FallbackReason.OUT_OF_CONTRACT
     return {
         "expert_mask": expert_mask,

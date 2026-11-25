@@ -116,9 +116,13 @@ def read_starting_kernel(path: Path) -> dict[str, str]:
 
 
 def builtin_starting_kernel(schema: Schema, aklr_root: Path) -> dict[str, str]:
-    """A schema's starting kernel, one file writing into the preallocated outputs: torch's product for a plain
-    gemm, and for any other contract, which torch cannot compute, its AKLR baseline."""
-    # The keyword arguments AKLR calls the entry with, its outputs, and the contract's baseline as [module, name].
+    """A plain gemm schema's starting kernel: torch writes the product into the preallocated output. Any other
+    schema needs --starting-kernel: torch does not compute it, and a kernel calling AKLR's baseline fails the
+    audit (SA5)."""
+    no_builtin = f"{schema.name}: only a plain gemm has a built-in starting kernel; pass --starting-kernel"
+    if schema.op_type != "gemm":
+        raise StartingKernelError(no_builtin)
+    # The keyword arguments AKLR calls the entry with.
     completed = subprocess.run(
         [sys.executable, str(ASSETS / "aklr_api_params.py"), str(aklr_root), str(schema.path)],
         capture_output=True,
@@ -127,39 +131,15 @@ def builtin_starting_kernel(schema: Schema, aklr_root: Path) -> dict[str, str]:
     )
     if completed.returncode:
         raise StartingKernelError(f"AKLR could not read {schema.path}:\n{completed.stderr[-2000:]}")
-    entry = json.loads(completed.stdout)
-    params = entry["params"]
+    params = json.loads(completed.stdout)
+    if not set(params) <= {"a", "b", "trans_b", "bias", "out_dtype", "out"}:
+        raise StartingKernelError(no_builtin)
+    rank = len(schema.inputs["a"]["shape"])
     signature = f"def run(*, {', '.join(params)}):\n"
-    if schema.op_type == "gemm" and set(params) <= {"a", "b", "trans_b", "bias", "out_dtype", "out"}:
-        rank = len(schema.inputs["a"]["shape"])
-        return {
-            "kernel.py": (
-                f'"""Starting point for {schema.name}: torch writes the product into the preallocated output."""\n\n'
-                f"import torch\n\n\n{signature}    {_TORCH_GEMMS[rank]}\n"
-            )
-        }
-    if entry["baseline"] is None:
-        raise StartingKernelError(
-            f"{schema.name}: no built-in starting kernel, as {schema.op_type!r}'s contract has no AKLR baseline; "
-            "pass --starting-kernel"
-        )
-    outputs = entry["outputs"]
-    if not outputs or not set(outputs) <= set(params):
-        raise StartingKernelError(
-            f"{schema.name}: the entry does not take every output {outputs} preallocated; pass --starting-kernel"
-        )
-    module, name = entry["baseline"]
-    call = ", ".join(f"{param}={param}" for param in params)
     return {
         "kernel.py": (
-            f'"""Starting point for {schema.name}: AKLR\'s baseline for its contract, its results in the preallocated '
-            'outputs."""\n\n'
-            f"from {module} import {name}\n\n\n{signature}"
-            f"    result = {name}({call})\n"
-            "    results = result if isinstance(result, (tuple, list)) else (result,)\n"
-            f"    for target, value in zip(({', '.join(outputs)},), results, strict=True):\n"
-            "        if value is not target:\n"
-            "            target.copy_(value)\n"
+            f'"""Starting point for {schema.name}: torch writes the product into the preallocated output."""\n\n'
+            f"import torch\n\n\n{signature}    {_TORCH_GEMMS[rank]}\n"
         )
     }
 

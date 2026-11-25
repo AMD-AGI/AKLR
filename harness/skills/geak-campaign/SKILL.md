@@ -13,7 +13,7 @@ AKLR measures and GEAK optimizes. `forge_task prepare` turns the schema into a t
 with `aklr validate` and times it with AKLR's own timer (`harness/scripts/forge_task/README.md`, step 1). This skill
 gives that task GEAK's format: a `config.yaml` whose compile, correctness and performance commands run
 `task_runner.py`, which calls the driver. GEAK's kernel_workflow then optimizes `kernel.py` against those commands,
-and `forge_task publish` writes the kernel it ends with back into `aklr/ops/`.
+and `forge_task publish` writes the kernel it ends with back into `aklr/plugins/aiter/`.
 
 ## Before you start
 
@@ -26,7 +26,7 @@ and `forge_task publish` writes the kernel it ends with back into `aklr/ops/`.
 - Knowledge: GEAK reads its own (`kernel_workflow/knowledge/`, `perf_knowledge/`) and adds what a run learns to
   `kernel_workflow/knowledge/learned/` and `kb_artifacts/` in its checkout. Its `perf_knowledge_dir` takes only
   GEAK's layout, so AKLR's skills are not given to it. The agents read AKLR's rules through the task's `program.md`
-  and `aklr/ops/README.md`.
+  and `aklr/plugins/aiter/README.md`.
 
 ## 1. Prepare
 

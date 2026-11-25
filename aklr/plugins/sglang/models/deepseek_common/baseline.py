@@ -6,11 +6,11 @@ DeepseekMLARocmForwardMixin.forward_absorb_rocm_prepare and forward_absorb_rocm_
 in fp8 at one scale per tensor (GLM-5.2's, which sglang quantizes at load): the aiter kernels
 forward_mla_rocm binds, called as it calls them."""
 
-from __future__ import annotations
-
 from types import SimpleNamespace
 
-__all__ = ["mla_qkv_a_norm_baseline"]
+from aklr.core.contract.baseline import OpBaseline
+
+__all__ = ["MlaQkvANormBaseline"]
 
 
 def _forward_mla_rocm():
@@ -23,27 +23,30 @@ def _forward_mla_rocm():
     return forward_mla_rocm
 
 
-def mla_qkv_a_norm_baseline(
-    hidden_states,
-    w_qkv_a,
-    q_norm_weight,
-    kv_norm_weight,
-    eps=1e-5,
-    q_latent=None,
-    kv_latent=None,
-    k_rope=None,
-):
-    """The qkv latent prepare fetches and its norms, for a bf16 q_b_proj: fused_qkv_a_proj_with_mqa
-    through sglang's UnquantizedLinearMethod (aiter's tuned GEMM at these shapes), split as
-    prepare splits it, then the fused q and KV RMSNorm it binds (fused_qk_rmsnorm_bf16). The RoPE
-    key is the qkv latent's last columns, the view prepare hands on."""
-    from sglang.srt.layers.quantization.unquant import UnquantizedLinearMethod
+class MlaQkvANormBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        hidden_states,
+        w_qkv_a,
+        q_norm_weight,
+        kv_norm_weight,
+        eps=1e-5,
+        q_latent=None,
+        kv_latent=None,
+        k_rope=None,
+    ):
+        """The qkv latent prepare fetches and its norms, for a bf16 q_b_proj: fused_qkv_a_proj_with_mqa
+        through sglang's UnquantizedLinearMethod (aiter's tuned GEMM at these shapes), split as
+        prepare splits it, then the fused q and KV RMSNorm it binds (fused_qk_rmsnorm_bf16). The RoPE
+        key is the qkv latent's last columns, the view prepare hands on."""
+        from sglang.srt.layers.quantization.unquant import UnquantizedLinearMethod
 
-    rocm = _forward_mla_rocm()
-    q_rank, kv_rank = q_norm_weight.shape[0], kv_norm_weight.shape[0]
-    latent = UnquantizedLinearMethod().apply(SimpleNamespace(weight=w_qkv_a), hidden_states)
-    q, latent_cache = latent.split([q_rank, latent.shape[-1] - q_rank], dim=-1)
-    q, kv = rocm.fused_qk_rmsnorm_bf16(
-        q, q_norm_weight, eps, latent_cache[..., :kv_rank], kv_norm_weight, eps
-    )
-    return q, kv, latent_cache[..., kv_rank:]
+        rocm = _forward_mla_rocm()
+        q_rank, kv_rank = q_norm_weight.shape[0], kv_norm_weight.shape[0]
+        latent = UnquantizedLinearMethod().apply(SimpleNamespace(weight=w_qkv_a), hidden_states)
+        q, latent_cache = latent.split([q_rank, latent.shape[-1] - q_rank], dim=-1)
+        q, kv = rocm.fused_qk_rmsnorm_bf16(
+            q, q_norm_weight, eps, latent_cache[..., :kv_rank], kv_norm_weight, eps
+        )
+        return {"q_latent": q, "kv_latent": kv, "k_rope": latent_cache[..., kv_rank:]}

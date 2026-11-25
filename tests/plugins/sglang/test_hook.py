@@ -24,8 +24,6 @@ from aklr.plugins.sglang import hook
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
-importlib.import_module("aklr.plugins.sglang.models.kimi_k3_torch_gemm")
-importlib.import_module("aklr.plugins.sglang.models.dspark_torch_gemm")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.5.22"
 
@@ -250,7 +248,7 @@ def register_calls(monkeypatch):
     """What register() did, in order."""
     calls = []
     monkeypatch.setattr(plugin, "register_sglang_plugin", lambda: calls.append("aklr starts"))
-    monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.ops.gemm", "aklr.plugins.sglang.x.y"))
+    monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.plugins.aiter.gemm", "aklr.plugins.sglang.x.y"))
     monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
     monkeypatch.setattr(hook, "install", lambda: calls.append("install"))
     return calls
@@ -273,8 +271,6 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     routes = (
         [
             "aklr.plugins.sglang.x.y.api",
-            "aklr.plugins.sglang.models.kimi_k3_torch_gemm",
-            "aklr.plugins.sglang.models.dspark_torch_gemm",
             "install",
         ]
         if hooked

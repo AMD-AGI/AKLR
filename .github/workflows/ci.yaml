@@ -30,10 +30,6 @@ env:
     from aklr.core.validation.stages.validation_scope import ValidationScope
     scope = ValidationScope.of_working_tree(sys.argv[1], None)
     sys.exit("core" in map(scope.path_kind, scope.changed_paths()))
-  AKLR_SAFE_API_URL: ${{ vars.AKLR_SAFE_API_URL }}
-  AKLR_SAFE_WORKSPACE: ${{ vars.AKLR_SAFE_WORKSPACE }}
-  AKLR_SAFE_RESOURCES: ${{ vars.AKLR_SAFE_RESOURCES }}
-  AKLR_SAFE_CA_URLS: ${{ vars.AKLR_SAFE_CA_URLS }}
 
 on:
   workflow_dispatch:
@@ -210,7 +206,7 @@ jobs:
           echo "contracts=$contracts" >> "$GITHUB_OUTPUT"
           echo "AITER op baseline/reference tests: ${contracts:-all contracts}" >> "$GITHUB_STEP_SUMMARY"
 
-  # aiter-test: aklr/ops timed against the baseline AITER, in aiter_image; beside it sglang-test and
+  # aiter-test: aklr/plugins/aiter timed against the baseline AITER, in aiter_image; beside it sglang-test and
   # vllm-test. No secrets and no actions/cache: they run the PR's code and kernels.
   aiter-test:
     needs: code-lint
@@ -222,7 +218,7 @@ jobs:
     env:
       TIMEOUT_MINUTES: 180
       IMAGE: ${{ needs.code-lint.outputs.aiter_image }}
-      TESTS: tests/core tests/ops tests/benchmarks
+      TESTS: tests/core tests/plugins/aiter tests/benchmarks
       AKLR_REFERENCE_CONTRACTS: ${{ needs.code-lint.outputs.reference_contracts }}
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
     steps:
@@ -316,15 +312,15 @@ jobs:
           flags=(${BASE:+--base "$BASE"})
           [[ ${MEASURED_BY_BOT:-} != true ]] || flags+=(--allow-measured-edits)
           if [[ -n ${AKLR_BASELINE_AITER:-} ]]; then
-            echo '::group::Validate aklr/ops'
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --out "$reports/validation-report"
+            echo '::group::Validate aklr/plugins/aiter'
+            python3 -m aklr validate "${flags[@]}" --under aklr/plugins/aiter --out "$reports/validation-report"
           else
             : "${PLUGINS:?}"
-            echo "::group::Validate plugins ($PLUGINS), check aklr/ops"
+            echo "::group::Validate plugins ($PLUGINS), check aklr/plugins/aiter"
             plugins=0 ops=0
             # shellcheck disable=SC2086 # PLUGINS is a list of flags
             python3 -m aklr validate "${flags[@]}" $PLUGINS --out "$reports/validation-report" || plugins=$?
-            python3 -m aklr validate "${flags[@]}" --under aklr/ops --no-timing --out "$reports/validation-check" || ops=$?
+            python3 -m aklr validate "${flags[@]}" --under aklr/plugins/aiter --no-timing --out "$reports/validation-check" || ops=$?
             exit $((plugins ? plugins : ops))
           fi
       - &finish_gpu_tests
@@ -368,7 +364,7 @@ jobs:
           retention-days: 90
 
   # sglang-test: the sglang image as it ships, AKLR alone installed. Its plugins are timed against
-  # sglang's own code; aklr/ops is built and checked only, its timing being aiter-test's.
+  # sglang's own code; aklr/plugins/aiter is built and checked only, its timing being aiter-test's.
   # aklr/plugins/vllm is vllm-test's.
   sglang-test:
     needs: code-lint
@@ -378,8 +374,8 @@ jobs:
     env:
       TIMEOUT_MINUTES: 150
       IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
-      TESTS: tests/plugins/aiter tests/plugins/sglang
-      PLUGINS: --under aklr/plugins --exclude aklr/plugins/vllm
+      TESTS: tests/plugins/aiter/provider tests/plugins/sglang
+      PLUGINS: --under aklr/plugins/sglang
     steps:
       - *checkout_source
       - *gpu_tests
@@ -389,7 +385,7 @@ jobs:
       - *summarize
       - *upload_report
       - &upload_check
-        name: Upload the check of aklr/ops (validation-check-${{ github.job }}-<attempt>)
+        name: Upload the check of aklr/plugins/aiter (validation-check-${{ github.job }}-<attempt>)
         if: always() && needs.code-lint.outputs.has_bench_paths == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -398,7 +394,7 @@ jobs:
           retention-days: 90
 
   # vllm-test: the vllm image as it ships, AKLR alone installed. aklr/plugins/vllm is timed in it;
-  # aklr/ops is built and checked only, as in sglang-test.
+  # aklr/plugins/aiter is built and checked only, as in sglang-test.
   vllm-test:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
@@ -555,8 +551,8 @@ jobs:
       - *setup_python
       - *install_cpu_deps
       # A missed measurement is not retried; the next aklr/core or stack.json change on main re-benches every schema.
-      # A test job can fail before write_schemas: no artifact is nothing to write. aklr/ops is
-      # aiter-test's, aklr/plugins/vllm vllm-test's, the rest of aklr/plugins sglang-test's (validate --under).
+      # A test job can fail before write_schemas: no artifact is nothing to write. aklr/plugins/aiter is
+      # aiter-test's, aklr/plugins/vllm vllm-test's, aklr/plugins/sglang sglang-test's (validate --under).
       - name: Download aiter-test's validation report
         continue-on-error: true
         uses: actions/download-artifact@v4
@@ -630,10 +626,6 @@ jobs:
     # Writes use the App token, not GITHUB_TOKEN.
     permissions:
       contents: read
-    # Every CI that writes site-data shares this group.
-    concurrency:
-      group: site-data
-      cancel-in-progress: false
     steps:
       - name: Mint the bot token
         id: token

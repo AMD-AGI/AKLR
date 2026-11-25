@@ -20,19 +20,27 @@ from urllib.request import HTTPSHandler, Request, build_opener
 
 
 class Deployment:
+    # Here, not repository variables: a fork's pull request reads none.
+    URL = "https://global.primus-safe.amd.com/api/v1/workloads"
+    # SaFE's certificate is signed by AMD's own CA.
+    CA_URLS = (
+        "https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs/amd-root-ca.crt",
+        "https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs/amd-issuing-ca.crt",
+    )
+    WORKSPACE = "crusoe-aklr-cicd"
+    RESOURCES = dict(
+        replica=1, gpu="8", cpu="96", memory="512Gi", sharedMemory="64Gi", ephemeralStorage="300Gi"
+    )
+
     def __init__(self):
         env = os.environ
         self.name = f"aklr-{env['GITHUB_RUN_ID']}-{env['GITHUB_RUN_ATTEMPT']}-{env['GITHUB_JOB']}"
-        self.url = env["AKLR_SAFE_API_URL"].rstrip("/") + "/api/v1/workloads"
-        if not self.url.startswith("https://"):
-            raise ValueError("SaFE requires HTTPS")
-        ca_urls = env.get("AKLR_SAFE_CA_URLS", "").split()
-        fetch = ["curl", "-fsSL", "--retry", "3", "--proto", "=https", "--proto-redir", "=https", *ca_urls]
-        certs = subprocess.check_output(fetch, text=True) if ca_urls else None
+        fetch = ["curl", "-fsSL", "--retry", "3", "--proto", "=https", "--proto-redir", "=https"]
+        certs = subprocess.check_output([*fetch, *self.CA_URLS], text=True)
         self.http = build_opener(HTTPSHandler(context=ssl.create_default_context(cadata=certs)))
 
     def api(self, method, suffix="", payload=None, allow=()):
-        request = Request(self.url + suffix, method=method, data=payload and json.dumps(payload).encode())
+        request = Request(self.URL + suffix, method=method, data=payload and json.dumps(payload).encode())
         request.add_header("Content-Type", "application/json")
         # Unredirected: a redirect never receives the key.
         request.add_unredirected_header("Authorization", "Bearer " + os.environ["USER_APIKEY"])
@@ -64,9 +72,9 @@ class Deployment:
         payload = dict(
             workloadId=self.name,
             displayName=self.name,
-            workspaceId=env["AKLR_SAFE_WORKSPACE"],
+            workspaceId=self.WORKSPACE,
             groupVersionKind={"kind": "Deployment", "version": "v1"},
-            resources=[json.loads(env["AKLR_SAFE_RESOURCES"])],
+            resources=[self.RESOURCES],
             images=[env["IMAGE"]],
             useWorkspaceStorage=False,
             entryPoints=[base64.b64encode(command.encode()).decode()],

@@ -64,8 +64,8 @@ enumerated M ≤ 16.
 
 ## How the bf16 path is reached
 
-1. `aiter.tuned_gemm.gemm_a16w16` (`aiter/tuned_gemm.py:290`) is the entry, and the call AKLR's `gemm_baseline`
-   makes (`aklr/ops/gemm/baseline.py`): time aiter through it.
+1. `aiter.tuned_gemm.gemm_a16w16` (`aiter/tuned_gemm.py:290`) is the entry, and the call AKLR's `GemmBaseline`
+   makes (`aklr/plugins/aiter/gemm/baseline.py`): time aiter through it.
 2. The lookup (`get_GEMM_A16W16_config`, `tuned_gemm.py:130`) matches `(gfx, cu_num, M, N, K, bias, dtype,
    outdtype, scaleAB, bpreshuffle)`, with M as is, then padded twice by `get_padded_m` (the padding is in
    `../../gemm/small_m.md` §7).
@@ -91,7 +91,7 @@ enumerated M ≤ 16.
 ## Before you reuse one
 - **It is dispatched only through a tuned row.** A shape without one never runs FlyDSL (step 4 above).
 - **Copy, do not import.** A AKLR kernel carries its code: copy what you reuse into its sources and import it
-  relatively. The audit does not check imports (`aklr/ops/README.md`). No committed AKLR kernel imports an aiter
+  relatively. The audit does not check imports (`aklr/plugins/aiter/README.md`). No committed AKLR kernel imports an aiter
   FlyDSL kernel (four import other aiter code).
 - **Persistent buffers are an aiter choice.** Both split-K schemes keep their counters (and the preshuffle
   family its workspace) alive across calls in an `lru_cache`. A AKLR kernel allocates scratch per call, or once
@@ -103,7 +103,7 @@ enumerated M ≤ 16.
 
 ## AKLR's own bf16 GEMM kernels
 
-Each lives in `aklr/ops/gemm/impls/flydsl/<name>/<uuid>.json`, its source in `kernel.sources[0].content`. All
+Each lives in `aklr/plugins/aiter/gemm/impls/flydsl/<name>/<uuid>.json`, its source in `kernel.sources[0].content`. All
 are deterministic (no atomics) and pass AKLR's audit: the nearest working code for a new bf16 GEMM.
 
 | Kernel | Read it for |
@@ -133,12 +133,12 @@ are deterministic (no atomics) and pass AKLR's audit: the nearest working code f
 
 ## AKLR's own FlyDSL MoE kernels
 
-Each lives in `aklr/ops/fused_moe/impls/flydsl/<name>/<uuid>.json`, its sources in `kernel.sources`. All take MXFP4
+Each lives in `aklr/plugins/aiter/fused_moe/impls/flydsl/<name>/<uuid>.json`, its sources in `kernel.sources`. All take MXFP4
 weights with E8M0 scales per 32, are `determinism: bounded` and pass AKLR's audit; each picks its configuration per
 token count and compiles it on a Point's first call, and a stage configured alike for several token counts is
 compiled once for all of them (`5d5b47d0…`'s stage 2). Copy their techniques, not their host structure: three of them
 (`f13fecf1…`, `fa7e6f02…`, `d0d05b32…`) cache their launch in a module-level `_RUN_CACHE` dict filled from `run`, and
-`f13fecf1…` reads its own file there, which `aklr/ops/README.md` does not allow (a `functools` compile function, no
+`f13fecf1…` reads its own file there, which `aklr/plugins/aiter/README.md` does not allow (a `functools` compile function, no
 I/O in launch code). Stage 2 either adds the routing-weighted rows into `out` with atomics or sums each token's
 routes in a fixed order; the form differs between kernels and, within some, between token counts or between rows
 (`ee1e253a…` writes a token with exactly one local route directly and adds the others atomically; with top-1 a row
@@ -160,7 +160,7 @@ serve; which run where: `../../moe/INDEX.md` § Kernels to start from.
 
 Same layout as the GEMMs: host wrapper in `aiter/ops/flydsl/`, body under `kernels/`, and nothing runs unless
 `is_flydsl_available()` (`aiter/ops/flydsl/utils.py:72`). `aiter.fused_moe.fused_moe` (`aiter/fused_moe.py:470`) is
-the call `fused_moe_baseline` makes (`aklr/ops/fused_moe/baseline.py`), in sglang's environment: price aiter's MoE
+the call `FusedMoeBaseline` makes (`aklr/plugins/aiter/fused_moe/baseline.py`), in sglang's environment: price aiter's MoE
 through it. Only what § Not for gfx950 lists is kept off gfx950 by its source; the families were not each run on
 gfx950.
 

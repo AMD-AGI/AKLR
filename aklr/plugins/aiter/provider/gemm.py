@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import torch
 
-from aklr.ops.gemm.api import gemm, gemm_a8w8, gemm_a8w8_blockwise_scaled
+from aklr.plugins.aiter.gemm.api import gemm, gemm_a8w8, gemm_a8w8_blockwise_scaled
 from aklr.plugins.aiter.provider._base import offer, selector, served
 
 
