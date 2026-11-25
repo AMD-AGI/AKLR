@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -54,6 +55,37 @@ def verify_image(image: str, inspection: dict) -> dict:
     ):
         raise ValueError("Docker image does not match the planned digest")
     return {"image_reference": image, "image_id": image_id}
+
+
+def registry_inspection(image: str) -> dict:
+    """The parts of `docker image inspect` that verify_image and image_environment read, from the registry.
+
+    For a run with no Docker beside it (a SaFE pod): the image ID is the config blob's digest, as Docker's.
+    """
+    if not pinned_image(image) or "@" not in image:
+        raise ValueError(f"{image!r} must be an image pinned by digest, name[:tag]@sha256:...")
+    name, digest = image.rsplit("@", 1)
+    if ":" in name.rsplit("/", 1)[-1]:
+        name = name.rsplit(":", 1)[0]  # skopeo takes a tag or a digest, not both
+    reference = f"{name}@{digest}"
+    done = subprocess.run(
+        ["skopeo", "inspect", "--retry-times", "3", "--config", "--raw", f"docker://{reference}"],
+        capture_output=True,
+        check=False,
+        timeout=300,
+    )
+    if done.returncode:
+        raise RuntimeError(
+            f"skopeo inspect {reference} failed: {done.stderr.decode(errors='replace')[-1000:]}"
+        )
+    config = json.loads(done.stdout)
+    if not isinstance(config, dict) or not isinstance(config.get("config"), dict):
+        raise ValueError(f"{reference}: the image config has no config object")
+    return {
+        "Id": "sha256:" + hashlib.sha256(done.stdout).hexdigest(),
+        "RepoDigests": [reference],
+        "Config": {"Env": config["config"].get("Env")},
+    }
 
 
 def validate_hardware(hardware: dict, expected: dict) -> None:

@@ -49,14 +49,24 @@ def summarize(out: Path, exit_code: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m e2e_perf sweep", description=__doc__)
-    parser.add_argument("--plan", type=Path, required=True, help="plan.json of one group")
+    parser.add_argument("--plan", type=Path, help="plan.json of one group; required unless --summarize")
     parser.add_argument("--hub", type=Path, help="host HF hub cache; required unless --in-container")
     parser.add_argument("--in-container", action="store_true", help="measure inside the prepared container")
+    parser.add_argument(
+        "--summarize",
+        type=int,
+        metavar="EXIT_CODE",
+        help="only summarize the results in --out, measured elsewhere (on SaFE) with this exit code",
+    )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--cache", type=Path, help="host kernel cache; defaults to <out>/cache")
     parser.add_argument("--work", type=Path, help="host work directory; defaults to <out>/work")
     parser.add_argument("--run-id")
     args = parser.parse_args(argv)
+    if args.summarize is not None:
+        return summarize(args.out, args.summarize)
+    if args.plan is None:
+        parser.error("--plan is required")
     options = ["--run-id", args.run_id] if args.run_id is not None else []
     if args.in_container:
         if args.hub is not None or args.cache is not None:

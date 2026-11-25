@@ -29,6 +29,20 @@ on:
         description: Publish the measured groups to the site (scheduled runs always do)
         type: boolean
         default: false
+      gpu_runner:
+        description: GPU backend; aklr-gpu is Docker on each target's runner_label in e2e.yaml
+        type: choice
+        options:
+          - aklr-gpu
+          - aklr-safe
+        default: aklr-gpu
+      gpu_priority:
+        description: SaFE workload priority (aklr-safe only)
+        type: choice
+        options:
+          - medium
+          - high
+        default: medium
 
 permissions:
   contents: read
@@ -62,11 +76,15 @@ defaults:
 
 env:
   PYTHONDONTWRITEBYTECODE: '1'
+  # The GPU backend: aklr-gpu (Docker on the target's runner_label) or aklr-safe (a SaFE
+  # workload per group, as ci.yaml's GPU jobs). The repository variable sets it for scheduled and PR runs.
+  E2E_GPU_RUNNER: ${{ inputs.gpu_runner || vars.AKLR_E2E_PERF_GPU_RUNNER || 'aklr-gpu' }}
+  AKLR_GPU_PRIORITY: ${{ inputs.gpu_priority || 'medium' }}
 
 jobs:
   plan:
     if: >-
-      (github.event_name != 'schedule' || vars.AKLR_E2E_SCHEDULE_ENABLED == 'true') &&
+      (github.event_name != 'schedule' || vars.AKLR_E2E_PERF_SCHEDULE_ENABLED == 'true') &&
       (github.event_name != 'pull_request' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         contains(github.event.pull_request.labels.*.name, 'ci:e2e-perf-mi355x') &&
@@ -80,9 +98,17 @@ jobs:
       matrix: ${{ steps.resolve.outputs.matrix }}
       count: ${{ steps.resolve.outputs.count }}
       skipped: ${{ steps.resolve.outputs.skipped }}
+      gpu_runner: ${{ env.E2E_GPU_RUNNER }}
       # "Re-run failed jobs" reuses this plan without its checks; later jobs need this attempt's plan.
       attempt: ${{ github.run_attempt }}
     steps:
+      - name: Check the GPU backend
+        run: |
+          case $E2E_GPU_RUNNER in
+            aklr-gpu | aklr-safe) echo "🖥️ GPU backend: $E2E_GPU_RUNNER" | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            *) echo "::error::The GPU backend must be aklr-gpu or aklr-safe, not $E2E_GPU_RUNNER"; exit 1 ;;
+          esac
+        working-directory: .
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -137,6 +163,10 @@ jobs:
             ${MANUAL_ACTOR:+--manual-actor "$MANUAL_ACTOR" --manual-ref "$GITHUB_REF"} \
             ${ALLOWLIST:+--allowlist "$RUNNER_TEMP/$ALLOWLIST"} \
             --out "$RUNNER_TEMP/plan"
+      - name: Read the planned images from their registry for SaFE
+        # A SaFE pod runs the pinned image itself and has no Docker to inspect it with.
+        if: env.E2E_GPU_RUNNER == 'aklr-safe' && steps.resolve.outputs.count != '0'
+        run: python3 -m e2e_perf inspect-images --plan "$RUNNER_TEMP/plan"
       - uses: actions/upload-artifact@v4
         if: steps.resolve.outputs.skipped != 'true'
         with:
@@ -148,10 +178,16 @@ jobs:
     if: ${{ needs.plan.outputs.count != '0' && needs.plan.outputs.attempt == github.run_attempt }}
     strategy:
       fail-fast: false
+      # One group at a time: one runner_label runner, and on SaFE one 8-GPU node at most, beside ci.yaml's jobs.
       max-parallel: 1
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ needs.plan.outputs.gpu_runner == 'aklr-safe' && 'aklr-safe' || matrix.runner }}
     timeout-minutes: 1080
+    env:
+      MODEL_ID: ${{ matrix.model }}
+      TARGET_ID: ${{ matrix.target }}
+      FRAMEWORK_ID: ${{ matrix.framework }}
+      E2E_GROUP: models/${{ matrix.model }}/targets/${{ matrix.target }}/frameworks/${{ matrix.framework }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -167,28 +203,88 @@ jobs:
           name: e2e-plan
           path: ${{ runner.temp }}/plan
       - name: Measure one group, AKLR off then on
+        if: needs.plan.outputs.gpu_runner != 'aklr-safe'
         env:
-          MODEL_ID: ${{ matrix.model }}
-          TARGET_ID: ${{ matrix.target }}
-          FRAMEWORK_ID: ${{ matrix.framework }}
           HF_HUB_DIR: ${{ vars.AKLR_E2E_PERF_HF_HUB_DIR }}
         # exec: a cancelled run's SIGINT must reach the sweep, which then stops its container.
         run: |
           : "${HF_HUB_DIR:?set the repository variable AKLR_E2E_PERF_HF_HUB_DIR to the HF hub cache on the runner}"
-          run="models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID"
-          exec python3 -m e2e_perf sweep --plan "$RUNNER_TEMP/plan/$run/plan.json" \
-            --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/e2e-cache/$run" \
-            --work "$RUNNER_TEMP/e2e-work/$run" --out "$RUNNER_TEMP/results/$run"
+          exec python3 -m e2e_perf sweep --plan "$RUNNER_TEMP/plan/$E2E_GROUP/plan.json" \
+            --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/e2e-cache/$E2E_GROUP" \
+            --work "$RUNNER_TEMP/e2e-work/$E2E_GROUP" --out "$RUNNER_TEMP/results/$E2E_GROUP"
       - name: Remove the sweep container left by a cancelled run
         # The runner kills the sweep 10 s after cancelling, which can be before its own cleanup ends.
-        if: always()
-        env:
-          MODEL_ID: ${{ matrix.model }}
-          TARGET_ID: ${{ matrix.target }}
-          FRAMEWORK_ID: ${{ matrix.framework }}
+        if: always() && needs.plan.outputs.gpu_runner != 'aklr-safe'
         run: |
-          out=$(realpath -m "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID")
+          out=$(realpath -m "$RUNNER_TEMP/results/$E2E_GROUP")
           docker ps --all --quiet --filter "label=e2e.out=$out" | xargs --no-run-if-empty docker rm --force
+      - name: Hand the group to its SaFE workload
+        if: needs.plan.outputs.gpu_runner == 'aklr-safe'
+        env:
+          HF_HUB_DIR: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
+        run: |
+          : "${HF_HUB_DIR:?set the repository variable AKLR_SHARED_HF_HUB_DIR to the HF hub cache under /shared_nfs}"
+          plan=$RUNNER_TEMP/plan/$E2E_GROUP
+          {
+            echo "IMAGE=$(jq -er '.image.run' "$plan/plan.json")"
+            echo "E2E_HF_HUB=$HF_HUB_DIR"
+            echo "E2E_PLAN=$(base64 -w0 "$plan/plan.json")"
+            echo "E2E_EXECUTION=$(base64 -w0 "$plan/execution.json")"
+          } >> "$GITHUB_ENV"
+      # The pod checks out this commit, installs AKLR into the image as it ships and measures as the Docker
+      # launcher's container does, reading the weights from the workspace storage, mounted read-only.
+      - name: Measure one group on SaFE, AKLR off then on
+        id: safe
+        if: needs.plan.outputs.gpu_runner == 'aklr-safe'
+        working-directory: .
+        shell: bash .github/scripts/gpu_job.sh {0}
+        env:
+          AKLR_GPU_RUNNER: aklr-safe
+          SAFE_JOB_NAME: sweep-${{ matrix.job_index }}
+          SAFE_WORKSPACE_STORAGE: readonly
+          # TIMEOUT_MINUTES limits the pod's sweep; SAFE_TIMEOUT_MINUTES the workload, its wait for a node included.
+          TIMEOUT_MINUTES: 960
+          SAFE_TIMEOUT_MINUTES: 1080
+          PASS_ENV: GITHUB_RUN_ID GITHUB_SHA E2E_GROUP FRAMEWORK_ID E2E_HF_HUB E2E_PLAN E2E_EXECUTION
+        run: |
+          set -euo pipefail
+          state=$(mktemp -d)
+          export TMPDIR=$state
+          out=$REPORTS/$E2E_GROUP
+          mkdir -p "$out"
+          base64 -d <<< "$E2E_PLAN" > "$state/plan.json"
+          base64 -d <<< "$E2E_EXECUTION" > "$state/execution.json"
+          git config --global --add safe.directory '*'
+          # The checkout of the measured commit, before the install adds its files.
+          dirty=false
+          [[ -z $(git status --porcelain --untracked-files=all) ]] || dirty=true
+          export AKLR_SOURCE_DIRTY=$dirty AKLR_EXECUTION_FILE=$state/execution.json \
+            HF_HUB_CACHE=$E2E_HF_HUB HF_HUB_OFFLINE=1
+          scripts/install_aklr.sh "$state/cache" "$FRAMEWORK_ID" 2>&1 | tee "$out/install.log"
+          set -a; . "$state/cache/aklr.env"; set +a
+          code=0
+          (cd benchmarks/perf && python3 -m e2e_perf sweep --in-container --plan "$state/plan.json" \
+            --work "$state/work" --out "$out" --run-id "$GITHUB_RUN_ID") || code=$?
+          # The reports return through the pod's log, which the node rotates past about 10 MiB.
+          find "$out" -name '*.log' -size +2M -print0 | while IFS= read -r -d '' log; do
+            tail -c 2M "$log" > "$log.tail" && mv "$log.tail" "$log"
+          done
+          exit "$code"
+      - name: Delete the SaFE workload
+        if: always() && needs.plan.outputs.gpu_runner == 'aklr-safe'
+        working-directory: .
+        env:
+          AKLR_GPU_RUNNER: aklr-safe
+          SAFE_JOB_NAME: sweep-${{ matrix.job_index }}
+        run: bash .github/scripts/gpu_job.sh delete
+      - name: Summarize the SaFE sweep
+        if: always() && (steps.safe.outcome == 'success' || steps.safe.outcome == 'failure')
+        env:
+          CODE: ${{ steps.safe.outcome == 'success' && '0' || '1' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/results"
+          [[ ! -d $RUNNER_TEMP/gpu-reports ]] || cp -a "$RUNNER_TEMP/gpu-reports/." "$RUNNER_TEMP/results/"
+          python3 -m e2e_perf sweep --summarize "$CODE" --out "$RUNNER_TEMP/results/$E2E_GROUP"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
