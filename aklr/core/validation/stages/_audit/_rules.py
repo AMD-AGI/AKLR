@@ -155,12 +155,14 @@ class _SideEffectRule(SourceRule):
     number = 3
 
     def source_rejections(self, source: ParsedSource) -> Iterable[Rejection]:
-        # a function's own param is not the builtin of its name: aiter's ops take an ``input``
+        # in its body a function's own param is not the builtin of its name: aiter's ops take an
+        # ``input``. Its defaults, decorators and annotations run where the builtin still is
         params = {
             id(name)
             for fn in ast.walk(source.tree)
             if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
-            for name in ast.walk(fn)
+            for statement in (fn.body if isinstance(fn.body, list) else [fn.body])
+            for name in ast.walk(statement)
             if isinstance(name, ast.Name)
             and name.id in {a.arg for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)}
         }

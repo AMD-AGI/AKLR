@@ -208,6 +208,13 @@ class TestCheckKernel:
                 id="builtin_input_beside_a_param_of_that_name",
             ),
             pytest.param(
+                '"""K."""\ndef _rows(open=open("/tmp/data")):\n    return open\n\n\n'
+                + _SIGNATURE
+                + "\n    out.copy_(a @ b.mT)\n",
+                "SA3",
+                id="builtin_called_in_the_default_of_a_param_of_that_name",
+            ),
+            pytest.param(
                 '"""K."""\nimport functools\nimport torch\n\n\n'
                 + "@functools.cache\ndef _compile(n):\n"
                 + '    torch.set_float32_matmul_precision("medium")\n    return n\n\n\n'
