@@ -7,25 +7,22 @@ _store_index_k_cache, _get_logits_head_gate), in _forward_cuda_k_only (_get_k_bf
 _store_index_k_cache) and in _aiter_fused_fp8_prepare_and_store (the fused fp8 writer), call
 for call."""
 
-from __future__ import annotations
-
 import functools
 from types import SimpleNamespace
 
-from aklr.plugins.sglang.layers.dsa_indexer.contract import HEAD_DIM, PAGE_SIZE, ROPE_DIM
+import torch
 
-__all__ = [
-    "dsa_indexer_key_prepare_baseline",
-    "dsa_indexer_prepare_baseline",
-    "dsa_indexer_writer_prepare_baseline",
-]
+from aklr.core.contract.baseline import OpBaseline
+from aklr.plugins.sglang.layers.dsa_indexer.reference import HEAD_DIM, PAGE_SIZE, ROPE_DIM
+
+__all__ = ["DsaIndexerKeyPrepareBaseline", "DsaIndexerPrepareBaseline", "DsaIndexerWriterPrepareBaseline"]
 
 # Indexer's quantization: block_size and scale_fmt as deepseek_v2 builds it
 _QUANT_BLOCK = 128
 _SCALE_FMT = "ue8m0"
 
 
-def _check_aiter_path() -> None:
+def _check_aiter_path():
     """Raise unless sglang takes the aiter path the baseline replays, chosen at import."""
     from sglang.srt.layers.quantization import unquant
 
@@ -45,7 +42,6 @@ def _linear(x, weight):
 
 def _layer_norm(x, weight, bias, eps):
     """k_norm, sglang's LayerNorm.forward_hip: aiter's layernorm2d_fwd when the dtypes agree."""
-    import torch
     from sglang.srt.layers import layernorm
 
     if (
@@ -82,8 +78,6 @@ def _rotate_activation(x):
 def _key(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, positions, cos_cache, sin_cache, query=None):
     """The bf16 key, and the query when given (_get_q_k_bf16), else with a dummy query's RoPE
     (_get_k_bf16): wk, k_norm, RoPE on both in place, the Hadamard transform on each."""
-    import torch
-
     key = _layer_norm(_linear(x, wk), k_norm_weight, k_norm_bias, k_norm_eps)
     k_rope = key[..., :ROPE_DIM]
     q_rope = torch.empty_like(k_rope) if query is None else query[..., :ROPE_DIM]
@@ -107,67 +101,76 @@ def _store(key, index_k_cache, out_cache_loc):
 def _head_gate():
     """_get_logits_head_gate after weights_proj, compiled as sglang compiles it (one fused
     kernel): weights * n_heads^-0.5, times each head's q_scale and softmax_scale."""
-    import torch
 
     @torch.compile(dynamic=True)
-    def head_gate(weights, q_scale, n_heads_scale: float, softmax_scale: float):
+    def head_gate(weights, q_scale, n_heads_scale, softmax_scale):
         weights = weights * n_heads_scale
         return weights.unsqueeze(-1) * q_scale * softmax_scale
 
     return head_gate
 
 
-def dsa_indexer_prepare_baseline(
-    x,
-    q_lora,
-    wq_b,
-    wk,
-    weights_proj,
-    k_norm_weight,
-    k_norm_bias,
-    cos_cache,
-    sin_cache,
-    positions,
-    out_cache_loc,
-    index_k_cache,
-    k_norm_eps=1e-6,
-    q_fp8=None,
-    head_weights=None,
-):
-    """forward_cuda's standard path up to the scores: (q_fp8, head_weights), the keys stored;
-    act_quant is sglang's tilelang kernel on HIP."""
-    from sglang.kernels.ops.quantization.act_quant_tilelang import act_quant
+class DsaIndexerPrepareBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        x,
+        q_lora,
+        wq_b,
+        wk,
+        weights_proj,
+        k_norm_weight,
+        k_norm_bias,
+        cos_cache,
+        sin_cache,
+        positions,
+        out_cache_loc,
+        index_k_cache,
+        k_norm_eps=1e-6,
+        q_fp8=None,
+        head_weights=None,
+    ):
+        """forward_cuda's standard path up to the scores: (q_fp8, head_weights), the keys stored;
+        act_quant is sglang's tilelang kernel on HIP."""
+        from sglang.kernels.ops.quantization.act_quant_tilelang import act_quant
 
-    _check_aiter_path()
-    n_heads = weights_proj.shape[0]
-    query = _linear(q_lora, wq_b).view(-1, n_heads, HEAD_DIM)
-    key, query = _key(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, positions, cos_cache, sin_cache, query)
-    quantized, q_scale = act_quant(query, _QUANT_BLOCK, _SCALE_FMT)
-    _store(key, index_k_cache, out_cache_loc)
-    weights = _head_gate()(_linear(x, weights_proj), q_scale, n_heads**-0.5, HEAD_DIM**-0.5)
-    return quantized, weights.squeeze(-1)
+        _check_aiter_path()
+        n_heads = weights_proj.shape[0]
+        query = _linear(q_lora, wq_b).view(-1, n_heads, HEAD_DIM)
+        key, query = _key(
+            x, wk, k_norm_weight, k_norm_bias, k_norm_eps, positions, cos_cache, sin_cache, query
+        )
+        quantized, q_scale = act_quant(query, _QUANT_BLOCK, _SCALE_FMT)
+        _store(key, index_k_cache, out_cache_loc)
+        weights = _head_gate()(_linear(x, weights_proj), q_scale, n_heads**-0.5, HEAD_DIM**-0.5)
+        return {"q_fp8": quantized, "head_weights": weights.squeeze(-1)}
 
 
-def dsa_indexer_key_prepare_baseline(
-    x,
-    wk,
-    k_norm_weight,
-    k_norm_bias,
-    cos_cache,
-    sin_cache,
-    positions,
-    out_cache_loc,
-    index_k_cache,
-    k_norm_eps=1e-6,
-    no_values=None,
-):
-    """_forward_cuda_k_only's standard branch: the keys stored, and no values."""
-    import torch
-
-    _check_aiter_path()
-    key, _ = _key(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, positions, cos_cache, sin_cache)
-    _store(key, index_k_cache, out_cache_loc)
-    return torch.empty(0, dtype=torch.float32, device=x.device) if no_values is None else no_values
+class DsaIndexerKeyPrepareBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        x,
+        wk,
+        k_norm_weight,
+        k_norm_bias,
+        cos_cache,
+        sin_cache,
+        positions,
+        out_cache_loc,
+        index_k_cache,
+        k_norm_eps=1e-6,
+        no_values=None,
+    ):
+        """_forward_cuda_k_only's standard branch: the keys stored, and no values."""
+        _check_aiter_path()
+        key, _ = _key(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, positions, cos_cache, sin_cache)
+        _store(key, index_k_cache, out_cache_loc)
+        return {
+            "no_values": torch.empty(0, dtype=torch.float32, device=x.device)
+            if no_values is None
+            else no_values
+        }
 
 
 def _writer_linear(x, weight, weight_scale):
@@ -181,59 +184,61 @@ def _writer_linear(x, weight, weight_scale):
     return fp8_utils.aiter_w8a8_block_fp8_linear(x, weight, [128, 128], weight_scale)
 
 
-def dsa_indexer_writer_prepare_baseline(
-    x,
-    q_lora,
-    wq_b,
-    wk,
-    weights_proj,
-    k_norm_weight,
-    k_norm_bias,
-    cos_cache,
-    sin_cache,
-    positions,
-    out_cache_loc,
-    index_k_cache,
-    k_norm_eps=1e-6,
-    wq_b_scale=None,
-    wk_scale=None,
-    q_fp8=None,
-    head_weights=None,
-):
-    """_aiter_fused_fp8_prepare_and_store: wq_b, wk and weights_proj (bf16 in, bf16 out), then
-    aiter's fused writer (indexer_qk_rope_quant_and_cache through aiter_fused_fp8_qk_write),
-    padded rows' queries computed too."""
-    import torch
-    from sglang.kernels.ops.attention.dsa.fp8_fused_writer_hip import aiter_fused_fp8_qk_write
-
-    _check_aiter_path()
-    n_heads = weights_proj.shape[0]
-    query = _writer_linear(q_lora, wq_b, wq_b_scale).view(-1, n_heads, HEAD_DIM)
-    key = _writer_linear(x, wk, wk_scale)
-    weights_raw = _linear(x, weights_proj)
-    if q_fp8 is None:
-        q_fp8 = torch.empty_like(query, dtype=index_k_cache.dtype)
-    if head_weights is None:
-        head_weights = torch.empty_like(weights_raw, dtype=torch.float32)
-    aiter_fused_fp8_qk_write(
-        query,
-        q_fp8,
-        weights_raw,
-        head_weights,
-        key,
-        index_k_cache,
-        out_cache_loc,
+class DsaIndexerWriterPrepareBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        x,
+        q_lora,
+        wq_b,
+        wk,
+        weights_proj,
         k_norm_weight,
         k_norm_bias,
-        positions,
         cos_cache,
         sin_cache,
-        k_norm_eps,
-        _QUANT_BLOCK,
-        _SCALE_FMT,
-        HEAD_DIM**-0.5 * n_heads**-0.5,
-        preshuffle=True,
-        is_neox=False,
-        compute_all_q_rope=True,
-    )
-    return q_fp8, head_weights
+        positions,
+        out_cache_loc,
+        index_k_cache,
+        k_norm_eps=1e-6,
+        wq_b_scale=None,
+        wk_scale=None,
+        q_fp8=None,
+        head_weights=None,
+    ):
+        """_aiter_fused_fp8_prepare_and_store: wq_b, wk and weights_proj (bf16 in, bf16 out), then
+        aiter's fused writer (indexer_qk_rope_quant_and_cache through aiter_fused_fp8_qk_write),
+        padded rows' queries computed too."""
+        from sglang.kernels.ops.attention.dsa.fp8_fused_writer_hip import aiter_fused_fp8_qk_write
+
+        _check_aiter_path()
+        n_heads = weights_proj.shape[0]
+        query = _writer_linear(q_lora, wq_b, wq_b_scale).view(-1, n_heads, HEAD_DIM)
+        key = _writer_linear(x, wk, wk_scale)
+        weights_raw = _linear(x, weights_proj)
+        if q_fp8 is None:
+            q_fp8 = torch.empty_like(query, dtype=index_k_cache.dtype)
+        if head_weights is None:
+            head_weights = torch.empty_like(weights_raw, dtype=torch.float32)
+        aiter_fused_fp8_qk_write(
+            query,
+            q_fp8,
+            weights_raw,
+            head_weights,
+            key,
+            index_k_cache,
+            out_cache_loc,
+            k_norm_weight,
+            k_norm_bias,
+            positions,
+            cos_cache,
+            sin_cache,
+            k_norm_eps,
+            _QUANT_BLOCK,
+            _SCALE_FMT,
+            HEAD_DIM**-0.5 * n_heads**-0.5,
+            preshuffle=True,
+            is_neox=False,
+            compute_all_q_rope=True,
+        )
+        return {"q_fp8": q_fp8, "head_weights": head_weights}

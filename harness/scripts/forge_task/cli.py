@@ -45,7 +45,7 @@ def _parser() -> argparse.ArgumentParser:
         "--starting-kernel",
         type=Path,
         help="kernel.py to start from, or a directory whose *.py files, kernel.py among them, are the kernel's "
-        "modules; gemm schemas default to torch",
+        "modules; a plain gemm schema defaults to torch, any other needs one",
     )
     prepare.add_argument("--kernel-backend", choices=("flydsl", "triton", "gluon"), default="flydsl")
     prepare.add_argument("--gpu-target", default="gfx950")

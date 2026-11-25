@@ -9,7 +9,7 @@ inputs, fix the kernel. Do not change the contract to exclude those inputs.
 
 The DeepSeek-V4 FlyDSL kernel for `fp8_paged_mqa_logits@1.0` used 32-bit offsets, so it could not read a KV cache
 larger than 2 GiB. Instead of fixing the kernel, the agent added a size limit (`_BYTE_LIMIT`) to
-`aklr/ops/mla/contract.py`. The user caught it before PR #96 was opened.
+`aklr/plugins/aiter/mla/contract.py`. The user caught it before PR #96 was opened.
 
 ## Why it is wrong
 

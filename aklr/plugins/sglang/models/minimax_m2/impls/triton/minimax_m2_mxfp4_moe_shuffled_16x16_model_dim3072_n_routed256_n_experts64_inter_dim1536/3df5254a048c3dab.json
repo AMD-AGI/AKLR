@@ -161,7 +161,7 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 2.193,
+      "speedup": 2.13,
       "microseconds": 26.2
     },
     {
@@ -172,8 +172,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.633,
-      "microseconds": 40.3
+      "speedup": 1.579,
+      "microseconds": 40.4
     }
   ],
   "layout_variants": {
@@ -222,9 +222,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

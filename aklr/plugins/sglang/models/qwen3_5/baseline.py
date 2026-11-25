@@ -18,7 +18,21 @@ input.
 
 import functools
 
-from aklr.plugins.sglang.models.qwen3_5.contract import MROPE_SECTION, ROTARY_DIM
+import torch
+
+from aklr.core.contract.baseline import OpBaseline
+from aklr.plugins.sglang.models.qwen3_5.reference import MROPE_SECTION, ROTARY_DIM
+
+__all__ = [
+    "GatedAttentionDecodeBaseline",
+    "GatedAttentionDecodeGroupFp8QuantBaseline",
+    "GatedAttentionPrefillBaseline",
+    "GatedAttentionPrefillGroupFp8QuantBaseline",
+    "GdnDecodeBaseline",
+    "GdnDecodeGroupFp8QuantBaseline",
+    "GdnPrefillBaseline",
+    "GdnPrefillGroupFp8QuantBaseline",
+]
 
 # sglang's aiter backend sizes its decode partitions for the served context
 # (--context-length): 131072 here, half of Qwen3.5's 262144-token default, which launches
@@ -45,7 +59,6 @@ def _prefill_normalized(
     eps,
 ):
     """SGLang 0.5.23's Triton prefill up to the BF16 input of its output projection."""
-    import torch
     from sglang.kernels.ops.attention.fla.chunk import chunk_gated_delta_rule
     from sglang.kernels.ops.attention.fla.layernorm_gated import _layer_norm_fwd
     from sglang.kernels.ops.attention.linear.fused_gdn_gating import fused_gdn_gating
@@ -121,29 +134,10 @@ def _prefill_normalized(
     return normed.reshape(rows, heads, value_dim)
 
 
-def gdn_prefill_group_fp8_quant_baseline(
-    projected_qkvz,
-    projected_ba,
-    conv_state,
-    delta_state,
-    cache_indices,
-    cu_seqlens,
-    has_initial_state,
-    conv_weight,
-    conv_bias,
-    a_log,
-    dt_bias,
-    norm_weight,
-    max_seq_len=2048,
-    scale=128**-0.5,
-    eps=1e-6,
-    normalized=None,
-    values=None,
-    scales=None,
-):
-    from sglang.kernels.ops.quantization.fp8_kernel import per_token_group_quant_fp8
-
-    normed = _prefill_normalized(
+class GdnPrefillGroupFp8QuantBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkvz,
         projected_ba,
         conv_state,
@@ -156,35 +150,41 @@ def gdn_prefill_group_fp8_quant_baseline(
         a_log,
         dt_bias,
         norm_weight,
-        max_seq_len,
-        scale,
-        eps,
-    )
-    rows, _, value_dim = normed.shape
-    quantized, factors = per_token_group_quant_fp8(normed.reshape(rows, -1), value_dim)
-    return normed, quantized, factors
+        max_seq_len=2048,
+        scale=128**-0.5,
+        eps=1e-6,
+        normalized=None,
+        values=None,
+        scales=None,
+    ):
+        from sglang.kernels.ops.quantization.fp8_kernel import per_token_group_quant_fp8
+
+        normed = _prefill_normalized(
+            projected_qkvz,
+            projected_ba,
+            conv_state,
+            delta_state,
+            cache_indices,
+            cu_seqlens,
+            has_initial_state,
+            conv_weight,
+            conv_bias,
+            a_log,
+            dt_bias,
+            norm_weight,
+            max_seq_len,
+            scale,
+            eps,
+        )
+        rows, _, value_dim = normed.shape
+        quantized, factors = per_token_group_quant_fp8(normed.reshape(rows, -1), value_dim)
+        return {"normalized": normed, "values": quantized, "scales": factors}
 
 
-def gdn_prefill_baseline(
-    projected_qkvz,
-    projected_ba,
-    conv_state,
-    delta_state,
-    cache_indices,
-    cu_seqlens,
-    has_initial_state,
-    conv_weight,
-    conv_bias,
-    a_log,
-    dt_bias,
-    norm_weight,
-    max_seq_len=2048,
-    scale=128**-0.5,
-    eps=1e-6,
-    normalized=None,
-):
-    """The prefill above, ending at the BF16 input of an unquantized out_proj."""
-    return _prefill_normalized(
+class GdnPrefillBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkvz,
         projected_ba,
         conv_state,
@@ -197,10 +197,31 @@ def gdn_prefill_baseline(
         a_log,
         dt_bias,
         norm_weight,
-        max_seq_len,
-        scale,
-        eps,
-    )
+        max_seq_len=2048,
+        scale=128**-0.5,
+        eps=1e-6,
+        normalized=None,
+    ):
+        """The prefill above, ending at the BF16 input of an unquantized out_proj."""
+        return {
+            "normalized": _prefill_normalized(
+                projected_qkvz,
+                projected_ba,
+                conv_state,
+                delta_state,
+                cache_indices,
+                cu_seqlens,
+                has_initial_state,
+                conv_weight,
+                conv_bias,
+                a_log,
+                dt_bias,
+                norm_weight,
+                max_seq_len,
+                scale,
+                eps,
+            )
+        }
 
 
 def _decode_normalized(
@@ -271,26 +292,10 @@ def _decode_normalized(
     return normed.reshape(rows, heads, value_dim)
 
 
-def gdn_decode_group_fp8_quant_baseline(
-    projected_qkvz,
-    projected_ba,
-    conv_state,
-    delta_state,
-    cache_indices,
-    conv_weight,
-    a_log,
-    dt_bias,
-    norm_weight,
-    scale=128**-0.5,
-    eps=1e-6,
-    values=None,
-    scales=None,
-):
-    """The decode above, then the per-1x128 AITER quantization that SGLang's block
-    FP8 output projection applies to its BF16 input (row-major scales)."""
-    import aiter
-
-    normed = _decode_normalized(
+class GdnDecodeGroupFp8QuantBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkvz,
         projected_ba,
         conv_state,
@@ -300,29 +305,37 @@ def gdn_decode_group_fp8_quant_baseline(
         a_log,
         dt_bias,
         norm_weight,
-        scale,
-        eps,
-    )
-    quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
-    return quantize(normed.reshape(normed.shape[0], -1), quant_dtype=aiter.dtypes.fp8)
+        scale=128**-0.5,
+        eps=1e-6,
+        values=None,
+        scales=None,
+    ):
+        """The decode above, then the per-1x128 AITER quantization that SGLang's block
+        FP8 output projection applies to its BF16 input (row-major scales)."""
+        import aiter
+
+        normed = _decode_normalized(
+            projected_qkvz,
+            projected_ba,
+            conv_state,
+            delta_state,
+            cache_indices,
+            conv_weight,
+            a_log,
+            dt_bias,
+            norm_weight,
+            scale,
+            eps,
+        )
+        quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
+        quantized = quantize(normed.reshape(normed.shape[0], -1), quant_dtype=aiter.dtypes.fp8)
+        return dict(zip(("values", "scales"), quantized, strict=True))
 
 
-def gdn_decode_baseline(
-    projected_qkvz,
-    projected_ba,
-    conv_state,
-    delta_state,
-    cache_indices,
-    conv_weight,
-    a_log,
-    dt_bias,
-    norm_weight,
-    scale=128**-0.5,
-    eps=1e-6,
-    normalized=None,
-):
-    """SGLang 0.5.23's ROCm decode up to the BF16 input of its output projection."""
-    return _decode_normalized(
+class GdnDecodeBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkvz,
         projected_ba,
         conv_state,
@@ -332,25 +345,38 @@ def gdn_decode_baseline(
         a_log,
         dt_bias,
         norm_weight,
-        scale,
-        eps,
-    )
+        scale=128**-0.5,
+        eps=1e-6,
+        normalized=None,
+    ):
+        """SGLang 0.5.23's ROCm decode up to the BF16 input of its output projection."""
+        return {
+            "normalized": _decode_normalized(
+                projected_qkvz,
+                projected_ba,
+                conv_state,
+                delta_state,
+                cache_indices,
+                conv_weight,
+                a_log,
+                dt_bias,
+                norm_weight,
+                scale,
+                eps,
+            )
+        }
 
 
 @functools.cache
 def _unit_scale(device):
     """The aiter backend's KV scale tensor, 1.0, which an FP8 checkpoint's own unit
     KV scales equal."""
-    import torch
-
     return torch.ones(1, dtype=torch.float32, device=device)
 
 
 @functools.cache
 def _last_page_lengths(rows, device):
     """The aiter backend's kv_last_page_len: one-token pages."""
-    import torch
-
     return torch.ones(rows, dtype=torch.int32, device=device)
 
 
@@ -426,7 +452,6 @@ def _gated_attention(
     """_prepare, the aiter backend's forward_decode (paged_attention_ragged over one-token
     pages at unit KV scales) and fused_sigmoid_mul: the BF16 rows sglang hands o_proj."""
     import aiter
-    import torch
     from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
 
     query, _, _, gate = _prepare(
@@ -476,27 +501,10 @@ def _gated_attention(
     return attended
 
 
-def gated_attention_decode_group_fp8_quant_baseline(
-    projected_qkv,
-    q_norm_weight,
-    k_norm_weight,
-    positions,
-    cos_sin_cache,
-    cache_locations,
-    key_cache,
-    value_cache,
-    kv_indptr,
-    kv_indices,
-    eps=1e-6,
-    scale=256**-0.5,
-    values=None,
-    scales=None,
-):
-    """The gated attention above, then the per-1x128 AITER quantization the block-FP8
-    o_proj applies to its BF16 input (row-major scales)."""
-    import aiter
-
-    attended = _gated_attention(
+class GatedAttentionDecodeGroupFp8QuantBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkv,
         q_norm_weight,
         k_norm_weight,
@@ -507,31 +515,38 @@ def gated_attention_decode_group_fp8_quant_baseline(
         value_cache,
         kv_indptr,
         kv_indices,
-        eps,
-        scale,
-    )
-    quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
-    quantized, factors = quantize(attended, quant_dtype=aiter.dtypes.fp8)
-    return quantized.view(attended.shape[0], -1, key_cache.shape[-1]), factors
+        eps=1e-6,
+        scale=256**-0.5,
+        values=None,
+        scales=None,
+    ):
+        """The gated attention above, then the per-1x128 AITER quantization the block-FP8
+        o_proj applies to its BF16 input (row-major scales)."""
+        import aiter
+
+        attended = _gated_attention(
+            projected_qkv,
+            q_norm_weight,
+            k_norm_weight,
+            positions,
+            cos_sin_cache,
+            cache_locations,
+            key_cache,
+            value_cache,
+            kv_indptr,
+            kv_indices,
+            eps,
+            scale,
+        )
+        quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
+        quantized, factors = quantize(attended, quant_dtype=aiter.dtypes.fp8)
+        return {"values": quantized.view(attended.shape[0], -1, key_cache.shape[-1]), "scales": factors}
 
 
-def gated_attention_decode_baseline(
-    projected_qkv,
-    q_norm_weight,
-    k_norm_weight,
-    positions,
-    cos_sin_cache,
-    cache_locations,
-    key_cache,
-    value_cache,
-    kv_indptr,
-    kv_indices,
-    eps=1e-6,
-    scale=256**-0.5,
-    gated=None,
-):
-    """The gated attention above: sglang's BF16 input to an o_proj that takes BF16."""
-    return _gated_attention(
+class GatedAttentionDecodeBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkv,
         q_norm_weight,
         k_norm_weight,
@@ -542,9 +557,27 @@ def gated_attention_decode_baseline(
         value_cache,
         kv_indptr,
         kv_indices,
-        eps,
-        scale,
-    )
+        eps=1e-6,
+        scale=256**-0.5,
+        gated=None,
+    ):
+        """The gated attention above: sglang's BF16 input to an o_proj that takes BF16."""
+        return {
+            "gated": _gated_attention(
+                projected_qkv,
+                q_norm_weight,
+                k_norm_weight,
+                positions,
+                cos_sin_cache,
+                cache_locations,
+                key_cache,
+                value_cache,
+                kv_indptr,
+                kv_indices,
+                eps,
+                scale,
+            )
+        }
 
 
 def _gated_attention_prefill(
@@ -564,7 +597,6 @@ def _gated_attention_prefill(
     """_prepare, the aiter backend's forward_extend without a prefix (gfx950, head width 256,
     FP8 pool: flash_attn_varlen_fp8_pertensor_func on Q, K and V cast to E4M3FN at unit
     scales) and fused_sigmoid_mul: the BF16 rows sglang hands o_proj."""
-    import torch
     from aiter import flash_attn_varlen_fp8_pertensor_func
     from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
 
@@ -602,27 +634,10 @@ def _gated_attention_prefill(
     return attended
 
 
-def gated_attention_prefill_group_fp8_quant_baseline(
-    projected_qkv,
-    q_norm_weight,
-    k_norm_weight,
-    positions,
-    cos_sin_cache,
-    cache_locations,
-    key_cache,
-    value_cache,
-    cu_seqlens,
-    eps=1e-6,
-    scale=256**-0.5,
-    max_seq_len=1024,
-    values=None,
-    scales=None,
-):
-    """The gated prefill above, then the per-1x128 AITER quantization of the block-FP8
-    o_proj (row-major scales)."""
-    import aiter
-
-    attended = _gated_attention_prefill(
+class GatedAttentionPrefillGroupFp8QuantBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkv,
         q_norm_weight,
         k_norm_weight,
@@ -632,32 +647,39 @@ def gated_attention_prefill_group_fp8_quant_baseline(
         key_cache,
         value_cache,
         cu_seqlens,
-        eps,
-        scale,
-        max_seq_len,
-    )
-    quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
-    quantized, factors = quantize(attended, quant_dtype=aiter.dtypes.fp8)
-    return quantized.view(attended.shape[0], -1, key_cache.shape[-1]), factors
+        eps=1e-6,
+        scale=256**-0.5,
+        max_seq_len=1024,
+        values=None,
+        scales=None,
+    ):
+        """The gated prefill above, then the per-1x128 AITER quantization of the block-FP8
+        o_proj (row-major scales)."""
+        import aiter
+
+        attended = _gated_attention_prefill(
+            projected_qkv,
+            q_norm_weight,
+            k_norm_weight,
+            positions,
+            cos_sin_cache,
+            cache_locations,
+            key_cache,
+            value_cache,
+            cu_seqlens,
+            eps,
+            scale,
+            max_seq_len,
+        )
+        quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
+        quantized, factors = quantize(attended, quant_dtype=aiter.dtypes.fp8)
+        return {"values": quantized.view(attended.shape[0], -1, key_cache.shape[-1]), "scales": factors}
 
 
-def gated_attention_prefill_baseline(
-    projected_qkv,
-    q_norm_weight,
-    k_norm_weight,
-    positions,
-    cos_sin_cache,
-    cache_locations,
-    key_cache,
-    value_cache,
-    cu_seqlens,
-    eps=1e-6,
-    scale=256**-0.5,
-    max_seq_len=1024,
-    gated=None,
-):
-    """The gated prefill above: sglang's BF16 input to an o_proj that takes BF16."""
-    return _gated_attention_prefill(
+class GatedAttentionPrefillBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkv,
         q_norm_weight,
         k_norm_weight,
@@ -667,7 +689,25 @@ def gated_attention_prefill_baseline(
         key_cache,
         value_cache,
         cu_seqlens,
-        eps,
-        scale,
-        max_seq_len,
-    )
+        eps=1e-6,
+        scale=256**-0.5,
+        max_seq_len=1024,
+        gated=None,
+    ):
+        """The gated prefill above: sglang's BF16 input to an o_proj that takes BF16."""
+        return {
+            "gated": _gated_attention_prefill(
+                projected_qkv,
+                q_norm_weight,
+                k_norm_weight,
+                positions,
+                cos_sin_cache,
+                cache_locations,
+                key_cache,
+                value_cache,
+                cu_seqlens,
+                eps,
+                scale,
+                max_seq_len,
+            )
+        }

@@ -4,27 +4,15 @@
 """What the contract says, in torch, in float32: the bf16 inputs decoded exactly, each dot
 product summed in float32."""
 
-from __future__ import annotations
+import torch
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from aklr.core.contract.reference import OpReference
 
-from aklr.core.contract.semantics import to_float32
-
-if TYPE_CHECKING:
-    from torch import Tensor
-
-__all__ = ["mla_v_absorb_reference"]
+__all__ = ["MlaVAbsorbReference"]
 
 
-def mla_v_absorb_reference(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-) -> Tensor:
-    """Per token and head, attn_output . w_vc^T; no rounding point."""
-    import torch
-
-    args = row_major_args
-    latent = to_float32(args["attn_output"], point.dtypes["attn_output"])
-    weight = to_float32(args["w_vc"], point.dtypes["w_vc"])
-    return torch.einsum("thk,hvk->thv", latent, weight)
+class MlaVAbsorbReference(OpReference):
+    def reference(self, *, attn_output, w_vc, **_):
+        """Per token and head, attn_output . w_vc^T; no rounding point but the output's."""
+        output = torch.einsum("thk,hvk->thv", attn_output.float(), w_vc.float())
+        return {"output": output.to(torch.bfloat16)}

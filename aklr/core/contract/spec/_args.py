@@ -15,14 +15,12 @@ from pydantic import BeforeValidator, Field, model_validator
 from aklr.core.contract import expr
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
-    DeterminismLevel,
     Distribution,
     DType,
-    ElementOrder,
     ErrorBound,
 )
-from aklr.core.contract.semantics._compare import ErrorBoundUnion
 from aklr.core.contract.semantics._distributions import DistributionUnion
+from aklr.core.contract.semantics._error_bounds import ErrorBoundUnion
 from aklr.core.contract.semantics._frozen_model import FrozenModel
 from aklr.core.contract.spec._points import case_key
 
@@ -108,7 +106,8 @@ class TensorSpec(FrozenModel):
         update: dict[str, Any] = {"shape": shape}
         if dtype is not None:
             update["dtype"] = DTypeSpec(any_of=(DType(dtype),))
-            update["distribution"] = self._decide_branches(self.distribution, symbols)
+            distribution = self._decide_branches(self.distribution, symbols)
+            update["distribution"] = tuple((p, _fields_decided(d, symbols)) for p, d in distribution)
             update["error_bounds"] = self._decide_branches(self.error_bounds, symbols)
         return type(self)(**{**dict(self), **update})
 
@@ -125,18 +124,10 @@ class TensorSpec(FrozenModel):
                 is_true = bool(closure(symbols)) if reads <= symbols.keys() else None
             if is_true is False and not decided:
                 continue
-            values = {}
-            for field_name in type(item).expr_fields:
-                text = getattr(item, field_name)
-                if isinstance(text, str):
-                    closure, reads = expr.compile(text)
-                    if reads <= symbols.keys() and type(value := closure(symbols)) is int:
-                        values[field_name] = value
-            kept = item.model_copy(update=values) if values else item
             if is_true:
-                decided.append((None, kept))
+                decided.append((None, item))
                 break
-            decided.append((predicate, kept))
+            decided.append((predicate, item))
         return tuple(decided)
 
 
@@ -199,13 +190,32 @@ class ScalarSpec(FrozenModel):
 ArgSpec = Annotated[TensorSpec | ScalarSpec, Field(discriminator="kind")]
 
 
+class DeterminismLevel(str, Enum):
+    """How two runs of a kernel on the same inputs must agree: ``bitwise``, byte-identical
+    outputs; ``bounded``, each run within its error bounds on its own."""
+
+    BITWISE = "bitwise"
+    BOUNDED = "bounded"
+
+
 class CompareSpec(FrozenModel):
-    max_violation_fraction: Annotated[float, Field(ge=0.0, le=1.0)] = 0.0
     determinism: DeterminismLevel = DeterminismLevel.BITWISE
-    element_order: ElementOrder = ElementOrder.FIXED
 
 
-def evaluated_json(value: Distribution | ErrorBound, symbols: Mapping[str, Any]) -> dict[str, Any]:
+def _fields_decided(distribution: Distribution, symbols: Mapping[str, Any]) -> Distribution:
+    """``distribution`` with each ``expr_fields`` text that ``symbols`` decide to an int
+    replaced by it."""
+    values = {}
+    for field_name in type(distribution).expr_fields:
+        text = getattr(distribution, field_name)
+        if isinstance(text, str):
+            closure, reads = expr.compile(text)
+            if reads <= symbols.keys() and type(value := closure(symbols)) is int:
+                values[field_name] = value
+    return distribution.model_copy(update=values) if values else distribution
+
+
+def evaluated_json(value: Distribution, symbols: Mapping[str, Any]) -> dict[str, Any]:
     """The json of ``value`` (defaults included) with ``expr_fields`` texts evaluated."""
     evaluated = value.model_dump(mode="json")
     for field_name in type(value).expr_fields:

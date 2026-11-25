@@ -7,13 +7,12 @@ import torch
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
-from aklr.plugins.sglang.models.qwen3_5.api import gated_attention_decode_group_fp8_quant
-from aklr.plugins.sglang.models.qwen3_5.contract import ROTARY_DIM
 from aklr.plugins.sglang.models.qwen3_next.contract import (
     QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT,
     QWEN3_NEXT_GDN_DECODE_GROUP_FP8_QUANT,
     QWEN3_NEXT_GDN_PREFILL_GROUP_FP8_QUANT,
 )
+from aklr.plugins.sglang.models.qwen3_next.reference import ROTARY_DIM
 
 __all__ = [
     "qwen3_next_gated_attention_decode_group_fp8_quant",
@@ -249,8 +248,9 @@ def _no_bias(size, dtype, device):
 def _attention_self_attention(self, positions, hidden_states, forward_batch):
     """Decode as HIP runs it (forward_prepare_native, the aiter backend's forward_decode,
     fused_sigmoid_mul, then o_proj's own FP8 quantization of its BF16 input), graph capture
-    too: sglang's qkv_proj, an op (_attention_ops), then sglang's o_proj on the op's FP8
-    values and scales."""
+    too: sglang's qkv_proj, the op at the capacity sglang's context length rounds up to, then
+    sglang's o_proj on the op's FP8 values and scales. A context past every capacity stays on
+    sglang."""
     from sglang.srt.model_executor.forward_context import get_attn_backend
     from sglang.srt.models import qwen3_next as model
 
@@ -259,6 +259,9 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
     backend = get_attn_backend()
     backend = getattr(backend, "full_attn_backend", backend)
     if positions.dim() != 1 or _attention_falls_back(self, backend):
+        return FallbackReason.OUT_OF_CONTRACT
+    capacity = _capacity(backend.max_context_len)
+    if capacity is None:
         return FallbackReason.OUT_OF_CONTRACT
     hidden = hidden_states[0] if isinstance(hidden_states, tuple) else hidden_states
     rows = hidden.shape[0]
@@ -271,46 +274,24 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
         "cache_locations": forward_batch.out_cache_loc[:rows],
         "key_cache": key_cache,
         "value_cache": value_cache,
+        "positions": positions,
         "kv_indptr": metadata.kv_indptr,
+        # the first rows * capacity entries hold every row's slots (a decode graph's buffer runs longer)
+        "kv_indices": metadata.kv_indices[: rows * capacity],
         "eps": self.q_norm.variance_epsilon,
         "scale": backend.scale,
+        "max_context": capacity,
     }
-    reasons, qkv = [], None
-    for op, asked, made in _attention_ops(positions, metadata.kv_indices, rows, backend.max_context_len):
-        reason = op.fallback_reason(projected_qkv=_qkv_stand_in(self, hidden), **arguments, **asked)
-        if reason is not None:
-            reasons.append(reason)
-            continue
-        if qkv is None:
-            qkv, _ = self.qkv_proj(hidden_states)
-        result = op(projected_qkv=qkv, **arguments, **made())
-        if not isinstance(result, FallbackReason):
-            values, scales = result
-            return self.o_proj((values.view(rows, -1), scales))[0]
-        reasons.append(result)
-    return reasons[0]
-
-
-def _attention_ops(positions, kv_indices, rows, context_len):
-    """The ops the route asks, in order, each with the arguments to ask it with and a function
-    making those it is called with:
-    - Qwen3-Next's own, at the capacity sglang's context length rounds up to, which bounds
-      every row; its kv_indices are the first rows * capacity entries, which hold every row's
-      slots (a decode graph's buffer runs longer);
-    - qwen3_5's, on the one position row Qwen3-Next rotates by, given as its temporal, height
-      and width rows, which makes its interleaved mRoPE plain NeoX RoPE (row-major, as the
-      op reads them; asked with an empty stand-in, a temporary)."""
-    capacity = _capacity(context_len)
-    if capacity is not None:
-        own = {"positions": positions, "kv_indices": kv_indices[: rows * capacity], "max_context": capacity}
-        yield qwen3_next_gated_attention_decode_group_fp8_quant, own, lambda: own
-    rows_of_three = (3, positions.shape[0])
-    stand_in = torch.empty(rows_of_three, dtype=positions.dtype, device=positions.device)
-    yield (
-        gated_attention_decode_group_fp8_quant,
-        {"positions": stand_in, "kv_indices": kv_indices},
-        lambda: {"positions": positions.expand(rows_of_three).contiguous(), "kv_indices": kv_indices},
-    )
+    op = qwen3_next_gated_attention_decode_group_fp8_quant
+    reason = op.fallback_reason(projected_qkv=_qkv_stand_in(self, hidden), **arguments)
+    if reason is not None:
+        return reason
+    qkv, _ = self.qkv_proj(hidden_states)
+    result = op(projected_qkv=qkv, **arguments)
+    if isinstance(result, FallbackReason):
+        return result
+    values, scales = result
+    return self.o_proj((values.view(rows, -1), scales))[0]
 
 
 def _capacity(context_len):
@@ -322,12 +303,12 @@ def _capacity(context_len):
 
 
 def _attention_falls_back(layer, backend) -> bool:
-    """Whether sglang computes other than the ops: LoRA or sequence parallelism; another
+    """Whether sglang computes other than the op: LoRA or sequence parallelism; another
     backend or decode path than paged_attention_ragged over one-token pages (MLA, unified or
     sliding-window attention, a 5-D pool, context parallelism, a logit cap); KV scales other
     than 1 (sglang writes at the layer's and reads at 1); another rotary embedding than NeoX
-    RoPE on the ops' 64 channels; norm epsilons that differ; or an o_proj that cannot take
-    the ops' FP8 groups (_takes_fp8_groups, and no row-wise FP8 copy for its small-M path,
+    RoPE on the op's 64 channels; norm epsilons that differ; or an o_proj that cannot take
+    the op's FP8 groups (_takes_fp8_groups, and no row-wise FP8 copy for its small-M path,
     which only BF16 inputs take)."""
     from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
     from sglang.srt.layers.layernorm import GemmaRMSNorm

@@ -36,8 +36,7 @@ aklr = "aklr.plugins.aiter.provider:provider"
 include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
-"aklr.ops" = ["*/impls/*/*/*.json"]
-"aklr.plugins" = ["*/*/*/impls/*/*/*.json", "*/*/*/*.hip"]
+"aklr.plugins" = ["aiter/*/impls/*/*/*.json", "*/*/*/impls/*/*/*.json", "*/*/*/*.hip"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]
@@ -63,8 +62,9 @@ ignore = [
 "__init__.py" = ["F401"]
 
 [tool.pytest.ini_options]
-# The AgentX tests import the agentx_ci package from benchmarks/agentx.
-pythonpath = ["benchmarks/agentx"]
+# The AgentX tests import the agentx package from benchmarks/perf, the kernels report tests
+# kernels_report from benchmarks/kernels.
+pythonpath = ["benchmarks/perf", "benchmarks/kernels"]
 
 [tool.coverage.run]
 branch = true
@@ -80,7 +80,7 @@ omit = [
 show_missing = true
 # Python line coverage does not measure JIT kernel bodies.
 omit = [
-    "aklr/ops/*/impls/*",
+    "aklr/plugins/aiter/*/impls/*",
 ]
 
 [tool.coverage.paths]

@@ -118,48 +118,6 @@ def rounded_to_bfloat16(x: Tensor) -> Tensor:
     return x.to(torch.bfloat16).to(x.dtype)
 
 
-def from_float32(float32_tensor: Tensor, dtype: str) -> Tensor:
-    """The inverse of ``to_float32`` for a logical-shape tensor, in the primary storage
-    dtype on its device (-0 may become +0); a value ``dtype`` cannot hold exactly (NaN
-    included) raises ``ValueError``."""
-    import torch
-
-    decoding = DTYPE_TRAITS[DType(dtype)].decoding  # an unknown name: ValueError
-    shape = dtype_storage_shape(dtype, float32_tensor.shape)
-    stored = torch.empty(shape, dtype=torch_dtypes(dtype)[0], device=float32_tensor.device)
-    match decoding:
-        case {"kind": "cast"}:
-            stored.copy_(float32_tensor)
-        case {"kind": "nibble_table", "decoded_values": decoded_values}:
-            table = torch.tensor(decoded_values, dtype=torch.float32, device=float32_tensor.device)
-            nibbles = (float32_tensor.unsqueeze(-1) == table).byte().argmax(-1).byte()
-            stored.view(torch.uint8).copy_(nibbles[..., 0::2] | nibbles[..., 1::2] << 4)
-        case {"kind": "power_of_two", "exponent_bias": exponent_bias}:
-            codes = float32_tensor.log2() + exponent_bias
-            stored.view(torch.uint8).copy_(codes.clamp(0, 255))
-        case _:
-            raise ValueError(f"no decoding rule for {dtype}")
-    if not torch.equal(to_float32(stored, dtype), float32_tensor):
-        raise ValueError(f"a {dtype} tensor cannot hold the values")
-    return stored
-
-
-def absolute_value(tensor: Tensor, dtype: str) -> Tensor:
-    """``|x|`` in ``tensor``'s storage (int8 widens to int16): the sign bits cleared."""
-    import torch
-
-    DTYPE_TRAITS[dtype]  # an unknown name raises KeyError
-    if dtype == "float4_e2m1":
-        return (tensor.view(torch.uint8) & 0x77).view(tensor.dtype)  # both nibbles
-    if dtype in ("float8_e4m3fn", "float8_e5m2"):
-        return (tensor.view(torch.uint8) & 0x7F).view(tensor.dtype)
-    if dtype in ("float8_e8m0", "uint8", "bool"):
-        return tensor  # no sign
-    if dtype == "int8":
-        return tensor.to(torch.int16).abs()  # abs(-128) overflows int8
-    return tensor.abs()
-
-
 def _operand(dim: int | str) -> str:
     return str(dim) if isinstance(dim, int) or dim.isidentifier() else f"({dim})"
 

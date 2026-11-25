@@ -5,7 +5,7 @@
 2. **Establish the baseline.** Choose the approved runtime without AKLR, or a prior AKLR one,
    and keep all non-AKLR inputs identical between baseline and candidate.
 3. **Install and probe.** Verify each downstream can import and call the expected
-   AKLR interface (`aklr.ops` or the SGLang plugin) before starting expensive
+   AKLR interface (`aklr.plugins.aiter` or the SGLang plugin) before starting expensive
    workloads.
 4. **Run correctness.** Exercise representative end-to-end requests, compare
    outputs or accuracy metrics with declared tolerances, and retain failures and

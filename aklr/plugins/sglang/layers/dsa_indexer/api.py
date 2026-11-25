@@ -9,10 +9,8 @@ from aklr.plugins.sglang.layers.dsa_indexer.contract import (
     DSA_INDEXER_KEY_PREPARE,
     DSA_INDEXER_PREPARE,
     DSA_INDEXER_WRITER_PREPARE,
-    HEAD_DIM,
-    PAGE_SIZE,
-    ROPE_DIM,
 )
+from aklr.plugins.sglang.layers.dsa_indexer.reference import HEAD_DIM, PAGE_SIZE, ROPE_DIM
 
 __all__ = ["dsa_indexer_key_prepare", "dsa_indexer_prepare", "dsa_indexer_writer_prepare"]
 
