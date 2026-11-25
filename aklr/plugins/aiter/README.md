@@ -194,7 +194,9 @@ def run(<every input name, in schema order>, <every output name, in schema order
   (`PythonBuilder`): do not depend on the package name, and import sibling files only relatively.
 - A `@triton.jit` or `@gluon.jit` body reads no module-level value: Triton fails to compile a plain `BLOCK = 64`
   read inside the kernel. Pass it as a `tl.constexpr` parameter or write it inside the device function.
-- The authority is `aklr/core/validation/stages/audit/_rules.py` (SA0–SA4, reported as `SOURCE_REJECTED`); a
+- A kernel imports nothing of `aklr` but `aklr.core.jit`: it is checked against the reference and timed against
+  the baseline, and served without them (SA5).
+- The authority is `aklr/core/validation/stages/audit/_rules.py` (SA0–SA5, reported as `SOURCE_REJECTED`); a
   source that does not parse or nests too deeply to audit is rejected (SA0).
 
 ### hip kernels
@@ -251,7 +253,7 @@ def run(a, b, bias, out):
   launches, and memory shared between ranks are not supported; kernels that need them require changes to
   `aklr/core/jit/hsaco.py`.
 - `build.requires` pins the HIP that loads the code objects, such as `{"hip": ">=7.15"}`.
-- Sources are audited like other Python kernels (SA0–SA4), then by SC1–SC2
+- Sources are audited like other Python kernels (SA0–SA5), then by SC1–SC2
   (`aklr/core/validation/stages/audit/_hsaco.py`), so that kernel code reaches the GPU only through the launcher.
   SC1 limits imports to sibling sources, `aklr.core.jit.hsaco`, `torch`, and a few standard modules with no side
   effects. SC2 rejects `__import__`, `eval`, `exec`, `compile`, `globals`, `vars`, and the torch APIs that reach

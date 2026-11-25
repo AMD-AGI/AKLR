@@ -460,6 +460,16 @@ class TestPythonKernel:
                 "SA4",
                 id="extra_var_keyword",
             ),
+            pytest.param(
+                _py("from aklr.plugins.aiter.gemm.baseline import gemm_a16w16_baseline\n"),
+                "SA5",
+                id="imports_the_baseline",
+            ),
+            pytest.param(
+                _py(body="    import aklr.plugins.aiter.gemm.reference\n" + _COPY),
+                "SA5",
+                id="imports_aklr_in_launch",
+            ),
         ],
     )
     def test_rejects(self, audit: Callable, source: str, rule: str) -> None:
