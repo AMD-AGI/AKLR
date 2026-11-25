@@ -531,7 +531,7 @@ def main() -> int:
 
     schemas: dict[int, Schema] = {}
     for info in pkgutil.iter_modules(aklr.plugins.aiter.__path__):
-        if info.ispkg:
+        if info.ispkg and (OPS_DIR / info.name / "schema.py").is_file():
             module = importlib.import_module(f"aklr.plugins.aiter.{info.name}.schema")
             schemas.update({id(v): v for v in vars(module).values() if isinstance(v, Schema)})
 

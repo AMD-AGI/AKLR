@@ -29,7 +29,9 @@ def test_a_template_declares_a_dtype_only_for_an_input_a_call_may_leave_out() ->
 
 
 def test_a_definition_records_the_dtype_of_every_required_tensor(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(ENV_SCHEMA_PATH)  # with no path the collection is the checkout's dataset, aklr/plugins/aiter
+    monkeypatch.delenv(
+        ENV_SCHEMA_PATH
+    )  # with no path the collection is the checkout's dataset, aklr/plugins/aiter
     ops = OpVariants.ops()
     unrecorded = []
     for name, schemas in SchemaCollection.from_path().schemas.items():

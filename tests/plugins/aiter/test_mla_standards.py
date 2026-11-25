@@ -20,7 +20,9 @@ _SAMPLES = [
     OpSample(aklr.plugins.aiter.mla_prefill_varlen, "mla_prefill_varlen_prefix", _PREFIX),
     OpSample(aklr.plugins.aiter.mla_prefill_varlen_lse, "mla_prefill_varlen_lse", _PREFILL),
     OpSample(aklr.plugins.aiter.mla_prefill_varlen_lse, "mla_prefill_varlen_lse_no_causal", _PREFILL),
-    OpSample(aklr.plugins.aiter.mla_prefill_varlen_lse, "mla_prefill_varlen_lse_prefix", _PREFIX | {"n_offsets": 2}),
+    OpSample(
+        aklr.plugins.aiter.mla_prefill_varlen_lse, "mla_prefill_varlen_lse_prefix", _PREFIX | {"n_offsets": 2}
+    ),
     OpSample(aklr.plugins.aiter.mla_prefill_varlen_lse, "mla_prefill_varlen_lse_prefix_no_causal", _PREFIX),
 ]
 
@@ -66,7 +68,9 @@ def test_a_decode_request_reading_no_row_is_zero_with_lse_minus_inf() -> None:
 
 def test_a_cprr_query_reads_its_shards_rows_at_or_before_its_global_position() -> None:
     axes = {"batch": 2, "query_length": 3, "n_heads": 16, "n_slots": 300, "n_indices": 40, "n_offsets": 3}
-    sample = OpSample(aklr.plugins.aiter.mla_decode_fwd_cprr, "mla_decode_fwd_cprr", axes | {"cp_world_size": 4})
+    sample = OpSample(
+        aklr.plugins.aiter.mla_decode_fwd_cprr, "mla_decode_fwd_cprr", axes | {"cp_world_size": 4}
+    )
     call = sample.call()
     assert sample.api.resolve(call) is sample.template
     assert sample.schema().name == "mla_decode_fwd_cprr_query_length3_n_heads16_cp4"
@@ -109,7 +113,9 @@ def test_the_prefill_plan_reduces_every_query_row_once(causal: bool) -> None:
 def test_the_verify_logits_are_each_query_rows_logits_over_its_requests_pages() -> None:
     axes = {"batch": 2, "next_n": 3, "n_heads": 32, "n_pages": 4, "page_tokens": 64, "max_blocks": 2}
     sample = OpSample(
-        aklr.plugins.aiter.fp8_paged_mqa_logits_verify, "fp8_paged_mqa_logits_verify", axes | {"max_seq_len": 128}
+        aklr.plugins.aiter.fp8_paged_mqa_logits_verify,
+        "fp8_paged_mqa_logits_verify",
+        axes | {"max_seq_len": 128},
     )
     call = sample.call()
     assert sample.api.resolve(call) is sample.template

@@ -102,9 +102,9 @@ def audit(tmp_path: Path) -> Callable[[dict[str, str]], tuple]:
 
 class TestAuditStage:
     def test_committed_schemas_pass(self) -> None:
-        root = Path(aklr.plugins.aiter.__file__).parents[2]
-        paths = tuple(root.glob("aklr/plugins/aiter/*/impls/*/*/*.json"))
-        scope = ValidationScope(root, "", None, paths, ())
+        root = Path(aklr.plugins.aiter.__file__).parents[3]
+        scope = ValidationScope(root, "", None, (), ())
+        scope = replace(scope, schema_paths=tuple(scope.layout.paths()))
         assert AuditStage().run(scope, None).findings == ()
 
     @pytest.mark.parametrize(
@@ -226,6 +226,7 @@ class TestAuditStage:
             )
         directory = tmp_path / "aklr/plugins/aiter/gemm/impls/triton/gemm_bf16_nt_n32_k64"
         save_json_file(_schema({"kernel.py": _PLAIN}), directory / "kernel.json")
+        (tmp_path / "aklr/plugins/aiter/gemm/schema.py").touch()
         monkeypatch.chdir(tmp_path)
         scope = ValidationScope.of_working_tree(base, None)
         assert [f.detail for f in AuditStage().run(scope, None).findings] == [

@@ -78,6 +78,7 @@ class _Repo:
         schema = replace(schema, kernel=schema.kernel.with_unique_name())  # kernel names are unique
         path = f"aklr/plugins/aiter/gemm/impls/triton/{schema.name}/{schema.uuid}.json"
         save_json_file(schema, self.root / path)
+        (self.root / path).parents[3].joinpath("schema.py").touch()
         return path
 
     def commit(self) -> None:
@@ -110,6 +111,7 @@ class _Repo:
         )
         path = f"aklr/plugins/aiter/{op_type}/impls/triton/{schema.name}/{schema.uuid}.json"
         save_json_file(schema, self.root / path)
+        (self.root / path).parents[3].joinpath("schema.py").touch()
         return path
 
     def start(self, *args: str) -> subprocess.Popen:

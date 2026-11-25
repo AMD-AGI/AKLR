@@ -16,6 +16,7 @@ import pkgutil
 import warnings
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, ClassVar
 
 from pydantic import TypeAdapter
@@ -41,7 +42,7 @@ class OpVariants:
         import aklr.plugins.aiter
 
         for package in pkgutil.iter_modules(aklr.plugins.aiter.__path__):
-            if package.ispkg:
+            if package.ispkg and Path(package.module_finder.path, package.name, "schema.py").is_file():
                 importlib.import_module(f"aklr.plugins.aiter.{package.name}.api")
         return cls._ops
 

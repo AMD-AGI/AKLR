@@ -45,7 +45,11 @@ class TraceDumpLayout(SchemaLayout):
 @dataclass(frozen=True)
 class DefaultLayout(SchemaLayout):
     def paths(self) -> list[Path]:
-        return sorted(self.root.glob("*/impls/*/*/*.json"))
+        return sorted(
+            path
+            for marker in self.root.glob("*/schema.py")
+            for path in marker.parent.glob("impls/*/*/*.json")
+        )
 
     def path(self, schema: Schema) -> Path:
         if schema.kernel is not None:

@@ -268,7 +268,9 @@ class TestOpApi:
 
     def test_call_no_variant_matches_runs_the_fallback(self) -> None:
         case = OpSample(
-            aklr.plugins.aiter.gemm_fp8_nt_blockscaled, "gemm_fp8_nt_blockscaled", {"M": 4, "N": 256, "K": 256}
+            aklr.plugins.aiter.gemm_fp8_nt_blockscaled,
+            "gemm_fp8_nt_blockscaled",
+            {"M": 4, "N": 256, "K": 256},
         )
         with dispatcher():
             assert (
@@ -351,7 +353,28 @@ def test_a_thread_calling_while_the_env_starts_the_dispatcher_waits_for_it() -> 
     assert done.stdout.splitlines() == ["['Dispatcher', 'Dispatcher'] True"], done.stderr[-2000:]
 
 
+@pytest.fixture
+def packages_beside_the_ops(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Beside the ops, a package with a schema.py and one without, which fails when imported."""
+    for package, init in (("schema_op", ""), ("no_schema", "raise ImportError('not an op')\n")):
+        (tmp_path / package).mkdir()
+        (tmp_path / package / "__init__.py").write_text(init)
+        (tmp_path / package / "api.py").write_text("")
+    (tmp_path / "schema_op/schema.py").write_text("")
+    monkeypatch.setattr(aklr.plugins.aiter, "__path__", [*aklr.plugins.aiter.__path__, str(tmp_path)])
+    yield
+    for name in [n for n in sys.modules if n.startswith("aklr.plugins.aiter.schema_op")]:
+        del sys.modules[name]
+    vars(aklr.plugins.aiter).pop("schema_op", None)
+
+
 class TestOpVariants:
+    @pytest.mark.usefixtures("packages_beside_the_ops")
+    def test_only_a_package_with_a_schema_py_is_an_op(self) -> None:
+        OpVariants.ops()
+        assert "aklr.plugins.aiter.schema_op.api" in sys.modules
+        assert "aklr.plugins.aiter.no_schema.api" not in sys.modules
+
     def test_a_second_api_of_one_op_type_is_refused(self) -> None:
         assert "gemm_bf16_nt" in OpVariants.ops()
         with pytest.raises(ValueError, match="gemm_bf16_nt"):

@@ -30,10 +30,11 @@ from aklr.core.schema import (
     save_json_file,
 )
 from aklr.core.utils import dtype_str_to_torch_dtype, torch_dtype_to_dtype_str
+from aklr.core.validation import ValidationScope
 from aklr.plugins.aiter.fused_moe import fused_moe
 from tests.op_sample import GEMM_SAMPLE, OpSample
 
-_COMMITTED = sorted(Path(aklr.plugins.aiter.__file__).parent.glob("*/impls/*/*/*.json"))
+_COMMITTED = ValidationScope(Path(aklr.plugins.aiter.__file__).parents[3], "", None, (), ()).layout.paths()
 # the ops' own: tests add apis of their toy ops to the declared ones
 _VARIANTS = tuple(
     s
