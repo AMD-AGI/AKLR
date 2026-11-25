@@ -39,15 +39,16 @@ The weight layout, gate mode, clamp, comparison and baseline are those of DeepSe
   interleave with `swiglu_limit`, bf16 `hidden_states` and `out`, fp32 `topk_weights`, int32 `topk_ids`, routing weight
   in stage 2. Every workload passes `swiglu_limit` 10.0.
 - Expert parallel (the 96-local kernel): `expert_mask` over 384 global experts, 96 local; ids are global. No kernel here
-  takes `num_local_tokens`: calls of this shape that pass it (m 1024 and 2048) have no kernel here.
+  takes `num_local_tokens`: calls of this shape that pass it (m 1024 and 2048) are not described here, except for the
+  stage-2 patch of § Code, entry 1 (m 1024).
 - A token's expert ids are distinct (a precondition on `topk_ids`), and the inter-768 kernel relies on it when it ORs a
   token's bit into each of its experts' bitmaps.
 - Accuracy: bounded, whole-output SQNR ≥ 13 dB against the reference. The reference keeps the activations unrounded in
   this gate mode; all three kernels quantize them to MX-fp8 (Counter-signals).
 - Token counts covered: m 1, 2, 4, 8, 16, 32, 64 (inter 384); m 1, 2, 4, 16, 32, 64 (inter 768); m 1, 2, 16, 32 (96
   local). A token count counts as won from a speedup of 1.03 over the baseline. Not covered: m 128 and 256 at
-  inter 384 (Counter-signals), expert parallel with 48 local experts (m 1–128) and calls that pass `num_local_tokens`,
-  which have no kernel here.
+  inter 384 (Counter-signals), expert parallel with 48 local experts (m 1–128) and calls that pass `num_local_tokens`
+  (§ Code, entry 1, shows one piece of a kernel for them).
 - The baseline is aiter's `fused_moe` with `AITER_BF16_FP8_MOE_BOUND=16`: bf16 activations below 16 rows, fp8 from 16.
 
 ## Counter-signals
@@ -274,6 +275,50 @@ What the three share:
   *(field, E5)*. Stage 2: workgroup (two 16-column blocks, token); wave w walks its K range of every live route with the
   intermediate in LDS, the routes summed in order in each wave and the waves in wave order. Folding the routing into
   stage 1 and moving m 16 from aiter onto this path is worth +12.3% at m 16 *(field, E5)*.
+
+## Code
+
+### 1. Give stage 2's weight load its cache policy by patching aiter's builder (96 local of 384 experts, calls with `num_local_tokens`, 1024 tokens)
+
+From a fourth kernel of this layer shape, which the rest of this page does not describe: 96 local of 384 experts at
+inter 3072, for calls that pass `num_local_tokens`, written for 1024 tokens. It runs aiter's sort and aiter's two
+FlyDSL stages, retiled, and compiles stage 2 with a patched builder. aiter's mixed stage-2 builder takes the tuned
+row's `b_nt` and discards it (`del b_nt`), so its w2 load carries no cache modifier, where stage 1's B load passes
+`cache_modifier=b_nt`. That kernel restores it without a copy of the builder: on the first stage-2 compile, in a
+cached function, it rewrites the installed builder's source, dropping `del b_nt`, adding `cache_modifier=b_nt` to
+the w2 load and `_nt<b_nt>` to the kernel name so that the variants do not share a cache entry, and it fails if an
+anchor is not found exactly once. `mm` is aiter's module that holds the builder; `pm_tag` is part of aiter's
+kernel-name string, left as it is.
+
+```python
+@functools.cache
+def _s2_builder_nt():
+    from aiter.ops.flydsl.kernels import mixed_moe_gemm_2stage_common as mm
+
+    src = inspect.getsource(mm.compile_mixed_moe_gemm2_common)
+    for old, new in (
+        ("    del b_nt\n", ""),  # b_nt is no longer discarded
+        (
+            "offset_in_bytes=(b_elem_bytes == 1),\n",
+            "offset_in_bytes=(b_elem_bytes == 1), cache_modifier=b_nt,\n",  # the w2 load
+        ),
+        ('f"_vscale_fix3_fp4opt_v1{pm_tag}', 'f"_vscale_fix3_fp4opt_v1_nt{b_nt}{pm_tag}'),  # the kernel name
+    ):
+        if src.count(old) != 1:
+            raise RuntimeError(f"stage-2 patch anchor matched {src.count(old)} times: {old!r}")
+        src = src.replace(old, new)
+
+    # filename: a synthetic name under which src is registered in linecache, where inspect and tracebacks read it
+    namespace = dict(mm.__dict__)
+    exec(compile(src, filename, "exec"), namespace)
+    return namespace["compile_mixed_moe_gemm2_common"]
+```
+
+Not this: counting on the tuned row's `b_nt` to reach stage 2's w2 load through aiter's builder. The builder drops
+it, so a row named `_bnt2` loads w2 cached like `_bnt0`.
+
+Explained in `../flydsl/moe.md` § grouped_sorted_tokens §4; what the policy was worth on another MXFP4 fused MoE
+(hidden 6144, 128 experts, top-4): `../moe/grouped_sorted_tokens.md` §4. Not measured on this kernel.
 
 ## Result
 

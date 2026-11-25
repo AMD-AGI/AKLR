@@ -6,6 +6,7 @@ dtypes: [bf16]
 regimes: ["M 1-64", weight-stream, split-k]
 gens: [gfx950]
 triton: 3.8.0
+cases: [cases/bf16_triton_small_m.md]
 ---
 
 # Small-M GEMM in Triton (bf16, M ≤ 64, gfx950)
@@ -54,26 +55,8 @@ Reading B once is the source construction, not a measured HBM-traffic count:
 ## 2. Load B in the layout `tl.dot` wants
 
 For a row-major (N, K) weight (`out = a @ b.T`), build the `[BLOCK_K, BLOCK_N]` tile directly:
-`b_offs = offs_k[:, None] + offs_n[None, :] * K`, then `tl.dot(a, b)` with no `tl.trans`:
-
-```python
-# the N 2624 × K 6144 kernel: one N tile (pid_n) per workgroup over all rows of A; pid_k is the K split (§6), kphase §4
-offs_m = tl.arange(0, BLOCK_M)
-offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
-offs_k = tl.arange(0, BLOCK_K)
-row_ok = offs_m[:, None] < M
-a_offs = offs_m[:, None] * K + offs_k[None, :] + pid_k * k_chunk
-b_offs = offs_k[:, None] + offs_n[None, :] * K + pid_k * k_chunk  # [BLOCK_K, BLOCK_N], as tl.dot takes it
-acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-for i in tl.range(0, n_kb):
-    kb = ((i + kphase) % n_kb) * BLOCK_K
-    if EVEN_M:
-        a = tl.load((A + kb) + a_offs)
-    else:
-        a = tl.load((A + kb) + a_offs, mask=row_ok, other=0.0)
-    b = tl.load((B + kb) + b_offs, cache_modifier=".cg")
-    acc = tl.dot(a, b, acc=acc)
-```
+`b_offs = offs_k[:, None] + offs_n[None, :] * K`, then `tl.dot(a, b)` with no `tl.trans`
+([cases/bf16_triton_small_m](../../cases/bf16_triton_small_m.md) §1).
 
 Not this: loading `[BLOCK_N, BLOCK_K]` and calling `tl.trans`. In the N 2624 × K 6144 kernel that added `ds_bpermute_b32`
 shuffles (12 and 16 against 0 in the
@@ -95,42 +78,12 @@ In program order (`pid = raw`) they took up to 1.8 % more time with the caches f
 5 – 16 % less at N 6144 × K 2048, M ≤ 16 when the next calls re-read the same weight (warm cache or back-to-back graph
 calls), 1 run *(field, E18)*; what XCD order measured on other kernels:
 [../tuning.md](../tuning.md) §12. A remap must be a permutation of the grid for every grid
-size launched, including one not divisible by 8 (164 tiles = 8 × 20 + 4). The N 2624 × K 6144 kernel's gives `per` tiles to the first
+size launched, including one not divisible by 8 (164 tiles = 8 × 20 + 4). The N 2624 × K 6144 kernel's remap gives `per` tiles to the first
 `tall` XCDs and `per - 1` to the rest, one contiguous run per XCD, and is a permutation for every grid of 1 – 4096
-tiles, enumerated from the formula:
-
-```python
-# pid: the launch's program id; the result is the N tile (times the K split at M = 64) this workgroup computes
-@triton.jit
-def _xcd_remap(pid, GRID: tl.constexpr, NXCD: tl.constexpr):
-    per: tl.constexpr = (GRID + NXCD - 1) // NXCD
-    tall: tl.constexpr = GRID % NXCD if GRID % NXCD else NXCD
-    xcd = pid % NXCD
-    local = pid // NXCD
-    if xcd < tall:
-        tile = xcd * per + local
-    else:
-        tile = tall * per + (xcd - tall) * (per - 1) + local
-    return tile
-```
+tiles, enumerated from the formula in [cases/bf16_triton_small_m](../../cases/bf16_triton_small_m.md) §2.
 
 The N 6144 × K 2048 kernel deals runs of `CHUNK = 8` tiles per XCD at M = 32 and 64 (3 runs per XCD over its 192 tiles) and one run of 24
-per XCD at M ≤ 16:
-
-```python
-# the kernel function launched at M <= 16: one run of N_TILES // NXCD tiles per XCD
-pid = tl.program_id(0)
-pid = (pid % NXCD) * (N_TILES // NXCD) + (pid // NXCD)
-```
-
-```python
-# the kernel function launched at M = 32 and 64: runs of CHUNK tiles per XCD
-pid = tl.program_id(0)
-# ... (the K phase of §4, taken from the unmapped pid)
-blk: tl.constexpr = NXCD * CHUNK
-local = pid // NXCD
-pid = (local // CHUNK) * blk + (pid % NXCD) * CHUNK + (local % CHUNK)
-```
+per XCD at M ≤ 16 ([cases/bf16_triton_small_m](../../cases/bf16_triton_small_m.md) §3).
 
 Neither of these two remaps is a permutation at 164 tiles (enumerated from the formulas). A remap that is not a permutation
 leaves tiles unwritten, and timing does not flag it: the N 2624 × K 6144 kernel at M = 8 with `xcd * (GRID // 8) + local` on its 164 tiles
@@ -172,56 +125,8 @@ M = 2, 4, 8 no split was faster (split / no split 1.037–1.104, two of the six 
 
 Both kernels must be bitwise reproducible: every run's output byte-identical to the first's. So split-K must
 reduce in a fixed order: write each split's fp32 partial tile to scratch (`torch.empty`, sized by the cached host
-helper and allocated in the call) and sum the partials in a second kernel in split order:
-
-```python
-# the end of the GEMM kernel. One split (M ≤ 16): round and store to the output, which the host passes as W.
-# SPLIT_K > 1 (M = 64): split pid_k stores its fp32 partial tile into plane pid_k of the scratch W
-if SPLIT_K == 1:
-    c_ptrs = W + offs_m[:, None] * N + offs_n[None, :]
-    tl.store(c_ptrs, acc.to(W.dtype.element_ty), mask=row_ok)
-else:
-    w_ptrs = W + pid_k * (M * N) + offs_m[:, None] * N + offs_n[None, :]
-    tl.store(w_ptrs, acc, mask=row_ok)
-```
-
-```python
-# second kernel: adds the planes in split order 0, 1, ..., SPLIT_K - 1, then rounds once
-@triton.jit
-def _reduce_kernel(W, C, TOTAL, SPLIT_K: tl.constexpr, BLOCK: tl.constexpr):
-    offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
-    ok = offs < TOTAL
-    acc = tl.load(W + offs, mask=ok, other=0.0, cache_modifier=".cg")
-    for s in tl.static_range(1, SPLIT_K):
-        acc += tl.load(W + s * TOTAL + offs, mask=ok, other=0.0, cache_modifier=".cg")
-    tl.store(C + offs, acc.to(C.dtype.element_ty), mask=ok)
-```
-
-```python
-# host, the per-shape helper's M = 64 arm (cached): split_k = 6, total = m * n; it returns the scratch size with the launch
-def launch(a, b, out, ws):
-    _gemm_kernel[(n_tiles * split_k,)](
-        a,
-        b,
-        ws,
-        # ... (m, the constexprs and the launch options)
-    )
-    _reduce_kernel[(triton.cdiv(total, 1024),)](
-        ws, out, total, SPLIT_K=split_k, BLOCK=1024, num_warps=4
-    )
-
-return launch, split_k * total
-```
-
-```python
-# host entry, per call: ws_elems is the helper's scratch size, 0 (no scratch) where K is not split
-ws = (
-    torch.empty(ws_elems, dtype=torch.float32, device=a.device)
-    if ws_elems
-    else None
-)
-launch(a, b, out, ws)
-```
+helper and allocated in the call) and sum the partials in a second kernel in split order
+([cases/bf16_triton_small_m](../../cases/bf16_triton_small_m.md) §4).
 
 Not this: each split adding its partial into `out` with a float atomic. On a test GEMM with the N 2624 × K 6144 kernel's
 M = 64 shapes (6 fp32 partial planes), the fixed-order reduce gave one output in 100 runs, bit-equal to
@@ -287,32 +192,7 @@ a choice: [../tuning.md](../tuning.md) §1–§2.
 
 `waves_per_eu = 2` and `num_stages = 3` on every GEMM launch; `matrix_instr_nonkdim = 16` on all but the N 6144 × K 2048 kernel's
 M ≤ 16 launch, which passes none; and on the N 6144 × K 2048 kernel's M = 32 launch
-`schedule_hint="memory-bound-attention"`:
-
-```python
-# the N 6144 × K 2048 kernel's launch for 16 < m <= 32; grid = (n // 32,)
-_gemm_xcd_kernel[grid](
-    a,
-    b,
-    out,
-    m,
-    N=n,
-    K=k,
-    BLOCK_M=32,
-    BLOCK_N=32,
-    BLOCK_K=64,
-    NXCD=8,
-    CHUNK=8,
-    EVEN_M=even_m,
-    UNROLL=4,
-    KROT=1,
-    num_warps=4,
-    num_stages=3,
-    waves_per_eu=2,
-    matrix_instr_nonkdim=16,
-    schedule_hint="memory-bound-attention",
-)
-```
+`schedule_hint="memory-bound-attention"` (that launch: [cases/bf16_triton_small_m](../../cases/bf16_triton_small_m.md) §5).
 
 Triton 3.8.0 reads the hint nowhere: its only mention is the
 `HIPOptions` field ("Experimental; right now no effect", S5), and the N 6144 × K 2048 kernel's M = 32 kernel compiled to byte-identical

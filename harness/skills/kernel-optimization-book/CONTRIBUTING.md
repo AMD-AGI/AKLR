@@ -11,7 +11,8 @@ may have made it stale. `maintenance/kb_lint.py` enforces what can be checked me
   grouped GEMM · `attention/` attention
 - `communication/` the collectives between GPUs (EP against TP, collectives in traces) and the design of kernels
   that move data between GPUs; its pages are kept as an op package's are
-- `patterns/` symptom pages · `cases/` worked cases, one kernel or kernel family each · `pitfalls/` traps
+- `patterns/` symptom pages · `cases/` worked cases, one kernel or kernel family each, with its code ·
+  `pitfalls/` traps
 - `profile.md` trace capture and analysis, and perf-regression bisection: links to FlyDSL's own skills, with what
   this book adds
 - `hardware/<arch>/` an architecture's ISA guide, and the guides to looking things up in it (`hardware/gfx950/`:
@@ -37,10 +38,10 @@ One page answers one kind of question. A page of each kind has the front matter 
 
 | Kind | Answers | Front matter; sections | Folder |
 |---|---|---|---|
-| `technique` | How to do one thing (one `lever`), when it pays, when it does not, how to see it in the binary | title, lever, ops, dtypes, regimes, gens, flydsl, basis, sources; What it does, How to write it, When it applies, Counter-signals, How to confirm it took effect, Cost and risk, Evidence | the op's package (`gemm/`, `moe/`, `attention/`); one that several ops use goes to the package it was measured in, and the others link it |
+| `technique` | How to do one thing (one `lever`), when it pays, when it does not, how to see it in the binary | title, lever, ops, dtypes, regimes, gens, flydsl, basis, and `sources` or `cases`; What it does, How to write it, When it applies, Counter-signals, How to confirm it took effect, Cost and risk, Evidence | the op's package (`gemm/`, `moe/`, `attention/`); one that several ops use goes to the package it was measured in, and the others link it |
 | `pattern` | What a symptom in a trace or counter means, and which techniques to try | title, signals, ops, gens, flydsl, basis; Symptom, Likely causes, Rule out first, Candidate techniques, Evidence | `patterns/` |
 | `op` | What an op family computes, where its time goes per regime, which kernels to start from | title, ops, dtypes, gens, flydsl, basis; What it computes, Bottleneck by regime, Techniques that apply, Kernels to start from | the op's package; a new op gets its folder with its first design page (MLA and DSA: `attention/`) |
-| `case` | How one kernel or kernel family got its speed: the op, its shapes and dtypes, the GPU, the techniques it uses, what was measured and under which conditions | title, ops, dtypes, regimes, accuracy, gens, flydsl, basis, measured; Applies when, Counter-signals, Mechanism, Result | `cases/`, named `<op>_<gist>.md` |
+| `case` | How one kernel or kernel family got its speed, or what went wrong in it: the op, its shapes and dtypes, the GPU, the techniques it uses, its code, what was measured and under which conditions | title, ops, dtypes, regimes, accuracy, gens, flydsl (`triton` for a Triton or Gluon kernel), basis, measured; Applies when, Counter-signals, Mechanism, Result; `## Code` for the excerpts (§ Code) | `cases/`, named `<op>_<gist>.md` |
 | `pitfall` | A silent wrong result, a FlyDSL version trap or a measurement artifact | title, scope, gens, flydsl, basis; Symptom, Root cause, How to detect, Fix or workaround, Scope | `pitfalls/` |
 | `language-note` | What FlyDSL v0.3.2 does, read from its source: limits, compile errors, version differences | title, gens, flydsl, basis, sources | `flydsl/language/`; a correction of, or an addition to, one of FlyDSL's own skills is a bullet under that skill's section of `flydsl/guides.md` |
 | `topic` | One area of an op (a card of numbered sections, one lever or decision each), such as the GEMM main loop | title, ops, dtypes, regimes, gens, flydsl; Route here when | the op's package |
@@ -69,6 +70,16 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
 (`0.3.2`), `gens` the architectures (`[gfx950]`; `[gfx942]` on a page about gfx942 only, such as
 `gemm/gfx942.md`), `regimes` the M ranges, shapes or mechanisms it covers, never a phase (see below).
 
+- **`sources`** lists the public source a page was read from: another repository at a fixed revision (a commit or
+  a tag, not a branch), or a folder or file of it, as `owner/repo@revision[:path[:line]]`, and URLs; a note in
+  parentheses may follow either. Nothing else goes there: a path with no repository and revision cannot be
+  followed, and a kernel with no public copy is not a source.
+- **`cases`** lists the case pages a page draws on, as paths from the book's root
+  (`cases/k3_bf16_band_stream.md`): exactly the ones its text links. A link is a Markdown link, or the page's path
+  alone in a code span, outside fenced code. A kernel with no public copy enters the book as a case page, with its
+  code, and the pages that learned from it list that case. A technique has `sources`, `cases`, or both; a case page
+  has no `cases`, and `SKILL.md`, `CONTRIBUTING.md` and index pages list none.
+
 ## Evidence
 
 - **`basis`** says how the page knows what it says:
@@ -92,8 +103,9 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   (a URL, or `owner/repo@commit:path`); any other gives the result alone. A number with no run record says
   `unverified` in its line. No page names a file of one machine (`local:` references, workspace or shared-disk
   paths), and the linter rejects them. `S` lines cite public source of other
-  repositories as `file:line`; source with no public copy is stated without one, and code the reader needs is
-  shown in the page (§ What not to write). The text stays readable.
+  repositories as `file:line`; a line about source with no public copy says what that source does and cites
+  nothing. Where the reader needs such code, it is an entry of that kernel's case page, and the sentence the code
+  supports points there (§ Code). The text stays readable.
 - **A number measured on another kind of kernel, or in another language, says so in the sentence** ("on a grouped
   GEMM", "on an attention kernel", "in Triton"), not only in its evidence line: readers do not read the evidence.
   The op packages' numbers were measured on FlyDSL kernels unless a sentence says otherwise, and each package's
@@ -116,9 +128,8 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   measurement profiles; review catches the rest. In their place:
   - a kernel is named by what it computes: the op, the operand layouts and dtypes, the shapes, the GPU;
   - a measurement keeps its numbers and its conditions (§ Evidence);
-  - code the reader needs to act on a statement is shown in the page: a short excerpt under the statement, and a
-    counter-example ("Not this: …") where the page states that failure. An excerpt is copied from a kernel that
-    passed its checks, not written for the page;
+  - code the reader needs to act on a statement is in the book: in the case page of the kernel it was copied
+    from, which the statement links (§ Code);
   - a rule that holds only for one repository's kernels is kept outside the book, with that repository's own
     skills, which cite the book. The general lesson behind it stays here, stated as a condition anyone can meet
     ("the caller may capture the call into a CUDA graph, so launch code does not synchronize").
@@ -132,12 +143,31 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   what it was measured on.
 - **No unchecked claim.** Every statement is checked against source, the ISA or a GPU run before it goes in.
 
+## Code
+
+- **Code copied from a kernel is in that kernel's case page.** An excerpt another page points to is a numbered
+  entry under the case's `## Code`, `### 1. <what it shows>` on: which kernel and size it is from and what its
+  names are, the excerpt, `Not this: …` where the book states that failure, and where the book explains it. An
+  excerpt is copied from a kernel that passed its checks, not written for the page; a counter-example names what
+  goes wrong and, where it was measured, the number. Entries are numbered 1, 2, 3 … in page order, each with its
+  excerpt in a fenced block, and a case page numbers no other heading, so `<case>.md` §3 can only mean entry 3. An
+  excerpt only the case itself needs may sit in its Mechanism, under the statement it supports.
+- **Every other page points to the entry**, after the sentence the code supports: a link, or the path alone in a
+  code span, then the number (`[cases/<page>](../cases/<page>.md) §<n>`, `` `../cases/<page>.md` §<n> ``). The lint
+  checks that the entry exists. An entry keeps its number while it is in the page: a new excerpt takes the next
+  one, and a pull request that removes an entry moves every `§<n>` that cites the entries after it.
+- **A case of a kernel that failed is a case.** A kernel that was fast under one measurement and slow or wrong
+  where it ran is written up the same way; its code is the counter-example.
+- **What a page other than a case may show itself**: commands, formulas, a schedule in pseudo-code, ISA, and a
+  probe or skeleton written for the page and run as the page says. Not an excerpt of a kernel.
+
 ## How a page gets in
 
 1. Write the page in its folder (the table above), with the front matter and sections of its kind.
-2. `python maintenance/kb_lint.py <page>` reports no error. Link the page from where an agent looks for it: a row of
-   `SKILL.md`'s task or symptom table, or the package's `INDEX.md`. `patterns/`, `cases/` and `pitfalls/` need no
-   link by hand: `python maintenance/kb_index.py` rebuilds their generated `INDEX.md`.
+2. A kernel the page learned from that has no public copy gets its case page first (§ Code), and the page lists
+   it under `cases`. `python maintenance/kb_lint.py <page>` reports no error. Link the page from where an agent looks
+   for it: a row of `SKILL.md`'s task or symptom table, or the package's `INDEX.md`. `patterns/`, `cases/` and
+   `pitfalls/` need no link by hand: `python maintenance/kb_index.py` rebuilds their generated `INDEX.md`.
 3. Review, in the pull request that adds it: each claim against its source or a run, no existing page that covers
    it, `basis` set.
 
@@ -161,7 +191,7 @@ this skill, its language folders included.
 
 | Command | Does |
 |---|---|
-| `python maintenance/kb_lint.py [page ...]` | checks front matter, sections, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers, sizes, and that nothing cites the repository the book is kept in; exit 1 on an error; `--repo-root` for a copy of the skill |
+| `python maintenance/kb_lint.py [page ...]` | checks front matter (the form of `sources`, `cases` against the case pages the text links), sections, the entries of a case's `## Code`, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers, sizes, and that nothing cites the repository the book is kept in; exit 1 on an error; `--repo-root` for a copy of the skill |
 | `python maintenance/kb_lint.py --stale <version>` | lists pages and evidence lines checked against another FlyDSL version |
 | `python maintenance/kb_index.py [--check]` | rebuilds the generated `INDEX.md` of `patterns/`, `cases/` and `pitfalls/` |
 | `python maintenance/kb_quote_check.py <sidecar.tsv>` | checks that each quote of an evidence sidecar is at the source line it names |

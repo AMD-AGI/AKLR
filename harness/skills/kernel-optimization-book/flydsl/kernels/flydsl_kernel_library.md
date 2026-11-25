@@ -8,26 +8,33 @@ regimes: [any]
 gens: [gfx950]
 flydsl: 0.3.2
 sources:
-  - aiter/ops/flydsl/gemm_kernels.py
-  - aiter/ops/flydsl/kernels/hgemm_dispatch.py
-  - aiter/ops/flydsl/kernels/splitk_hgemm.py
-  - aiter/ops/flydsl/kernels/small_m_hgemm.py
-  - aiter/ops/flydsl/kernels/preshuffle_gemm.py
-  - aiter/ops/flydsl/kernels/splitk_epilogue.py
-  - aiter/ops/gemm_op_a8w8.py
-  - aiter/tuned_gemm.py
-  - aiter/ops/flydsl/moe_kernels.py
-  - aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py
-  - aiter/ops/flydsl/mxfp4_kname.py
-  - aiter/ops/flydsl/fhmoe.py
-  - aiter/ops/flydsl/moe_sorting.py
-  - aiter/ops/flydsl/kernels/moe_reduce.py
-  - aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
-  - aiter/ops/flydsl/linear_attention_kernels.py
-  - aiter/ops/flydsl/linear_attention_prefill_kernels.py
-  - aiter/ops/flydsl/mla_reduce_kernels.py
-  - aiter/fused_moe.py
-  - aiter/mla.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/gemm_kernels.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/hgemm_dispatch.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/splitk_hgemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/small_m_hgemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/preshuffle_gemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/splitk_epilogue.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/gemm_op_a8w8.py
+  - ROCm/aiter@dbd8bf5:aiter/tuned_gemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/moe_kernels.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/mxfp4_kname.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/fhmoe.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/moe_sorting.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/moe_reduce.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/linear_attention_kernels.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/linear_attention_prefill_kernels.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/mla_reduce_kernels.py
+  - ROCm/aiter@dbd8bf5:aiter/fused_moe.py
+  - ROCm/aiter@dbd8bf5:aiter/mla.py
+cases:
+  - cases/fused_moe_interleave_swiglu.md
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/k3_bf16_band_stream.md
+  - cases/k3_bf16_short_k_large_m.md
+  - cases/k3_bf16_splitk_narrow_n.md
+  - cases/k3_bf16_splitk_wide_n.md
 ---
 
 # The FlyDSL kernels in the baseline aiter

@@ -7,6 +7,7 @@ flydsl: 0.3.2
 basis: single-observation
 sources:
   - "ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1358"
+cases: [cases/biased_topk_eager_host_time.md]
 ---
 
 # Host time outside the graph ruler
@@ -32,35 +33,7 @@ took 85.8 and 96.1 µs per call against aiter's 15.5 and 65.5, 0.18× and 0.68×
 - The eager readings were taken with nothing queued ahead of the calls, so the host set the pace; behind enough
   queued GPU work the host time is hidden.
 
-The router kernel's launch path, the shape to look for:
-
-```python
-@flyc.jit
-def _launch(
-    logits: fx.Pointer,
-    bias: fx.Pointer,
-    n_tokens: fx.Int32,
-    # ... the other arguments, `stream` last
-):
-    # ... builds the kernel and launches it
-    ).launch(grid=(n_blocks, 1, 1), block=(64 * WPB, 1, 1), stream=stream)
-
-# hints only, no other arguments: this returns `_launch` itself, still a JitFunction
-_launch = flyc.compile[
-    {"llvm_options": {"amdgpu-kernarg-preload-count": 6, "slp-vectorize-hor": False}}
-](_launch)
-
-def run(*, router_logits, correction_bias, topk_weights, topk_ids, num_expert_group, topk_group, renormalize, routed_scaling_factor):
-    n_tokens = router_logits.shape[0]
-    wpb, prune, n_blocks, top2, ts, tiered = _config(n_tokens)
-    _launch(  # every eager call re-checks globals, binds the signature and rebuilds the cache key
-        flyc.from_c_void_p(fx.Int32, router_logits.data_ptr()),
-        flyc.from_c_void_p(fx.Int32, correction_bias.data_ptr()),
-        n_tokens,
-        # ... 11 more arguments
-        stream=torch.cuda.current_stream(),
-    )
-```
+The router kernel's launch path, the shape to look for, is in `../cases/biased_topk_eager_host_time.md` §1.
 
 ## How to detect
 

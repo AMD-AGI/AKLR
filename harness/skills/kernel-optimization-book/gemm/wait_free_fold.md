@@ -8,10 +8,12 @@ regimes: ["M 1-512", "M 512-4096 (bf16, N 64-256)", split-k]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=4
-sources:
-  - "../cases/k3_bf16_splitk_narrow_n.md § N 1024 and 2048 × K 7168 at m 1–128: the same in-workgroup ring, and a fold that does not wait"
-  - "../cases/k3_bf16_splitk_narrow_n.md § N 384 × K 7168 at m 7–256 (DeepSeek-V4-Pro's router): N 1024's ring on narrower tiles, a tagged fold at m 256"
-  - "../cases/bf16_k4096_splitk_hgemm.md § N 64–256 at m 256–4096: N 512 × K 4096's K split over waves, ported"
+cases:
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/bf16_n6144_k16384_counter_fold.md
+  - cases/bf16_small_m_column_strip.md
+  - cases/bf16_triton_small_m.md
+  - cases/k3_bf16_splitk_narrow_n.md
 ---
 
 # Wait-free split-K fold
@@ -29,7 +31,7 @@ it publishes with the launch and reads its partners' tags back, and whichever sp
 
 ## How to write it
 
-After its main loop, each split of a one-launch split-K kernel (the code is a bf16 GEMM's, shown under the steps):
+After its main loop, each split of a one-launch split-K kernel (the code is a bf16 GEMM's, linked under the steps):
 
 1. Each split stores its packed partial into its own plane with `sc0 sc1` (aux 17), which bypasses
    the non-coherent caches so the data meets across XCDs.
@@ -76,54 +78,14 @@ After its main loop, each split of a one-launch split-K kernel (the code is a bf
 
    The planes sit in the call's own `torch.empty` workspace, written before they are read.
 
-The first four steps on a bf16 GEMM with counters zeroed in the call (`bid` is the tile, `s_idx` the split,
-`c_frags` the accumulators; an access at `_OOB`, an offset past the buffer descriptor, is dropped):
+The kernels these forms were measured on are written up as cases: N 6144 × K 16384 (counters zeroed in the call) in
+`../cases/bf16_n6144_k16384_counter_fold.md`; N = K = 6144 in `../cases/bf16_small_m_column_strip.md`; N 64 × K 4096,
+N 128 × K 6144 and N 256 × K 6144 at m 256–4096 in `../cases/bf16_k4096_splitk_hgemm.md` (§ N 64–256 at m 256–4096);
+N 384 and N 2048 × K 7168 in `../cases/k3_bf16_splitk_narrow_n.md`.
 
-```python
-counter = _global_ptr(S, bid * (_COUNTER_LINE * 4))  # one 64-bit counter per tile, a cache line apart
-packed = [_pack24(fx.arith.unwrap(c_frags[f])) for f in range_constexpr(NF)]
-for f in range_constexpr(NF):
-    _bstore(packed[f], w_rsrc, own_off(s_idx, f), _SC01)  # step 1: own plane, _SC01 = 17 (sc0 | sc1)
-# the partials bypass the non-coherent caches: once stored they are visible on every XCD
-rocdl.s_waitcnt(vmcnt=0)  # step 2: every store acknowledged before the split counts in
-gpu.barrier()
-arrived_lds = _lds_ptr(a_lds_i64)
-if tid == fx.Int32(0):  # step 3: count in; the old count goes to the workgroup through LDS
-    before = llvm.atomicrmw(
-        llvm.AtomicBinOp.add,
-        counter,
-        fx.arith.constant(1, type=T.i64),
-        llvm.AtomicOrdering.monotonic,
-        syncscope="agent",
-    )
-    llvm.StoreOp(std_arith.TruncIOp(T.i32, before).result, arrived_lds)
-gpu.barrier()
-arrived = rocdl.readfirstlane(T.i32, llvm.LoadOp(T.i32, arrived_lds).result)
-```
-
-The fold, in the same kernel:
-
-```python
-if fx.Int32(arrived) == fx.Int32(SPLIT - 1):  # step 4: every other split has counted in, so this one folds
-    for f0 in range_constexpr(0, NF, _FOLD_BATCH):
-        fs = list(range_constexpr(f0, min(f0 + _FOLD_BATCH, NF)))
-        raw = {}
-        for f in fs:
-            for sp in range_constexpr(SPLIT):  # the other splits' planes; its own load is sent out of bounds
-                mine = s_idx == fx.Int32(sp)
-                off = arith.select(
-                    mine, fx.Int32(_OOB), fx.Int32(own_off(sp, f))
-                )
-                raw[f, sp] = _bload(T.vec(3, T.i32), w_rsrc, off, _SC01)
-        for f in fs:
-            tot = None
-            for sp in range_constexpr(SPLIT):  # split order, own partial from registers: the same bits whoever folds
-                mine = as_ir_value(s_idx == fx.Int32(sp))
-                part = std_arith.SelectOp(mine, packed[f], raw[f, sp]).result
-                v = Vector(_unpack24(part))
-                tot = v if tot is None else tot + v
-            cast = tot.to(fx.BFloat16)
-```
+The first four steps on a bf16 GEMM with counters zeroed in the call: the store, the wait and the count are in
+`../cases/bf16_n6144_k16384_counter_fold.md` §1, and the fold, in the same kernel, in
+`../cases/bf16_n6144_k16384_counter_fold.md` §2.
 
 Not this: an owner split that polls a flag or its partners' planes until they are published. On a stream limited
 to part of the CUs the partners may not be running, and such a fold wrote NaN *(field, E3)*.
@@ -157,41 +119,8 @@ The two layouts:
   again, loads the slots of its wave index in every split, makes the result uniform with `readfirstlane`, and folds
   if all match. A wave reads its partners' planes only when it folds.
 
-The per-wave layout in that kernel, from the store of a wave's summed partials on (`CPOL_SYS` is `sc0 sc1`, `S` the
-split count, `fold` the function that adds the planes in split order and writes C):
-
-```python
-    buffer_store(sm, ws_rsrc, plane_off(s_idx, frags[i]), cpol=CPOL_SYS)
-fx.rocdl.s_waitcnt(vmcnt=0)  # the planes are acknowledged before the tag is published
-
-did = llvm.call_intrinsic(T.i64, "llvm.amdgcn.dispatch.id", [], [], [])
-qp = llvm.call_intrinsic(ir.Type.parse("!llvm.ptr<4>"), "llvm.amdgcn.queue.ptr", [], [], [])
-qpi = llvm.PtrToIntOp(T.i64, qp).result
-qrot = std_arith.OrIOp(
-    std_arith.ShLIOp(qpi, _i64c(32)).result, std_arith.ShRUIOp(qpi, _i64c(32)).result
-).result
-tag = std_arith.XOrIOp(did, qrot).result  # dispatch.id ^ rotl(queue.ptr, 32)
-tag_lo = std_arith.TruncIOp(T.i32, tag).result
-tag_hi = std_arith.TruncIOp(T.i32, std_arith.ShRUIOp(tag, _i64c(32)).result).result
-grp_i32 = fx.Index(SLOT_BASE // 4) + (fx.Index(tile) * W + fx.Index(wid)) * SLOT_WORDS
-tagv = _vector.FromElementsOp(T.vec(2, T.i32), [tag_lo, tag_hi]).result
-buffer_store(tagv, ws_rsrc, grp_i32 + fx.Index(s_idx) * 2, cpol=CPOL_SYS)  # this split's slot of (tile, wave)
-fx.rocdl.s_waitcnt(vmcnt=0)  # read the partners' tags only after the own tag is acknowledged
-VW = min(4, 2 * S)
-vals = []
-for c in range_constexpr((2 * S) // VW):
-    v = buffer_load(ws_rsrc, grp_i32 + c * VW, VW, T.i32, cpol=CPOL_SYS)
-    for e in range_constexpr(VW):
-        vals.append(v_extract(v, e))
-ok = None
-for sp in range_constexpr(S):  # every split's tag must be this launch's
-    e_lo = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, vals[2 * sp], tag_lo).result
-    e_hi = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, vals[2 * sp + 1], tag_hi).result
-    e = std_arith.AndIOp(e_lo, e_hi).result
-    ok = e if ok is None else std_arith.AndIOp(ok, e).result
-ok_i = rocdl.readfirstlane(T.i32, std_arith.ExtUIOp(T.i32, ok).result)
-guarded(std_arith.CmpIOp(std_arith.CmpIPredicate.ne, ok_i, _i32c(0)).result, fold)
-```
+The per-wave layout in that kernel, from the store of a wave's summed partials on, is in
+`../cases/k3_bf16_splitk_narrow_n.md` §1.
 
 What it costs:
 
@@ -304,7 +233,7 @@ What was checked, and what was not, is under Cost and risk.
 - Each call owns its counters and partials, so overlapping calls do not share synchronization memory.
 - **A workspace cached per (device, stream) is shared by every CUDA graph captured on that stream.** In Triton,
   a bf16 GEMM with N 32 × K 6144 keeps its partials and counters in a `functools.cache` keyed on the device and
-  the current stream, zeroes the counters once and relies on the folding split's reset to 0 (code below). Under capture
+  the current stream, zeroes the counters once and relies on the folding split's reset to 0 (`../cases/bf16_triton_small_m.md` §7). Under capture
   the key is the capture stream, and torch's default capture stream is one per process, so graphs replayed at once,
   or a replay beside an eager call on the capture stream, share one set of partials and counters. *(field, E23)* At
   m 6–96, eager calls on the capture stream beside replays on another stream gave 30–33 wrong outputs of 400, and
@@ -313,17 +242,6 @@ What was checked, and what was not, is under Cost and risk.
   but the zeroing is captured and runs on every replay: *(field, E24)* 0.77–1.10 over aiter's tuned bf16 GEMM in graph
   replays, against 1.33–1.95 for the kernel with the cached workspace. Not tested: carving each capture's slice from a region zeroed
   once before capture, which needs no zeroing per replay because the folding split returns its counter to 0.
-
-  ```python
-  # Not this: one workspace per (device, stream), zeroed once, shared by every graph captured on the stream
-  @functools.cache
-  def _workspace(device, stream):
-      p = torch.empty(_MAX_PART, device=device, dtype=torch.float32)
-      cnt = torch.zeros(_MAX_TILES, device=device, dtype=torch.int32)
-      return p, cnt
-
-  p, cnt = _workspace(a.device, torch.cuda.current_stream(a.device).cuda_stream)
-  ```
 
 - Zeroing per-call counters adds one kernel to every split-K call: *(field, E5)* one `torch.zeros(64, int32)`
   before a bf16 GEMM (N=4096, K=2048, m=128) took the call from 8.013 to 11.909 µs. Against counters kept in

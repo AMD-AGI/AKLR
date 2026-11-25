@@ -17,10 +17,14 @@ sources:
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1414
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/kernel_function.py:367
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/
-  - aiter/ops/flydsl/kernels/splitk_hgemm.py
-  - aiter/ops/flydsl/gemm_kernels.py
-  - aiter/tuned_gemm.py
-  - csrc/gemm_a16w16/gemm_a16w16_tune.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/splitk_hgemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/gemm_kernels.py
+  - ROCm/aiter@dbd8bf5:aiter/tuned_gemm.py
+  - ROCm/aiter@dbd8bf5:csrc/gemm_a16w16/gemm_a16w16_tune.py
+cases:
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/bf16_small_m_column_strip.md
+  - cases/k3_bf16_splitk_narrow_n.md
 ---
 
 # GEMM in FlyDSL
@@ -422,17 +426,8 @@ In FlyDSL the wait before a split counts in is `rocdl.s_waitcnt(vmcnt=0)` follow
 
 A launch tag reads the dispatch id and the queue pointer with `llvm.call_intrinsic` of `flydsl._mlir.dialects.llvm`,
 as the launch-tagged kernels of `../gemm/wait_free_fold.md` do (the conditions the protocol rests on are under that
-page's Cost and risk):
-
-```python
-from flydsl._mlir import ir
-from flydsl._mlir.dialects import llvm
-from flydsl.expr.typing import T
-
-did = llvm.call_intrinsic(T.i64, "llvm.amdgcn.dispatch.id", [], [], [])
-qp = llvm.call_intrinsic(ir.Type.parse("!llvm.ptr<4>"), "llvm.amdgcn.queue.ptr", [], [], [])
-qpi = llvm.PtrToIntOp(T.i64, qp).result  # the queue address as i64
-```
+page's Cost and risk); the calls are in the fold of `../cases/k3_bf16_splitk_narrow_n.md` §1. There and in this
+section, `llvm` is `flydsl._mlir.dialects.llvm`, `ir` is `flydsl._mlir.ir` and `T` is `flydsl.expr.typing.T`.
 
 *(field, E10)* The id was the same in every workgroup of a launch and grew from launch to launch, eager and in graph
 replays; a second stream started again at 0 with a different queue address, so put queue bits in the tag

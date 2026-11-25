@@ -4,6 +4,10 @@ kind: method
 ops: [gemm, moe, attention, gdn]
 gens: [gfx950]
 triton: 3.8.0
+cases:
+  - cases/dsa_sparse_mla_gluon.md
+  - cases/mxfp4_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # Debugging a Triton or Gluon kernel (Triton 3.8.0, gfx950)
@@ -162,25 +166,8 @@ What each construct becomes in Triton 3.8.0 for gfx950 *(field, E2)*; a source l
 A change that does not show may sit where nothing compiles it: in a branch the size does not take (per-size constants
 select constexpr branches, and code written for other sizes is not compiled at this one), or after a `return` in the
 same block, which Triton does not trace: in DS256 at 2 tokens, the helper that packs activations into fp4
-bytes returns before its three sign-OR lines, so they are dead code (S56):
-
-```python
-@gluon.jit
-def _quantized_bytes(x, a):
-    # ... the sign of x applied to a, a split into lo and hi ...
-    packed = gl.inline_asm_elementwise(
-        "v_cvt_scalef32_pk_fp4_f32 $0, $1, $2, 1.0 op_sel:[0,0,0]",
-        constraints="=v,v,v",
-        args=[lo, hi],
-        dtype=gl.uint32,
-        is_pure=True,
-        pack=1,
-    ).to(gl.uint8)
-    return packed  # the block ends here: an edit to the three lines below changes no instruction
-    sign = gl.convert_layout(gl.where(x < 0, 8, 0).to(gl.uint8), pack_layout)
-    sign_lo, sign_hi = gl.split(sign.reshape((x.shape[0], 16, 2)))
-    return packed | sign_lo | sign_hi << 4
-```
+bytes returns before its three sign-OR lines, so they are dead code
+(S56; [cases/mxfp4_moe_gluon_dim6144](../cases/mxfp4_moe_gluon_dim6144.md) §7).
 
 Put `gl.static_print` in the branch (§4) or diff the amdgcn of two builds.
 
@@ -361,22 +348,8 @@ tokens), and without `allow_flush_denorm` the 4 DSA 64-head kernels' code did no
 reports its death by the exit signal; −11 is SIGSEGV, which the compiler can raise as well as the kernel. Setting the
 fold constant of the one-token gate-up launch of MM256-FP4 (the MiniMax-M2 MXFP4 MoE with all 256 experts on the rank) from 4 to 1 crashed every run *(field, E10)*:
 `gate_fold = 4 if m <= 2 else …` becomes the launch's `FOLD`, beside `NATIVE_FOLD=m in (1, 8)` and, at m ≤ 2,
-`llvm_fn_attrs` with `amdgpu-sched-strategy=iterative-ilp`:
-
-```python
-gate_fold = 4 if m <= 2 else 2 if m == 4 else 8 if m == 8 else 1
-gate_unroll = 6 if m == 2 else 3
-gate_attrs = (["amdgpu-sched-strategy", "iterative-ilp"],) if m <= 2 else ()
-_gate_up[gate_grid](
-    # ... the tensors and sizes ...
-    K_UNROLL=gate_unroll,
-    FOLD=gate_fold,  # 1 in place of 4 at m = 1, nothing else changed: the compile segfaults
-    PROJECT_ROWS=8 if m == 8 else 4 if m == 16 else 16,
-    TRANSPOSED=m not in (1, 2, 8),
-    NATIVE_FOLD=m in (1, 8),
-    llvm_fn_attrs=gate_attrs,
-)
-```
+`llvm_fn_attrs` with `amdgpu-sched-strategy=iterative-ilp`
+([cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §7).
 
 Compiled alone without a GPU, that launch segfaults inside `make_amdgcn` (LLVM's code generation, S29) and compiles
 once the scheduler attribute is dropped *(field, E10)*; [moe.md](moe.md) §7 gives the other combinations that compile.
@@ -392,31 +365,7 @@ passed *(field, E1)*.
 branches only, and the new constant takes another. In a 64-head DSA sparse MLA kernel at 24 tokens,
 `TILES = cdiv(TOPK, SPLITS * 256)`: 8 splits give each program one 256-key tile (`TILES` = 1) and the branch that
 allocates `cache_shared`; 4 splits give `TILES` = 2 and the branch that allocates `cache0`/`cache1`, while the 64-head
-path still reads `cache_shared`:
-
-```python
-TILES: gl.constexpr = triton.cdiv(TOPK, SPLITS * 256)  # TOPK 2048: 8 splits give 1 tile, 4 splits 2
-# ...
-if TILES > 1:
-    cache0 = gl.allocate_shared_memory(
-        Cache.dtype.element_ty, [256, 256], gl.SwizzledSharedLayout(LDS_VECTOR, 1, 16, [1, 0])
-    )
-    cache1 = gl.allocate_shared_memory(
-        Cache.dtype.element_ty, [256, 256], gl.SwizzledSharedLayout(LDS_VECTOR, 1, 16, [1, 0])
-    )
-else:  # (an `elif HEAD_TILE == 32:` before it allocates cache_shared in a padded layout)
-    cache_shared = gl.allocate_shared_memory(
-        Cache.dtype.element_ty, [256, VALUE], gl.SwizzledSharedLayout(LDS_VECTOR, 1, 16, [1, 0])
-    )
-for tile in gl.static_range(TILES):
-    # ...
-    if HEAD_TILE == 64:
-        key_rope = gl.convert_layout(rope, score_rhs)
-        scores = _wide_query_scores(
-            Query,
-            cache_shared,  # no branch defined it when TILES > 1
-            # ...
-```
+path still reads `cache_shared` ([cases/dsa_sparse_mla_gluon](../cases/dsa_sparse_mla_gluon.md) §7).
 
 The compile raised `NameError('cache_shared is not defined')` in every run *(field, E10)* ([attention.md](attention.md)
 §4). Read the host rule that sets a constant and every constexpr branch that reads it before changing it, and guard a

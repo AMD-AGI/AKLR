@@ -6,6 +6,12 @@ dtypes: [fp8, mxfp4, bf16, fp32]
 regimes: [all]
 gens: [gfx950]
 triton: 3.8.0
+cases:
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/fp8_moe_gluon_dim3072.md
+  - cases/gdn_chunked_gluon.md
+  - cases/gdn_step_gluon.md
+  - cases/mxfp4_moe_gluon_dim3072.md
 ---
 
 # Numerics of a Triton or Gluon kernel on gfx950
@@ -78,18 +84,8 @@ from values rounded at other points flips some fp8 codes: about 33 to 38 dB on t
 Of the library's 154 kernels, 52 output E4M3FN values with an fp32 scale per 128 values (gated attention 9, Qwen3.5 GDN decode 8 and prefill
 15, Qwen3-Next GDN decode 9 and prefill 11), so that the next block-fp8 linear takes them directly; 16 MoE kernels
 (MiniMax-M2 fp8 9, Qwen2-MoE fp8 7) quantize their own GEMM inputs per 1×128 the same way. The recipe, at the end of a
-GDN prefill kernel's gated RMSNorm, after `normalized = (...).to(gl.bfloat16)`:
-
-```python
-gl.store(Normalized + row[:, None] * 128 + col[None, :], normalized, valid[:, None])
-x = normalized.to(gl.float32)
-quant_scale = gl.maximum(gl.max(gl.abs(x), 1), 1e-10) * inv_quant_max
-encoded = gl.clamp(x * gl.div_rn(1.0, quant_scale)[:, None], min_quant, quant_max)
-gl.store(Quantized + row[:, None] * 128 + col[None, :], encoded, valid[:, None])
-gl.store(Scales + row, quant_scale, valid)
-```
-
-(The host passes `quant_max` = 448, `min_quant` = −448 and `inv_quant_max` = `1.0 / 448`.)
+GDN prefill kernel's gated RMSNorm, after `normalized = (...).to(gl.bfloat16)`, is in
+[cases/gdn_chunked_gluon](../cases/gdn_chunked_gluon.md) §5.
 
 - **Check quantization against the output's bound.** The references quantize the bf16-rounded output. On synthetic groups, quantizing the fp32 precursor instead put all 100000 scales outside a bound of two output roundings (2·u_out·|y|) and changed 282120 of 12.8M codes *(field, E10)*; under a Qwen3.5 GDN prefill kernel's own bounds at 16384 tokens the same change passed both checked runs (largest error 0.354, 0.64 and 0.348 of the bound for the normalized output, its fp8 values and their scales; one input set) *(field, E17)*. The output's bound decides.
 - **Floor amax at 1e-10 before forming the scale**, as all 68 quantizing kernels do: an all-zero group then gets a
@@ -97,51 +93,27 @@ gl.store(Scales + row, quant_scale, valid)
   The GDN and gated-attention references floor amax the same way; the MoE references floor the scale at float32's
   smallest normal instead, which leaves the same zero codes.
 - **Keep each group of 128 inside one wave**, so its amax needs no LDS: no warps on the 128 axis of a (rows, 128) tile,
-  like the excerpt's `BlockedLayout([1, 8], [8, 8], [1, 1], [1, 0])` at `num_warps=1`. Compiled for gfx950, its
+  like the recipe's `BlockedLayout([1, 8], [8, 8], [1, 1], [1, 0])` at `num_warps=1`
+  ([cases/gdn_chunked_gluon](../cases/gdn_chunked_gluon.md) §5). Compiled for gfx950, its
   `gl.max(gl.abs(x), 1)` is in-thread and cross-lane steps only; `BlockedLayout([1, 8], [16, 4], [2, 2], [1, 0])` on a
   32 × 128 tile adds 256 bytes of LDS and an `s_barrier`. A 1-D `BlockedLayout([4], [64], [2], [0])` holds a 128-value
   group whole in each wave, the second a copy.
 - **The amax of values already rounded to bf16** can be an integer max of their bit patterns with the sign cleared:
-  non-negative bf16 patterns order like their values. An MM64-FP8 kernel does so at 64 tokens:
-
-  ```python
-  @gluon.jit
-  def _max_bf16_magnitude_bits(a, b):
-      return gl.maximum(a, b)
-
-  @gluon.jit
-  def _quantize_fp8_groups(x, DTYPE: gl.constexpr, NARROW_PEAK: gl.constexpr = False):
-      if NARROW_PEAK:  # x holds bf16-rounded values: amax as an integer max of their bit patterns, sign cleared
-          bits = (x.to(gl.bfloat16).to(gl.uint16, bitcast=True) & 32767).to(gl.uint16)
-          peak_bits = gl.reduce(bits, 1, _max_bf16_magnitude_bits)
-          peak = peak_bits.to(gl.bfloat16, bitcast=True).to(gl.float32)
-      else:
-          peak = gl.max(gl.abs(x), 1)
-      peak = gl.maximum(peak, 1e-10)
-      first = peak * (1.0 / 448.0)  # the scale as a rounded product,
-      remainder = gl.fma(-first, 448.0, peak)  # corrected with its residual
-      scale = gl.fma(remainder, 1.0 / 448.0, first)
-      inverse = gl.inline_asm_elementwise(
-          "v_rcp_f32 $0, $1", "=v,v", (scale,), dtype=gl.float32, is_pure=True, pack=1
-      )
-      error = gl.fma(-scale, inverse, 1.0)  # one Newton step on the reciprocal
-      inverse = gl.fma(inverse, error, inverse)
-      q = (x * inverse[:, None]).to(DTYPE)
-      return (q, scale)
-  ```
+  non-negative bf16 patterns order like their values. An MM64-FP8 kernel does so at 64 tokens
+  ([cases/fp8_moe_gluon_dim3072](../cases/fp8_moe_gluon_dim3072.md) §3).
 
   A NaN pattern orders above Inf; map patterns above 0x7f80 to 0 where a NaN must not win, as the Qwen3-Next GDN
   decode kernels do.
 - **Quantize an fp8 output in a normalization's last pass**: normalization, bf16 store, amax, scale and codes in one program. In a synthetic RMSNorm + quantization of 4096 and 131072 rows of 128, the fused kernel took 0.55 and 0.61 of the time of a norm kernel followed by a quantization kernel, with the same codes and scales *(field, E10)*. In the epilogue of a plain-Triton bf16 GEMM (N = K = 4096) it gained nothing: 0.99 of the time of the GEMM followed by the quantization kernel at M = 512 and 8192, 1.03 at M = 16 *(field, E22)*. Inside one MoE op a GEMM input can instead be quantized by its consumer as it loads it ([moe.md](moe.md) §8).
 
 **Four ways to divide by the scale.** Most kernels form the scale as `amax · fl(1/448)`, a rounded product where the
-reference divides; a few divide (`amax / 448`) or correct the product with a residual step (`first`, `remainder` and `scale` in the excerpt above). Then x/scale:
+reference divides; a few divide (`amax / 448`) or correct the product with a residual step (`first`, `remainder` and `scale` in [cases/fp8_moe_gluon_dim3072](../cases/fp8_moe_gluon_dim3072.md) §3). Then x/scale:
 
 | Form | Kernels | Rounding of the code |
 |---|---|---|
 | a division per value: `gl.div_rn(x, s)` or `x / s` | gated attention, 7 of 9; Qwen2-MoE fp8 but the router+experts hidden state at 1–4 tokens; Qwen3-Next GDN decode: the kernels for 1 token and for 2 tokens, two kernels for 128 and 256 tokens, and the template (the Qwen3-Next GDN decode kernel written for all nine sizes: [gdn.md](gdn.md) §1) at 1, 128 and 256 tokens | correctly rounded |
 | one reciprocal per group: `x * gl.div_rn(1.0, s)` or `x * (1.0 / s)` | Qwen3.5 GDN decode and prefill; Qwen3-Next prefill; the other 2 gated attention kernels; four MiniMax-M2 fp8 kernels, one of them for its router input only (these four form the scale as `gl.div_rn(amax, 448.0)`) | one more rounding: a code can move at a tie |
-| `v_rcp_f32` refined, then `x * r` | MiniMax-M2 fp8, 6 of 9 carry this form: one Newton step in five (the excerpt above), one of them on its activation path only (the kernel that takes the second form for its router input); the sixth uses one Newton step followed by a residual correction with the original reciprocal | an extra rounding of the reciprocal or the product can move an fp8 code |
+| `v_rcp_f32` refined, then `x * r` | MiniMax-M2 fp8, 6 of 9 carry this form: one Newton step in five (code: [cases/fp8_moe_gluon_dim3072](../cases/fp8_moe_gluon_dim3072.md) §3), one of them on its activation path only (the kernel that takes the second form for its router input); the sixth uses one Newton step followed by a residual correction with the original reciprocal | an extra rounding of the reciprocal or the product can move an fp8 code |
 | `v_rcp_f32` with a Newton step, then each `q = x · r` corrected by `fma(fma(-s, q, x), r, q)` | Qwen2-MoE fp8 router+experts hidden state at 1–4 tokens (three kernels); Qwen3-Next GDN decode: the kernels for 4 and 8, for 32 and for 64 tokens, and the template at 2, 4, 8, 32 and 64 tokens (the 16-token kernel, and the template at 16, skip the Newton step); the 1-token and 2-token kernels carry the helpers unused | the quotient of an IEEE division on all 12.8M tested values near e4m3 midpoints, no proof for every input *(field, E10)*; the 64-token and 16-token kernels also execute `v_div_fixup_f32` after the correction |
 
 All four forms pass their bounds at the sizes they run at *(field, E1)*. The Qwen3.5 GDN decode tolerances (atol 2 and rtol 0.125 on the fp8 codes, rtol 0.02 on the scales) admit a code one e4m3 step off and a scale one ulp off (65536 moved codes and 512 moved scales passed *(field, E2)*). Default to the second form: one IEEE division (11 VALU, §6) per group of 128 instead of one per value, 236 against 550 VALU on 16 × 128 *(field, E10)*, a saving no timing isolates. The fourth form keeps the fp8 rounding boundary without a division per value: on 12.8M values within 2 ulps of e4m3 midpoints it matched IEEE division in every code and quotient *(field, E10)*, and on exhaustive bf16 inputs and random fp32 groups it matched the code of every nonzero x, but x = −0 gave +0 (code 0x00, not 0x80) unless signed zeros are kept with `gl.where(x == 0.0, x, q)` *(field, E23)*. That is no proof for every input; where a correctly rounded fp32 quotient is required, use `gl.div_rn(x, s)`. The fourth form: `r` from the asm `"v_rcp_f32 $0, $1"` (`"=v,v"`, `gl.float32`), one Newton step `r = gl.fma(r, gl.fma(-s, r, 1.0), r)`, `q = x * r`, then `q = gl.fma(gl.fma(-q, s, x), r, q)` (compiled: no `v_div_fixup_f32`). The scale floor keeps finite reciprocals normal only together with an upper bound on the scale: for finite bf16 or fp32 amax the floored amax/448 scales lie in about [2.23e-13, 7.60e35] (estimated), whose reciprocals are normal, and the floored `v_rcp_f32` reciprocals for amax from 0 to 1e30 were all normal *(field, E8)*. Supplied scales and non-finite intermediates need their own handling.
@@ -149,7 +121,7 @@ All four forms pass their bounds at the sizes they run at *(field, E1)*. The Qwe
 **Where the quantization is the op, match its reference's form.** The standalone fp8 group quantization these kernels were checked against (E4M3FN codes
 and an fp32 scale per group of 128, the common tolerances on both, §1) has the second form exactly as its reference, `fl32(max(amax, 1e-10) · fl32(1/448))`, then
 `fl32(1 / scale)` and `fl32(x · r)`: combining the scale and reciprocal into one division changes quantization ties,
-a code by one step, rarely on bf16 inputs *(field, E10)*. Against such a reference reproduce the form, as the excerpt at the head of this section does: the correctly
+a code by one step, rarely on bf16 inputs *(field, E10)*. Against such a reference reproduce the form, as the recipe at the head of this section does ([cases/gdn_chunked_gluon](../cases/gdn_chunked_gluon.md) §5): the correctly
 rounded `amax / 448` was one ulp below that product for 71 of the 128 bf16 significands and above it for none in each of the 25 tested normal-scale binades: inside the
 bound, but all one way, which failed a bias test (the mean error over its rms) *(field, E10)*. A code one step off is over a per-element tolerance where the reference's
 code is 0 or subnormal: there the bound is under a step.
@@ -167,63 +139,20 @@ type, S10), lowers on CDNA4 to `v_cvt_scalef32_pk_fp8_f32 …, 1.0`: scale 2^0, 
 only (S25). The same lowering makes Triton set MODE.FP16_OVFL at kernel entry,
 `s_setreg_imm32_b32 hwreg(HW_REG_MODE, 23, 1), 1` (S22); a compile for gfx950 shows both. With FP16_OVFL set, ±Inf and
 values that round above 448 convert to ±448 and NaN stays NaN; with it clear they become NaN (S26; [gluon/wave_ops.md](gluon/wave_ops.md) §7).
-- Without an explicit MODE write, the bit stays set for the whole kernel; inline asm can clear it and set it again later, the pair of writes the Qwen3-Next GDN decode template makes at 2, 4, 8 and 32 tokens (the second way below). Per the ISA it also clamps an overflowing FP16 result to ±MAX_FP16 and an
+- Without an explicit MODE write, the bit stays set for the whole kernel; inline asm can clear it and set it again later, the pair of writes the Qwen3-Next GDN decode template makes at 2, 4, 8 and 32 tokens (the second way below; code: [cases/gdn_step_gluon](../cases/gdn_step_gluon.md) §5). Per the ISA it also clamps an overflowing FP16 result to ±MAX_FP16 and an
   overflowing F32 MFMA result to ±MAX instead of ±Inf (S27, S26): measured for the bf16 and scaled-e4m3 MFMAs *(field, E10)*,
   while the fp32-input `v_mfma_f32_16x16x4_f32` still returned ±Inf ([gluon/wave_ops.md](gluon/wave_ops.md) §7): a kernel with
   any Triton fp8 cast can return a finite maximum where the reference overflows, which the non-finite rule rejects (§1).
 - An asm fp8 convert in a kernel without a Triton fp8 cast or an explicit MODE write starts with FP16_OVFL clear: overflow and ±Inf become NaN. Inline asm that sets bit 23 can instead enable saturation.
-- The Qwen3-Next GDN decode kernels (which pass their bounds *(field, E1)*) allow for the bit also saturating bf16 conversions, as measured: ±0x7F7F instead of ±Inf *(field, E10)*. They keep IEEE overflow three ways ([gdn.md](gdn.md) §6; `s_setreg`: [gluon/wave_ops.md](gluon/wave_ops.md) §7), which matters only where a bf16 convert, an FP16 result or an F32 MFMA result can overflow before the fp8 convert. First, keep Triton's fp8 store, so that the bit is set, and make a finite bf16 overflow a signed infinity by hand: the 1-token kernel, and the template at 1 token. Second, use no Triton fp8 cast, so that nothing sets the bit at entry: clamp to ±448, convert pairs of values with inline `"v_cvt_scalef32_pk_fp8_f32 $0, $1, $2, 1.0"` (`dtype=gl.uint32`), store them through a uint16 pointer, and switch the bit in asm that produces a value (`is_pure=False`), cleared on the program id at entry and set on the fp8 scale after the last bf16 rounding: the template at 2, 4, 8 and 32 tokens. Third, the same convert with the bit set in the convert's own asm string, `"s_setreg_imm32_b32 hwreg(HW_REG_MODE, 23, 1), 1\nv_cvt_scalef32_pk_fp8_f32 $0, $1, $2, 1.0"` (`is_pure=False`): the 32-token kernel. The first two, in the template:
-
-  ```python
-  # first way: the bf16 rounding where Triton's fp8 store has set the bit (OVFL_FIXUP is on at 1 token)
-  @gluon.jit
-  def round_bf16_ieee(value, OVFL_FIXUP: gl.constexpr):
-      # ...
-      if not OVFL_FIXUP:
-          return value.to(gl.bfloat16)
-      bits = value.to(gl.uint32, bitcast=True)
-      infinity = ((bits & 0x80000000) | 0x7F800000).to(gl.float32, bitcast=True)
-      value = gl.where(gl.abs(value) >= 3.39617752923046e38, infinity, value)
-      return value.to(gl.bfloat16)
-  # ...
-  # second way: the kernel's entry runs `pid = ieee_pid(pid)`, which clears the bit
-  @gluon.jit
-  def ieee_pid(pid):
-      return gl.inline_asm_elementwise(
-          "s_setreg_imm32_b32 hwreg(HW_REG_MODE, 23, 1), 0\ns_mov_b32 $0, $1",
-          "=s,s", (pid,), dtype=gl.uint32, is_pure=False, pack=1,
-      )
-  # after the last bf16 rounding `quant_scale = fp8_mode_scale(quant_scale)` sets it
-  @gluon.jit
-  def fp8_mode_scale(scale):
-      return gl.inline_asm_elementwise(
-          "s_setreg_imm32_b32 hwreg(HW_REG_MODE, 23, 1), 1\nv_mov_b32 $0, $1",
-          "=v,v", (scale,), dtype=gl.float32, is_pure=False, pack=1,
-      )
-  ```
+- The Qwen3-Next GDN decode kernels (which pass their bounds *(field, E1)*) allow for the bit also saturating bf16 conversions, as measured: ±0x7F7F instead of ±Inf *(field, E10)*. They keep IEEE overflow three ways ([gdn.md](gdn.md) §6; `s_setreg`: [gluon/wave_ops.md](gluon/wave_ops.md) §7), which matters only where a bf16 convert, an FP16 result or an F32 MFMA result can overflow before the fp8 convert. First, keep Triton's fp8 store, so that the bit is set, and make a finite bf16 overflow a signed infinity by hand: the 1-token kernel, and the template at 1 token. Second, use no Triton fp8 cast, so that nothing sets the bit at entry: clamp to ±448, convert pairs of values with inline `"v_cvt_scalef32_pk_fp8_f32 $0, $1, $2, 1.0"` (`dtype=gl.uint32`), store them through a uint16 pointer, and switch the bit in asm that produces a value (`is_pure=False`), cleared on the program id at entry and set on the fp8 scale after the last bf16 rounding: the template at 2, 4, 8 and 32 tokens. Third, the same convert with the bit set in the convert's own asm string, `"s_setreg_imm32_b32 hwreg(HW_REG_MODE, 23, 1), 1\nv_cvt_scalef32_pk_fp8_f32 $0, $1, $2, 1.0"` (`is_pure=False`): the 32-token kernel. The first two, in the template, are in
+  [cases/gdn_step_gluon](../cases/gdn_step_gluon.md) §5.
 
 ## 3. MXFP4 activation quantization
 
 Of the library's 154 kernels, all 42 MXFP4 MoE kernels (DeepSeek-V2/GLM 19, MiniMax-M2 23) quantize both expert-GEMM inputs to MXFP4 in registers:
 e2m1 values, one e8m0 scale per 32. The MoE references leave activations unquantized; this rounding is the kernel's,
-its error left to the 10 dB bound; a quantization op's is not (below). The recipe:
-
-```python
-peak = gl.max(gl.abs(x), 1)
-ratio = gl.div_rn(peak, 6.0)
-bits = ratio.to(gl.uint32, bitcast=True)
-exponent = (bits >> 23 & 255).to(gl.int32) - 127 + (bits & 8388607 != 0)
-exponent = gl.minimum(127, gl.maximum(-127, exponent))
-scale = gl.exp2(exponent.to(gl.float32))
-normalized = x * gl.div_rn(1.0, scale)[:, None]
-normalized = gl.where((normalized == 0) | (normalized != normalized), 0.0, normalized)
-even, odd = gl.split(gl.reshape(normalized, (x.shape[0], 16, 2)))
-packed = gl.inline_asm_elementwise(
-    "v_cvt_scalef32_pk_fp4_f32 $0, $1, $2, 1.0 op_sel:[0,0,0]", constraints="=v,v,v",
-    args=[even, odd], dtype=gl.uint32, is_pure=True, pack=1,
-).to(gl.uint8)
-return (packed, (exponent + 127).to(gl.uint8))
-```
+its error left to the 10 dB bound; a quantization op's is not (below). The recipe is in
+[cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §8.
 
 `x` is fp32 of shape (groups, 32), one MX block per row; the codes and scale bytes are MXFP4, ceil rule (below),
 RNE e2m1 *(field, E11)*. `gl.split` needs each pair in one thread: at least 2 consecutive elements per thread along the
@@ -276,18 +205,8 @@ $0, 0` and an early-clobber output (`"v_mov_b32 $0, 0\nv_cvt_scalef32_pk_fp4_f32
 register for constraint 'v'` to stderr, Triton 3.8.0 raises nothing, and the asm compiles to nothing: the kernel
 launches and writes no codes, or wrong ones (asm rules: [gluon/wave_ops.md](gluon/wave_ops.md) §2). A software encoder
 also works: an MM64-FP4 kernel compares |x| with the code midpoints, alternating `>` and `>=` so that ties go to the even
-code, and a NaN compares false and becomes code 0:
-
-```python
-@gluon.jit
-def _fp4_code(x):
-    a = gl.abs(x)
-    code = (a > 0.25).to(gl.uint8) + (a >= 0.75).to(gl.uint8)
-    code += (a > 1.25).to(gl.uint8) + (a >= 1.75).to(gl.uint8)
-    code += (a > 2.5).to(gl.uint8) + (a >= 3.5).to(gl.uint8)
-    code += (a > 5.0).to(gl.uint8)
-    return code | gl.where(x < 0, 8, 0).to(gl.uint8)
-```
+code, and a NaN compares false and becomes code 0
+([cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §9).
 
 At its two sizes, 128 and 256 tokens, it measured 1.19 and 1.194 times the speed of what sglang runs for the op (its gate and top-k, then aiter's `fused_moe`) *(field, E1)*.
 
@@ -302,17 +221,8 @@ one scale multiplies a whole block's dot product, and 0xFF is NaN (S31) *(field,
 The fp8 GEMMs with fp32 block scales (of the library's 154 kernels, the 24 a8w8 blockwise GEMMs; 13 of the 16 fp8 MoE kernels: MiniMax-M2's 9
 and the four Qwen2-MoE router+experts kernels) keep the scales out of the matrix core: each 128-K group gets its own MFMA from a zero
 accumulator with unit scales, `gl.amd.cdna4.mfma_scaled(aa, None, "e4m3", bb, None, "e4m3", zero)`, and the scale pair
-multiplies that partial in fp32, `dot * sx[…][:, None] * sw[…]` ([gluon/mfma.md](gluon/mfma.md) §2.1). In an a8w8 GEMM for N 7168 × K 2048, a group's operands are slices of the loaded tiles:
-
-```python
-@gluon.jit
-def _group_dot(a, b, zero, GROUP: gl.constexpr):
-    M: gl.constexpr = zero.type.shape[0]
-    BN: gl.constexpr = zero.type.shape[1]
-    aa = gl.amd.slice(a, (M, 128), (0, GROUP * 128))
-    bb = gl.amd.slice(b, (128, BN), (GROUP * 128, 0))
-    return gl.amd.cdna4.mfma_scaled(aa, None, "e4m3", bb, None, "e4m3", zero)  # unit scales, zero accumulator
-```
+multiplies that partial in fp32, `dot * sx[…][:, None] * sw[…]` ([gluon/mfma.md](gluon/mfma.md) §2.1). In an a8w8 GEMM for N 7168 × K 2048, a group's operands are slices of the loaded tiles
+([cases/a8w8_gluon_n3072_n7168](../cases/a8w8_gluon_n3072_n7168.md) §9).
 
 - **Why outside the MFMA.** Its scale operand is an e8m0 exponent (S31), the a8w8 block scales fp32 values from 2^U[-3,
   0], not powers of two *(field, E2)*; one `16x16x128` spans one 128-wide scale block, so one `sx · sw` scales it.
@@ -346,17 +256,8 @@ and solves; one Qwen3.5 GDN prefill kernel (1025 tokens) runs K·Kᵀ and Q·K�
 bf16. On the tested bf16 `[16, 16, 32]` MFMA, integer sums at K = 128 and 512 were bit-exact and randn error was
 under 1% of an fp32 dot-product rounding bound, 2·(6·√K + 2)·u_fp32·Σ|a·b| *(field, E8)*; this does not establish IEEE fp32 accumulation or cover fp16.
 
-**Split only the fp32 operand (MiniMax-M2 router).** The input is bf16; the fp32 router weight becomes three bf16 terms:
-
-```python
-b0 = b.to(gl.bfloat16, fp_downcast_rounding="rtz")
-residual = b - b0.to(gl.float32)
-b1 = residual.to(gl.bfloat16, fp_downcast_rounding="rtz")
-b2 = (residual - b1.to(gl.float32)).to(gl.bfloat16)
-high = gl.amd.cdna4.mfma(a, b0, high)
-middle = gl.amd.cdna4.mfma(a, b1, middle)
-low = gl.amd.cdna4.mfma(a, b2, low)
-```
+**Split only the fp32 operand (MiniMax-M2 router).** The input is bf16; the fp32 router weight becomes three bf16 terms
+([cases/fp8_moe_gluon_dim3072](../cases/fp8_moe_gluon_dim3072.md) §2).
 
 (The result is `high + (middle + low)`.) The two truncations take 16 significant bits and leave at most 8, so the
 three terms hold the fp32 weight exactly unless a lower term falls below bf16's normal range, and a bf16 × bf16 product
@@ -440,18 +341,8 @@ is one `v_exp_f32` and `libdevice.fast_dividef(1.0, x)` one `v_rcp_f32` (S51; co
   brings it to at most 0.5 ulp on the tested inputs *(field, E8)*. The Qwen3-Next GDN decode kernel that covers every
   size keeps a true division anywhere the reference expression is kept verbatim, a bare `v_rcp_f32` only where the
   caller immediately rounds to bf16 (then one bf16 ulp off in 7e-6 of inputs *(field, E8)*), and `v_rcp_f32` of the argument scaled by
-  2^-64 where the result can be subnormal, the reciprocal scaled by the same constant again:
-
-  ```python
-  # 2**-64, used to keep v_rcp_f32 inputs and outputs in the normal range.
-  _RESCALE = gl.constexpr(5.421010862427522e-20)
-  # ... in the sigmoid, `denominator` being 1.0 + exp(-value):
-          reciprocal = gl.inline_asm_elementwise(
-              "v_rcp_f32 $0, $1", "=v,v", (denominator * _RESCALE,),
-              dtype=gl.float32, is_pure=True, pack=1,
-          )
-          return reciprocal * _RESCALE
-  ```
+  2^-64 where the result can be subnormal, the reciprocal scaled by the same constant again
+  ([cases/gdn_step_gluon](../cases/gdn_step_gluon.md) §6).
 
   Where the quotient is itself a rounding point, add §2's correction.
 - `v_exp_f32`: that kernel's native exponential is `gl.exp2(x * log2(e))`; squaring `v_exp_f32(x · log2(e) / 2)`
@@ -495,14 +386,9 @@ The fusion switch can matter for speed: a Qwen3-Next GDN prefill kernel with fus
 - **Bitwise kernels use no atomics.** Of the library's 154 kernels, none of the 65 `bitwise` ones contains a global or LDS atomic; having no atomic does not by itself fix a reduction order, which the code must. The plain-Triton bf16 GEMM for N 2624 × K 6144 splits K six ways only for 16 < m ≤ 64 (of its sizes, m = 64): each split writes an fp32 partial tile, and a second kernel adds the six partials in a fixed order before rounding to bf16, so the result is bitwise reproducible, as it was at all its sizes *(field, E9)*; when that split pays: [gemm/small_m_gemm.md](gemm/small_m_gemm.md) §6.
 - **Bounded kernels use integer atomics, for positions only.** 31 of the 89 `bounded` kernels (DeepSeek-V2 12,
   MiniMax-M2 MXFP4 11, MiniMax-M2 fp8 6, Qwen2-MoE fp8 experts 2) contain an atomic. Their 42 global atomic calls are
-  all `sem="relaxed"` integer adds or ors that hand out tickets, job slots, cursors and token masks; three kernels also
+  all `sem="relaxed"` integer adds or ors that hand out tickets, job slots, cursors and token masks
+  (a ticket's code: [cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §10); three kernels also
   reserve LDS slots with `atomic_scatter_*`. No kernel has a float atomic.
-
-```python
-ticket = gl.atomic_add(Counts + experts, 1, valid, sem="relaxed")
-gl.store(Sorted + experts * CAPACITY + ticket, row * TOPK + slot, valid)
-new_job = valid & (ticket % 16 == 0)
-```
 
 `Counts` and `Total` must read zero at the start of every call, graph replays included (unzeroed, a replay's
 tickets started at 4096 *(field, E9)*): an earlier launch of the same call zeroes them ([moe.md](moe.md) §6). Where LDS

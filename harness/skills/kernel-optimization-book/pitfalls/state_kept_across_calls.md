@@ -5,6 +5,7 @@ scope: [launch code and kernels in FlyDSL, Triton / Gluon or HIP, kernels writte
 gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
+cases: [cases/gdn_step_gluon.md]
 ---
 
 # State kept between calls
@@ -45,27 +46,11 @@ The first two forms keep something derived from an argument across calls; in the
    A speedup measured on cache hits leaves out the repack.
 3. **Work that depends on the state's history, timed on state replayed in place.** The op's state is an input the
    kernel updates in place (`delta_state`, `conv_state`), and the GDN decode kernel stores only the 64 B segments of it whose
-   bits changed (the excerpt below). Replayed on one call's tensors, each call starts from the state the last one left; the
+   bits changed (code: `../cases/gdn_step_gluon.md` §8). Replayed on one call's tensors, each call starts from the state the last one left; the
    one-token recurrence settles toward a fixed point, fewer segments change and the kernel stores less: from 100% of
    the `delta_state` segments at calls 1–4 to 52% at call 64 and 20% after 400, and no `conv_state` stores from call 4
    *(field, E5)*. A serving step brings new tokens, so its state changes on every call. The kernel itself keeps
    nothing.
-
-```python
-# Gluon. old_bits: the state's bits as loaded; state: the values after this token's update
-new_bits = state.to(gl.uint32, bitcast=True)
-ol, oh = gl.split(old_bits.reshape((rows, 64, 2)))
-nl, nh = gl.split(new_bits.reshape((rows, 64, 2)))
-old_pairs = ol.to(gl.uint64) | (oh.to(gl.uint64) << 32)
-new_pairs = nl.to(gl.uint64) | (nh.to(gl.uint64) << 32)
-# a segment of WORDS 4 B words (16 here: 64 B) is dirty when any of its bits differ
-dirty = gl.max((old_pairs != new_pairs).reshape((rows, 128 // WORDS, WORDS // 2)).to(gl.int32), 2) != 0
-groups = old_bits.reshape((rows, 128 // WORDS, WORDS))
-dirty = gl.convert_layout(dirty, gl.SliceLayout(2, groups.type.layout))
-mask, _ = gl.broadcast(dirty[:, :, None], groups)
-# the store is masked: a segment that did not change is not written
-gl.amd.cdna3.buffer_store(state, DS, offsets, mask.reshape((rows, 128)), cache=CACHE)
-```
 
 A check that overwrites reused input buffers, weights included, through
 `.data.copy_()` fails form 2. Form 1 recomputes on the new values and

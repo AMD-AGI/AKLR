@@ -38,6 +38,9 @@ alone at inter dim 2048) and by the token counts it is built for:
 | 65-expert large-m | 65 experts, inter 2048 | 256, 2048, 4096 | one file |
 | 33-expert | 33 experts, inter 2048 | 1–4096 | one file |
 
+The code of the 257/256 fold kernel's sort, inline quantization and stage 2 is on
+[fused_moe_shuffled_16x16_few_tokens.md](fused_moe_shuffled_16x16_few_tokens.md).
+
 The 257/256 all-m, 33-expert and 65-expert all-m kernels were measured in two or more runs and the 257/256 fold kernel
 in one (the first table of § Result); the other five are newer and, but for one separate reading of the 257/512 fold
 kernel, have this page's runs only. "m" is the tokens in the call, the input batch, not the rows an expert receives. A
@@ -291,32 +294,8 @@ What the nine kernels share:
     `amdgpu-kernarg-preload-count` 16, `../gemm/small_m.md` §6): per 16-row block, 24 workgroups of 256 output columns,
     K = 256 in one tile, the MXFP4 intermediate by buffer→LDS DMA, weights non-temporal into registers, × routing
     weight, bf16x2 `atomicrmw fadd` into `out`. Upper-bound grids of 1728–6648 workgroups; those past the device bound
-    exit (`../moe/grouped_sorted_tokens.md` §2, §6). The epilogue's adds:
-
-    ```python
-    # per row and pair of columns: the fp32 result × the route's routing weight, packed as 2 × bf16
-    pk = Vec.from_elements(
-        [v2[0] * weight[mr], v2[1] * weight[mr]], fx.Float32
-    ).to(fx.BFloat16)
-    # then every row of the block adds its pairs into its token's row of `out`
-    for mr in range_constexpr(M_REPS):
-        token_id = packed[mr] & fx.Int32(0x00FFFFFF)
-        if token_id < i32_M:
-            row_base_addr = (
-                token_id * fx.Int32(N_OUT) + n_block_idx * fx.Int32(BN) + col_start
-            )
-            for s in range_constexpr(4):
-                off = (row_base_addr + fx.Int32(s * 64)) * fx.Int32(2)
-                out_ptr = _gep1(out_base, off)
-                llvm.AtomicRMWOp(
-                    llvm.AtomicBinOp.fadd,
-                    out_ptr,
-                    _raw(_pk_all[mr][s]),
-                    llvm.AtomicOrdering.monotonic,
-                    syncscope="agent",
-                    alignment=4,
-                )
-    ```
+    exit (`../moe/grouped_sorted_tokens.md` §2, §6). The epilogue's adds are in
+    [fused_moe_shuffled_16x16_few_tokens.md](fused_moe_shuffled_16x16_few_tokens.md) §7.
 
     Not this where two runs must give the same bytes: a token's 9 routes sit in different expert blocks, so their adds
     land in arrival order (Counter-signals, Every regime). The 1–2-token stage 2 above adds them in LDS in route order

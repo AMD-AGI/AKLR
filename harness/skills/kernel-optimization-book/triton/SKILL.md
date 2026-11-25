@@ -18,7 +18,7 @@ number's conditions.
 
 |Task|Read|
 |---|---|
-|Start|[library](kernels/kernel_library.md) §3; [authoring](authoring.md) §10|
+|Start|[library](kernels/kernel_library.md) §3, then the family's case page (its code); [authoring](authoring.md) §10|
 |ABI, scratch, keys, launches, capture, fallbacks|[authoring](authoring.md) §2–§9|
 |Validation|[authoring](authoring.md) §11; [debugging](debugging.md) §5–§6|
 |IR, ISA, VGPRs, LDS, occupancy|[debugging](debugging.md) §1–§3|

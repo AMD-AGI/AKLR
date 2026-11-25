@@ -6,6 +6,7 @@ dtypes: [bf16, fp8]
 regimes: ["one query token per sequence", gqa, split-kv]
 gens: [gfx950]
 triton: 3.8.0
+cases: [cases/gated_attention_gluon.md]
 ---
 
 # Qwen3.5 gated attention in Gluon: K and V into LDS, the merge launch, the prologue (gfx950)
@@ -41,41 +42,9 @@ in general, `../gluon/memory.md` §8–§11; the mechanisms measured on FlyDSL k
 | 16–64 | gathered into registers, converted to the QK operand | gathered into registers, stored to padded LDS, read as the P·V operand |
 | 128–256 | async copy at pre-swizzled offsets (Q joins K's first group) | async copy at pre-swizzled offsets; the compiled pre-QK wait leaves eight LDS-direct copies outstanding, overlap not measured *(field, E16)* |
 
-- **Two K/V commit groups do not guarantee V–QK overlap: the 8-row kernel shows it.** There the next tile's slot prefetch is issued after V's commit (`PREFETCH_STAGE == 2` in the excerpt below), so the compiled pre-QK `vmcnt(4)` leaves only those prefetch loads outstanding, no LDS-direct V copy (the kernel's early-V switch is not read on this direct-to-LDS path); with `PREFETCH_STAGE=1` or `0` the same wait leaves the 4 V copies outstanding *(field, E16, E22)*; one group uses `vmcnt(0)`. One group took about 1.019× the call time of two (2 runs, 8 pairs; 22.33–22.35 against 21.93–21.94 µs; accuracy passed), no evidence of V overlap or a resolved mean difference. At 128 rows the run-mean ratios were 1.167–1.169 (2 runs, 8 pairs; accuracy passed); at 256 1.102–1.108 (6 runs, 24 pairs; accuracy passed in 5 of the 6 runs). There the compiled pre-QK `vmcnt(8)` leaves eight LDS-direct copies outstanding, none with one group; the overlap at run time and its share of the gain were not measured *(field, E16)*. The 8-row kernel's K and V copies, with the prefetch stages (0 is after the K read):
+- **Two K/V commit groups do not guarantee V–QK overlap: the 8-row kernel shows it.** There the next tile's slot prefetch is issued after V's commit (`PREFETCH_STAGE == 2` in `../../cases/gated_attention_gluon.md` §4), so the compiled pre-QK `vmcnt(4)` leaves only those prefetch loads outstanding, no LDS-direct V copy (the kernel's early-V switch is not read on this direct-to-LDS path); with `PREFETCH_STAGE=1` or `0` the same wait leaves the 4 V copies outstanding *(field, E16, E22)*; one group uses `vmcnt(0)`. One group took about 1.019× the call time of two (2 runs, 8 pairs; 22.33–22.35 against 21.93–21.94 µs; accuracy passed), no evidence of V overlap or a resolved mean difference. At 128 rows the run-mean ratios were 1.167–1.169 (2 runs, 8 pairs; accuracy passed); at 256 1.102–1.108 (6 runs, 24 pairs; accuracy passed in 5 of the 6 runs). There the compiled pre-QK `vmcnt(8)` leaves eight LDS-direct copies outstanding, none with one group; the overlap at run time and its share of the gain were not measured *(field, E16)*. The 8-row kernel's K and V copies, with the prefetch stages (0 is after the K read), are in `../../cases/gated_attention_gluon.md` §4.
 
-  ```python
-          if DIRECT_LDS:
-              # Omit `other` to use native masked zero filling on CDNA4.
-              gl.amd.cdna4.async_copy.buffer_load_to_shared(
-                  cache_shared, Key, offsets, live[:, None])
-              gl.amd.cdna4.async_copy.commit_group()
-              if PREFETCH_INDICES and PREFETCH_STAGE == 1:
-                  # ... gl.load of the next tile's slots
-              if DUAL_LDS:
-                  gl.amd.cdna4.async_copy.buffer_load_to_shared(
-                      value_shared, Value, offsets, live[:, None], cache_modifier=VALUE_CACHE)
-                  gl.amd.cdna4.async_copy.commit_group()
-                  if PREFETCH_INDICES and PREFETCH_STAGE == 2:
-                      # ... gl.load of the next tile's slots
-                  # K must be complete; V can remain in flight during QK.
-                  gl.amd.cdna4.async_copy.wait_group(1)
-                  gl.barrier()
-                  key = cache_shared.permute((1, 0)).load(rhs).to(gl.bfloat16)
-  ```
-
-  The 256-row kernel after its pre-swizzled offsets:
-
-  ```python
-      if FULL_TILE:
-          gl.amd.cdna4.async_copy.buffer_load_to_shared(key_copy, key_ptr, key_offsets)
-          gl.amd.cdna4.async_copy.commit_group()
-          gl.amd.cdna4.async_copy.buffer_load_to_shared(value_copy, value_ptr, value_offsets)
-      else:
-          # ... the partial tile: the same copies and commit, masked with valid[:, None]
-      gl.amd.cdna4.async_copy.commit_group()
-      # Q/K are complete; V remains the one outstanding async group.
-      gl.amd.cdna4.async_copy.wait_group(1)
-  ```
+  The 256-row kernel's copies after its pre-swizzled offsets are in `../../cases/gated_attention_gluon.md` §5.
 
   The partial tile passes the mask `valid[:, None]` and no `other`: masked lanes read 0 with no branch. `other` adds a
   branch per copy and, by build, a store of `other` (S33): the MI355X image's Triton 3.8.0 made none, so masked rows
@@ -87,7 +56,7 @@ in general, `../gluon/memory.md` §8–§11; the mechanisms measured on FlyDSL k
   the source instead, one `ds_bpermute_b32` per copy (S33; compiled at `max_phase` 8). The 128- and 256-row kernels and
   the DSA 8-head kernels ([../attention.md](../attention.md) §3) XOR the global column with the consumer's swizzle, copy into a linear alias and restate the
   16-byte runs with `gl.max_contiguous(gl.multiple_of(offsets, [1, 16]), [1, 16])`; the 8-row kernel pays the
-  shuffles. Code and cost: `../gluon/memory.md` §5, §9; the swizzle to match: `../gluon/layouts.md` §4. Untimed.
+  shuffles. Code and cost: `../../cases/gated_attention_gluon.md` §12 and `../gluon/memory.md` §5, §9; the swizzle to match: `../gluon/layouts.md` §4. Untimed.
 - **Read async-copied tiles with a plain `.load()`.** The 128- and 256-row kernels (Q, K) and the DSA 8-head kernels
   use `gl.amd.cdna4.async_copy.load_shared_relaxed`, whose tag makes Membar drop the barrier between that read and
   any async copy into the same buffer, in either order (S34, S36). Compiled, a straight-line kernel copying K and V as
@@ -108,48 +77,23 @@ in general, `../gluon/memory.md` §8–§11; the mechanisms measured on FlyDSL k
 ## 2. The gate and fp8 group quantization in the merge launch
 
 The finish merges the splits of a (row, head) ([../attention.md](../attention.md) §2), then applies the gate and quantizes each group of 128 channels while
-the merged values are in registers. The 16-row kernel's epilogue:
-
-```python
-    attention = attention.to(gl.bfloat16).to(gl.float32)
-    offset = row * HEADS * 256 + group * 128 + d
-    gate = gl.load(Gate + offset).to(gl.float32)
-    sigmoid = (1.0 / (1.0 + gl.exp(-gate))).to(gl.bfloat16).to(gl.float32)
-    gated = (attention * sigmoid).to(gl.bfloat16)
-    gl.store(Gated + offset, gated)
-    values = gated.to(gl.float32)
-    amax = gl.max(gl.abs(values), 0)
-    quant_scale = gl.maximum(amax, 1.0e-10) * (1.0 / 448.0)
-    quant = gl.clamp(gl.div_rn(values, quant_scale), -448.0, 448.0)
-    gl.store(Quantized + offset, quant)
-    gl.store(Scales + row * HEADS * 2 + group, quant_scale)
-```
+the merged values are in registers. The 16-row kernel's epilogue is in `../../cases/gated_attention_gluon.md` §6.
 
 - **Give one wave whole groups,** so the amax reduces in registers: in one wave it takes no LDS or `s_barrier`, over two
   waves an LDS round trip and an `s_barrier` (compiled); the finishes map groups per size.
 - **Keep the reference's rounding points.** The reference rounds the attention output and the gated product to bf16;
   the kernels also round the sigmoid to bf16, which the reference does not, and pass *(field, E3)*; without the
   two roundings the 32-row kernel still passed but moved 2060 of 65,536 fp8 codes *(field, E13)*. Quantization forms
-  (`gl.div_rn` here, `values * (1 / scale)` at 128 and 256 rows), the clamp and the op's accuracy bounds: `../numerics.md` §2.
-- **Drop the bf16 `Gated` store when you copy this.** Every finish writes it, and the host code discards it.
+  (`gl.div_rn` in `../../cases/gated_attention_gluon.md` §6, `values * (1 / scale)` at 128 and 256 rows), the clamp and the op's accuracy bounds: `../numerics.md` §2.
+- **Drop the bf16 `Gated` store when you copy the epilogue.** Every finish writes it, and the host code discards it.
 - **In the 256-row finish the compiler kept the gate load first.** The 256-row finish loads the gate before the statistics; moved
   below the merge, the gate load still issues first and the finish takes 0.98–1.00× as long over 4 runs *(field, E2)*.
 
 ## 3. The prologue
 
 The first launch RMS-normalizes Q and K, applies mRoPE, writes K and V into the e4m3 pools and copies the gate, in
-one-wave programs that each own one job of a row. The 32-row kernel's head job begins:
-
-```python
-    variance = gl.sum(source * source, axis=0) / 256.0
-    normalized = (
-        source * gl.rsqrt(variance + eps) * (1.0 + weight)
-    ).to(gl.bfloat16)
-    normalized_float = normalized.to(gl.float32)
-
-    half: gl.constexpr = rotary_dim // 2
-    partner = gl.gather(normalized_float, offsets ^ half, axis=0)
-```
+one-wave programs that each own one job of a row. The start of the 32-row kernel's head job
+is in `../../cases/gated_attention_gluon.md` §7.
 
 - **A head per wave or sub-wave**, so the RMS sum stays in the wave: `BlockedLayout([1], [64], [1], [0])` for one head,
   threads per warp `[heads_per_wave, 64 // heads_per_wave]` for 2 or 4.
@@ -169,19 +113,8 @@ one-wave programs that each own one job of a row. The 32-row kernel's head job b
   `f % 3 == 2 and f < 30`, else `positions[0]`. Encodings include two `uint32` masks the host builds from
   `mrope_section`, the same masks as Python ints, written signed as 0x92492492 does not fit an int32, and a
   `uint64` table of two-bit axis ids; each gives the rule, and every kernel's key cache follows it. The two masks in
-  the 32-row prologue, one bit per frequency:
+  the 32-row prologue, one bit per frequency, are in `../../cases/gated_attention_gluon.md` §8.
 
-  ```python
-          # Masks encode only the static section layout, never position data.
-          height_mask = gl.full((), axis_masks[0], gl.uint32, layout)
-          width_mask = gl.full((), axis_masks[1], gl.uint32, layout)
-          height = ((height_mask >> frequency.to(gl.uint32)) & 1) != 0
-          width = ((width_mask >> frequency.to(gl.uint32)) & 1) != 0
-          axis = gl.where(height, 1, gl.where(width, 2, 0))
-          position = gl.load(
-              positions_ptr + axis * positions_stride + token
-          ).to(gl.int64)
-  ```
 - **The reference's rounding points.** The RMSNorm result rounds to bf16 before RoPE, the 192 unrotated channels included.
   The cache value is `gl.div_rn(x, scale)` rounded to bf16, which the fp8 store then converts; with
   the unit scales the host code passes, the division is exact, and every kernel's caches equal that chain bitwise: without

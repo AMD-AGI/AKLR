@@ -6,6 +6,10 @@ dtypes: [fp8, bf16]
 regimes: ["M 1-64", "M 128-8193", tiny-M K-group folding, ragged-M, split-k]
 gens: [gfx950]
 triton: 3.8.0
+cases:
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/a8w8_n4096_k_sweep.md
+  - cases/bf16_triton_small_m.md
 ---
 # GEMM in Triton and Gluon (gfx950)
 The Triton side of [`../gemm/`](../gemm/INDEX.md): how 24 Gluon fp8 block-scaled (a8w8 blockwise) GEMMs and two plain-Triton bf16 GEMMs for M ≤ 64 of the library (154 Triton and Gluon kernels for gfx950: [kernels/kernel_library.md](kernels/kernel_library.md) §1) are cut by M, how their K loops feed the matrix core, and what was measured on them. The `../gemm/` cards cover the related mechanisms. The fp8 shapes are named n3072 and n7168 after their N, the bf16 ones by N × K (§1's table); m or M is the row count of `a`.
@@ -38,16 +42,7 @@ rounding, `numerics.md`; writing and checking a kernel, `authoring.md`; loop des
 All 24 a8w8 GEMMs launch one kernel per call, one program per output tile, no persistent loop, all of K in each program, no split-K, no atomics; dequantization is fused into the K loop, and the epilogue sums what a kernel kept apart (folded groups at M ≤ 8, m = 8 and 32's second accumulator, m = 256's delayed folds), rounds to bf16 and stores (§12). Weight-versus-FLOP estimates at M ≤ 256 use 4.5 MiB (n3072) or 14 MiB (n7168) of fp8 weight: n7168 at M = 256 is 7.52 GFLOP, about 1.53 µs at 4923 TFLOP/s against 2.45 µs to read 14 MiB at 6 TB/s (estimated). Timed only to M = 64: n3072 4.13–4.50 µs at M = 2–64; n7168 4.19–4.67 µs to M = 32 and 6.27–6.34 µs at M = 64, 4 runs *(field, E21)*. M = 128 and 256 were not timed, nor was the grid sizing; classify a call site with `../gemm/small_m.md` §2, `../gemm/grid_pricing.md` §1.
 Each logical 128-K scale-group contribution is scaled in fp32 before it joins the running sum. Tiny-M kernels
 extract that contribution from packed products (§4), and 32 × 32 kernels may chain two 64-K instructions (§2).
-For n3072 M = 16, the group starts from zero and is folded as follows:
-```python
-# n3072, m = 16: one instruction per 128-K group on a zero accumulator, then the fp32 fold
-if EARLY_MFMA:
-    partial = gl.amd.cdna4.mfma_scaled(
-        a, None, "e4m3", b, None, "e4m3", gl.zeros((16, 16), gl.float32, LC)
-    )
-# ... (the refill, the wait and the read-ahead of §5; the same call under `if not EARLY_MFMA:`)
-acc = gl.fma(partial * sx, sw, acc)
-```
+For n3072 M = 16, the group starts from zero and is folded (code: `../cases/a8w8_gluon_n3072_n7168.md` §2).
 `LC` is `AMDMFMALayout(4, [16, 16, 128], transposed=True, warps_per_cta=[1, 1])`; `a` and `b` carry
 `DotOperandLayout(0 or 1, LC, k_width)`, `k_width` 16 at m = 16 and 32 at m = 32 and 64: one instruction per 128-K
 group either way (`gluon/mfma.md` §5). §5's skeleton writes all of it out.
@@ -101,41 +96,16 @@ with (token, K group) pairs (the other n7168 variants are described below): row 
 row `j` of the B tile holds output column `j // PG`, group `j % PG`. The instruction computes every (A group,
 B group) product; the kernel keeps the diagonal where the groups match, scales it, and sums the `PG` groups at the
 end. Three bounds pick `PG`: M × PG ≤ 16 A rows; 16 / PG output columns per 16-row B instruction (4 at PG = 4, 8 per
-wave at m = 8's PG = 2); PG divides K / 128. `group` gets the split diagonal's layout from a zero tile put through
-the same reshape and splits, the carrier. n3072 m = 1 (`PG = 4`, 4 output columns, 3 panels of 4 groups):
-```python
-# n3072, m = 1: the carrier gives `group` the split diagonal's layout; keep the diagonal, then sum the PG groups
-even_carrier, _ = gl.split(
-    gl.reshape(gl.zeros((VM, VN), gl.float32, LC), (VM, BN, 2, 2))
-)
-carrier, _ = gl.split(even_carrier)
-rows = gl.arange(0, VM, gl.SliceLayout(1, carrier.type.layout))
-group = rows % PG
-for panel in gl.static_range(3):
-    # ... (the wait, the scales, the operands and the MFMA into `partial`)
-    even, odd = gl.split(gl.reshape(partial, (VM, BN, 2, 2)))
-    p0, p2 = gl.split(even)
-    p1, p3 = gl.split(odd)
-    pair0 = gl.where((group[:, None] & 1) == 0, p0, p1)
-    pair1 = gl.where((group[:, None] & 1) == 0, p2, p3)
-    diagonal = gl.where(group[:, None] < 2, pair0, pair1)
-    # ... (`diagonal` scaled and added to `acc`)
-result = gl.sum(gl.reshape(acc, (M, PG, BN)), 1)
-```
+wave at m = 8's PG = 2); PG divides K / 128. In the code of the n3072 m = 1 kernel (`PG = 4`, 4 output columns, 3 panels
+of 4 groups; `../cases/a8w8_gluon_n3072_n7168.md` §3), `group` gets the split diagonal's layout from a zero tile put
+through the same reshape and splits, the carrier.
 - **Variants.** n3072 m = 2 and 4 run the same kernel with `VM = M · PG` rows (m = 4 fills all 16, adds an LDS
   read-ahead and preloads its scales); m = 8 folds two groups on both operands, its 6 two-group products issued
   before the loop in 3 commit groups. n7168 M = 8 folds the same way (`PG = 2`) and picks the diagonal with
   `gl.amd.slice`, `reshape`, `permute` and `convert_layout(..., assert_trivial=True)`, which fails to compile if the
-  selection would move data between lanes (S19; the code is below). n7168 M = 2 and 4 fold only A (4 K groups × M tokens) and take
+  selection would move data between lanes (S19; code: `../cases/a8w8_gluon_n3072_n7168.md` §4). n7168 M = 2 and 4 fold only A (4 K groups × M tokens) and take
   one 128-K group of 16 weight columns per MFMA, keeping that group's rows; M = 1 packs 4 groups on A and 2 on B,
   with a zero example tile as carrier.
-```python
-# n7168, M = 8: `dots` holds every (A group, B group) product; take B group GROUP's columns, then A group GROUP's rows
-columns = gl.amd.slice(dots, (M * PG, BN), (0, GROUP * BN))
-groups = columns.reshape((M, PG, BN)).permute((1, 0, 2))
-chosen = gl.amd.slice(groups, (1, M, BN), (GROUP, 0, 0)).reshape((M, BN))
-return gl.convert_layout(chosen, OUT, assert_trivial=True)  # a compile error if lanes would have to move
-```
 - **Confirm the selection stays in registers.** Compiled (Triton 3.8.0, gfx950), m = 1 has 131 instructions:
   3 `v_mfma_scale_f32_16x16x128_f8f6f4`, 9 `buffer_load_dwordx4 … lds`, 12 `ds_read_b128`, 10 `v_cndmask_b32` (9 for
   the selection, 1 masking the store's duplicate lanes), 2 DPP adds for the group sum, no `ds_bpermute`, no
@@ -252,34 +222,17 @@ group's copy issued before the wait) and `EARLY_MFMA` (the MFMA issued before th
     (compiled). A four-wave toy with 2 groups ahead and 3 slots gave wrong sums in every launch (200 per delay, four
     delays, two runs), including a pinned variant (48–89% of outputs wrong) whose refill stayed behind its own wave's
     earlier read. Four slots, or three plus a barrier before the refill, gave zero wrong *(field, E26)*; these toys
-    show that AHEAD + 1 slots is not enough, not that the m = 128 / 256 kernels fail (the code is below the list);
+    show that AHEAD + 1 slots is not enough, not that the m = 128 / 256 kernels fail (code:
+    `../cases/a8w8_gluon_n3072_n7168.md` §5);
   - n7168 M = 64 reads with plain `.load` (3 slots, `PREFETCH` 2), so Membar guards its refill (8 source stages; the M = 64 launch emits eight barriers). The same source's M = 32 path uses 4 slots, `PREFETCH` 3, an explicit `gl.barrier()` after the wait and relaxed reads: the plain-load guard does not apply there. n7168 M = 16 uses plain shared loads, 4 A slots and 4 or 6 B slots depending on strides; source order is not timing or race evidence. n7168 M = 128 and M = 256 add an inline `s_waitcnt lgkmcnt(0)` before `wait_group` + `gl.barrier()`. Compiled offline with Triton 3.8.0 at their own launch settings (`num_warps` 4, `num_stages` 2, `waves_per_eu` 0), removing only those inline calls still leaves `lgkmcnt(0)` before every barrier with no LGKM-producing instruction in between: 16 barriers at M = 128, 18 at M = 256 (scale setup, 16 K groups, output conversion); at M = 256 the K-group drain can come well before `vmcnt(4)` + `s_barrier`. The inline drain is thus redundant for that barrier, read from the ISA only (not run): M = 128 goes from 236 to 238 VGPRs and 961 to 937 instructions with scheduling changes, M = 256 stays at 62 VGPRs and goes from 1175 to 1159 instructions; LDS stays 53264 / 53920 bytes, no spills;
   - single buffer (m ≥ 1024): barrier between last read and refill, unguarded by relaxed reads (compiled;
     §7; `../gemm/correctness.md` §4). A four-wave toy where waves refill rows others read gave wrong sums in
     all 200 launches at each of four delays (0–16 µs, two runs, 38–72% of outputs); with the barrier, zero wrong
     in 1600 launches *(field, E26)*. The m = 8192 kernel without it passed its accuracy check in six runs: the failure is the toy's.
 
-  The four-wave ring's step, as the n3072 m = 128 kernel writes it (its `BLOCK_M` is 32: four slots per operand, refilled two groups ahead). Not this: one slot fewer at the same depth, where a
+  The four-wave ring's step, as the n3072 m = 128 kernel writes it (four slots per operand, refilled two groups ahead), is in
+  `../cases/a8w8_gluon_n3072_n7168.md` §5. Not this: one slot fewer at the same depth, where a
   refill lands in the slot read in the previous step with no barrier between the two (the toy's failing arm).
-```python
-# A_SLOTS and B_SLOTS are 4 when BLOCK_M == 32
-for stage in gl.static_range(12):
-    if BLOCK_M == 32:
-        if stage < 10:  # refill the slots read two steps ago: the previous step's barrier is behind those reads
-            _prefetch_group(a_slots[(stage + 2) % A_SLOTS], X, ao, stage + 2, True)
-            gl.amd.cdna4.async_copy.commit_group()
-            _prefetch_group(b_slots[(stage + 2) % B_SLOTS], W, bo, stage + 2, True)
-            gl.amd.cdna4.async_copy.commit_group()
-        gl.amd.cdna4.async_copy.wait_group(
-            4 if stage < 10 else (2 if stage == 10 else 0)
-        )
-    # ... (the `else:` arm, the source's 64-row path, which the m = 128 kernel does not run)
-    gl.barrier()  # every wave is past the wait before any wave's relaxed read
-    a_slot = a_slots[stage % A_SLOTS]
-    b_slot = b_slots[stage % B_SLOTS]
-    a = gl.amd.cdna4.async_copy.load_shared_relaxed(a_slot, da)
-    b = gl.amd.cdna4.async_copy.load_shared_relaxed(b_slot, db)
-```
 - **Count waits in committed groups** (`gluon/memory.md` §8): a toy with consecutive committed groups of 3, 2 and 1
   copies gave `vmcnt(0/1/3)` at `wait_group(0/1/2)` *(field, E27)*; n7168 M = 64's per-stage wait counts `(1, 2, 2, 2, 2, 2, 2, 0)`
   survive as eight waits in its Triton 3.8.0 IR for gfx950. Its M = 64 launch emits 48 direct-to-LDS instructions and
@@ -336,25 +289,7 @@ From m = 1024 (n3072) a program is four waves on a 64–128-row by 96–192-colu
 `range`, and LDS is single-buffered, with `wait_group(0)` per K group. The three-column-panel loops read their operands,
 barrier and refill before the last panel's MFMAs; m = 6144's generic loop refills before its MFMAs, while
 m = 8193's rowwise bulk refills A and B separately after each buffer's last read. The m = 8192 loop (not this: the
-refill without the barrier, the failing arm of §5's single-buffer toy):
-```python
-# n3072, m = 8192: three 64-column panels on one LDS buffer set; w1 is the middle panel's weight scale
-for kg in range(NUM_GROUPS):
-    # ... (this group's activation scale `xs` and weight scales `w0`, `w2` gathered from LDS)
-    w1 = gl.where(pn % 2 == 0, w0, w2)
-    # ... (`ws0`, `ws1`, `ws2`: each panel's weight scale broadcast over its 64 columns)
-    async_copy.wait_group(0)
-    a = async_copy.load_shared_relaxed(a_smem, dot_a)
-    b0 = async_copy.load_shared_relaxed(b0_smem, dot_b)
-    acc0 = _accumulate_panel(a, b0, zero, acc0, xs, ws0)
-    b2 = async_copy.load_shared_relaxed(b2_smem, dot_b)
-    acc2 = _accumulate_panel(a, b2, zero, acc2, xs, ws2)
-    b1 = async_copy.load_shared_relaxed(b1_smem, dot_b)
-    if kg + 1 < NUM_GROUPS:
-        gl.barrier()  # every wave has read this group before any wave refills the buffers
-        _wide_stage_group(*copy_args, kg + 1, SXK, SWN, SWK)
-    acc1 = _accumulate_panel(a, b1, zero, acc1, xs, ws1)  # the last panel's MFMAs run over the refill
-```
+refill without the barrier, the failing arm of §5's single-buffer toy) is in `../cases/a8w8_gluon_n3072_n7168.md` §6.
 - **Cut a 192-column tile into three 64-column panels**, each with its own accumulator. 192 columns span one and a
   half 128-column weight-scale blocks, so the middle panel takes one of two scale rows,
   `w1 = gl.where(pn % 2 == 0, w0, w2)` at m = 8192; m = 1024's 96-column tile picks it by `pn % 4`.
@@ -366,40 +301,9 @@ for kg in range(NUM_GROUPS):
   and sends m = 2048, 4096, 8192 and m = 6145's bulk to a strip kernel, which was within 3 % of the generic one at
   m = 6144 (B/A 0.981–0.992, 3 runs) *(field, E23)*.
 - **Band the M tiles.** m = 4096 and m = 8192 walk bands of 4 M tiles per
-  N tile, then interleave N (below); m = 2048 and 6144 use bands of 2 and 4, m = 1024 none. A band of 1
+  N tile, then interleave N (code: `../cases/a8w8_gluon_n3072_n7168.md` §7); m = 2048 and 6144 use bands of 2 and 4, m = 1024 none. A band of 1
   instead of 4 made m = 4096 1.86 % slower in one run of 4 balanced pairs *(field, E28)* (§8).
-```python
-# n3072, m = 8192: consecutive programs walk GROUP_M = 4 M tiles of one 192-column N tile, then N is interleaved
-band = pid // (GROUP_M * (N // 192))
-within_band = pid % (GROUP_M * (N // 192))
-pm = (band * GROUP_M + within_band % GROUP_M).to(gl.int32)
-pn = (within_band // GROUP_M).to(gl.int32)
-pn = ((pn % (N // 768)) * 4 + pn // (N // 768)).to(gl.int32)
-```
-- **Ragged M: compile the bulk at a divisible M.** m = 8193 launches `cdiv(8193, 128) · 24 = 1560` programs; the 24 of the last M tile run a tail kernel on 16 rows, the others the bulk kernel compiled with M = 8192, so every row mask folds away (the code is below); compiled at 8193 the bulk was 9–10 % slower (§11). Its 1.486 over aiter was the highest of the n3072 sizes *(field, E1)*, partly the baseline's doing: one row more took the baseline 61.77–62.81 → 68.75–70.25 µs (10.9–12.7 % longer), the kernel 46.91–49.22 → 46.32–48.59 µs (1.2–1.6 % less), 4 runs *(field, E21)*. A 65th 128-row baseline tile may explain it; not tested. The tail gets no padded layout at 16 rows (`compute_efficient_padded_shared_layout` returns `None` for a [16, 128] fp8 A operand of a 16 × 16 × 128 4-warp layout, a layout from 32 rows; compiled): it copies 32 A rows, masked by `(am[:, None] < M) | (M % AM == 0)`, and keeps 16 with `gl.amd.slice`. A buffer descriptor is not a tensor-bounds check: an unmasked address past the logical tensor but inside the descriptor's byte range may read the backing storage; past that range, or through another descriptor, it was not tested (`gluon/memory.md` §3).
-```python
-# n3072, m = 8193 (BM = 128): the last M tile's programs run the 16-row tail
-if M % BM > 0 and M % BM <= 16:
-    if pm == M // BM:
-        _compute_tail_tile(
-            # ... (X, XS, W, WS, Y)
-            pm * BM,
-            pn * BN,
-            M,
-            # ... (N, K, the eight strides, GROUP_N, GROUP_K)
-            16,
-            BN,
-        )
-    else:
-        _compute_tile_rowwise(
-            # ... (the same leading arguments)
-            M - M % BM,  # the bulk is compiled for 8192 rows: every `row < M` mask is a compile-time constant
-            # ... (the same middle arguments)
-            BM,
-            BN,
-        )
-# ... (the outer `else:`, for an M with no such remainder, which m = 8193 does not take)
-```
+- **Ragged M: compile the bulk at a divisible M.** m = 8193 launches `cdiv(8193, 128) · 24 = 1560` programs; the 24 of the last M tile run a tail kernel on 16 rows, the others the bulk kernel compiled with M = 8192, so every row mask folds away (code: `../cases/a8w8_gluon_n3072_n7168.md` §8); compiled at 8193 the bulk was 9–10 % slower (§11). Its 1.486 over aiter was the highest of the n3072 sizes *(field, E1)*, partly the baseline's doing: one row more took the baseline 61.77–62.81 → 68.75–70.25 µs (10.9–12.7 % longer), the kernel 46.91–49.22 → 46.32–48.59 µs (1.2–1.6 % less), 4 runs *(field, E21)*. A 65th 128-row baseline tile may explain it; not tested. The tail gets no padded layout at 16 rows (`compute_efficient_padded_shared_layout` returns `None` for a [16, 128] fp8 A operand of a 16 × 16 × 128 4-warp layout, a layout from 32 rows; compiled): it copies 32 A rows, masked by `(am[:, None] < M) | (M % AM == 0)`, and keeps 16 with `gl.amd.slice`. A buffer descriptor is not a tensor-bounds check: an unmasked address past the logical tensor but inside the descriptor's byte range may read the backing storage; past that range, or through another descriptor, it was not tested (`gluon/memory.md` §3).
 ## 8. Tile order across XCDs
 On the 10 launch grids tested, on the default stream, workgroup `i` ran on XCD `i % 8`, and each XCD has its own 4 MiB L2 *(field, E22)*
 (`../gemm/schedule_and_locality.md` §2). On a new stream, such as the one the ruler's graph replays run on, the index rotates by a constant c ([gluon/memory.md](gluon/memory.md) §14); the placements below hold up to that rotation. The a8w8 kernels remap the program
@@ -460,28 +364,8 @@ the spread over M is the baseline's was not separated. What Triton 3.8.0 adds on
 - **m = 2, 4 and 8 run one binary in each kernel:** M is a runtime argument, nothing else changes.
 - **Split K only with a fixed-order fold.** At m = 64 the N 2624 × K 6144 kernel splits K six ways: each split stores its fp32 partial
   tile to `[split][m][n]` scratch (`torch.empty` per call, which holds undefined bytes, so every element is written
-  before it is read), and a reduce kernel adds planes 0 … 5 in order and rounds once:
-```python
-# N 2624 × K 6144, the end of the GEMM kernel. m ≤ 8 (one split): round and store to the output, passed as W;
-# m = 64 (six splits): split pid_k stores its fp32 partial tile into plane pid_k of the scratch W
-if SPLIT_K == 1:
-    c_ptrs = W + offs_m[:, None] * N + offs_n[None, :]
-    tl.store(c_ptrs, acc.to(W.dtype.element_ty), mask=row_ok)
-else:
-    w_ptrs = W + pid_k * (M * N) + offs_m[:, None] * N + offs_n[None, :]
-    tl.store(w_ptrs, acc, mask=row_ok)
-```
-```python
-# the same kernel's second launch at m = 64: add the planes in split order, round to bf16 once
-@triton.jit
-def _reduce_kernel(W, C, TOTAL, SPLIT_K: tl.constexpr, BLOCK: tl.constexpr):
-    offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
-    ok = offs < TOTAL
-    acc = tl.load(W + offs, mask=ok, other=0.0, cache_modifier=".cg")
-    for s in tl.static_range(1, SPLIT_K):
-        acc += tl.load(W + s * TOTAL + offs, mask=ok, other=0.0, cache_modifier=".cg")
-    tl.store(C + offs, acc.to(C.dtype.element_ty), mask=ok)
-```
+  before it is read), and a reduce kernel adds planes 0 … 5 in order and rounds once
+  (`../cases/bf16_triton_small_m.md` §4).
 - **XCD runs cross split boundaries.** The XCD remap over the 246-tile grid (`pid_k = pid // N_TILES`) hands each XCD
   30–31 consecutive split-major tiles; 41-tile splits do not align, so five XCDs straddle two splits (computed from
   the remap). One split per XCD (`../gemm/schedule_and_locality.md` §2) needs runs aligned to the splits.

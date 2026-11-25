@@ -17,7 +17,8 @@ from kb_lint import SKILL_ROOT, read_page
 
 START, END = "<!-- generated:start (maintenance/kb_index.py) -->", "<!-- generated:end -->"
 
-# folder -> (heading, one line on what the folder holds, the front-matter columns of its table)
+# folder -> (heading, one line on what the folder holds, the columns of its table: front-matter fields, and
+# `toolchain`, what the page's kernels are written with)
 FOLDERS = {
     "patterns": (
         "Patterns",
@@ -26,8 +27,9 @@ FOLDERS = {
     ),
     "cases": (
         "Cases",
-        "Worked cases, one kernel or kernel family each: the op, its shapes and dtypes, what made it fast and what was measured.",
-        ("ops", "dtypes", "regimes", "accuracy", "basis"),
+        "Worked cases, one kernel or kernel family each: the op, its shapes and dtypes, what made it fast or what went "
+        "wrong, its code, and what was measured.",
+        ("ops", "dtypes", "regimes", "toolchain", "accuracy", "basis"),
     ),
     "pitfalls": (
         "Pitfalls",
@@ -45,6 +47,13 @@ def _cell(value: object) -> str:
     return str(value).replace("|", "\\|")
 
 
+def _toolchain(front: dict) -> str:
+    """What a page's kernels are written with, from the version it pins: `flydsl: 0.3.2` or `triton: 3.8.0`."""
+    return ", ".join(
+        f"{name} {front[key]}" for key, name in (("flydsl", "FlyDSL"), ("triton", "Triton")) if front.get(key)
+    )
+
+
 def render(folder: str) -> str:
     _, _, columns = FOLDERS[folder]
     rows = []
@@ -53,7 +62,8 @@ def render(folder: str) -> str:
             continue
         front = read_page(path).front or {}
         title = _cell(front.get("title")) or path.stem
-        rows.append(f"| [{title}]({path.name}) | " + " | ".join(_cell(front.get(c)) for c in columns) + " |")
+        cells = (_toolchain(front) if c == "toolchain" else _cell(front.get(c)) for c in columns)
+        rows.append(f"| [{title}]({path.name}) | " + " | ".join(cells) + " |")
     head = "| Page | " + " | ".join("FlyDSL" if c == "flydsl" else c.capitalize() for c in columns) + " |"
     rule = "|---" * (len(columns) + 1) + "|"
     body = "\n".join(rows) if rows else "| *(none yet)* |" + " |" * len(columns)

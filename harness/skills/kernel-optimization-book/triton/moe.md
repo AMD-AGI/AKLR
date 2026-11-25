@@ -6,6 +6,11 @@ dtypes: [mxfp4, fp8, bf16]
 regimes: ["tokens 1-16", "tokens 32-256", "tokens 1024-16384", sorted-tokens]
 gens: [gfx950]
 triton: 3.8.0
+cases:
+  - cases/fp8_moe_gluon_dim3072.md
+  - cases/moe_router_experts_gluon_dim4096.md
+  - cases/mxfp4_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # Whole MoE layers in Gluon (gfx950)
@@ -96,24 +101,8 @@ The token count for a given r is N = r·E/k; this converts the coordinate, not a
 When two phases read only call inputs, they can share a program-id-role grid; the scalar role test is uniform.
 A toy router GEMV (64 programs, 2 rows, K2048) beside a 4-program elementwise phase gave equal outputs in 4 runs; one grid took 0.495–0.506× the time of two launches on the ruler's timer in all four, but 0.755–0.835× the replay time in three and 1.154× (9.360 against 8.110 µs) in the fourth: a gain on the ruler's timer but not in every replay run *(field, E10)*. No DeepSeek or MiniMax kernel is named as a quantizer alone
 *(field, E11)*. In DS256/m1 (1 token) 192 one-wave programs each compute a 16 × 16 router tile over one K split of 512
-(16 expert tiles × 12 splits) beside 24 programs that quantize the token to MXFP4:
-
-```python
-    program = gl.program_id(0)
-    if program < 256 // BN * SPLITS:
-        tile = program % (256 // BN)
-        split = program // (256 // BN)
-        # ... (a 16 × BN router tile over this split's K on bf16 MFMAs, accumulated in acc)
-        gl.store(Y + (om[:, None] * SPLITS + split) * 256 + on[None, :], acc, om[:, None] < M)
-    elif GROUPED and program == 256 // BN * SPLITS:
-        # ... (one program initializes the per-expert group masks)
-    else:
-        quant = program - 256 // BN * SPLITS - (1 if GROUPED else 0)
-        # ... (this program's row and K groups loaded as fp32 values)
-        routed, routed_scale = _quantize_groups(values, False)
-        shared, shared_scale = _quantize_groups(values, True)
-        # ... (both quantizations and their scales stored)
-```
+(16 expert tiles × 12 splits) beside 24 programs that quantize the token to MXFP4
+([cases/mxfp4_moe_gluon_dim6144](../cases/mxfp4_moe_gluon_dim6144.md) §2).
 
 - Other role splits: programs `< M` select and publish the routes while the rest run the gate-up (DS256/m2); one CTA
   sorts in LDS while the others quantize (Q2-E/m128; Q2-E/m64 splits its roles by program id too); the router programs of
@@ -131,27 +120,8 @@ Recomputing a small decision is a candidate, not an unconditional rule. In the t
 At 1 token DS256/m1 runs 1153 programs in its selection and gate-up launch: program 0 publishes `Ids`/`Weights` for the down launch, the
 1024 routed-route programs (8 routes × 4 K splits × 32 column tiles) each recompute their route's expert, the 128
 shared-expert ones take id 256. A recomputing program sums the router's 12 fp32 split partials in split order,
-rounds once to bf16 (the reference's rounding point, §5), adds the bias to the sigmoid and runs slot + 1 elections:
-
-```python
-@gluon.jit
-def _expert_at_rank_peeled(Logits, Bias, row, rank, SPLITS: gl.constexpr):
-    layout: gl.constexpr = gl.BlockedLayout([4], [64], [1], [0])
-    e = gl.arange(0, 256, layout)
-    logits = gl.load(Logits + row * SPLITS * 256 + e)
-    for part in gl.static_range(1, SPLITS):
-        logits += gl.load(Logits + (row * SPLITS + part) * 256 + e)
-    logits = logits.to(gl.bfloat16).to(gl.float32)
-    probability = 1.0 / (1.0 + gl.exp(-logits))
-    score = probability + gl.load(Bias + e).to(gl.float32)
-    available = gl.full((256,), True, gl.int1, layout)
-    idx = _elect_rank(score, available, e)
-    for j in range(rank):
-        available = available & (e != idx)
-        score = gl.where(e == idx, -float("inf"), score)
-        idx = _elect_rank(score, available, e)
-    return idx
-```
+rounds once to bf16 (the reference's rounding point, §5), adds the bias to the sigmoid and runs slot + 1 elections
+([cases/mxfp4_moe_gluon_dim6144](../cases/mxfp4_moe_gluon_dim6144.md) §3).
 
 `_elect_rank` is the ballot election of §5.3; writing it: [gluon/wave_ops.md](gluon/wave_ops.md) §6.2.
 
@@ -168,21 +138,8 @@ def _expert_at_rank_peeled(Logits, Bias, row, rank, SPLITS: gl.constexpr):
 ### 4.2 GEMM programs that derive their own job
 
 At 16–256 tokens five implementations skip the job-list launch: each gate-up program finds its tile from the per-expert counts.
-DS256/m256 (256 tokens) scans the counts; `PAD` (m rounded up to the tile height `TM`) is an expert's region (§6):
-
-```python
-        e = gl.arange(0, 256, scan_layout)
-        count = gl.load(Counts + e * (32 if M <= 128 else _NATIVE_COUNT_STRIDE))
-        chunks = ((count + TM - 1).to(gl.uint32) // TM).to(gl.int32)
-        end = gl.associative_scan(chunks + (count << 10), 0, _add)
-        begin = (end & 1023) - chunks
-        row_begin = (end >> 10) - count
-        chunk = tile - shared_jobs - begin
-        packed = (
-            (e * (PAD // TM) + chunk) * 32 + gl.minimum(TM, count - chunk * TM) - 1 + (row_begin + chunk * TM << 17)
-        )
-        descriptor = gl.max(gl.where((chunk >= 0) & (chunk < chunks), packed, -1), 0)
-```
+DS256/m256 (256 tokens) scans the counts ([cases/mxfp4_moe_gluon_dim6144](../cases/mxfp4_moe_gluon_dim6144.md) §4);
+`PAD` (m rounded up to the tile height `TM`) is an expert's region (§6).
 
 Two prefix sums share one `gl.associative_scan` by bit packing, guarded by `gl.static_assert` on the ranges, and
 `v_readfirstlane_b32` in inline assembly makes the result wave-uniform. The descriptor holds live rows − 1 in bits 0–4,
@@ -197,19 +154,8 @@ deriving the job with a job list the selection launch writes, and ratios across 
 ### 4.3 The global prefix in every scatter program
 
 A route's row needs the exclusive prefix of every expert's padded count: each program of MM256-FP4/m16384's scatter launch reloads
-all count chunks, pads, scans and adds the earlier chunks' counts; program 0 stores `Total`:
-
-```python
-    padded = gl.cdiv(gl.sum(counts, 0), BM) * BM
-    vector: gl.constexpr = gl.BlockedLayout([1], [64], [4], [0])
-    padded_vector = gl.convert_layout(padded, vector)
-    start_vector = gl.associative_scan(padded_vector, 0, _add) - padded_vector
-    start = gl.convert_layout(start_vector, gl.SliceLayout(0, layout))
-    chunk = gl.program_id(0) * 256 // CHUNK_BLOCK
-    bases = start + gl.sum(gl.where(c[:, None] < chunk, counts, 0), 0)
-    if gl.program_id(0) == 0:
-        gl.store(Total, gl.sum(padded_vector, 0))
-```
+all count chunks, pads, scans and adds the earlier chunks' counts; program 0 stores `Total`
+([cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §1).
 
 Both `convert_layout`s are needed: `gl.associative_scan` on the `SliceLayout` that `gl.sum` returns fails to lower in
 Triton 3.8.0 ("error: TODO: unsupported scan layout") *(field, E9)*; scan a 1-D `BlockedLayout`
@@ -225,38 +171,11 @@ The FlyDSL analog repeats the full M×9 route scan, expert histogram and padded-
 | DeepSeek: logits in bf16 (what SGLang's gate returns on ROCm), sigmoid, plus an fp32 bias | bf16 MFMA tiles (16×16×32) write fp32 split-K partials; the consumer sums them in split order and rounds once to bf16 | DS256/m1 |
 | | at 2 tokens a full-K dot per expert with `gl.dot_fma`, both tokens sharing the weight load (read from the source); the router kernel compiles to 48 `v_dot2c_f32_bf16` and no MFMA *(field, E8)* | DS256/m2 |
 | Qwen2: bf16 logits, top-10 by logit, the lower id on a tie | the same split-order sum and one bf16 rounding | Q2-R/m256 |
-| | router+experts: float64 products (f64 VALU and no f64 MFMA at 1–4 tokens, `v_mfma_f64_16x16x4_f64` at 32 *(field, E8)*), rounded once to bf16 with a midpoint fix against double rounding (below; on 512 crafted near-midpoint logits f64 → f32 → bf16 erred on 260, Q2-RE/m1's helper on none *(field, E4)*) | Q2-RE/m1, Q2-RE/m32 |
-| MiniMax: fp32 router weight, fp32 logits | fp32 multiply and `gl.sum` at 1–16 tokens (read from the source; MM256-FP8/m1–m16's key-preparing router, 1–16 tokens, compiles to no MFMA); the fp32 weight split into three bf16 terms on bf16 MFMAs (the bf16 hidden makes each product exact; the split read from the sources, below): the routers of the MM64-FP4 implementations at 2048–16384 tokens (MM64-FP4/m2048, MM64-FP4/m4096, MM64-FP4/m6144, MM64-FP4/m8192, MM64-FP4/m16384: 1.318–1.735 over the baseline) and of MM256-FP8/m1024–m16384 and MM64-FP8/m1024–m16384 run bf16 MFMAs and no fp32 MFMA; or fp32 MFMA: MM256-FP8/m32–m64's router (32–64 tokens) `v_mfma_f32_16x16x4_f32`, MM256-FP4/m16384's `v_mfma_f32_32x32x2_f32`, the MM256-FP4 routers at 1024–16384 tokens 16×16×4 (MM256-FP4/m1024, MM256-FP4/m2048–m4096) or 32×32×2 (MM256-FP4/m6144, MM256-FP4/m8192, MM256-FP4/m16384: 1.261–1.423 for the five) *(field, E1, E8)*; much else differs between these implementations: no ablation. On 13 of these router branches, each with a random and a cancellation input, the logits' error against fp64 was no larger than an fp32 computation's in L2 on 25 of the 26 inputs (MM256-FP4/m6144's cancellation input 1.00009×) and in max abs on 23 of 26; on two more inputs with a nonzero residual, MM64-FP4/m6144's and MM64-FP4/m8192's fp64 correction ran and both errors were 0 *(field, E20)*. | MM256-FP8/m1–m16, MM256-FP8/m256; MM256-FP8/m32–m64, MM256-FP4/m16384 |
+| | router+experts: float64 products (f64 VALU and no f64 MFMA at 1–4 tokens, `v_mfma_f64_16x16x4_f64` at 32 *(field, E8)*), rounded once to bf16 with a midpoint fix against double rounding ([cases/moe_router_experts_gluon_dim4096](../cases/moe_router_experts_gluon_dim4096.md) §1; on 512 crafted near-midpoint logits f64 → f32 → bf16 erred on 260, Q2-RE/m1's helper on none *(field, E4)*) | Q2-RE/m1, Q2-RE/m32 |
+| MiniMax: fp32 router weight, fp32 logits | fp32 multiply and `gl.sum` at 1–16 tokens (read from the source; MM256-FP8/m1–m16's key-preparing router, 1–16 tokens, compiles to no MFMA); the fp32 weight split into three bf16 terms on bf16 MFMAs (the bf16 hidden makes each product exact; the split read from the sources: [cases/fp8_moe_gluon_dim3072](../cases/fp8_moe_gluon_dim3072.md) §2): the routers of the MM64-FP4 implementations at 2048–16384 tokens (MM64-FP4/m2048, MM64-FP4/m4096, MM64-FP4/m6144, MM64-FP4/m8192, MM64-FP4/m16384: 1.318–1.735 over the baseline) and of MM256-FP8/m1024–m16384 and MM64-FP8/m1024–m16384 run bf16 MFMAs and no fp32 MFMA; or fp32 MFMA: MM256-FP8/m32–m64's router (32–64 tokens) `v_mfma_f32_16x16x4_f32`, MM256-FP4/m16384's `v_mfma_f32_32x32x2_f32`, the MM256-FP4 routers at 1024–16384 tokens 16×16×4 (MM256-FP4/m1024, MM256-FP4/m2048–m4096) or 32×32×2 (MM256-FP4/m6144, MM256-FP4/m8192, MM256-FP4/m16384: 1.261–1.423 for the five) *(field, E1, E8)*; much else differs between these implementations: no ablation. On 13 of these router branches, each with a random and a cancellation input, the logits' error against fp64 was no larger than an fp32 computation's in L2 on 25 of the 26 inputs (MM256-FP4/m6144's cancellation input 1.00009×) and in max abs on 23 of 26; on two more inputs with a nonzero residual, MM64-FP4/m6144's and MM64-FP4/m8192's fp64 correction ran and both errors were 0 *(field, E20)*. | MM256-FP8/m1–m16, MM256-FP8/m256; MM256-FP8/m32–m64, MM256-FP4/m16384 |
 
-The midpoint fix (Q2-RE/m1) and the three-term split (MM256-FP8/m256), as the kernels write them:
-
-```python
-# Q2-RE/m1: float64 value -> bf16; an fp32 halfway between two bf16 values first moves one fp32 step toward the float64 value
-@gluon.jit
-def _round_to_bf16(value):
-    approximate = value.to(gl.float32)
-    bits = approximate.to(gl.int32, bitcast=True)
-    midpoint = (bits & 65535) == 32768
-    inexact = value != approximate.to(gl.float64)
-    toward_positive = value > approximate.to(gl.float64)
-    step = gl.where(toward_positive == (approximate > 0), 1, -1)
-    corrected = (bits + step).to(gl.float32, bitcast=True)
-    return gl.where(midpoint & inexact, corrected, approximate).to(gl.bfloat16)
-```
-
-```python
-# MM256-FP8/m256, the router's K loop: the fp32 weight tile b as three bf16 terms, one bf16 MFMA accumulator each
-    for step in gl.static_range(CHUNK):
-        # ... (a and b loaded and converted to the MFMA operand layouts)
-        b0 = b.to(gl.bfloat16, fp_downcast_rounding="rtz")
-        residual = b - b0.to(gl.float32)
-        b1 = residual.to(gl.bfloat16, fp_downcast_rounding="rtz")
-        b2 = (residual - b1.to(gl.float32)).to(gl.bfloat16)
-        high = gl.amd.cdna4.mfma(a, b0, high)
-        middle = gl.amd.cdna4.mfma(a, b1, middle)
-        low = gl.amd.cdna4.mfma(a, b2, low)
-    acc = high + (middle + low)
-```
+The midpoint fix (Q2-RE/m1) and the three-term split (MM256-FP8/m256), as the kernels write them, are in
+[cases/moe_router_experts_gluon_dim4096](../cases/moe_router_experts_gluon_dim4096.md) §1 and [cases/fp8_moe_gluon_dim3072](../cases/fp8_moe_gluon_dim3072.md) §2.
 
 Check the reference's rounding points first ([numerics.md](numerics.md) §5), then compare each output against its
 bound. On the Qwen2 router, whose ids must match exactly, Q2-R/m256 at m = 256 (one input set): swapping only token 0's first two ids, every other
@@ -328,19 +247,13 @@ DPP builtin, so the kernels write them in inline assembly ([gluon/wave_ops.md](g
 | Election by ballot | `gl.max` over the wave; `v_cmp_*_e64` writes the lanes holding the maximum to an SGPR pair, `s_ff1_i32_b64` takes the first, `v_readlane_b32` broadcasts its id; lanes hold consecutive ids, so the lowest id wins a tie | DS256/m1 (`_elect_rank` in §4.1) |
 | Keyed min, no inline asm | with retired experts' scores at −inf (as its caller sets them), `gl.max` of the scores, then `gl.min(where(available, where(score == max, e, e + 256), 512)) & 255`: the lowest available id holding the maximum (0 wrong of 4000 tie-heavy rows; unmasked retired maxima untested *(field, E11)*) | DS512/m16 |
 | Per-lane sorted queues | sort each lane's keys once (a 5-compare network on 4 keys, or two 4-deep queues on 8); a round compares only the queue heads and pops the winner's queue | MM256-FP8/m32–m64 and MM256-FP8/m1–m16; Q2-R/m256, whose ballot winner goes into lane `slot` with `v_writelane_b32` |
-| Order-preserving integer keys | the score's bits made monotonic, −0 folded into 0, the inverted expert id in the low bits: one `gl.max` returns the score and the lowest id | Q2-RE/m1 (16-bit bf16 key above a 9-bit id, below). Two reductions per round instead: MM256-FP8/m1–m16 keys the fp32 score alone (NaN to the largest key) and takes the lowest id with a second `gl.min`; MM256-FP8/m32–m64 packs the inverted id into 64 bits but at 256 experts still reduces the head scores with `gl.max`, then the ids with `gl.min` |
+| Order-preserving integer keys | the score's bits made monotonic, −0 folded into 0, the inverted expert id in the low bits: one `gl.max` returns the score and the lowest id | Q2-RE/m1 (16-bit bf16 key above a 9-bit id: [cases/moe_router_experts_gluon_dim4096](../cases/moe_router_experts_gluon_dim4096.md) §2). Two reductions per round instead: MM256-FP8/m1–m16 keys the fp32 score alone (NaN to the largest key) and takes the lowest id with a second `gl.min`; MM256-FP8/m32–m64 packs the inverted id into 64 bits but at 256 experts still reduces the head scores with `gl.max`, then the ids with `gl.min` |
 | Packed float64 keys | for finite scores, the same order inside a double's mantissa in [1, 2), so one float compare decides (`v_max_f64` in inline assembly in MM64-FP8/m128–m256); MM256-FP4/m2 maps NaNs to NaN-valued keys outside that interval | MM256-FP4/m2, MM64-FP8/m128–m256 |
 | Packed uint64 keys, partitioned reduce | keys 4 per lane in a [4, 16] layout (a wave's four 16-lane rows); a round pre-reduces each lane's 4 in registers, runs a 16-lane `gl.reduce` whose combine compares the scores as floats and the ids on a tie, gathers the 4 row roots from lane 15 of each row and finishes 4-way; the winner's key becomes a tombstone | MM256-FP4/m16384; MM64-FP4/m4096 on (value, index) pairs |
 | Rank counting, no rounds | one program per candidate expert counts, per token, the experts that beat it (higher score, or equal score and lower id); a count below k selects it and names its slot | MM64-FP8/m1–m16, exact at 8 and 16 tokens; MM64-FP4/m8–m16 returns a token bitmask: measured M2 keeps 8 via its id tie rule, M8 counts only strictly higher scores and a tied 8th/9th selects 9; M16 not run *(field, E11)* |
 
-The integer key of Q2-RE/m1, from the bf16 logit's bits and the expert ids:
-
-```python
-    bits = logits.to(gl.uint16, bitcast=True).to(gl.uint32)
-    bits = gl.where((bits & 32767) == 0, 0, bits)  # -0 folded into 0
-    ordered = gl.where((bits & 32768) != 0, 65535 - bits, bits | 32768)  # negative scores below positive ones
-    return (ordered << 9) | (511 - experts).to(gl.uint32)  # the inverted id below the score: the lower id wins a tie
-```
+The integer key of Q2-RE/m1, from the bf16 logit's bits and the expert ids, is in
+[cases/moe_router_experts_gluon_dim4096](../cases/moe_router_experts_gluon_dim4096.md) §2.
 
 No measurement compares designs. Election runs slot + 1 argmax rounds (from the code); over 16384 one-wave programs DS256/m2's
 took 9.7–10.7 µs at slots 0–4 and 11.3–11.4, 12.8–13.0 and 14.3–14.4 µs at slots 5, 6, 7 in 3 runs, not linear in the
@@ -349,7 +262,8 @@ that was timed ran in a test kernel, not in MM64-FP8/m1–m16. The selecting pro
 renormalizes weights and, in the ticket designs, takes each route's ticket (§6), in the same launch. Traps:
 
 - **One call, one tie rule.** Every §4.1 design selects at least twice per call: the program that publishes
-  `Ids`/`Weights` and each gate-up program that recomputes its expert (DS256/m1: the publishing selection and `_expert_at_rank_peeled`;
+  `Ids`/`Weights` and each gate-up program that recomputes its expert (DS256/m1: the publishing selection and `_expert_at_rank_peeled`, code in
+  [cases/mxfp4_moe_gluon_dim6144](../cases/mxfp4_moe_gluon_dim6144.md) §3;
   MM256-FP8/m1–m16: a `gl.min` round and per-lane queues; MM64-FP4/m4 both in one launch). The copies share the score
   (split-order sum, bf16 rounding) and the lower-id rule.
   Keep the copies consistent: at DS256/m1 (1 token), changing only the gate-up copy's bf16 rounding or its tie rule made producer and consumer disagree on a slot's expert on 12 of 13 inputs, and changing both alike restored agreement on 36 of 36; summing the 12 split partials in reverse order changed no id, weight or output on four saved inputs, which did not exercise that order *(field, E21)*. In the accuracy check, the copy without the bf16 rounding failed and the copy with the higher-id tie rule passed *(field, E18)*.
@@ -359,20 +273,8 @@ renormalizes weights and, in the ticket designs, takes each route's ticket (§6)
 
 ## 6. Sorting and bucketing (32 tokens and up)
 
-- **Tickets.** In the selection launch each route takes `ticket = gl.atomic_add(Counts + …, 1, sem="relaxed")` and stores `ticket << 8 | expert`; the scatter launch turns prefix (§4.3) plus ticket into its row of `Sorted`, and segments are padded to the tile height so a tile never mixes experts (MM256-FP4/m16384, its selection kernel, then its scatter kernel):
-
-  ```python
-      ticket = gl.atomic_add(
-          Counts + row * TOPK // COUNT_BLOCK * 256 + ids, 1, sem="relaxed"
-      )
-      record = ticket << 8 | ids
-  ```
-
-  ```python
-      offset = ticket + gl.gather(base_table, expert, 1)
-      gl.store(Sorted + offset, route, valid)
-      gl.store(Experts + offset // BM, expert, valid & (offset % BM == 0))
-  ```
+- **Tickets.** In the selection launch each route takes `ticket = gl.atomic_add(Counts + …, 1, sem="relaxed")` and stores `ticket << 8 | expert`; the scatter launch turns prefix (§4.3) plus ticket into its row of `Sorted`, and segments are padded to the tile height so a tile never mixes experts (MM256-FP4/m16384, its selection kernel, then its scatter kernel:
+  [cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §2).
 
   The 8-bit field holds ids 0–255, MiniMax's 256 experts, and in an int32 record the ticket must stay below 2^23. With
   more ids widen it as the DeepSeek and Qwen2 job words do (`expert | live << 9 | block << 17`, decoded `& 511`, DS512/m256;
@@ -395,17 +297,10 @@ renormalizes weights and, in the ticket designs, takes each route's ticket (§6)
   4096-program grid; MM64-FP8/m128–m256 at 256 runs
   a persistent W13 kernel on a 48 × 96 grid, the only kernel named persistent at the 96 sizes *(field, E11)*.
 - **Sorts without global atomics.** The MiniMax MXFP4 64-expert rank at ≥ 1024 tokens gives lane j the 64-bit mask of the
-  routes in its stripe whose expert is j with seven wave ballots, then popcounts (MM64-FP4/m1024); the FP8 64-expert rank
+  routes in its stripe whose expert is j with seven wave ballots
+  ([cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §3), then popcounts (MM64-FP4/m1024); the FP8 64-expert rank
   packs four 8-bit counters per word. Both fix the row order; Qwen2's LDS atomics at 64 and 128 tokens
   (`atomic_scatter_add` in LDS, one CTA) do not (Q2-E/m64). No measurement compares them with a ticket sort.
-
-  ```python
-      # each ballot is a wave's 64-bit lane mask; a wave holds a stripe of 64 routes, and lane j also stands for expert j
-      mask = _wave_ballot_2((r < R) & (ids >= 0) & (ids < 64))  # ballot 1: the routes to an expert of this rank
-      for bit in gl.static_range(6):  # ballots 2-7, one per bit of the expert id
-          bits = _wave_ballot_2(ids & 1 << bit != 0)
-          mask &= gl.where(expert[None, :] & 1 << bit != 0, bits, ~bits)  # lane j keeps the routes whose expert is j
-  ```
 - **Graph capture.** Grids depend on shapes only (same grids on two routings at all 82 sizes *(field, E11)*): a
   worst-case tile bound on the host (MiniMax `cdiv(min(routes · bm, routes + E · (bm − 1)), bm) · bm`; DeepSeek `A +
   (8m − A) // block_m` with `A = min(256, 8m)`, the most experts that can hold a partial tile) and an exit on a
@@ -458,17 +353,8 @@ Writing those loads, the `shuffled_16x16` offsets and the scale layout: [gluon/m
 | The gate-up is split along K over programs | a small launch that sums the split partials in order, then SwiGLU and quantization | DS256/m2 and DS256/m1, DS512/m1–m2 at 1 token, Q2-E/m8 *(field, E11)* |
 | The down operand is fp8 per 1 × 128 | the gate-up stores bf16; the down kernel quantizes each 128-group as it loads it | MM256-FP8/m1–m16, MM64-FP8/m32–m64 |
 
-MM64-FP4/m4096's epilogue rounds the accumulator and the SwiGLU product to bf16 and quantizes groups of 32 to MXFP4:
-
-```python
-    rounded = acc.to(gl.bfloat16).to(gl.float32)
-    pairs = gl.permute(gl.reshape(rounded, (BM, 2, BN // 2)), (0, 2, 1))
-    gate, up = gl.split(pairs)
-    value = (gate * _sigmoid(gate) * up).to(gl.bfloat16)
-    groups: gl.constexpr = BM * BN // 64
-    grouped = gl.convert_layout(gl.reshape(value, (groups, 32)), layout).to(gl.float32)
-    q, scale = _quantize_groups_3(grouped)
-```
+MM64-FP4/m4096's epilogue rounds the accumulator and the SwiGLU product to bf16 and quantizes groups of 32 to MXFP4
+([cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §4).
 
 - **Take the activation from the reference.** These layers split `x @ W13ᵀ` into gate (columns `[0, I)`, I the intermediate dimension)
   and up (the rest) and compute `silu(gate) · up`, SwiGLU on this page. Other fused MoE ops also have 'gelu', 'situv2',
@@ -485,19 +371,8 @@ MM64-FP4/m4096's epilogue rounds the accumulator and the SwiGLU product to bf16 
 
 ## 9. Down GEMM
 
-- **≤ 16 tokens: down+combine is a candidate, not a uniform win.** In the toy top-4/32 MoE at m = 2 and 16, fusing down and combine saved 2.94–3.73 µs on the ruler's timer (4 runs; its replay saving and output equality alone not measured; all fusions against none: §2) *(field, E10)*. In the synthetic fp8 VALU shapes at m = 1, 2, 8, 16 (one run, 16 rotated rounds per size; slot order as the reference sums), it added 0.25–8.18 µs of replay time on average (savings −8.18 to −0.25 µs); at H6144/m2 the confidence interval crossed zero and some small differences fell within the bias of A/A controls, at H3072/m8 and m16 it was slower on the ruler's timer too, and at none of the sizes did all fusions together reach 0.85× the unfused time *(field, E13)*. Neither shows how MXFP4 MFMA kernels fare. The source form in DS512/m1–m2 puts routes in MFMA A rows and experts' column slices side by side in B, keeps the diagonal blocks and sums them weighted in slot order, without partials or atomics:
-
-  ```python
-      acc = _tiny_projection(X, XS, W, WS, Ids, token, column, N, K, BN, BK, WARPS, False, CACHE)
-      vn = gl.arange(0, 8 * BN, gl.SliceLayout(0, mma))
-      diagonal = gl.gather(acc, vn[None, :] // BN, 0).reshape((8, BN))
-      # ... (diagonal converted to a layout ep that holds one row per route; value starts at 0 in it)
-      for rank in gl.static_range(8):
-          part = gl.gather(diagonal, gl.full((1, BN), rank, gl.int32, ep), 0)
-          weight = gl.load(Weights + token * 8 + rank)
-          value += part * weight
-      shared_acc = _tiny_projection(X, XS, W, WS, Ids, token, column, N, K, BN, BK, WARPS, True, CACHE)
-  ```
+- **≤ 16 tokens: down+combine is a candidate, not a uniform win.** In the toy top-4/32 MoE at m = 2 and 16, fusing down and combine saved 2.94–3.73 µs on the ruler's timer (4 runs; its replay saving and output equality alone not measured; all fusions against none: §2) *(field, E10)*. In the synthetic fp8 VALU shapes at m = 1, 2, 8, 16 (one run, 16 rotated rounds per size; slot order as the reference sums), it added 0.25–8.18 µs of replay time on average (savings −8.18 to −0.25 µs); at H6144/m2 the confidence interval crossed zero and some small differences fell within the bias of A/A controls, at H3072/m8 and m16 it was slower on the ruler's timer too, and at none of the sizes did all fusions together reach 0.85× the unfused time *(field, E13)*. Neither shows how MXFP4 MFMA kernels fare. The source form in DS512/m1–m2 puts routes in MFMA A rows and experts' column slices side by side in B, keeps the diagonal blocks and sums them weighted in slot order, without partials or atomics
+  ([cases/mxfp4_moe_gluon_dim6144](../cases/mxfp4_moe_gluon_dim6144.md) §5).
 
   DS256/m2 puts all 9 routes (shared expert included) into one 16 × 256 MFMA tile per program; MiniMax FP8 (256 experts)
   gives each of 8 waves one route (`AMDMFMALayout(..., warps_per_cta=[8, 1, 1])`, MM256-FP8/m1–m16) on plain fp8 `mfma` (§7).

@@ -16,6 +16,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/gemm/fp8_gemm_8wave.py
   - ROCm/FlyDSL@dd8373349:kernels/gemm/fp8_gemm_4wave.py
   - ROCm/FlyDSL@dd8373349:.claude/skills/gemm-optimization/SKILL.md
+cases: [cases/bf16_k4096_splitk_hgemm.md]
 ---
 
 # The GEMM main loop

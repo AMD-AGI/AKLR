@@ -6,6 +6,11 @@ dtypes: [bf16, fp8]
 regimes: ["one query token per sequence", split-kv, sparse, gqa]
 gens: [gfx950]
 triton: 3.8.0
+cases:
+  - cases/dsa_sparse_mla_16_heads.md
+  - cases/dsa_sparse_mla_8_heads.md
+  - cases/dsa_sparse_mla_gluon.md
+  - cases/gated_attention_gluon.md
 ---
 
 # Attention with one query token per sequence in Gluon (gfx950)
@@ -56,49 +61,14 @@ unless the sentence says otherwise; a speedup is the ruler's stored value for on
 
 Each producer program owns a key range (a split) of one token for a group of heads, runs an online softmax over it,
 and writes a record: the unnormalized numerator Σ exp(s − m)·v, the running max m and the denominator Σ exp(s − m).
-One tile's step in the 32-row gated-attention kernel: max and sum are `SliceLayout(1, mma)` vectors, one value per
-head row, and the numerator stays in the MFMA accumulator. The caller peels the first tile (`FIRST`: no rescale) and
-compiles the masks only into the variant for a row's last, partial tile (`FULL_TILE=False`):
-
-```python
-    key = gl.convert_layout(gl.permute(key, (1, 0)), b_layout).to(gl.bfloat16)
-    scores = gl.amd.cdna4.mfma(
-        q, key, gl.full((q.type.shape[0], TILE), 0, gl.float32, mma)
-    )
-    scores = scores * key_scale * attention_scale
-    score_pos = tile * TILE + gl.arange(0, TILE, gl.SliceLayout(0, mma))
-    if not FULL_TILE:
-        scores = gl.where(score_pos[None, :] < length, scores, -float("inf"))
-    if FIRST:
-        next_max = gl.max(scores, 1)
-    else:
-        next_max = gl.maximum(running_max, gl.max(scores, 1))
-        correction = gl.exp(running_max - next_max)
-    probability = gl.exp(scores - next_max[:, None])
-    if not FULL_TILE:
-        probability = gl.where(score_pos[None, :] < length, probability, 0.0)
-    # ...
-    if FIRST:
-        running_sum = gl.sum(probability, 1)
-    else:
-        running_sum = running_sum * correction + gl.sum(probability, 1)
-        numerator = numerator * correction[:, None]
-```
+One tile's step in the 32-row gated-attention kernel (`../cases/gated_attention_gluon.md` §1): max and sum are
+`SliceLayout(1, mma)` vectors, one value per head row, and the numerator stays in the MFMA accumulator. The caller
+peels the first tile (no rescale) and compiles the masks only into the variant for a row's last, partial tile.
 
 P·V follows, `gl.amd.cdna4.mfma(gl.convert_layout(probability.to(gl.bfloat16), a_layout), value, numerator)`, V read
 through padded LDS ([attention/gated_attention_launches.md](attention/gated_attention_launches.md) §1); K and V are gathered by slot above (§5); these `gl.max` and `gl.sum` cross waves (§12). A
 later launch reads the records of all splits of a (token, head), weighs split s by exp(m_s − M), M the largest m_s,
-sums in a fixed order and divides once, as the 24-token DSA merge does:
-
-```python
-    maximum = gl.max(maximums, 0)
-    safe_max = gl.where(maximum == -float("inf"), 0, maximum)
-    correction = _softmax_exp(maximums - safe_max[None, :])
-    denominator = gl.sum(denominators * correction, 0)
-    # ...
-    numerator = gl.sum(partials * correction[:, :, None], 0)
-    inverse_denominator = 1.0 / gl.where(denominator > 0, denominator, 1)
-```
+sums in a fixed order and divides once, as the 24-token DSA merge does (`../cases/dsa_sparse_mla_gluon.md` §1).
 
 Merged so in float64, the 32-row Qwen3.5 kernel's records give the softmax over all keys with maximum per-head relative L2 error 5.042e-4 in the tested 2049–4096-key rows
 *(field, E13)*. `_softmax_exp(x)` is `gl.exp2(x * 1.4426950408889634)`: 2 VALU against 9 for `gl.exp(x)` with one value
@@ -117,66 +87,22 @@ per lane, compiled with Triton 3.8.0 for gfx950 (`numerics.md` §6). The gated-a
 - **Every split writes a record, empty or not:** max −inf, denominator 0 and numerator 0 for a split with no keys, which
   the merge weighs by exp(−inf) = 0. Scratch from `torch.empty` then needs no zeroing, and a graph replay with
   other lengths reads no stale record, as run on the 32-row Qwen3.5 and 24-token DSA kernels *(field, E13)*; lengths and
-  slots are read on the device, the configuration from the batch shape. The 32-row Qwen3.5 producer:
+  slots are read on the device, the configuration from the batch shape. The 32-row Qwen3.5 producer stores its
+  records as in `../cases/gated_attention_gluon.md` §2.
 
-  ```python
-      running_max = gl.full((head_tile,), -float("inf"), gl.float32, gl.SliceLayout(1, mma))
-      running_sum = gl.full((head_tile,), 0, gl.float32, gl.SliceLayout(1, mma))
-      numerator = gl.full((head_tile, 256), 0, gl.float32, mma)
-      if split * TILE < length:
-          # ... a split with keys runs its tiles
-      # Every split publishes fresh neutral records, including inactive splits.
-      numerator = gl.convert_layout(numerator.to(gl.bfloat16), query_layout)
-      record = (row * HEADS + h) * SPLITS + split
-      # ... numerator stored at Partial + record[:, None] * 256 + d[None, :], rows past HEADS masked
-      h_stats = gl.arange(0, head_tile, gl.SliceLayout(1, mma))
-      stat_record = (row * HEADS + h_stats) * SPLITS + split
-      gl.store(Stats + stat_record * 2, running_max, h_stats < HEADS)
-      gl.store(Stats + stat_record * 2 + 1, running_sum, h_stats < HEADS)
-  ```
 - **Lay the records out for both launches.** Simplest, Qwen3.5's: numerators `[rows, heads, splits, 256]` bf16 and
   statistics `[rows, heads, splits, 2]` fp32, the numerator converted to
-  `BlockedLayout([1, 8], [8, 8], [1, gl.num_warps()], [1, 0])` so each lane stores 16 bytes (`query_layout` above). The 64-head DSA
+  `BlockedLayout([1, 8], [8, 8], [1, gl.num_warps()], [1, 0])` so each lane stores 16 bytes (`query_layout` in `../cases/gated_attention_gluon.md` §2). The 64-head DSA
   producers store straight from the transposed 32 × 32 accumulator in `[channel // 8][head][channel % 8]` order, read
   back 8 channels per lane, and at 64 heads XOR the channel group with `split * 4`, for a reason the source does not
-  state:
-
-  ```python
-      matrix: gl.constexpr = gl.amd.AMDMFMALayout(
-          version=4, instr_shape=[32, 32, 16], transposed=True, warps_per_cta=[1, 8]
-      )
-      local_heads = gl.arange(0, HEAD_TILE, gl.SliceLayout(1, matrix))
-      channels = START + gl.arange(0, 256, gl.SliceLayout(0, matrix))
-      record = (row * (HEADS // HEAD_TILE) + head_block) * SPLITS + split
-      groups = channels[None, :] // 8
-      if HEAD_TILE == 64:
-          groups = groups ^ split * 4
-      offsets = (groups * HEAD_TILE + local_heads[:, None]) * 8 + channels[None, :] % 8
-      gl.amd.cdna4.buffer_store(
-          numerator.to(gl.bfloat16), Partial + record * RECORD_VALUE * HEAD_TILE, offsets, cache=".cs"
-      )
-  ```
+  state (`../cases/dsa_sparse_mla_gluon.md` §2).
 
   The 12- and 16-token kernels pad a record to 544 channels, the 16-token one keeping the statistics in
   the padding; the 256-row Qwen3.5 kernel interleaves 4 heads for its 4-wave finish. None is measured.
 - **Guard the running max in the producer as well as in the merge.** DSA marks an unused slot −1, and its
   reference outputs 0 for a token that reads no row: a kernel must survive empty tiles, splits and tokens. Every
-  DSA producer takes its exponentials against `safe_max = gl.where(m == -float("inf"), 0, m)`, as the 24-token one:
-
-  ```python
-          if tile == 0:
-              next_max = tile_max
-          else:
-              next_max = gl.maximum(maximum, tile_max)
-          safe_max = gl.where(next_max == -float("inf"), 0, next_max)
-          probability = gl.where(valid_scores[None, :], _softmax_exp(scores - safe_max[:, None]), 0)
-          # ...
-          if tile == 0:
-              denominator = tile_sum
-          else:
-              correction = _softmax_exp(maximum - safe_max)
-              denominator = denominator * correction + tile_sum
-  ```
+  DSA producer takes its exponentials against `safe_max = gl.where(m == -float("inf"), 0, m)`, as the 24-token one
+  does (`../cases/dsa_sparse_mla_gluon.md` §3).
 
   Not this: `next_max` in place of `safe_max` in the exponentials. Without the guard,
   a split whose first two tiles are empty rescales by exp(−inf − (−inf)) = NaN in its token; the merges guard their
@@ -194,7 +120,9 @@ left out. The baseline is sglang's split-K Triton
 kernel `triton_sparse_mla_decode_splitk`. q is `[tokens, heads, 576]` fp8 e4m3fn (512 latent channels, then 64
 RoPE channels), the pool `[pool rows, 576]` fp8, 2048 slots per token (−1: none), the output `[tokens, heads, 512]`
 bf16; there are no scales. Two head counts, 64 and 8, one kernel per token count (not in the table: 16 heads, and more 8-head
-token counts with two kernels each at 32, 128 and 256 tokens, none of them with a measured speedup):
+token counts with two kernels each at 32, 128 and 256 tokens, none of them measured in this table's runs;
+`../cases/dsa_sparse_mla_8_heads.md` and `../cases/dsa_sparse_mla_16_heads.md` time some of them beside the FlyDSL
+kernels):
 
 | Heads | Tokens | Heads per program × splits | Producer: programs × warps | `waves_per_eu` | LDS (B) | VGPRs | Merge: programs × warps | Speedup over the baseline |
 |---|---|---|---|---|---|---|---|---|
@@ -240,7 +168,7 @@ read from Kineto *(field, E1)*; a second run of the ruler read
 - **Head tile and split count are coupled in the source.** The host code sets both from the token count,
   `head_tile = 64 if rows == 24 and heads == 64 else 32` and `splits = 8 if rows <= 16 or head_tile == 64 else 4`,
   and launches the producer on the grid `(rows, heads // head_tile, splits)`. The 64-head path is written for one
-  256-key tile per program: it reads the whole-tile LDS buffer (`cache_shared` in §5's excerpt), which the kernel
+  256-key tile per program: it reads the whole-tile LDS buffer (`cache_shared` in `../cases/dsa_sparse_mla_gluon.md` §5), which the kernel
   allocates only with one tile per program. Four
   splits at 24 tokens give two tiles per program, and the producer fails to compile
   (`NameError: cache_shared is not defined`) *(field, E6)*, without a GPU too (Triton 3.8.0, gfx950). A second tile
@@ -265,26 +193,13 @@ read from Kineto *(field, E1)*; a second run of the ruler read
   lane gets an out-of-range offset and reads 0 (S23); a pool that can outgrow it needs a host gate on its byte extent
   and another path above it (`gluon/memory.md` §3). The 64-head kernels clamp a −1 slot to row 0 and mask it; the
   32-token 8-head kernel masks its panel copies (`slots[:, None] >= 0`); the 128- and 256-token 8-head kernels turn
-  it into an `INT_MIN` element offset and copy with no mask, which stays out of range only for 1-byte elements (`gluon/memory.md` §4):
+  it into an `INT_MIN` element offset and copy with no mask (`../cases/dsa_sparse_mla_gluon.md` §4), which stays out
+  of range only for 1-byte elements (`gluon/memory.md` §4).
 
-  ```python
-      row_offsets = gl.where(selected >= 0, selected * KV_ROW, -2147483648).to(gl.int32)
-  ```
 - **16 bytes per lane, a whole tile in flight.** The 12- to 24-token producers gather each 256-row × 512-byte tile into
   registers as one tensor, in `BlockedLayout([1, 16], [4, 16], [8, 1], [1, 0])` (12 tokens: `[8, 8], [4, 2]`), the
-  32-token one in halves and refill slabs; 16 fp8 values per lane in one `buffer_load_dwordx4`, then to LDS:
-
-  ```python
-          indices = (split * TILES + tile) * 256 + key_offsets
-          slot = gl.load(Slots + row * TOPK + indices)
-          valid = slot >= 0
-          if CACHE_BUFFER:
-              base = gl.maximum(slot, 0) * WIDTH
-          # ...
-                  latent = gl.amd.cdna4.buffer_load(Cache, base[:, None] + channels[None, :], valid[:, None], 0.0)
-          # ...
-              cache_shared.store(latent)
-  ```
+  32-token one in halves and refill slabs; 16 fp8 values per lane in one `buffer_load_dwordx4`, then to
+  LDS (`../cases/dsa_sparse_mla_gluon.md` §5).
 
   That is 128 KiB per program, 16 loads of 16 bytes per lane, all issued before the first `ds_write_b128` (24-token producer, compiled for gfx950). A contiguous bf16 stream at 256 programs × 4 warps read 2.24–2.29 → 7.13–7.17 TB/s as the independent 16-byte loads per lane went 1 → 8 (3 runs) *(field, E10)*. A synthetic fp8 gather of distinct random rows ran 3.171× faster with 8 loads per lane than with 1 for 256-byte rows and 2.959× for 576-byte-stride rows reading 512 bytes (256 programs × 4 warps, 12 randomized blocks, paired 95% CIs 3.1698–3.1729 and 2.9568–2.9613; the matched bf16 stream 2.240 → 7.073 TB/s), 1.825× and 1.718× at 512 programs, 1.172× and 1.109× at 1024 *(field, E19)*. These are synthetic probes, not attention or DSA measurements; repeated indices and more than 8 loads per lane were not tested.
 - **One LDS tile serves QK and P·V.** In MLA the 512 latent channels of a row are the key (with the 64 RoPE channels)
@@ -433,22 +348,8 @@ only; Qwen3.5 none at 1–2 rows, bf16 `16x16x32` from 4 (f16 too at 4). Partial
 - **Hi + lo P: the residual as extra MFMA rows.** Split each probability into a bf16 high part and a bf16 residual,
   stack them as row pairs, run one P·V MFMA on twice the head rows and add each pair at the end. A stand-in of this form
   compiles with Triton 3.8.0 for gfx950 (8 heads, 64 keys: eight `v_mfma_f32_16x16x32_bf16`, as many as a 16-row bf16 P·V).
-  The 8-row Qwen3.5 kernel, whose launch sets the three constexprs below for its 8 heads (`TILE` 64, `lhs` the A operand
-  layout of the `[16, 16, 32]` MFMA; row 2h holds head h's high part, row 2h + 1 its residual):
-
-  ```python
-          prob_hi = probabilities.to(gl.bfloat16)
-          prob_lo = (probabilities - prob_hi.to(gl.float32)).to(gl.bfloat16)
-          if COMPRESS_SOFTMAX:
-              # Reconstitute M16 as adjacent high/residual probability rows.
-              probability_pair = gl.join(prob_hi, prob_lo).permute((0, 2, 1)).reshape((16, TILE))
-              numerator = gl.amd.cdna3.mfma(gl.convert_layout(probability_pair, lhs), value, numerator)
-          # ... the arms of other row counts, the end of the tile loop, the record indices
-      if FOLD_PROB:
-          if INTERLEAVED:
-              folded = gl.sum(numerator.reshape((HEADS, 2, 256)), axis=1)
-          # ... the arm of other row counts, the store of the folded rows
-  ```
+  The 8-row Qwen3.5 kernel's code is in `../cases/gated_attention_gluon.md` §3; its launch sets the three constexprs
+  there for its 8 heads (`TILE` 64; row 2h holds head h's high part, row 2h + 1 its residual).
 
   The extra rows cost no instruction only where they would be padding: 8 heads on the 16-row MFMA. The 8-row kernel loads
   query row r from head r // 2, keeps rows 2h and 2h + 1 in one thread (non-transposed MFMA), splits off the duplicate
@@ -482,37 +383,7 @@ timed against plain `gl.max` and `gl.sum`:
 - **Reduce in two levels by hand** (DSA): each warp reduces its keys in registers and writes its partial into a 2 KiB
   fp32 scratch whose halves hold max and sum; a fold layout reads them back and finishes in registers: at
   `HEAD_TILE` 32, 2 `s_barrier` against 7 for `gl.max` and `gl.sum` (compiled). That reduction in the 24-token kernel's source, the branches for a 64-head tile
-  left out; `storage` is a `[HEAD_TILE, 2 * (256 // HEAD_TILE)]` fp32 LDS buffer:
-
-  ```python
-  @gluon.jit
-  def _key_reduce(value, storage, HEAD_TILE: gl.constexpr, MAXIMUM: gl.constexpr, COMPACT_FOLD: gl.constexpr):
-      KEY_WAVES: gl.constexpr = 256 // HEAD_TILE
-      if HEAD_TILE == 32:
-          local = gl.reshape(value, [HEAD_TILE, KEY_WAVES, 32])
-          if MAXIMUM:
-              partial = gl.max(local, 2)  # each warp reduces its own keys in registers
-          else:
-              partial = gl.sum(local, 2)
-      # ...
-      shared = storage.slice(0 if MAXIMUM else KEY_WAVES, KEY_WAVES, dim=1)  # the max or the sum half
-      shared.store(partial)
-      if HEAD_TILE == 32:
-          if COMPACT_FOLD:
-              fold_layout: gl.constexpr = gl.BlockedLayout([1, 4], [32, 2], [1, 8], [0, 1])
-          else:
-              fold_layout: gl.constexpr = gl.BlockedLayout([1, 8], [32, 2], [1, 8], [0, 1])
-      # ...
-      partials = shared.load(fold_layout)  # read back in the fold layout
-      if MAXIMUM:
-          result = gl.max(partials, 1)  # finished in registers
-      else:
-          result = gl.sum(partials, 1)
-      matrix: gl.constexpr = gl.amd.AMDMFMALayout(
-          version=4, instr_shape=[32, 32, 16], transposed=True, warps_per_cta=[HEAD_TILE // 32, KEY_WAVES]
-      )
-      return gl.convert_layout(result, gl.SliceLayout(1, matrix))
-  ```
+  left out, is in `../cases/dsa_sparse_mla_gluon.md` §6.
 
 ## Evidence
 

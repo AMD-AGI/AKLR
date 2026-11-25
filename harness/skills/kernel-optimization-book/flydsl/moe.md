@@ -16,8 +16,11 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/utils/gemm_helper.py
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/quantization/
-  - aiter/fused_moe.py
-  - aiter/ops/flydsl/
+  - ROCm/aiter@dbd8bf5:aiter/fused_moe.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/
+cases:
+  - cases/fused_moe_interleave_swiglu_hidden7168.md
+  - cases/fused_moe_shuffled_16x16_few_tokens.md
 ---
 
 # MoE in FlyDSL
@@ -86,19 +89,8 @@ and MoE kernels FlyDSL lacks; the mapping is in § grouped_sorted_tokens §1 bel
 ## few_tokens How to write it
 
 Steps c and f of the head (`../moe/few_tokens.md` § How to write it), in stage 1 of the MXFP4 fused-MoE kernel that
-page reads from (257 experts, top-9, model dim 6144, inter dim 256):
-
-```python
-# c: one LDS atomic add per routed item
-for _r in range_constexpr(_NREP):
-    _i = tx_i32 + fx.Int32(_r * 256)
-    if _i < fx.Int32(_MT):
-        _lds_atomic_add(cnt_tiles, _tk_regs[_r], 1)
-# f: rank among this expert's items, in item order
-_x = _is_eq(_v, fold_e)          # 1 where this item routes to the block's expert
-_inc2 = _dpp_scan_wave(_x)       # inclusive scan inside the wave, then wave totals through LDS
-_d = _base + _p2 + _inc2 - _x - _lo
-```
+page reads from (257 experts, top-9, model dim 6144, inter dim 256), are in
+`../cases/fused_moe_shuffled_16x16_few_tokens.md` §8.
 
 ## grouped_sorted_tokens §1 What FlyDSL v0.3.2 ships
 
@@ -170,33 +162,10 @@ epilogue (`_SUPPORTED` in both host files).
   `compile_mixed_moe_gemm2` as an argument "accepted as ignored" (:747, :768-773). `compile_mixed_moe_gemm2_common`
   takes it and discards it (`del b_nt`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3448`, `:3459`):
   its w2 load passes no `cache_modifier` (:4256-4265), where stage 1's B load passes `cache_modifier=b_nt` (:992).
-  Two fused-MoE kernels restore it. One rewrites the installed builder's source at import: it drops
+  Two fused-MoE kernels restore it. One rewrites the installed builder's source on its first stage-2 compile: it drops
   `del b_nt`, adds `cache_modifier=b_nt` to the w2 load, adds `_nt<b_nt>` to the kernel name so the variants do not
-  share a cache entry, and fails if an anchor is not found exactly once:
-
-  ```python
-  @functools.cache
-  def _s2_builder_nt():
-      from aiter.ops.flydsl.kernels import mixed_moe_gemm_2stage_common as mm
-
-      src = inspect.getsource(mm.compile_mixed_moe_gemm2_common)
-      for old, new in (
-          ("    del b_nt\n", ""),  # b_nt is no longer discarded
-          (
-              "offset_in_bytes=(b_elem_bytes == 1),\n",
-              "offset_in_bytes=(b_elem_bytes == 1), cache_modifier=b_nt,\n",  # the w2 load
-          ),
-          ('f"_vscale_fix3_fp4opt_v1{pm_tag}', 'f"_vscale_fix3_fp4opt_v1_nt{b_nt}{pm_tag}'),  # the kernel name
-      ):
-          if src.count(old) != 1:
-              raise RuntimeError(f"stage-2 patch anchor matched {src.count(old)} times: {old!r}")
-          src = src.replace(old, new)
-
-      # filename: a synthetic name under which src is registered in linecache, where inspect and tracebacks read it
-      namespace = dict(mm.__dict__)
-      exec(compile(src, filename, "exec"), namespace)
-      return namespace["compile_mixed_moe_gemm2_common"]
-  ```
+  share a cache entry, and fails if an anchor is not found exactly once
+  (`../cases/fused_moe_interleave_swiglu_hidden7168.md` §1).
 
   The other carries its own copy of the builder with `cache_modifier=b_nt` on the w2 load. What it costs:
   `../moe/grouped_sorted_tokens.md` §4.

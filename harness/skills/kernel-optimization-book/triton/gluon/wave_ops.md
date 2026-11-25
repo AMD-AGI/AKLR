@@ -23,6 +23,10 @@ sources:
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/Utility.cpp
   - triton-lang/triton@c01b677:third_party/amd/language/hip/libdevice.py
   - triton-lang/triton@c01b677:third_party/amd/backend/compiler.py
+cases:
+  - cases/fp8_moe_gluon_dim3072.md
+  - cases/gdn_chunked_gluon.md
+  - cases/gdn_step_gluon.md
 ---
 
 # Inline assembly and cross-lane operations in Gluon (gfx950)
@@ -199,7 +203,7 @@ What each fp32 call lowers to, its VALU count and precision, and when the native
   which MM64-FP8 uses and the compiler sees as an intrinsic. LLVM already packs fp32 `gl.fma`, `*` and `+` on
   register-adjacent pairs into `v_pk_fma_f32`, `v_pk_mul_f32`, `v_pk_add_f32`: check the amdgcn first.
 - **A quotient in 7 instructions instead of 11.** `r = v_rcp(d)`, a Newton step `r = fma(fma(-d, r, 1), r, r)`,
-  `q = n·r`, a residual step `q = fma(fma(-q, d, n), r, q)`, then `v_div_fixup_f32 q, d, n` (S29; no `v_div_scale`; code below).
+  `q = n·r`, a residual step `q = fma(fma(-q, d, n), r, q)`, then `v_div_fixup_f32 q, d, n` (S29; no `v_div_scale`; code: [cases/gdn_step_gluon](../../cases/gdn_step_gluon.md) §7).
   It matched the compiler’s `n / d` on 16 tested special cases (non-NaN results bitwise; NaN classification only) and bitwise on 843198 random normal quotients with 2^-126 ≤ |d| ≤ 2^126, and was
   off by more than 1 ulp at d = ±2^127 and ±2^-127 *(field, E8)*. Which quotient an accuracy bound allows: [numerics.md](../numerics.md) §2.
 - **Canonicalization.** Under the default IEEE mode LLVM quiets each min/max operand it cannot prove canonical (a
@@ -210,25 +214,8 @@ What each fp32 call lowers to, its VALU count and precision, and when the native
 - `v_mad_u32_u24` (S29; DSA's gather addresses) gave (a·b + c) mod 2^32 for factors below 2^24, and
   a first factor of 2^24 + 5 lost bit 24 *(field, E9)*: keep both factors within 24 bits.
 
-The quotient, as Qwen3-Next's GDN decode writes it for its fp8 quantization scale (n = `numerator`, d = `quant_max`):
-
-```python
-@gluon.jit
-def _quantization_scale(magnitude, quant_max):
-    numerator = gl.maximum(magnitude, 1.0e-10)
-    inverse = gl.inline_asm_elementwise(
-        "v_rcp_f32 $0, $1", "=v,v", (quant_max,),
-        dtype=gl.float32, is_pure=True, pack=1,
-    )
-    inverse = gl.fma(gl.fma(-quant_max, inverse, 1.0), inverse, inverse)  # Newton step
-    quotient = numerator * inverse
-    residual = gl.fma(-quotient, quant_max, numerator)
-    quotient = gl.fma(residual, inverse, quotient)  # residual step
-    return gl.inline_asm_elementwise(
-        "v_div_fixup_f32 $0, $1, $2, $3", "=v,v,v,v",
-        (quotient, quant_max, numerator), dtype=gl.float32, is_pure=True, pack=1,
-    )
-```
+The quotient, as Qwen3-Next's GDN decode writes it for its fp8 quantization scale, is in
+[cases/gdn_step_gluon](../../cases/gdn_step_gluon.md) §7.
 
 ## 5. Cross-lane operations Gluon emits by itself
 Compiled, one wave, a 64-element `int32` tensor on 64 lanes, the instructions between the load's wait and the store;
@@ -388,19 +375,9 @@ of `a` with rows 0–1 of `b` (S38). Both registers change: tie the outputs. Glu
 reductions over lane bits 4–5 and for xor-16/32 shuffles (S39, S41); making a `convert_layout` permlane-sized is in
 [layouts.md](layouts.md). The GDN prefill store swaps registers 0–3 with 4–7 of each 8-register block across lane
 bit 4, so that K bits 0–2 land in consecutive registers for 8-value bf16 stores, then relabels the axes and asserts
-that no data moves (its docstring: "Entry and exit delays cover GFX950 hazards."):
+that no data moves (its docstring: "Entry and exit delays cover GFX950 hazards."); the code is in
+[cases/gdn_chunked_gluon](../../cases/gdn_chunked_gluon.md) §6.
 
-```python
-gl.static_assert(BLOCK_V == 16)
-shuffled = gl.inline_asm_elementwise(
-    "\n        s_nop 1\n        v_permlane16_swap_b32 $0, $4\n        v_permlane16_swap_b32 $1, $5\n        v_permlane16_swap_b32 $2, $6\n        v_permlane16_swap_b32 $3, $7\n        s_nop 1\n        ",
-    "=v,=v,=v,=v,=v,=v,=v,=v,0,1,2,3,4,5,6,7", [state], dtype=gl.float32, is_pure=True, pack=8)
-matrix = shuffled.reshape((16, 2, 2, 2, 2, 2, 2, 2))
-matrix = matrix.permute((0, 5, 2, 3, 4, 1, 6, 7)).reshape((16, 128))
-L: gl.constexpr = gl.DistributedLinearLayout([[0, 1], [0, 2], [0, 4]], [[1, 0], [2, 0], [4, 0], [8, 0], [0, 64], [0, 8]],
-                                             [[0, 16], [0, 32]], [], [16, 128])
-matrix = gl.convert_layout(matrix, L, assert_trivial=True)
-```
 ### 6.8 Bit scans
 `v_ffbl_b32` returns the index of the lowest set bit, −1 for 0 (S38); `s_ff1_i32_b64` does it for a 64-bit SGPR mask (S45).
 Iterate a mask with `i = ffbl(m)`, then `m = m & m - 1` (DSA's live tiles); a 64-bit per-lane mask takes two `v_ffbl_b32`
@@ -452,7 +429,7 @@ Prefer an explicit ±448 clamp with Triton's cast, or a clamp with the asm conve
   fixed (compiled: 12 loads per group at 1 warp, 3 at 4): re-derive it from the amdgcn after any change ([memory.md](memory.md) §11).
 - **`s_waitcnt lgkmcnt(0)` to retire LDS reads before a refill** (`=v,~{memory}`, `is_pure=False`). With one wave
   `gl.barrier()` emits neither a wait nor `s_barrier`, so the one-warp MiniMax router writes this asm between its
-  relaxed reads and the next async copy into the same slot (code below). With 4 waves `gl.barrier()` compiles to
+  relaxed reads and the next async copy into the same slot (code: [cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §6). With 4 waves `gl.barrier()` compiles to
   `s_waitcnt lgkmcnt(0)` and `s_barrier`, so the 4-wave n = 7168 fp8 GEMM's asm repeats it ([memory.md](memory.md) §11).
 - **Empty asm with tied operands** leaves an empty block and is opaque (compiled: `x*3`, pin, `*5` kept two multiplies):
   - `"", "=v,0"`, pure: the value must exist in VGPRs there and nothing folds across it; between two `convert_layout`s
@@ -462,24 +439,7 @@ Prefer an explicit ±448 clamp with Triton's cast, or a clamp with the asm conve
   - 16 tied outputs, `pack=16`, `is_pure=False` on the accumulator between K groups: the accumulator is
     materialized there, and the async refill issued after it stays after it, as an impure asm keeps loads (§2.3; the n = 7168 fp8 GEMM at m = 256).
 
-The one-warp MM64-FP8 router, one step of its two-slot ring (slot 0 shown; `_copy_router_panel` issues the two async copies of a slot):
-
-```python
-a = gl.amd.cdna4.async_copy.load_shared_relaxed(ax0, ad)  # relaxed reads of the slot
-b = gl.amd.cdna4.async_copy.load_shared_relaxed(bw0, bd)
-gl.inline_asm_elementwise(  # retire them; the `=v` output is a dummy
-    "s_waitcnt lgkmcnt(0)\n v_mov_b32 $0, 0",
-    "=v,~{memory}",
-    (),
-    dtype=gl.int32,
-    is_pure=False,
-    pack=1,
-)
-if step + 2 < steps:  # then the refill of the same slot
-    _copy_router_panel(
-        ax0, bw0, X, W, xo + (step + 2) * BK, wo + (step + 2) * BK
-    )
-```
+One step of the one-warp MM64-FP8 router's two-slot ring is in [cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §6.
 
 ## 9. Rules: when it pays, hazards, checking the result
 ### 9.1 When inline assembly is worth it

@@ -5,6 +5,12 @@ ops: [gemm, moe, attention, gdn]
 gens: [gfx950]
 triton: 3.8.0
 basis: source-semantics
+cases:
+  - cases/bf16_triton_small_m.md
+  - cases/gated_attention_gluon.md
+  - cases/gdn_chunked_gluon.md
+  - cases/mxfp4_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # Authoring a Triton or Gluon kernel
@@ -71,7 +77,7 @@ compiler stage: plain Triton runs `make_ttir` then `make_ttgir`, Gluon replaces 
 - **`num_warps` is part of a Gluon kernel.** The module takes `ttg.num-warps` from the launch, and the verifier rejects
   a layout with another warp count ("Layout has 4 warps per CTA, but the context requires 8 warps per CTA") or with
   other than 64 lanes (S1). A launch without `num_warps` gets 4 (S4), which hard-coded 4-warp layouts rely on (the state-clearing
-  launch of §6).
+  launch §6 points to).
 
 The plain bf16 GEMMs and norms ([gemm/small_m_gemm.md](gemm/small_m_gemm.md)) are starting points for plain
 `tl.*`, which leaves layouts and LDS buffers to the compiler ([gemm.md](gemm.md) §9), not a rule for choosing the
@@ -147,54 +153,11 @@ grid from `_shape_config(rows)`, as the skeleton of §10 does with `_config`.
 module-level def of shapes whose cache holds compiled code, constants and per-shape scratch only. Eleven of the library's 154 kernels
 have one (42 of its later 280, with the 31 Qwen3-Next gated-attention kernels): the two plain-Triton GEMMs cache a
 launch closure per shape, the N 2624 × K 6144 one with its workspace size; the nine Qwen3.5 gated-attention kernels
-the fp32 unit KV scale both launches read, which built in `run` would allocate and fill a tensor per call. The N 6144 × K 2048 bf16 GEMM, its launch closure built once per (a_shape, b_shape):
+the fp32 unit KV scale both launches read, which built in `run` would allocate and fill a tensor per call. The N 6144 × K 2048 bf16 GEMM's launch closure, built once per (a_shape, b_shape), is in
+[cases/bf16_triton_small_m](../cases/bf16_triton_small_m.md) §6.
 
-```python
-@functools.cache
-def _launch_for(a_shape, b_shape):
-    m, k = a_shape
-    n = b_shape[0]
-    grid = (n // 32,)
-    if m <= 16:
-        even_m = m == 16
-        block_k = 512 if m == 1 else 256
-
-        def launch(a, b, out):
-            _gemm_m16_kernel[grid](
-                a,
-                b,
-                out,
-                m,
-                N=n,
-                K=k,
-                BLOCK_M=16,
-                BLOCK_N=32,
-                BLOCK_K=block_k,
-                N_TILES=n // 32,
-                NXCD=8,
-                EVEN_M=even_m,
-                num_warps=2,
-                num_stages=3,
-                waves_per_eu=2,
-            )
-
-        return launch
-    # ... the branches for m <= 32 and m <= 64 return their own closures
-
-
-def run(*, a, b, trans_b, bias, out_dtype, out):
-    launch = _launch_for(tuple(a.shape), tuple(b.shape))
-    launch(a, b, out)
-```
-
-A Qwen3.5 gated-attention kernel, the constant tensor both launches read, built once per device:
-
-```python
-@functools.cache
-def _unit_scale(device):
-    """The FP32 KV scale both kernels read: the pools hold unscaled values."""
-    return torch.ones(1, dtype=torch.float32, device=device)
-```
+A Qwen3.5 gated-attention kernel's constant tensor that both launches read, built once per device, is in
+[cases/gated_attention_gluon](../cases/gated_attention_gluon.md) §10.
 
 None of the library's 154 kernels (nor of its later 280) calls `warmup()` or `triton.compile`: binaries live in Triton's in-process JIT cache, which is enough
 while every size is first called outside a capture and the key below is a function of the size.
@@ -226,63 +189,20 @@ for the values it passes: put an int that may change within a size in `do_not_sp
 
 - **Allocate inside the call**, on an argument's device, sized from the shapes: `torch.empty` (117 of the library's 154 kernels,
   686 call sites), `torch.empty_like`, `.new_empty`. One allocation can be carved into typed regions at aligned
-  offsets (64 KiB or 256 bytes in the MoE kernels' arenas); an offset that is not a multiple of 16 bytes loses `D` and gets
-  another binary (§5):
-
-```python
-# a DeepSeek-V2 MXFP4 MoE: one uint8 arena, each typed region starting on a 64 KiB boundary
-regions = []
-total_bytes = 0
-for shape, dtype in specifications:  # ((jobs_count,), torch.int32), ((m, 8), torch.float32), ...
-    region_bytes = dtype.itemsize * prod(shape)
-    regions.append((total_bytes, region_bytes, shape, dtype))
-    total_bytes += triton.cdiv(region_bytes, 65536) * 65536
-arena = torch.empty((total_bytes,), dtype=torch.uint8, device=x.device)
-return [arena.narrow(0, offset, size).view(dtype).view(shape) for offset, size, shape, dtype in regions]
-```
+  offsets (64 KiB or 256 bytes in the MoE kernels' arenas; code: [cases/mxfp4_moe_gluon_dim6144](../cases/mxfp4_moe_gluon_dim6144.md) §6); an offset that is not a multiple of 16 bytes loses `D` and gets
+  another binary (§5).
 
 - **`torch.empty` holds whatever was there**, in an eager call and in every replay. In every call, write before any read
   what a launch reads before it writes: atomic counters and cursors, `-1` job sentinels, padding rows, accumulators
   added into. None of the library's 154 kernels calls `torch.zeros` or `fill_` (nor any of its later 280): an earlier
   launch of the call writes the initial values, as program 0 of an MM256-FP4 kernel's first launch stores 0 into the
-  expert counts and the total and -1 into the job slots, on which the next launch takes atomic tickets:
-
-```python
-pid = gl.program_id(0).to(gl.uint32)
-linear_layout: gl.constexpr = gl.BlockedLayout([1], [64], [NW], [0])
-if pid == 0:  # one program of the first launch writes what the next launch's atomics start from
-    expert = gl.arange(0, _next_power_of_2(max(E, MAX_JOBS)), layout=linear_layout)
-    gl.store(Counts + expert, 0, expert < E)
-    gl.store(Jobs + expert, -1, expert < MAX_JOBS)
-    gl.store(Total, 0)
-# ... every program, 0 included, then goes on to its router or quantization tile
-```
+  expert counts and the total and -1 into the job slots, on which the next launch takes atomic tickets
+  ([cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §5).
 
   Not this: counters that no launch of the call writes before they are read. A fold whose counters no node of the
   graph zeroed was wrong in every replay after the first (§7).
 - **State that must start fresh** is cleared by a small launch reading its flag on the device, as a GDN prefill kernel
-  zeroes the slot of each sequence without initial state:
-
-```python
-@gluon.jit
-def _initialize_fresh(
-    STATE, INDICES, INITIAL, WIDTH: gl.constexpr, BLOCK: gl.constexpr
-):
-    seq = gl.program_id(0)
-    if not gl.load(INITIAL + seq):  # the flag is read on the device, not by the host
-        slot = gl.load(INDICES + seq)
-        offset = gl.program_id(1) * BLOCK + gl.arange(
-            0, BLOCK, gl.BlockedLayout([1], [64], [4], [0])
-        )
-        gl.store(STATE + slot * WIDTH + offset, 0.0, offset < WIDTH)
-
-
-def initialize_fresh(state, indices, initial):
-    width = state.shape[1] * state.shape[2] * state.shape[3]
-    _initialize_fresh[(indices.numel(), triton.cdiv(width, 1024))](
-        state, indices, initial, width, 1024
-    )
-```
+  zeroes the slot of each sequence without initial state ([cases/gdn_chunked_gluon](../cases/gdn_chunked_gluon.md) §4).
 
 - **Nothing carries from one call to the next.** `run` keeps nothing derived from an argument across calls, a compile
   function only compiled code, constants (§5) and per-shape scratch rewritten whole before every read. A source scan
@@ -363,23 +283,8 @@ that left 8 of its 16 rows unwritten failed at the first capture with 24576 = 8 
 
 The worst-case grid with an early exit, as an MM256-FP4 kernel sizes its expert GEMM: the host launches
 `capacity = cdiv(min(routes * block_m, routes + e * (block_m - 1)), block_m) * block_m` rows of tiles, and a program
-returns at once when `tile * BM >= gl.load(Total)`, the row count the GPU computed:
-
-```python
-# host: the grid covers the most rows of tiles any routing can need, from shapes alone
-capacity = (
-    triton.cdiv(min(routes * block_m, routes + e * (block_m - 1)), block_m)
-    * block_m
-)
-```
-
-```python
-# kernel: a program past the rows the GPU counted returns at once
-linear = gl.program_id(0) + gl.program_id(1) * gl.num_programs(0)
-tile, column_tile = _grouped_tile_2(linear.to(gl.uint32), column_tiles, M_GROUP)
-if tile * BM >= gl.load(Total):
-    return
-```
+returns at once when `tile * BM >= gl.load(Total)`, the row count the GPU computed
+([cases/mxfp4_moe_gluon_dim3072](../cases/mxfp4_moe_gluon_dim3072.md) §6).
 
 Not this: `torch.nonzero` or `.item()` on the count to size the grid on the host, which fails the capture (table).
 

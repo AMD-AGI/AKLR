@@ -14,6 +14,7 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/utils/gemm_helper.py
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/utils/prims.py
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_mxfp4_kernel.py
+cases: [cases/bf16_ring_refill_barrier.md]
 ---
 
 # LDS, global feed and prefetch in a GEMM
@@ -116,27 +117,8 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §3.
   output at m=2 in 10 of 2000 calls (relative error up to 8.7e-2) and different bits for the same input in 26 while
   another process ran matmuls on the same GPU; with `lgkmcnt(0)` added to both waits, 0 and 0. Run alone, 300 calls
   each at m 1, 2, 4 and 8 were right, so a check that runs the kernel by itself passes it. The loop with the wait,
-  from the twin kernel for N 8192 × K 4096 (`issue(st)` sends the DMAs that fill ring slot `st % NS`, `frag` is a
-  `ds_read` of a slot):
-
-```python
-for st in range_constexpr(NS - 1):
-    issue(st)
-for st in range_constexpr(STAGES):
-    vm = min(NS - 2, STAGES - 1 - st) * PASSES
-    llvm.InlineAsmOp(
-        None, [], f"s_waitcnt vmcnt({vm}) lgkmcnt(0)\n\ts_barrier", "", has_side_effects=True
-    )
-    if const_expr(st + NS - 1 < STAGES):
-        issue(st + NS - 1)  # refills the slot the waves read one stage earlier
-    for u in range_constexpr(U):
-        bf = frag(st % NS, 0, rb_rd, u)
-        afs = [frag(st % NS, ROWS * KV, ra_rd[i], u) for i in range_constexpr(MF)]
-        for i in range_constexpr(MF):
-            acc[i] = rocdl.mfma_f32_16x16x32_bf16(
-                T.vec(4, T.f32), [afs[i], bf, acc[i], 0, 0, 0]
-            )
-```
+  from the twin kernel for N 8192 × K 4096 (`issue(st)` sends the DMAs that fill ring slot `st % NS`), is in
+  `../cases/bf16_ring_refill_barrier.md` §1.
 
   Not this: `f"s_waitcnt vmcnt({vm})\n\ts_barrier"`. The `ds_read`s of the stage before can still be in flight when
   `issue` refills their slot.

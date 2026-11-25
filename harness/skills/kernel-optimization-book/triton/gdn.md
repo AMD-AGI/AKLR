@@ -6,6 +6,9 @@ dtypes: [bf16, fp8, fp32]
 regimes: ["one token per sequence, 1-256 rows", "chunked, 512-16384 tokens in 1-16 sequences", ragged-sequences]
 gens: [gfx950]
 triton: 3.8.0
+cases:
+  - cases/gdn_chunked_gluon.md
+  - cases/gdn_step_gluon.md
 ---
 
 # GatedDeltaNet kernels in Gluon on gfx950
@@ -45,20 +48,10 @@ Where the reference rounds differs per model and regime: read the reference impl
 with. Qwen3.5 decode rounds each conv tap product to BF16, Qwen3-Next sums
 exact products; both prefills round the normalized q and k to BF16 and multiply the core S q by `scale`, where decode
 multiplies q ([numerics.md](numerics.md) for rounding points). Prefill runs the recurrence over each sequence of a
-ragged batch (`cu_seqlens`) in the chunked WY form, as one kernel's docstring states it:
+ragged batch (`cu_seqlens`) in the chunked WY form, as one kernel's docstring
+states it ([cases/gdn_chunked_gluon](../cases/gdn_chunked_gluon.md) §1).
 
-```python
-# docstring of a Qwen3.5 prefill kernel's chunk-factor function: G relative decay, c cumulative decay
-    With cumulative decay c and relative decay G, solve
-      (I + tril(beta * G * (K @ K.T), -1)) [W, U]
-          = [beta * c * K, beta * V].
-    Replay uses R = U.T - S @ W.T, then
-      Y = S @ (c * Q).T + R @ response,
-      S_next = c_last * S + R @ Ktail.
-    Products of decays are formed directly, without dividing tiny prefixes.
-```
-
-Here `response` in the replay equation is the transpose of the chunk's causal decayed attention, tril(Q Kᵀ ⊙ G)ᵀ (the untransposed matrix has i ≥ j), `Ktail` is K scaled by each
+In that docstring `response` in the replay equation is the transpose of the chunk's causal decayed attention, tril(Q Kᵀ ⊙ G)ᵀ (the untransposed matrix has i ≥ j), `Ktail` is K scaled by each
 token's decay to the chunk end, G(last, j), W and U solve the triangular system, R = Uᵀ − S Wᵀ is the residual.
 
 | model, op | kernels | sizes | launches per call | writes |
@@ -173,18 +166,8 @@ reader of the old history has read it, while with recomputed inputs (§4) many C
 - Exchange q and k between the CTA's waves through 1–2 KiB of LDS (q and k, 2 × 128 fp32, at 1 and 2 rows; q, k, v and β
   at 4 rows) and read them back in the state layout; the 2-row kernel's late q read "to shorten its register
   lifetime" compiles as an early one *(field, E17)*. Summing a `[1, BK]` slice over its unit axis yields the vector in
-  `SliceLayout(0, state_layout)` with no data movement (compiled with Triton 3.8.0 for gfx950: four `ds_read_b128` per
-  vector, no lane exchange; `qk_shared.index(1).load(gl.SliceLayout(0, state_layout))` is rejected by Triton 3.8.0 for gfx950 at the descriptor `index` step: "rank must be equal to or one less than the shape size. Got 2 and 1"):
-```python
-# the 2-row kernel; the update and the state store sit between the read of k and the read of q
-        # Hold Q in LDS until state writeback to shorten its register lifetime.
-        qk_shared = gl.allocate_shared_memory(
-            gl.float32, (2, BK), gl.SwizzledSharedLayout(1, 1, 1, [1, 0]), qk,
-        )
-        k = gl.sum(qk_shared.slice(1, 1, 0).load(state_layout), 0)
-        q = gl.sum(qk_shared.slice(0, 1, 0).load(state_layout), 0)
-        result = gl.sum(state * q[None, :], 1)
-```
+  `SliceLayout(0, state_layout)` with no data movement ([cases/gdn_step_gluon](../cases/gdn_step_gluon.md) §1; compiled with Triton 3.8.0 for gfx950: four `ds_read_b128` per
+  vector, no lane exchange; `qk_shared.index(1).load(gl.SliceLayout(0, state_layout))` is rejected by Triton 3.8.0 for gfx950 at the descriptor `index` step: "rank must be equal to or one less than the shape size. Got 2 and 1").
 
 - Lay the state out with 4 contiguous keys per thread (16-byte accesses) and the key axis on lanes and registers only,
   so `S k` and `S q` reduce inside a wave; take q and k from `SliceLayout(0, …)` and v, u and the core from
@@ -259,24 +242,7 @@ GPU, one run *(field, E9)*. The instructions are from compiling its recurrence k
 One helper ends every head in all eight Qwen3.5 fp8 decode kernels (the same function text in each): it rounds the head
 to BF16, takes the amax of its non-NaN values floored at 1e-10, scales by one reciprocal of `amax · (1/448)`, clamps to
 ±448 with an inline `v_med3_f32` (`gl.clamp` lowers to the same, S20) and converts. The recipe and its division
-forms: [numerics.md](numerics.md) §2.
-
-```python
-value = value.to(gl.bfloat16, fp_downcast_rounding="rtne").to(gl.float32)  # quantize the BF16-rounded head
-magnitude = gl.where(value == value, gl.abs(value), 0.0)  # a NaN does not enter the amax
-maximum = gl.maximum(gl.max(magnitude, 0), 1.0e-10)
-group_scale = maximum * (1.0 / 448.0)
-inverse_scale = 1.0 / group_scale  # one reciprocal per head
-scaled = value * inverse_scale
-clipped = gl.inline_asm_elementwise(
-    "v_med3_f32 $0, $1, $2, $3",
-    constraints="=v,v,v,v",
-    args=[scaled, -448.0, 448.0],
-    dtype=gl.float32,
-    is_pure=True,
-    pack=1,
-)
-```
+forms: [numerics.md](numerics.md) §2. The helper is in [cases/gdn_step_gluon](../cases/gdn_step_gluon.md) §2.
 
 - Keep the head's 128 values in one wave (`BlockedLayout([4], [64], [2], [0])` gives each of two waves a full copy), so
   amax and the RMS are wave reductions with no LDS exchange.
@@ -436,17 +402,9 @@ up to 1024 do not run at their sizes: no run checked or timed them.
 - The unit-lower-triangular inverse `(I + A)⁻¹` of a 16–64-token chunk: solve small diagonal blocks (4 × 4, 8 × 8 or
   16 × 16) by forward substitution with `gl.gather` pivots and join them with fp32 MFMAs; or, on a 16 × 16 block,
   multiply out `(I+N)(I+N²)(I+N⁴)(I+N⁸)`, which is `(I − N)⁻¹` for a strictly lower N (N¹⁶ = 0): pass N = −A, as RSUM b
-  negates the Gram term before the inverse below and the Qwen3-Next snapshot-scan kernel documents ("Inverse of I-P for a strictly lower triangular
+  negates the Gram term before the inverse in [cases/gdn_chunked_gluon](../cases/gdn_chunked_gluon.md) §2 and the Qwen3-Next snapshot-scan kernel documents ("Inverse of I-P for a strictly lower triangular
   16-by-16 P"), and join 16 × 16 inverses with fp32 MFMAs for longer chunks. Keep each small solve in one
   wave: `gl.gather` lowers to lane shuffles only when the gathered axis stays in a warp, else through LDS (S38).
-```python
-# RSUM b: `lower` is N, the negated strictly lower Gram term of a 16 × 16 block; _fp32_mfma(a, b, acc) is acc + a @ b
-power = gl.convert_layout(lower, MMA)
-inverse = power + (rr[:, None] == cc[None, :]).to(gl.float32)  # I + N
-for stage in gl.static_range(3):
-    power = _fp32_mfma(power, power, gl.zeros((16, 16), gl.float32, MMA), MMA)  # N², N⁴, N⁸
-    inverse = _fp32_mfma(power, inverse, inverse, MMA)  # (I + power) @ inverse
-```
 
 - The kernels skip the zero halves of triangular operands: K blocks taken with `gl.amd.slice`, a register-only view (S39),
   only nonzero blocks multiplied, only tiles on or below the diagonal stored and loaded. In SEQ32L at 4096/2
@@ -488,18 +446,11 @@ For its `[16, 16, 4]` accumulator as A, `k_width = 1` takes two register↔lane 
 - **`k_width = 4` operands (conversion candidate, not a speed preference).** With warps only along M, the
   transposed fp32 accumulator already is the `k_width = 4` A operand: the conversion to `DotOperandLayout(0, mma, 4)` passes `assert_trivial=True`, while `k_width = 1` fails it, and so does `k_width = 4` with `[2, 2]` or `[1, 4]` warps; it needs no permutation code. CKPT's scan (`[1, 4]` warps, `transposed=False`) stages the state through LDS and reads it back as a `k_width = 4` operand; RSUM's summaries use `k_width = 4` with `[2, 2]` warps.
 - **Relabel K (SEQ16).** Permute K inside every 16-block (k = 4y + z → 4z + y) on both operands,
-  the columns of A (below) and the rows of B (`(rows // 16, 4, 4, columns)` permuted by `(0, 2, 1, 3)`): the product is unchanged, the conversion passes
+  the columns of A ([cases/gdn_chunked_gluon](../cases/gdn_chunked_gluon.md) §3) and the rows of B (`(rows // 16, 4, 4, columns)` permuted by `(0, 2, 1, 3)`): the product is unchanged, the conversion passes
   `assert_trivial=True` (S42), and the one-wave code is that of `k_width = 4`. The kernel holds the state K-permuted
   for the whole sequence (permuting it again lands it in the A layout) and un-permutes it for the final store. In a
   probe of its 64 × 128 `[4, 1]` state, the direct `k_width = 1` conversion costs 8 `ds_write_b128` + 8 `ds_read_b128`
   and 16 KB of LDS; relabeled, it has no LDS access or lane shuffle, only 32 `v_mfma_f32_16x16x4_f32`.
-```python
-# SEQ16, the columns of A, x of shape (rows, columns): swap the two base-4 digits of k inside every 16-block
-    return gl.reshape(
-        gl.permute(gl.reshape(x, (rows, columns // 16, 4, 4)), (0, 1, 3, 2)),
-        (rows, columns),
-    )
-```
 
 - **Two permlane-sized steps (SEQ32G, on its 16 × 16 inverse blocks, not the state).** Go through a middle
   `DistributedLinearLayout` one transposition from each end, SEQ32G's `reg_bases=[[0, 1], [0, 8]]`: on a one-wave 16
@@ -512,7 +463,7 @@ In one wave, a product of two 16 × 16 fp32 accumulators held in the same transp
 conversion *(field, E17)*; all four use 1 KB of LDS, since B is not free there (the direct conversion moves both
 operands through it, the others only B). In a layout-conversion probe, not a GDN kernel, a lane-moving conversion cost
 0.6–1.5 µs per 16 KB tile with all programs running, 3 runs *(field, E5)* ([gluon/layouts.md](gluon/layouts.md) §8; the D
-kernels' hand-written `v_permlane16_swap`: [gluon/wave_ops.md](gluon/wave_ops.md)). Fewer instructions did not mean less time at every occupancy: a 256-step, 4-wave chain on 64 × 16 tiles at 16 programs per CU took 337.2 µs with `k_width = 4` against 256.8 µs with the direct `k_width = 1` conversion, 1.313× (8 balanced repeat clusters, one run) *(field, E23)*, but at 4 programs per CU `k_width = 4` was faster for all five tile shapes tried (0.54–0.89×), and in a one-wave chain at every occupancy tried (0.54–0.80×), 1 run *(field, E26)*; no GDN kernel was timed either way.
+kernels' hand-written `v_permlane16_swap`: [cases/gdn_chunked_gluon](../cases/gdn_chunked_gluon.md) §6, [gluon/wave_ops.md](gluon/wave_ops.md)). Fewer instructions did not mean less time at every occupancy: a 256-step, 4-wave chain on 64 × 16 tiles at 16 programs per CU took 337.2 µs with `k_width = 4` against 256.8 µs with the direct `k_width = 1` conversion, 1.313× (8 balanced repeat clusters, one run) *(field, E23)*, but at 4 programs per CU `k_width = 4` was faster for all five tile shapes tried (0.54–0.89×), and in a one-wave chain at every occupancy tried (0.54–0.80×), 1 run *(field, E26)*; no GDN kernel was timed either way.
 
 ## 12. Chunks of many tokens: LDS staging, conv windows and masks
 

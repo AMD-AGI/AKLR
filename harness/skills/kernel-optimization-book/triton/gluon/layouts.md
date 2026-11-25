@@ -33,6 +33,9 @@ sources:
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUTransforms/LowerLoops.cpp
   - triton-lang/triton@c01b677:third_party/amd/lib/Analysis/AMDGPUAllocation.cpp
   - triton-lang/triton@c01b677:third_party/amd/lib/Dialect/TritonAMDGPU/IR/TargetFeatures.cpp
+cases:
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/moe_router_experts_gluon_dim4096.md
 ---
 
 # Gluon layouts on gfx950 (Triton 3.8.0)
@@ -81,21 +84,9 @@ kernels are over the library (154 Triton and Gluon kernels for gfx950: [../kerne
 |---|---|---|
 | `BlockedLayout(size_per_thread, threads_per_warp, warps_per_cta, order, cga_layout=[])` (S10) | per dimension: contiguous elements per lane, lanes, waves; `order` lists dimensions fastest first; `cga_layout` stays `[]` (one CTA per program) | global loads and stores, element-wise math, reductions |
 | `SliceLayout(dim, parent)` (S10) | `parent` without dimension `dim`; lanes that differed only along `dim` hold the same element | index vectors; per-row or per-column values that broadcast back into `parent` |
-| `DistributedLinearLayout(reg_bases, lane_bases, warp_bases, block_bases, shape)` (S10) | one basis per bit of the register, lane and wave index; an element's coordinates are the XOR of the bases of the set bits; a zero basis means a copy | ownerships no BlockedLayout expresses: copy layouts derived from a shared layout (§6.4), per-row scale tiles that keep 4 K groups in a lane's registers (excerpt below), MX scale layouts (`get_mfma_scale_layout` returns one, §3) |
-- The scale-tile case, in the N 3072 × K 1536 blockwise-scaled fp8 GEMM for M = 128: a 32-row window of per-row scales, the scale columns of four K groups in a lane's registers, the rows on lanes and waves:
-```python
-@gluon.constexpr_function
-def _scale_window_layout(rows):
-    if rows == 32:
-        return gl.DistributedLinearLayout(
-            [[0, 1], [0, 2]],                                  # registers: the 4 scale columns
-            [[1, 0], [2, 0], [4, 0], [8, 0], [0, 0], [0, 0]],  # lanes: rows 0-15; zero bases are copies
-            [[0, 0], [16, 0]],                                 # waves: rows +16
-            [],
-            [32, 4],
-        )
-    # ... (the 64-row window of the source's other tile height, which M = 128 does not take)
-```
+| `DistributedLinearLayout(reg_bases, lane_bases, warp_bases, block_bases, shape)` (S10) | one basis per bit of the register, lane and wave index; an element's coordinates are the XOR of the bases of the set bits; a zero basis means a copy | ownerships no BlockedLayout expresses: copy layouts derived from a shared layout (§6.4), per-row scale tiles that keep 4 K groups in a lane's registers (code: `../../cases/a8w8_gluon_n3072_n7168.md` §10), MX scale layouts (`get_mfma_scale_layout` returns one, §3) |
+- The scale-tile case, in the N 3072 × K 1536 blockwise-scaled fp8 GEMM for M = 128: a 32-row window of per-row scales, the scale columns of four K groups in a lane's registers, the rows on lanes and waves
+  (`../../cases/a8w8_gluon_n3072_n7168.md` §10).
 - A BlockedLayout covers `size_per_thread × threads_per_warp × warps_per_cta` per dimension: `BlockedLayout([1, 8], [8,
   8], [4, 1], [1, 0])` covers 32×64; on 64×64 it gains register basis `[32, 0]` (two 8-element runs 32 rows apart per
   lane), on 16×64 its second warp basis becomes `[0, 0]` (waves 2 and 3 copy waves 0 and 1). The lowering masks copies
@@ -140,34 +131,13 @@ takes `DotOperandLayout`s of a `BlockedLayout` parent with `k_width` 0 (`mfma.md
   a per-row scale in `SliceLayout(1, mma)` is one value per lane and a lane's bf16 row segment one
   `global_store_dwordx2` (compiled, one-wave `[16, 16, 32]`; `False`: 4 row-scale values per lane, 2-byte stores).
   Choose `False` when rows must sit in one lane's registers: K-group-folded fp8 GEMMs at N 7168 and M ≤ 4 pick each token's
-  4 K-group rows out of registers with `reshape`/`permute`/`split` (excerpt below; `../gemm.md` §4); gated attention keeps a row
+  4 K-group rows out of registers with `reshape`/`permute`/`split` (code: `../../cases/a8w8_gluon_n3072_n7168.md` §11; `../gemm.md` §4); gated attention keeps a row
   and its bf16 residual row in one lane so one softmax serves both; a Qwen2-MoE router stores straight from a
   non-transposed accumulator at 2232 rows. A 4×64 layout (fp16 `instr_shape=[4, 64, 64]`, `k_width=4`:
   compiled, 16 `v_mfma_f32_4x4x4_16b_f16` for `[4, 64] × [64, 64]` and 32 for `[4, 64] × [64, 128]` *(field, E3)*;
   `[4, 64, 4]` has no instruction) must be `False`, a 64×4 one `True`: a transposed 4×64 stops at the lowering's
-  assertion, a non-transposed 64×4 aborts the process (S14, S15). The K-group unpacking of the N 7168 kernel for M = 1 (one wave, each MFMA row one K group of the token), then, from the body of its kernel function, the layout it produces read off a zero tensor:
-```python
-@gluon.jit
-def _unpack_group(products, M: gl.constexpr, GROUP: gl.constexpr):
-    BN: gl.constexpr = products.type.shape[1]
-    values = products.reshape((M, 4, BN)).permute((0, 2, 1))
-    even, odd = gl.split(values.reshape((M, BN, 2, 2)))  # two splits pick one of a lane's 4 K-group rows
-    if GROUP % 2 == 0:
-        values = even
-    else:
-        values = odd
-    lower, upper = gl.split(values)
-    if GROUP // 2 == 0:
-        return lower
-    else:
-        return upper
-```
-```python
-# the kernel function that calls it: mma is the one-wave [16, 16, 128] layout with transposed=False
-zero = gl.zeros((M * A_PACK, BN * B_PACK), gl.float32, mma)
-example = _unpack_group(gl.amd.slice(zero, (M * A_PACK, BN), (0, 0)), M, 0)
-rows = gl.arange(0, M, gl.SliceLayout(1, example.type.layout))
-```
+  assertion, a non-transposed 64×4 aborts the process (S14, S15). The K-group unpacking of the N 7168 kernel for M = 1 (one wave, each MFMA row one K group of the token) and, from the body of its kernel function, the layout it produces read off a zero tensor are in
+  `../../cases/a8w8_gluon_n3072_n7168.md` §11.
 - **`warps_per_cta`** places waves along N first, then M (S14): with `[1, 4]` on a 16×128 accumulator wave w owns
   columns 16w to 16w + 15 and 64 + 16w to 64 + 16w + 15. An operand covers its whole K in lanes and registers, so wave
   bits on its K become copies (S14): with `[1, W]` every wave holds all of A (warp bases `[0, 0]`) and B is split, with
@@ -310,18 +280,8 @@ at its slot. Two ways need no extra instruction (copy, waits, destinations, pipe
 - **Padded destination, copy layout from its bases.** Take the helper's padded layout and read the copy layout off its
   `offset_bases`: the first bases are one lane's 16 bytes, the next 6 the 64 lanes, the next log2(num_warps) the waves,
   the rest registers. Compiled at 4 waves, each wave instruction fills one 1 KiB interval, with no `ds_bpermute`
-  or `ds_write` (bf16 64×64: 2 `buffer_load_dwordx4 … lds` per wave), and a GEMM through it matched torch:
-
-  ```python
-  @constexpr_function
-  def _copy_layout(shared, num_warps):
-      """Map 128-bit async copies onto the operand's padded LDS layout."""
-      bases = shared.offset_bases
-      wave_end = 9 + num_warps.bit_length() - 1
-      return gl.DistributedLinearLayout(
-          bases[:3] + bases[wave_end:], bases[3:9], bases[9:wave_end], [], shared.shape,
-      )
-  ```
+  or `ds_write` (bf16 64×64: 2 `buffer_load_dwordx4 … lds` per wave), and a GEMM through it matched torch; `_copy_layout`, the function that reads the copy layout off the bases, is in
+  `../../cases/moe_router_experts_gluon_dim4096.md` §4.
 
   `bases[:3]` is 8 bf16 elements; fp8 GEMMs at 4 waves take `bases[:4]`, `bases[4:10]`, `bases[10:12]`. The decorator
   is `triton.runtime.jit.constexpr_function`, which `gluon.constexpr_function` re-exports. Call it in the jit body,
@@ -332,7 +292,7 @@ at its slot. Two ways need no extra instruction (copy, waits, destinations, pipe
   (bf16, fp8, uint8; 1–16 waves), the 603 meeting the bound copied with exactly the expected `buffer_load_dwordx4 … lds`
   count and read back bitwise, the 167 below it failed to compile, and the helper gave `None` for 51 others *(field, E14)*.
 - **Flat alias, XOR on the global side.** Copy into a `max_phase=1` view of the swizzled buffer and permute the source's
-  16-byte chunks; the consumer reads through the swizzled layout, XOR being its own inverse (excerpt and cost:
+  16-byte chunks; the consumer reads through the swizzled layout, XOR being its own inverse (cost, and the pointer to the code:
   `memory.md` §9). The XOR must be the consumer's: `SwizzledSharedLayout(vec, per_phase, max_phase, [1, 0])` keeps
   logical column `c` of row `r` at physical column `c ^ (r // per_phase % max_phase * vec)`, modulo the row length
   (S24), so the copy filling physical column `p` reads global column `p ^ (r // per_phase % max_phase * vec)`: DSA's fp8
@@ -427,7 +387,7 @@ took 32 KB and 3 `s_barrier`; a transposed 32×32×2 fp32 accumulator into its `
 - **Relabel K instead of moving data.** A product is unchanged if A's columns and B's rows are permuted the same way.
   With fp32 `k_width=1` operands, a chunked GDN kernel permutes K inside every 16-block (`k = 4y + z → 4z + y`, a
   `reshape`/`permute`/`reshape` of each operand) so the transposed accumulator becomes the A operand with no data
-  movement, asserted; the code and its compiled cost are in `../gdn.md` §11.
+  movement, asserted; its compiled cost and the pointer to the code are in `../gdn.md` §11.
 - **Two permlane steps can avoid LDS; whether they are faster depends on the case.** For the 16×16 fp32 accumulator →
   `DotOperandLayout(0, mma, 1)`, two register–lane transpositions go through LDS; the middle `DistributedLinearLayout`
   compiles to 2 `v_permlane32_swap` + 2 `v_permlane16_swap`, no LDS, with or without the empty asm (`../gdn.md`
@@ -440,7 +400,7 @@ took 32 KB and 3 `s_barrier`; a transposed 32×32×2 fp32 accumulator into its `
   0])` tile, its size-2 axis on lanes, is rejected; with that axis on a register bit (a `DistributedLinearLayout` here)
   it moves nothing. Qwen3-Next's GDN decode writes one where a BlockedLayout cannot. To learn the layout a chain
   of `reshape`/`permute`/`split` produces, apply it to a zero tensor of the same layout and index in the result's slices
-  (§3's excerpt). `gl.join(a, b)` adds its size-2 axis as a register bit (S5), so stacking two tiles moves nothing: an fp8
+  (the code §3 points to: `../../cases/a8w8_gluon_n3072_n7168.md` §11). `gl.join(a, b)` adds its size-2 axis as a register bit (S5), so stacking two tiles moves nothing: an fp8
   GEMM at m 16 joins two rounded accumulators and permutes and reshapes them into one stripe.
 - **`gl.amd.slice(x, shape, offsets)`** (21 of the kernels) takes a sub-tile without moving anything when the
   slice keeps all of the layout's lane and wave bases: each dimension at least the extent one round of lanes and waves

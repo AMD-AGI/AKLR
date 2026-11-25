@@ -5,6 +5,7 @@ scope: [benchmark sizes and the distributions that draw their inputs, kernels wi
 gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
+cases: [cases/mla_causal_bf16_fixed_rows.md]
 ---
 
 # Benchmark sizes with degenerate inputs
@@ -21,25 +22,9 @@ per request it was 4.6–8.7× slower, and both were within the accuracy bounds 
 
 - **The kernel bets on the benchmark's inputs.** It first computes every request as if it held exactly 8 KV rows
   starting at row 8·b, and stores that; a request whose rows differ sets `slow` and is recomputed serially in 8-row
-  chunks, one wave per (request, query, 16 heads), with no split over the keys:
+  chunks, one wave per (request, query, 16 heads), with no split over the keys
+  (`../cases/mla_causal_bf16_fixed_rows.md` §1).
 
-  ```python
-  rt = fx.Int32(fx.ptr_load(fx.add_offset(cup, b)))  # request b's first KV row, from the cumulative lengths
-  re = fx.Int32(fx.ptr_load(fx.add_offset(cup, b + fx.Int32(1))))
-  ln = re - rt
-  slow = (rt != b * CH) | (ln != fx.Int32(CH))  # CH = 8: anything but 8 rows starting at row 8 b
-  # ...
-  finish(chunk(0, slot_s, init, qpos + fx.Int32(1)))  # the 8-row result, computed and stored first
-  if slow:  # every other request: recomputed serially, one 8-row chunk at a time
-      for ci, st in range(fx.Int32(0), nch, fx.Int32(1), init=init):
-          c = fx.Int32(ci)
-          cidx = c * CH + key
-          cidx = (cidx < nvalid).select(cidx, fx.Int32(0))
-          slot = fx.Int32(fx.ptr_load(fx.add_offset(btp, rt + cidx)))
-          nst = chunk(c, slot, st, nvalid)
-          res = yield nst
-      finish(res)
-  ```
 - **Every benchmark size gives every request exactly 8 rows.** Each workload sets the page table's width to 8 × batch, and
   the per-request lengths (`cu_seqlens_k`) are drawn with a minimum of the query length (8) and a total of the table's width. The sampler
   gives each request the minimum and spreads only the spare rows, total − requests · minimum, which is 0

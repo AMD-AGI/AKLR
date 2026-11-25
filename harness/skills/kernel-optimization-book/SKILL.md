@@ -20,8 +20,10 @@ gens: [gfx950, gfx942]
 # Kernel optimization book
 
 What makes a kernel fast on AMD GPUs, by op and by symptom. The op cards (`gemm/`, `moe/`,
-`attention/`) and the cases come from FlyDSL kernels: their mechanisms carry to other languages, their numbers were
-measured on FlyDSL code unless a sentence says otherwise (re-derive them: § Rules that hold everywhere). How to write
+`attention/`) come from FlyDSL kernels: their mechanisms carry to other languages, their numbers were
+measured on FlyDSL code unless a sentence says otherwise (re-derive them: § Rules that hold everywhere). Kernel
+code is in the cases (`cases/`, FlyDSL, Triton and Gluon kernels): a page that needs code points to an entry of a
+case's `## Code`, as `cases/<page>.md §<n>`. How to write
 it in a language is in that language's folder: `flydsl/SKILL.md` (with the FlyDSL side of each op card in
 `flydsl/<op>.md`), `triton/SKILL.md`, `hip/SKILL.md`.
 
@@ -41,7 +43,8 @@ what this book corrects in it; a `§` marked as FlyDSL's is that skill's own num
 - Confirm a change by what its page says to check (final ISA, kernel descriptor, a counter), not by the total
   time alone.
 - Before starting on an op, look in [cases/INDEX.md](cases/INDEX.md) for a case of the same op and
-  regime, and in [pitfalls/INDEX.md](pitfalls/INDEX.md) for its traps.
+  regime, written with your toolchain or another: it has the kernel's code, with counter-examples. Look in
+  [pitfalls/INDEX.md](pitfalls/INDEX.md) for the op's traps.
 
 ## By task
 

@@ -42,8 +42,8 @@ DEFAULT_GENS = ("gfx950",)
 # Whole names and family forms (gfx9, gfx95x, gfx94*); the `*` of a bold `**gfx950**` is not a wildcard.
 ARCH_TOKEN_RE = re.compile(r"\bgfx\d{1,4}(?:[a-z]\b|\*(?!\*)|\b)|\bCDNA ?\d\b|\bMI\d{3}X?\b")
 PINNED_FLYDSL = "0.3.2"
-# The Triton the pages under triton/ were checked against; they give it in `triton` where other pages give
-# `flydsl`.
+# The Triton the pages under triton/ and the cases of Triton kernels were checked against; they give it in `triton`
+# where other pages give `flydsl`.
 PINNED_TRITON = "3.8.0"
 SKILL_MD_MAX_LINES = 150  # forge-loop inlines SKILL.md into every round's prompt
 SKILL_MD_MAX_BYTES = 12_000  # of the body it inlines; the front matter is stripped
@@ -74,7 +74,6 @@ REQUIRED_FIELDS = {
         "gens",
         "flydsl",
         "basis",
-        "sources",
     ),
     "pattern": ("title", "signals", "ops", "gens", "flydsl", "basis"),
     "op": ("title", "ops", "dtypes", "gens", "flydsl", "basis"),
@@ -187,13 +186,24 @@ HOST_REPOSITORY = (
 )
 # In files that are not pages (ISA snapshots, review notes) hexadecimal words and `#<n>` are the source's own.
 HOST_REPOSITORY_ALWAYS = (0, 3, 5, 6)
+# `sources` names public source of another repository at a fixed revision (a commit or a tag, not a branch), or a
+# URL; a note in parentheses may follow either. A kernel with no public copy is no source: it is written up as a
+# case page, which the page lists under `cases`.
+SOURCE_RE = re.compile(
+    r"^(?:https?://\S+|[\w.-]+/[\w.-]+@(?!(?:main|master|HEAD)(?:[: ]|$))[\w.-]+(?::\S+)?)(?: \([^()]*\))?$"
+)
+CASES_FOLDER = "cases"
+CODE_SECTION_RE = re.compile(r"^## Code\s*$", re.MULTILINE)
 ABSOLUTE_RE = re.compile(r"\b(always|never)\b", re.IGNORECASE)
 MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s#]+)(?:#[^)]*)?\)")
 CODE_PATH_RE = re.compile(r"`([\w./-]+\.md)`")
 SECTION_REF_RE = re.compile(
     r"(?:`([\w./-]+\.md)`|\]\(([\w./-]+\.md)\))\s*§\s?(\d+(?:\s*[–-]\s*\d+)?(?:\s*,\s*§\s?\d+(?:\s*[–-]\s*\d+)?)*)"
 )
-NUMBERED_HEADING_RE = re.compile(r"^#{1,4}\s+(?:Chapter\s+)?(\d+)\.", re.MULTILINE)
+# `## 3. Title`: the number of a section. `### 2.1 …` and `### 1.5× faster` are not numbered sections.
+NUMBERED_HEADING_RE = re.compile(r"^#{1,4}[ \t]+(?:Chapter[ \t]+)?(\d+)\.(?!\d)", re.MULTILINE)
+# `path.md §3` inside one code span: the section is not checked there
+SPAN_SECTION_RE = re.compile(r"`([\w./-]+\.md)\s*§[^`\n]*`")
 FENCE_RE = re.compile(r"^[ \t]*```.*?^[ \t]*```", re.MULTILINE | re.DOTALL)
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 H2_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
@@ -359,41 +369,56 @@ def _skill_local(target: str) -> bool:
     return (SKILL_ROOT / first).is_dir()
 
 
-def check_links(page: Page, level: str) -> Iterable[Issue]:
+def _links(page: Page) -> Iterable[tuple[re.Match, str]]:
+    """The links of a page's text, outside fenced code: Markdown links, and paths alone in a code span that name a
+    page of this skill. Each with its target."""
     prose = _prose(page.body)
-    seen = set()
     for regex in (MD_LINK_RE, CODE_PATH_RE):
         for match in regex.finditer(prose):
             target = match.group(1)
-            if target in seen or "<" in target or "*" in target:
-                continue
-            if target.startswith(("http://", "https://", "mailto:")):
+            if "<" in target or "*" in target or target.startswith(("http://", "https://", "mailto:")):
                 continue
             if regex is CODE_PATH_RE and not _skill_local(target):
                 continue
-            seen.add(target)
-            path = _resolve(page, target)
-            if path is None:
-                yield Issue(
-                    level,
-                    page.rel,
-                    _line_of(page, match.start()),
-                    f"link does not resolve: {target}",
-                )
-            elif CHECK_HOST_REPOSITORY and not path.resolve().is_relative_to(SKILL_ROOT.resolve()):
-                yield Issue(
-                    "error",
-                    page.rel,
-                    _line_of(page, match.start()),
-                    f"link leaves the book: {target}; the book cites nothing of the repository it is kept in "
-                    "(CONTRIBUTING.md § What not to write)",
-                )
+            yield match, target
+
+
+def check_links(page: Page, level: str) -> Iterable[Issue]:
+    prose = _prose(page.body)
+    seen = set()
+    for match, target in _links(page):
+        if target in seen:
+            continue
+        seen.add(target)
+        path = _resolve(page, target)
+        if path is None:
+            yield Issue(
+                level,
+                page.rel,
+                _line_of(page, match.start()),
+                f"link does not resolve: {target}",
+            )
+        elif CHECK_HOST_REPOSITORY and not path.resolve().is_relative_to(SKILL_ROOT.resolve()):
+            yield Issue(
+                "error",
+                page.rel,
+                _line_of(page, match.start()),
+                f"link leaves the book: {target}; the book cites nothing of the repository it is kept in "
+                "(CONTRIBUTING.md § What not to write)",
+            )
+    for match in SPAN_SECTION_RE.finditer(prose):
+        yield Issue(
+            level,
+            page.rel,
+            _line_of(page, match.start()),
+            f"`{match.group(1)} §…` in one code span is not checked: close the span after the path",
+        )
     for match in SECTION_REF_RE.finditer(prose):
         target = match.group(1) or match.group(2)
         path = _resolve(page, target)
         if path is None:
             continue
-        numbers = set(NUMBERED_HEADING_RE.findall(path.read_text(encoding="utf-8")))
+        numbers = set(NUMBERED_HEADING_RE.findall(_prose(read_page(path).body)))
         for cited in re.findall(r"\d+", match.group(3)):
             if cited not in numbers:
                 yield Issue(
@@ -451,12 +476,15 @@ def check_phase(page: Page) -> Iterable[Issue]:
 
 def check_front(page: Page) -> Iterable[Issue]:
     kind, front = page.kind, page.front or {}
-    triton_page = page.rel.startswith("triton/")
+    triton_page = _pins_triton(page)
     for field in REQUIRED_FIELDS[kind]:
         if triton_page and field == "flydsl":
             field = "triton"
         if front.get(field) in (None, "", []):
-            yield Issue("error", page.rel, 1, f"front matter lacks `{field}` (kind {kind})")
+            or_triton = (
+                ", or `triton` for a Triton or Gluon kernel" if kind == "case" and field == "flydsl" else ""
+            )
+            yield Issue("error", page.rel, 1, f"front matter lacks `{field}`{or_triton} (kind {kind})")
     triton = str(front.get("triton") or "")
     if triton and triton != PINNED_TRITON:
         yield Issue(
@@ -481,6 +509,24 @@ def check_front(page: Page) -> Iterable[Issue]:
             1,
             f"pinned to FlyDSL {flydsl}, the skill is on {PINNED_FLYDSL}: re-check",
         )
+    sources = front.get("sources")
+    for entry in sources if isinstance(sources, list) else [sources] if sources else []:
+        if CHECK_HOST_REPOSITORY and not SOURCE_RE.match(str(entry)):
+            yield Issue(
+                "error",
+                page.rel,
+                1,
+                f"`sources` entry `{str(entry)[:60]}` is not `owner/repo@revision[:path]`, at a commit or a tag, or "
+                "a URL: a kernel with no public copy is written up as a case page and listed under `cases`",
+            )
+    if kind == "technique" and not sources and not front.get("cases"):
+        yield Issue(
+            "error",
+            page.rel,
+            1,
+            "front matter lacks `sources` or `cases` (kind technique): the public source the technique was read "
+            "from, or the case pages that show its code",
+        )
     if kind == "case":
         if front.get("accuracy") not in ("bitwise", "bounded"):
             yield Issue("error", page.rel, 1, "accuracy must be bitwise or bounded")
@@ -488,6 +534,120 @@ def check_front(page: Page) -> Iterable[Issue]:
             missing = [k for k in MEASURED_KEYS if not isinstance(entry, dict) or entry.get(k) in (None, "")]
             if missing:
                 yield Issue("error", page.rel, 1, f"measured[{i}] lacks {', '.join(missing)}")
+
+
+def _pins_triton(page: Page) -> bool:
+    """The page gives `triton` where others give `flydsl`: a page under triton/, or a case of a Triton kernel."""
+    front = page.front or {}
+    return page.rel.startswith("triton/") or (
+        page.kind == "case" and bool(front.get("triton")) and not front.get("flydsl")
+    )
+
+
+def _is_case(path: Path) -> bool:
+    """A case page of this book: a page of kind `case` in cases/."""
+    try:
+        return (
+            path.suffix == ".md"
+            and path.is_file()
+            and path.resolve().parent == (SKILL_ROOT / CASES_FOLDER).resolve()
+            and read_page(path).kind == "case"
+        )
+    except OSError:  # a name no file can have
+        return False
+
+
+def linked_cases(page: Page) -> dict[str, int]:
+    """The case pages the text links, as paths from the skill's root, each with the line of its first link."""
+    found: dict[str, int] = {}
+    for match, target in _links(page):
+        path = _resolve(page, target)
+        if path is not None and _is_case(path):
+            found.setdefault(f"{CASES_FOLDER}/{path.name}", _line_of(page, match.start()))
+    return found
+
+
+def check_cases(page: Page) -> Iterable[Issue]:
+    """`cases` lists the case pages a page draws on: exactly the ones its text links. A case page is a page of kind
+    `case` in cases/, and has no `cases` of its own."""
+    in_folder = page.rel.startswith(f"{CASES_FOLDER}/")
+    if (page.kind == "case") != in_folder:
+        yield Issue(
+            "error",
+            page.rel,
+            1,
+            f"a page of kind `case` goes in `{CASES_FOLDER}/`, which holds no page of another kind",
+        )
+    listed = (page.front or {}).get("cases")
+    entries = [str(e) for e in (listed if isinstance(listed, list) else [listed] if listed else [])]
+    if page.kind == "case":
+        if entries:
+            yield Issue(
+                "error", page.rel, 1, "`cases` is for a page that draws on cases; a case page has none"
+            )
+        return
+    listed_cases = set()
+    for entry in entries:
+        path = SKILL_ROOT / entry
+        if entry == f"{CASES_FOLDER}/{path.name}" and _is_case(path):
+            listed_cases.add(entry)
+        else:
+            yield Issue(
+                "error",
+                page.rel,
+                1,
+                f"`cases` entry `{entry}` names no page of kind `case` in `{CASES_FOLDER}/`",
+            )
+    linked = linked_cases(page)
+    missing, unused = sorted(set(linked) - listed_cases), sorted(listed_cases - set(linked))
+    if missing:
+        yield Issue(
+            "error",
+            page.rel,
+            linked[missing[0]],
+            f"`cases` lacks {', '.join(missing)}: it lists every case page the text links",
+        )
+    if unused:
+        yield Issue("error", page.rel, 1, f"`cases` lists {', '.join(unused)}, which the text does not link")
+
+
+def check_code_entries(page: Page) -> Iterable[Issue]:
+    """A case page's numbered headings are the entries of its `## Code` section, numbered from 1 in page order, each
+    with its excerpt in a fenced block: another page cites one as `<case>.md` §2, and the reference is checked like
+    any other."""
+    prose = _prose(page.body)
+    numbered = [(match.start(), match.group(1)) for match in NUMBERED_HEADING_RE.finditer(prose)]
+    if not numbered:
+        return
+    section = CODE_SECTION_RE.search(prose)
+    if not section:
+        yield Issue(
+            "error",
+            page.rel,
+            _line_of(page, numbered[0][0]),
+            "a numbered heading in a case page is an entry of `## Code`, which this page lacks",
+        )
+        return
+    following = H2_RE.search(prose, section.end())
+    stop = following.start() if following else len(prose)
+    entries = [(start, number) for start, number in numbered if section.end() <= start < stop]
+    for start, number in numbered:
+        if not section.end() <= start < stop:
+            yield Issue(
+                "error", page.rel, _line_of(page, start), f"numbered heading {number} is outside `## Code`"
+            )
+    for index, (start, number) in enumerate(entries):
+        line = _line_of(page, start)
+        if number != str(index + 1):
+            yield Issue(
+                "error",
+                page.rel,
+                line,
+                f"entry {number} of `## Code` should be {index + 1}: numbered from 1, no gap",
+            )
+        end = entries[index + 1][0] if index + 1 < len(entries) else stop
+        if not FENCE_RE.search(page.body, start, end):
+            yield Issue("error", page.rel, line, f"entry {number} of `## Code` shows no fenced code")
 
 
 def read_evidence(page: Page) -> tuple[dict[str, Evidence], list[Issue]]:
@@ -679,8 +839,8 @@ def host_repository_issues(rel: str, text: str, entries: tuple[int, ...] | None 
                 "error",
                 rel,
                 line_no,
-                f"`{found[0]}` {found[1]}; state the op, shapes, dtypes, GPU, technique and measurement, and show "
-                "code as an example in the page (CONTRIBUTING.md § What not to write)",
+                f"`{found[0]}` {found[1]}; state the op, shapes, dtypes, GPU, technique and measurement, and put "
+                "the code the reader needs in the kernel's case page (CONTRIBUTING.md § What not to write, § Code)",
             )
 
 
@@ -734,6 +894,9 @@ def lint_page(page: Page) -> list[Issue]:
         issues += check_front(page)
         issues += check_body(page, "error")
         issues += check_links(page, "error")
+        issues += check_cases(page)
+        if kind == "case":
+            issues += check_code_entries(page)
     elif kind in LEGACY_KINDS or kind in ("upstream", "untyped"):
         if kind == "untyped":
             issues.append(
@@ -831,8 +994,8 @@ def stale(paths: Iterable[Path], version: str) -> list[str]:
     out = []
     for path in paths:
         page = read_page(path.resolve())
-        if page.kind in ("upstream", "entry", "guide", "index") or page.rel.startswith("triton/"):
-            continue  # triton/ pages pin `triton`, not FlyDSL
+        if page.kind in ("upstream", "entry", "guide", "index") or _pins_triton(page):
+            continue  # not pinned to FlyDSL: no knowledge page, or one that pins `triton`
         pinned = str((page.front or {}).get("flydsl") or "none")
         if pinned != version:
             out.append(f"{page.rel}: flydsl {pinned}")

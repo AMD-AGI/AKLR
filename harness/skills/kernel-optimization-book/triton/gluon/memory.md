@@ -30,6 +30,12 @@ sources:
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/MembarUtility.cpp
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/TritonGPUToLLVM.cpp
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/Utility.cpp
+cases:
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/fp8_moe_gluon_dim3072.md
+  - cases/gated_attention_gluon.md
+  - cases/moe_router_experts_gluon_dim4096.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # Moving data in a Gluon kernel on gfx950
@@ -114,16 +120,8 @@ out of range unless it lies wholly below `num_records`, each dword of a wider ac
      became 8 `buffer_load_ushort` and the async copy failed at translation; a marked or constexpr `stride`, or
      `gl.multiple_of(slot * stride, 16)`, gave `buffer_load_dwordx4`: one source can compile at one size, fail at another.
 
-The K step can ride the base too, keeping the offsets loop-invariant; DS256's kernel for 1024–3072 tokens picks per token count with a constexpr flag, copying its activations from `X + base * (BK // 2) if REBASE else X` at offsets `row[:, None] * (K // 2) + (kl if REBASE else base * BK // 2 + kl)[None, :]`. Gate a pool that can outgrow the range on its **byte** extent against `2**31 - 2` on the host, with another path above it (a 64-bit rebase per slot, `gl.load`, `global_load_to_shared`); where the caller bounds the pool below the range, that path is dead code *(field, E4)*. The host gate of Qwen3.5's gated attention (the 4-row kernel):
-
-```python
-key_extent = (key_cache.shape[0] - 1) * key_cache.stride(0) + 256  # elements up to the end of the last row
-value_extent = (value_cache.shape[0] - 1) * value_cache.stride(0) + 256
-buffer_kv = (  # False: the launch takes the kernel's pointer path
-    key_extent * key_cache.element_size() <= 2**31 - 2
-    and value_extent * value_cache.element_size() <= 2**31 - 2
-)
-```
+The K step can ride the base too, keeping the offsets loop-invariant; DS256's kernel for 1024–3072 tokens picks per token count with a constexpr flag, copying its activations from `X + base * (BK // 2) if REBASE else X` at offsets `row[:, None] * (K // 2) + (kl if REBASE else base * BK // 2 + kl)[None, :]`. Gate a pool that can outgrow the range on its **byte** extent against `2**31 - 2` on the host, with another path above it (a 64-bit rebase per slot, `gl.load`, `global_load_to_shared`); where the caller bounds the pool below the range, that path is dead code *(field, E4)*. The host gate of Qwen3.5's gated attention (the 4-row kernel) is in
+[cases/gated_attention_gluon](../../cases/gated_attention_gluon.md) §11.
 
 - **Constant offsets.** A constant added to the offsets rode the 12-bit `offset:` immediate at 256 bytes and cost a
   second offset register at 4096 bytes; `+2047` bf16 elements (4094 bytes) split each 16-byte load into 2-byte loads
@@ -189,7 +187,7 @@ unless the launch marks it divisible by 16, keeps gcd(contiguity, divisibility, 
 through `gl.where` what both branches and its condition's constancy allow: XOR of 8-element chunks, an unmarked `stride`
 or a `gl.where` varying along the row cut bf16 loads to 2 bytes, `% 65536` or a row-constant `gl.where` kept 16
 *(field, E32)*. Restate only what is lost, with `gl.max_contiguous(gl.multiple_of(offsets, [1, V]), [1, V])` (S17), V
-the elements of the true aligned run (16 for the fp8 chunks of §9's excerpt, 8 for bf16; [layouts.md](layouts.md) §6.1).
+the elements of the true aligned run (16 for the fp8 chunks of the code §9 points to, 8 for bf16; [layouts.md](layouts.md) §6.1).
 Both are promises the compiler does not check (S18), and a larger V is believed: bf16 offsets permuted in 8-byte chunks
 loaded `buffer_load_dwordx2` with V = 4 and `buffer_load_dwordx4` with V = 8, reading wrong values *(field, E32)*.
 
@@ -221,21 +219,8 @@ contiguous 512 KiB, `nt` sped reads up 13.0–13.7% on either path, `.cs` reduce
 
 **What ran before the kernel.** The ruler's flush runs before each timed call, inside the graph (85 calls, 85 preceding flushes; N=2), reads 1 GiB, leaves that buffer unchanged and writes only per-block sums ([../debugging.md](../debugging.md) §11) *(field, E37)*. After a 1 GiB read flush like that one, `nt` gained about 4–12% on 64 MB–1 GiB streams (`.cg`/none 1.039–1.117 over 4 runs, eager launches): +3.9–7.4% at 64 MB, +9.0–10.4% at 128, +5.9–8.8% at 192, +10.8–11.5% at 512, +9.9–11.7% at 1024. With 64 MB hot from the previous launch `.cg` gained 5–16% in all 12 dedicated rounds (N=4), each timing none before `.cg`; the sweep's single hot medians after write-flush launches gave 1.122, 1.044, 0.960 and about 1.10×, and an earlier hot probe found `.cg` slower (0.96×, 0.93×). These order-specific probes give no general sign for a hot cache, and none of them is the ruler's flush under graph replay *(field, E11)*.
 
-**In kernels** effects ranged from no consistent direction to 17%, not a universal 1–2% or token-count rule. At 1 token three sizes had pairs both ways; at 2 tokens DS256 moved 0.0–1.2% (N=3, every pair the same way in two runs), MM256-FP8 3.7% on time but 2.0% on speedup (N=1, 3 of 4 speedup pairs agreeing). For MM64-FP8 at 4/8/16 tokens, time without/with `.cg` was 1.023–1.096; MM64-FP4 at 128 tokens 1.016–1.018; DS256 at 2048 tokens 1.016–1.017 (each N=1; ratios, not percent time savings). At 256 tokens read-once MM64-FP4 lost 2.6–3.5% without `.cg`, while re-read DS512 lost 0.2–0.7% with it (each N=4); re-read MM256-FP4 at 16384 tokens lost 17% with it (N=1). These are measured cases, not guarantees for every workload *(field, E12, E35)*; all rows: [../tuning.md](../tuning.md) §11. Kernel sources also key hints on reuse: the DS512 kernel for 2048 tokens keeps `.cg` on its gate-up weights only up to 1536 tokens, the DS256 kernel for 2 tokens drops it at 1 token, the DS512 kernel for 256 tokens on its 128-row gate-up tiles above 128 tokens, and the MM256-FP8 kernel for 256 tokens drops it per job, for experts with more than `BM` routes: its planner launch sets bit 24 of a job's descriptor (`packed |= gl.where(count[:, None] > BM, 1 << 24, 0)`) and its gate-up worker branches on it, the hint being a constexpr string:
-
-```python
-packed = gl.load(Jobs + job).to(gl.uint32)
-if packed & 1 << 24 != 0:
-    _run_w13_job(
-        # ... (19 arguments, the same in both calls)
-        ".ca",
-    )
-else:
-    _run_w13_job(
-        # ... (the same 19 arguments)
-        ".cg",
-    )
-```
+**In kernels** effects ranged from no consistent direction to 17%, not a universal 1–2% or token-count rule. At 1 token three sizes had pairs both ways; at 2 tokens DS256 moved 0.0–1.2% (N=3, every pair the same way in two runs), MM256-FP8 3.7% on time but 2.0% on speedup (N=1, 3 of 4 speedup pairs agreeing). For MM64-FP8 at 4/8/16 tokens, time without/with `.cg` was 1.023–1.096; MM64-FP4 at 128 tokens 1.016–1.018; DS256 at 2048 tokens 1.016–1.017 (each N=1; ratios, not percent time savings). At 256 tokens read-once MM64-FP4 lost 2.6–3.5% without `.cg`, while re-read DS512 lost 0.2–0.7% with it (each N=4); re-read MM256-FP4 at 16384 tokens lost 17% with it (N=1). These are measured cases, not guarantees for every workload *(field, E12, E35)*; all rows: [../tuning.md](../tuning.md) §11. Kernel sources also key hints on reuse: the DS512 kernel for 2048 tokens keeps `.cg` on its gate-up weights only up to 1536 tokens, the DS256 kernel for 2 tokens drops it at 1 token, the DS512 kernel for 256 tokens on its 128-row gate-up tiles above 128 tokens, and the MM256-FP8 kernel for 256 tokens drops it per job, for experts with more than `BM` routes: its planner launch sets bit 24 of a job's descriptor (`packed |= gl.where(count[:, None] > BM, 1 << 24, 0)`) and its gate-up worker branches on it, the hint being a constexpr string
+([cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §4).
 
 **A/B the hint a kernel already has too.** Flipping it won in every pair, in time and in speedup, at 4 of 12 sizes (MM64-FP8 at 4/8/16 tokens, MM64-FP4 at 128; N=1). Stores also differed by size: removing `.cs` from the n = 3072 fp8 GEMM output cost 1.7–1.9% at m = 6144 and gained 0.1–0.7% at m = 8193 (every pair, N=3) *(field, E12, E35)*; C-tile store policy: [../../gemm/epilogue.md §5](../../gemm/epilogue.md). Pair direction is descriptive, not statistical proof: at 1 token single pairs swung −3.9% to +2.8%; report the uncertainty and a same-window A-vs-A control. Three-run A-vs-A spreads were 0.4–3.2% on four kernels over three sessions (the n = 3072 fp8 GEMM at m = 16 5.9% over 8 runs) *(field, E13)*, and up to 3.5% with the ruler reading rocprofiler-sdk, where one whole run read about 3% low *(field, E47)*: a noise floor, not an effect-size threshold.
 
@@ -312,27 +297,10 @@ instruction (S10) *(field, E19)*. In the library the DSA kernels, two gated-atte
 global offsets instead and copy into an unswizzled view *(field, E19)*. `SwizzledSharedLayout(vec, per_phase, max_phase, order)` stores
 element (row, c) at column `c ^ ((row // per_phase) % max_phase * vec % width)` of its row (S47); XOR being its own
 inverse, the LDS column `c` a lane fills takes global column `c ^ ((row // per_phase) % max_phase * vec)` when
-`max_phase × vec` fits in the row *(field, E19)*. Here, in Qwen3.5's gated attention at 256 rows, K and V are
-`SwizzledSharedLayout(16, 1, 8, [1, 0])` (`QK_WIDTH` is 8, so `key_vec` is 16), and the 128-row kernel XORs a `vec = 32` K buffer with `* 32`; a wrong
-multiplier compiles and loads the wrong chunks:
-
-```python
-# Apply each consumer's swizzle in global source offsets so the LDS
-# transfers themselves have a linear, lane-local destination layout.
-linear_layout: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [1, 0])
-key_copy = key_shared._reinterpret(layout=linear_layout)
-value_copy = value_shared._reinterpret(layout=linear_layout)
-key_vec: gl.constexpr = 32 if QK_WIDTH == 16 else 16
-key_offsets = slots[:, None] * 256 + (
-    dims[None, :] ^ ((tokens[:, None] % 8) * key_vec)
-)
-value_offsets = slots[:, None] * 256 + (
-    dims[None, :] ^ ((tokens[:, None] % 8) * 16)
-)
-# XOR only permutes aligned 16-byte runs; each run remains contiguous.
-key_offsets = gl.max_contiguous(gl.multiple_of(key_offsets, [1, 16]), [1, 16])
-value_offsets = gl.max_contiguous(gl.multiple_of(value_offsets, [1, 16]), [1, 16])
-```
+`max_phase × vec` fits in the row *(field, E19)*. In Qwen3.5's gated attention at 256 rows, K and V are
+`SwizzledSharedLayout(16, 1, 8, [1, 0])`, and the 128-row kernel XORs a `vec = 32` K buffer with `* 32`; a wrong
+multiplier compiles and loads the wrong chunks
+([cases/gated_attention_gluon](../../cases/gated_attention_gluon.md) §12).
 
 A test kernel with this `[64, 256]` fp8 copy had 4 `ds_bpermute_b32` and 76 instructions into the swizzled buffer, none
 and 56 pre-swizzled *(field, E19)*. Why swizzle: read as a 16×16×32 MFMA operand, LDS-bound, a row-major 64×64 bf16 tile ran at 0.46–0.59 of the XOR-swizzled rate; padding 8 elements after each 64-element row kept B within 3% of that rate and A at 0.86–0.96 (0.82–0.84 when only the padded A loop was not unrolled) *(field, E20, E52)*. With 32×32×16 operands plain A ran at 0.28 and padded A at 1.34 of the XOR rate: measure the layout for the instruction shape in use *(field, E52)*.
@@ -342,7 +310,7 @@ In the n = 3072 fp8 GEMM at m = 16 XOR addressing changed nothing, 4.25 → 4.26
 [../../patterns/lds_bank_conflicts.md](../../patterns/lds_bank_conflicts.md).
 
 **Padded.** `gl.amd.cdna4.compute_efficient_padded_shared_layout(dot_operand_layout, shape, dtype, is_k_contig=True)`
-returns a `PaddedSharedLayout` (bf16 A, 16×16×32 MFMA v4, k_width 8, `[32, 64]`: `[[512, 16]]`, at 1–16 waves) or `None` (`[8, 64]`). In a 900-combination helper sweep (bf16/fp8 e4m3/uint8, A and both B orientations, 16-/32-wide MFMA, 1–16 waves, 16–256 rows × 64/128 columns), 130 returned `None`, independent of waves: A with rows ≤ MFMA M, and fp8/uint8 B with K=16 at 16×16×128. Enough bytes per wave did not guarantee a layout *(field, E39)*; packed fp4 passes `gl.uint8` (S3). DMA width is capped at `min_interval / 64` elements per lane (S14); 45 identity-offset padded `[64, 64]`/4-wave configurations reached the widest legal 4-/16-byte width under that cap, not arbitrary widths; requests above it failed *(field, E39)*. Split `offset_bases`: first log2(16 / element bytes) bases for one lane's 16 bytes, next 6 for lanes, next log2(num_warps) for waves, rest for registers (the Qwen2-MoE router does so for bf16, the n = 3072 fp8 GEMM for fp8). All 603 helper-layout combinations with tile bytes ≥ 1024×num_warps compiled to exactly `tile_bytes/(1024×num_warps)` `buffer_load_dwordx4 … lds`, no `ds_bpermute`/`ds_write`, and read back bitwise on MI355X (N=1); 167 smaller helper-layout tiles failed to compile *(field, E39)*. Code, and `None`: [layouts.md](layouts.md) §4, §6.4.
+returns a `PaddedSharedLayout` (bf16 A, 16×16×32 MFMA v4, k_width 8, `[32, 64]`: `[[512, 16]]`, at 1–16 waves) or `None` (`[8, 64]`). In a 900-combination helper sweep (bf16/fp8 e4m3/uint8, A and both B orientations, 16-/32-wide MFMA, 1–16 waves, 16–256 rows × 64/128 columns), 130 returned `None`, independent of waves: A with rows ≤ MFMA M, and fp8/uint8 B with K=16 at 16×16×128. Enough bytes per wave did not guarantee a layout *(field, E39)*; packed fp4 passes `gl.uint8` (S3). DMA width is capped at `min_interval / 64` elements per lane (S14); 45 identity-offset padded `[64, 64]`/4-wave configurations reached the widest legal 4-/16-byte width under that cap, not arbitrary widths; requests above it failed *(field, E39)*. Split `offset_bases`: first log2(16 / element bytes) bases for one lane's 16 bytes, next 6 for lanes, next log2(num_warps) for waves, rest for registers (the Qwen2-MoE router does so for bf16, the n = 3072 fp8 GEMM for fp8). All 603 helper-layout combinations with tile bytes ≥ 1024×num_warps compiled to exactly `tile_bytes/(1024×num_warps)` `buffer_load_dwordx4 … lds`, no `ds_bpermute`/`ds_write`, and read back bitwise on MI355X (N=1); 167 smaller helper-layout tiles failed to compile *(field, E39)*. Code ([cases/moe_router_experts_gluon_dim4096](../../cases/moe_router_experts_gluon_dim4096.md) §4), and `None`: [layouts.md](layouts.md) §4, §6.4.
 
 **Transposed reads.** How B is stored decides the LDS read. Compiled, bf16 `[64, 64]`, `instr_shape [16, 16, 32]`: A
 `[M, K]` (K contiguous) → `ds_read_b128`; B stored `[K, N]` (N contiguous), read as `DotOperandLayout(1, …)` → 8
@@ -404,7 +372,7 @@ with `.load` by default and relaxed only for the `.index()` slots of one allocat
 M = 32 (separate allocations and `.load` at M = 64); then order each refill after the last read of its slot: a
 `gl.barrier()` or ring slack (§12), and in a one-wave kernel, where `gl.barrier()` only orders the compiler, an explicit
 retire of the reads, as the one-warp router in MM64-FP8 does with an inline `s_waitcnt lgkmcnt(0)` and a
-`~{memory}` clobber between its relaxed reads and the refill of the same slot (code: [wave_ops.md](wave_ops.md) §8).
+`~{memory}` clobber between its relaxed reads and the refill of the same slot (code: [cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §6; [wave_ops.md](wave_ops.md) §8).
 The ISA does not say whether a DMA's LDS write can overtake an earlier `ds_read` of the same wave; on MI355X it did, in one-wave rings with slow, bank-conflicted reads and no `lgkmcnt` wait between ([../gemm.md](../gemm.md) §5).
 
 **`gl.barrier()`** is a `ttg.barrier` over every address space (S17, S37), lowered to a release fence, `s_barrier` and
@@ -424,38 +392,13 @@ In a delayed-reader probe (1024 programs, 2000 launches per arm, N=2), no barrie
 
 **One slot per K group.** The n = 3072 fp8 GEMM at m = 16 keeps `PREFETCH` K groups ahead per wave (its prefetch depth), one LDS slot for each of its 12 groups, none reused. Count waits in committed groups by replaying the issue order (§8): with `PREFETCH` groups committed ahead of group g, `wait_group(PREFETCH - 1)` lands g. At m = 16 it reads the next 2 groups into registers early, so depth 5 leaves three groups in flight at each steady wait; depth 3 (one left) lowered the reported speedup by 12.9% (1.475 → 1.285), while time increased 14.6%, 4.23 → 4.85 µs; 7 gave 4.294 → 4.293 µs *(field, E15)*. Deeper paid little: on the same GEMM at m = 64, depth 4 → 6 took 0.996× the call time at its own `waves_per_eu=6` and 0.994× at `waves_per_eu=0`, over three sessions *(field, E49)*. Shallower lost in both settings, 4 → 2 1.77–1.78×, as did the same GEMM at m = 32, 5 → 3 1.15–1.19× (also in a build without spills), where 5 → 7 was unresolved *(field, E44)*. Depth per size, and the single buffer of m ≥ 1024: [../gemm.md](../gemm.md) §5.
 
-**A ring of reused slots.** A refill must not overtake the reads of its slot. With plain `.load` Membar sees to it and the ring size only decides the cost: with `SLOTS = PREFETCH` it put an `s_barrier` between each read and its slot's refill, 10 against 6 over 6 stages, while with `SLOTS = PREFETCH + 1` the barrier after the next `wait_group` already separates them *(field, E30)*, as the n = 7168 fp8 GEMM's ring has. With relaxed reads, count the barriers between a slot's last read and its refill yourself. A refill issued after the step's reads needs one spare slot (without it, a refill copy was issued before its slot's reads *(field, E30)*); one issued at the top of the step, before its wait, needs two, `DEPTH = AHEAD + 2`, as the Qwen2-MoE router does at 256 tokens with `AHEAD` 2 (with 1: 10.01 → 11.28 µs *(field, E15)*), or a `gl.barrier()` before the refill, which its 128-token ring issues under `if DEPTH <= AHEAD + 1 and stage >= DEPTH - AHEAD:`. The 256-token ring:
-
-```python
-for stage in gl.static_range(-AHEAD, STAGES):
-    if stage + AHEAD < STAGES:
-        _prefetch_stage(
-            a_buffers[(stage + AHEAD) % DEPTH],
-            b_buffers[(stage + AHEAD) % DEPTH],
-            # ... (the two tensors and their offsets for stage + AHEAD)
-        )
-    if stage >= 0:
-        gl.amd.cdna4.async_copy.wait_group(min(AHEAD, STAGES - stage - 1))
-        gl.barrier()
-        a = gl.amd.cdna4.async_copy.load_shared_relaxed(a_buffers[stage % DEPTH], a_dot)
-```
+**A ring of reused slots.** A refill must not overtake the reads of its slot. With plain `.load` Membar sees to it and the ring size only decides the cost: with `SLOTS = PREFETCH` it put an `s_barrier` between each read and its slot's refill, 10 against 6 over 6 stages, while with `SLOTS = PREFETCH + 1` the barrier after the next `wait_group` already separates them *(field, E30)*, as the n = 7168 fp8 GEMM's ring has. With relaxed reads, count the barriers between a slot's last read and its refill yourself. A refill issued after the step's reads needs one spare slot (without it, a refill copy was issued before its slot's reads *(field, E30)*); one issued at the top of the step, before its wait, needs two, `DEPTH = AHEAD + 2`, as the Qwen2-MoE router does at 256 tokens with `AHEAD` 2 (with 1: 10.01 → 11.28 µs *(field, E15)*), or a `gl.barrier()` before the refill: the 128-token router's source keeps one under `if DEPTH <= AHEAD + 1 and stage >= DEPTH - AHEAD:`, a branch that its own size, with 4 slots and `AHEAD` 2, does not compile. The 256-token ring is in
+[cases/moe_router_experts_gluon_dim4096](../../cases/moe_router_experts_gluon_dim4096.md) §5.
 
 **A rolled ring for long K** keeps the code small ([../gemm.md](../gemm.md) §3). `wait_group(n)` takes a Python int (S4): `n` from an argument or a `range` variable failed at trace with a `CompilationError`, "create_async_wait_group(): incompatible function arguments" *(field, E34)*, so a rolled body waits a constant. The 2232-token Qwen2-MoE router is written so: one `[STAGES, …]` allocation per operand (§10); a static prologue of `STAGES - 1` committed groups; a `range` over blocks of `gl.static_range(UNROLL)` steps, each refilling slot `(tile + STAGES - 1) % STAGES`, committing, waiting `STAGES - 2`, calling `gl.barrier()`, reading slot `(tile + 1) % STAGES` relaxed and multiplying the operands read the step before; the leftover steps, unrolled (there all 29); a static drain waiting `STAGES - 3 - tail`. Written so, an fp8 block-scaled GEMM at M = 32, N = 4096, K = 7168 (2 waves, 16 columns, 6 slots, one step per trip) compiled to 325 instructions against 1417 unrolled, 56 VGPRs, 44 KiB of LDS and one `vmcnt(12)` wait per step, its scales from LDS or `s_load`s (§13); a weight scale `gl.load`ed at its group added `vmcnt(0)` before the fold, and a tuple of scales loaded with their groups' copies (none grows in a `range` loop) `vmcnt(3)`, unless unrolled by its length *(field, E34)*.
 
-**Register look-ahead.** Operands loaded straight into the operand layout (§13) need no LDS. MM64-FP8 keeps up to three K steps' operand tuples (A, B and both scales) in flight and rotates them; the rotation is loop-carried, so the loop stays a rolled `range` (its three-tuple branch, which the up projection takes at 8 tokens):
-
-```python
-for step in range(groups - 3):
-    na, nb, nsa, nsb = _load_fp8_tile(
-        # ... (X, XS, W, WS and the tile's row, expert and column indices)
-        split * groups + step + 3,
-        # ... (K, WN, WK, BUFFER_LOAD, WEIGHT_CACHE)
-    )
-    acc = _accumulate_fp8(a, b, sa, sb, acc)
-    a, b, sa, sb = (a1, b1, sa1, sb1)
-    a1, b1, sa1, sb1 = (a2, b2, sa2, sb2)
-    a2, b2, sa2, sb2 = (na, nb, nsa, nsb)
-```
+**Register look-ahead.** Operands loaded straight into the operand layout (§13) need no LDS. MM64-FP8 keeps up to three K steps' operand tuples (A, B and both scales) in flight and rotates them; the rotation is loop-carried, so the loop stays a rolled `range` (its three-tuple branch, which the up projection takes at 8 tokens:
+[cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §5).
 
 The depth is set per token count (up projection: 2 tuples at 1, 4 and 16 tokens, 1 at 2, 3 at 8). No timing isolates it;
 in its fp8 projection kernel the second tuple cost 16–24 VGPRs, the third none *(field, E34)*.
@@ -487,36 +430,18 @@ grid (the remap of a bf16 GEMM at N 2624 × K 6144 was checked for grids of 1–
 [../gemm/small_m_gemm.md](../gemm/small_m_gemm.md) §3, which compiled in Gluon *(field, E25, E33)*. The kernels:
 
 - Above 4096 tokens, DS256's router walks `GROUP = 8` row tiles per column, so the 4 column tiles
-  of one row tile share an XCD (derived from the code below); below that it walks rows within a column,
+  of one row tile share an XCD (derived from the code: [cases/mxfp4_moe_gluon_dim6144](../../cases/mxfp4_moe_gluon_dim6144.md) §8); below that it walks rows within a column,
   `(pid % ROWS, pid // ROWS)`.
 - The n = 3072 fp8 GEMM at m = 4096 walks a group of M tiles per N tile; the n = 7168 GEMM's m = 64 permutation changes
   no reuse, one reader per weight tile, all for the activation panel (inferred; [../tuning.md](../tuning.md) §12), nor
   the time *(field, E25)*.
 
-The router's grouped walk:
-
-```python
-@gluon.jit
-def _grouped_tile(pid, ROWS: gl.constexpr, COLS: gl.constexpr, GROUP: gl.constexpr):
-    gl.static_assert(ROWS % GROUP == 0)
-    row = pid // (GROUP * COLS) * GROUP + pid % GROUP  # GROUP consecutive ids: GROUP row tiles of one column
-    column = pid // GROUP % COLS  # ids GROUP apart: the next column of the same row tile
-    return (row, column)
-```
+The router's grouped walk is in [cases/mxfp4_moe_gluon_dim6144](../../cases/mxfp4_moe_gluon_dim6144.md) §8.
 
 ## 15. Epilogue stores
 
-Round first, move through LDS to 16 contiguous bytes per lane, store with the buffer op, as the n = 3072 fp8 GEMM for m = 128 does (its `BLOCK_M` is 32):
-
-```python
-result = acc.to(gl.bfloat16)
-if BLOCK_M == 32:
-    exchange = gl.allocate_shared_memory(gl.bfloat16, [BLOCK_M, 64], gl.SwizzledSharedLayout(8, 2, 8, [1, 0]))
-    exchange.store(result)
-    result = exchange.load(out_layout)
-# ... (the `else:` arm, the source's 64-row exchange, which m = 128 does not take; then `rm`, `rn` and `output_base`)
-gl.amd.cdna4.buffer_store(result, output_base, rm[:, None] * 3072 + rn[None, :], cache=".wt")
-```
+Round first, move through LDS to 16 contiguous bytes per lane, store with the buffer op, as the n = 3072 fp8 GEMM for m = 128 does (its `BLOCK_M` is 32;
+[cases/a8w8_gluon_n3072_n7168](../../cases/a8w8_gluon_n3072_n7168.md) §12).
 
 `out_layout` is `BlockedLayout([1, 8], [8, 8], [4, 1], [1, 0])`; rounding first halves the exchange's LDS bytes; at
 `BLOCK_M = 64` the exchange is a `SharedLinearLayout` whose bases XOR rows into the 16-byte chunk. To reach this 16-byte-per-lane store width, exchange the result

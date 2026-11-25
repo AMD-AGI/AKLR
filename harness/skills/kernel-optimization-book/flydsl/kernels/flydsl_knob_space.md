@@ -8,12 +8,12 @@ regimes: [any]
 gens: [gfx950]
 flydsl: 0.3.2
 sources:
-  - aiter/ops/flydsl/gemm_kernels.py
-  - aiter/ops/flydsl/kernels/hgemm_dispatch.py
-  - aiter/ops/flydsl/kernels/splitk_hgemm.py
-  - aiter/ops/flydsl/kernels/small_m_hgemm.py
-  - aiter/ops/flydsl/kernels/preshuffle_gemm.py
-  - csrc/gemm_a16w16/gemm_a16w16_tune.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/gemm_kernels.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/hgemm_dispatch.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/splitk_hgemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/small_m_hgemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/preshuffle_gemm.py
+  - ROCm/aiter@dbd8bf5:csrc/gemm_a16w16/gemm_a16w16_tune.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/autotune.py
 ---
 

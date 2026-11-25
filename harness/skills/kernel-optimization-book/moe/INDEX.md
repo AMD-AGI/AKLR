@@ -6,6 +6,10 @@ dtypes: [mxfp4, bf16, fp8]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
+cases:
+  - cases/fused_moe_interleave_swiglu.md
+  - cases/fused_moe_interleave_swiglu_hidden7168.md
+  - cases/fused_moe_shuffled_16x16.md
 ---
 
 # MoE — package map: fused MoE and the expert grouped GEMM

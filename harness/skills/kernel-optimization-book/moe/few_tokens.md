@@ -9,16 +9,20 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 sources:
-  - aiter/fused_moe.py
-  - aiter/ops/flydsl/moe_sorting.py
-  - aiter/configs/model_configs/glm5_fp4_tuned_fmoe.csv
+  - ROCm/aiter@dbd8bf5:aiter/fused_moe.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/moe_sorting.py
+  - ROCm/aiter@dbd8bf5:aiter/configs/model_configs/glm5_fp4_tuned_fmoe.csv
+cases:
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/fused_moe_shuffled_16x16_few_tokens.md
 ---
 
 # MXFP4 fused MoE at 8–64 tokens: one graph node less
 
 The kernel this page reads from is a FlyDSL fused MoE with MXFP4 weights in aiter's 16×16 preshuffle and MXFP4
 activations (E8M0 scale per 32), 257 experts, top-9, model dim 6144, inter dim 256, SiLU with a separate gate, built
-for 8, 16, 32 and 64 tokens: two GEMM kernels, one launch each. The code excerpts below are from it.
+for 8, 16, 32 and 64 tokens: two GEMM kernels, one launch each. Its code excerpts are in
+`../cases/fused_moe_shuffled_16x16_few_tokens.md`.
 "Tokens" (M in formulas) is the number of tokens in the call. What it measured, and what the
 kernel of the same shape does at 1–2 tokens: [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md).
 aiter's MoE kernels, their names and knobs: `../flydsl/kernels/flydsl_kernel_library.md` (MoE).
@@ -89,120 +93,15 @@ The head runs at the top of the stage-1 kernel, before and just after the bound 
 | f | rank this expert's items in item order (a DPP scan of `item == expert`), keep ranks [lo, lo + 16) as the block's rows: token ids, `(slot << 24) \| token` ids and routing weights |
 | g | n-block 0 publishes the block's sorted ids, weights and expert id; block 0 also `num_valid_ids` |
 
-Steps a–c. `tx_i32` is the thread id, `bx_i32` the workgroup id, `_MT` the number of routed items, `_NREP` the
-passes of the workgroup's threads over them:
+Steps a–c are in `../cases/fused_moe_shuffled_16x16_few_tokens.md` §1.
 
-```python
-for _r in range_constexpr(_NREP):  # (b) issue the loads of this thread's items; a padding item reads index 0
-    _i = tx_i32 + fx.Int32(_r * 256)
-    _m = _ashr(_i - fx.Int32(_MT), 31)      # -1 iff _i < MT
-    _tk_regs.append((_global_i32_at(arg_topk, _i & _m), _m))
-    if const_expr(_TKWN):
-        _tkw_regs.append(_global_i32_at(arg_topkw, _i & _m))
-# (a) moe_buf zero-init, issued behind the topk loads
-mb_tiles = _global_scalar_tiles(arg_moebuf, fx.Int32, _NDW)
-_gtid = bx_i32 * fx.Int32(256) + tx_i32
-for _rz in range_constexpr(_NREP_Z):
-    _zi = _gtid + fx.Int32(_rz * _GRID * 256)
-    if _zi < fx.Int32(_NDW):
-        _scalar_store(mb_tiles, _zi, fx.Int32(0), fx.Int32)
-# (c0) zero the histogram while the topk loads fly
-_e_a = tx_i32
-for _r in range_constexpr(2):
-    _ci = tx_i32 + fx.Int32(_r * 256)
-    if _ci < fx.Int32(272):
-        _scalar_store(cnt_tiles, _ci, fx.Int32(0), fx.Int32)
-_tk_regs = [  # the first use of the loaded ids: a padding item becomes -1
-    (_tv & _m) | (fx.Int32(-1) ^ _m) for (_tv, _m) in _tk_regs
-]
-gpu.barrier()
-for _r in range_constexpr(_NREP):  # (c) one LDS atomic add per item
-    _i = tx_i32 + fx.Int32(_r * 256)
-    if _i < fx.Int32(_MT):
-        _lds_atomic_add(cnt_tiles, _tk_regs[_r], 1)
-gpu.barrier()
-```
+The scan of steps d and f, an inclusive add-scan over the lanes of a wave, is in
+`../cases/fused_moe_shuffled_16x16_few_tokens.md` §2.
 
-The scan of steps d and f, an inclusive add-scan over the lanes of a wave:
+Step d, in which thread t holds expert t's count, is in `../cases/fused_moe_shuffled_16x16_few_tokens.md` §3.
 
-```python
-def _dpp_scan_wave(x):
-    """64-lane inclusive add-scan, mirroring the HIP dpp_inclusive_scan_wave."""
-    for ctrl in (0x111, 0x112, 0x114, 0x118):
-        t = dpp_utils.update_dpp_i32(0, _raw(x), ctrl, 0xF, 0xF, True)
-        x = x + fx.Int32(t)
-    t = dpp_utils.update_dpp_i32(0, _raw(x), 0x142, 0xA, 0xF, True)
-    x = x + fx.Int32(t)
-    t = dpp_utils.update_dpp_i32(0, _raw(x), 0x143, 0xC, 0xF, True)
-    x = x + fx.Int32(t)
-    return x
-```
-
-Step d. Thread t holds expert t's count (`_e_a` is the thread id); `BM` is the rows of a block, `wave` and `lane`
-the thread's wave and lane:
-
-```python
-def _scan_d():
-    _cnt_a = _global_i32_load(cnt_tiles, _e_a)
-    _nb256 = (  # expert 256 (the 257th) has no thread: counted apart
-        _global_i32_load(cnt_tiles, fx.Int32(256)) + fx.Int32(BM - 1)
-    ) >> fx.Int32(4)
-    _nb_a = (_cnt_a + fx.Int32(BM - 1)) >> fx.Int32(4)  # ceil(count / 16) blocks
-
-    # ---- (d) block-wide inclusive scan of the padded block counts --
-    _inc = _dpp_scan_wave(_nb_a)
-    gpu.barrier()
-    if lane == fx.Int32(63):  # each wave's total, through LDS
-        _scalar_store(wt_tiles, wave, _inc, fx.Int32)
-    gpu.barrier()
-    _w0 = _global_i32_load(wt_tiles, fx.Int32(0))
-    _w1 = _global_i32_load(wt_tiles, fx.Int32(1))
-    _w2 = _global_i32_load(wt_tiles, fx.Int32(2))
-    _w3 = _global_i32_load(wt_tiles, fx.Int32(3))
-    _pref = (  # the totals of the waves before this one
-        (_w0 & _ashr(fx.Int32(0) - wave, 31))
-        + (_w1 & _ashr(fx.Int32(1) - wave, 31))
-        + (_w2 & _ashr(fx.Int32(2) - wave, 31))
-    )
-    _t256 = _w0 + _w1 + _w2 + _w3  # expert 256's blocks start here: it is placed last
-    _excl = _inc + _pref - _nb_a  # exclusive block offset of this thread's expert
-    gpu.barrier()
-    return _nb_a, _excl, _t256, _t256 + _nb256
-```
-
-Step f. `fold_e` is the block's expert from step e, `_lo` the rank of the block's first row among the expert's
-items, `_is_eq` a branch-free equality test; the wave totals go through LDS as in step d:
-
-```python
-# (f) rank the items of this expert and keep rows [lo, lo+16)
-_base = fx.Int32(0)
-for _r in range_constexpr(_NREP):
-    _i = tx_i32 + fx.Int32(_r * 256)
-    if const_expr(_HD2N):
-        _v = _tk_regs[_r]
-    else:
-        _v = _global_i32_load(tk_tiles, _i)
-    _x = _is_eq(_v, fold_e)
-    _inc2 = _dpp_scan_wave(_x)
-    # ... the four wave totals _u0 to _u3 through LDS and the prefix _p2 of the earlier waves, as in step d
-    _d = _base + _p2 + _inc2 - _x - _lo
-    if _x == fx.Int32(1):
-        if fx.Uint32(_d) < fx.Uint32(BM):
-            _tok = _i // fx.Int32(_TOPK)
-            _kk = _i % fx.Int32(_TOPK)
-            _scalar_store(rw_tiles, _d, _tok, fx.Int32)
-            _scalar_store(
-                st_tiles, _d, _tok | (_kk << fx.Int32(24)), fx.Int32
-            )
-            if const_expr(_TKWN):
-                _scalar_store(wg_tiles, _d, _tkw_regs[_r], fx.Int32)
-            else:
-                _scalar_store(
-                    wg_tiles, _d, _global_i32_at(arg_topkw, _i), fx.Int32
-                )
-    _base = _base + _u0 + _u1 + _u2 + _u3
-gpu.barrier()
-```
+Step f, in which the wave totals go through LDS as in step d, is in
+`../cases/fused_moe_shuffled_16x16_few_tokens.md` §4.
 
 - The device then computes `bound = total_m_blocks × 2` n-blocks; a workgroup at or past it exits, and at 32
   tokens the tile id is remapped per XCD only after that test
@@ -215,52 +114,9 @@ gpu.barrier()
   144, 288, 518 and 554 workgroups at 8, 16, 32 and 64 tokens.
 - Stage 1 asserts tile-M 16 with inline quantization for the fold.
 
-The grid's upper bound (`NE` experts, `BM` rows a block):
+The grid's upper bound is in `../cases/fused_moe_shuffled_16x16_few_tokens.md` §5.
 
-```python
-# every routed item, plus up to BM - 1 padding rows for each expert the items can hit
-active = min(n_tokens * TOPK, NE)
-max_m_blocks = (n_tokens * TOPK + active * (BM - 1) + BM - 1) // BM
-tiles = max_m_blocks * (num_n_blocks // NF)
-```
-
-The inline quantization, for a batch of `n` loads; `h_dw[i]` holds the four bf16x2 words a lane loaded:
-
-```python
-la = [None] * n
-for i in range_constexpr(n):
-    hm = [h_dw[i][j] & fx.Int32(0x7FFF7FFF) for j in range_constexpr(4)]  # |x| of the lane's 8 bf16 values
-    m01 = _pkmax_u16(hm[0], hm[1])
-    m23 = _pkmax_u16(hm[2], hm[3])
-    m0123 = _pkmax_u16(m01, m23)
-    lo = m0123 & fx.Int32(0xFFFF)
-    hi = m0123.shrui(fx.Int32(16)) & fx.Int32(0xFFFF)
-    la[i] = _umax_i32(lo, hi)
-a = [fx.Int32(_raw(la[i])) for i in range_constexpr(n)]
-s1 = [  # DPP quad max: quad_perm [1, 0, 3, 2], then [2, 3, 0, 1]; the four lanes of a quad end with one amax
-    fx.Int32(
-        dpp_utils.update_dpp_i32(_raw(a[i]), _raw(a[i]), 0xB1, 0xF, 0xF, True)
-    )
-    for i in range_constexpr(n)
-]
-a = [_umax_i32(a[i], s1[i]) for i in range_constexpr(n)]
-s2 = [
-    fx.Int32(
-        dpp_utils.update_dpp_i32(_raw(a[i]), _raw(a[i]), 0x4E, 0xF, 0xF, True)
-    )
-    for i in range_constexpr(n)
-]
-a = [_umax_i32(a[i], s2[i]) for i in range_constexpr(n)]
-e8 = [_inline_e8m0(a[i]) for i in range_constexpr(n)]  # the E8M0 scale, rounded up
-for i in range_constexpr(n):
-    qs_raw = _raw(fx.Float32(_raw(e8[i] << fx.Int32(23)).bitcast(T.f32)))
-    pk = _raw(fx.Int32(0))
-    for j in range_constexpr(4):  # 8 bf16 values into one dword of fp4
-        src_bf16x2 = _raw(
-            fx.Vector.from_elements([h_dw[i][j]], fx.Int32).bitcast(fx.BFloat16)
-        )
-        pk = rocdl.cvt_scalef32_pk_fp4_bf16(T.i32, pk, src_bf16x2, qs_raw, j)
-```
+The inline quantization is in `../cases/fused_moe_shuffled_16x16_few_tokens.md` §6.
 
 In FlyDSL: `../flydsl/moe.md` § few_tokens How to write it.
 
@@ -275,27 +131,7 @@ In FlyDSL: `../flydsl/moe.md` § few_tokens How to write it.
 - An accuracy requirement that is bounded, not bitwise: stage 2 adds the weighted rows into `out` with bf16x2
   atomics, and the output is judged by an SQNR bound (§3).
 
-Stage 2's accumulation into `out`:
-
-```python
-for mr in range_constexpr(M_REPS):
-    token_id = packed[mr] & fx.Int32(0x00FFFFFF)  # the sorted id is (slot << 24) | token
-    if token_id < i32_M:
-        row_base_addr = (
-            token_id * fx.Int32(N_OUT) + n_block_idx * fx.Int32(BN) + col_start
-        )
-        for s in range_constexpr(4):
-            off = (row_base_addr + fx.Int32(s * 64)) * fx.Int32(2)
-            out_ptr = _gep1(out_base, off)
-            llvm.AtomicRMWOp(  # one atomic fadd of a bf16x2 pair, already weighted and truncated
-                llvm.AtomicBinOp.fadd,
-                out_ptr,
-                _raw(_pk_all[mr][s]),
-                llvm.AtomicOrdering.monotonic,
-                syncscope="agent",
-                alignment=4,
-            )
-```
+Stage 2's accumulation into `out` is in `../cases/fused_moe_shuffled_16x16_few_tokens.md` §7.
 
 ## Counter-signals
 

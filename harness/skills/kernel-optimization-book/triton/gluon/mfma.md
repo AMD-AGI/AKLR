@@ -22,6 +22,11 @@ sources:
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/ConvertFpCastOpToLLVM.cpp
   - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/LinearLayoutConversions.cpp
   - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Dialect.cpp
+cases:
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/dsa_sparse_mla_gluon.md
+  - cases/fp8_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # The matrix core from Gluon on gfx950
@@ -153,7 +158,7 @@ The bf16 convert is two `v_cvt_scalef32_pk_bf16_fp8` per four values with scale 
 
 - Load the fp8 data in a layout whose per-lane run equals the bf16 operand's, so the convert stays in registers:
   DSA 8-head reads K from LDS into `BlockedLayout([16, 1], [4, 16], [1, 4], [1, 0])`, converts, and hands it to
-  `DotOperandLayout(1, mma, 16)` (code below). That hand-over passes `assert_trivial=True`, which makes
+  `DotOperandLayout(1, mma, 16)` (code: [cases/dsa_sparse_mla_gluon](../../cases/dsa_sparse_mla_gluon.md) §8). That hand-over passes `assert_trivial=True`, which makes
   `gl.convert_layout` raise at compile time if the conversion would move data between lanes or waves (§7), and the
   convert is `v_cvt_scalef32_pk_bf16_fp8` (compiled with Triton 3.8.0 for gfx950).
 - When P·V needs more than bf16's 8 significant bits and V is fp8, run both in fp16: 11 bits for P ∈ [2^-14, 1], V
@@ -163,17 +168,7 @@ The bf16 convert is two `v_cvt_scalef32_pk_bf16_fp8` per four values with scale 
   the Qwen2-MoE fp8 experts are promoted-fp8 examples, and where the other kernels' 16-bit operands come from was not
   read.
 
-The DSA 8-head QK panel (`score` is the fp32 accumulator on a bf16 `[16, 16, 32]` layout):
-
-```python
-_QK_OPERAND = gl.constexpr(gl.BlockedLayout([16, 1], [4, 16], [1, 4], [1, 0]))  # 16 fp8 of K per lane, as the operand
-
-@gluon.jit
-def _qk_panel(query, key_smem, score):
-    rhs_layout: gl.constexpr = gl.DotOperandLayout(1, score.type.layout, 16)
-    key = gl.amd.cdna4.async_copy.load_shared_relaxed(key_smem.permute((1, 0)), _QK_OPERAND).to(gl.bfloat16)
-    return gl.amd.cdna4.mfma(query, gl.convert_layout(key, rhs_layout), score)
-```
+The DSA 8-head QK panel is in [cases/dsa_sparse_mla_gluon](../../cases/dsa_sparse_mla_gluon.md) §8.
 
 ### 2.4 bf16 × bf16
 
@@ -189,7 +184,7 @@ use it, e.g. the DeepSeek-V2 1-token router.
   algebra that must stay fp32. Qwen3-Next's helper converts both operands to `DotOperandLayout(i, mma, 1)`.
 - **fp32 weight × bf16 activation**: split only the fp32 operand into three bf16 terms and run three bf16 MFMAs
   into three accumulators; a bf16 × bf16 product in fp32's normal range is exact in fp32 *(field, E5)* (MiniMax-M2
-  router, code below). Why it is exact and how to sum the terms: [../numerics.md](../numerics.md) §5.
+  router, code: [cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §2). Why it is exact and how to sum the terms: [../numerics.md](../numerics.md) §5.
 - **Not `input_precision`.** Gluon's `mfma` reads `TRITON_F32_DEFAULT` (S23) into every call: `tf32` made Gluon
   `mfma` fail when traced whatever the operand dtype, while `mfma_scaled` still compiled ("input_precision must be
   one of ('ieee', 'bf16x3', 'bf16x6'). Got tf32", S12; Triton 3.8.0 for gfx950; [../debugging.md](../debugging.md)
@@ -198,19 +193,7 @@ use it, e.g. the DeepSeek-V2 1-token router.
 - **fp64**: `element_bitwidth=64` on `[16,16,4]` with `.to(gl.float64)` operands gives `v_mfma_f64_16x16x4_f64`
   (Qwen2-MoE fp8 router+experts).
 
-The three-term split in MiniMax-M2's router (`a` bf16 activations, `b` fp32 weights, both in operand layouts):
-
-```python
-b0 = b.to(gl.bfloat16, fp_downcast_rounding="rtz")  # the leading bits, truncated
-residual = b - b0.to(gl.float32)
-b1 = residual.to(gl.bfloat16, fp_downcast_rounding="rtz")
-b2 = (residual - b1.to(gl.float32)).to(gl.bfloat16)
-high = gl.amd.cdna4.mfma(a, b0, high)  # three accumulators, one per term
-middle = gl.amd.cdna4.mfma(a, b1, middle)
-low = gl.amd.cdna4.mfma(a, b2, low)
-...
-acc = high + (middle + low)  # after the K loop
-```
+The three-term split in MiniMax-M2's router is in [cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §2.
 
 ### 2.6 When to skip the matrix core
 
@@ -386,25 +369,14 @@ loads (all compiled with Triton 3.8.0 for gfx950). The library's kernels use:
 - load each scale's enclosing word and shift out its byte, `bx = (scale_words >> scale_shift).to(gl.uint8)` with
   `scale_shift = sn[:, None] // 16 % 2 * 8 + sg[None, :] // 4 % 2 * 16`, then convert (DeepSeek-V2 at 2 tokens);
 - load whole scale words, split each into its four bytes with two `gl.join` levels and permute them back to
-  `[BN, BK // 32]` (a 6-D permute, code below); only reshaped, relative error 0.94 *(field, E5)*;
+  `[BN, BK // 32]` (a 6-D permute, code: [cases/mxfp4_moe_gluon_dim6144](../../cases/mxfp4_moe_gluon_dim6144.md) §9); only reshaped, relative error 0.94 *(field, E5)*;
 - one word, two K steps: it holds groups g and g + 4, so load it on even K steps and shift by 16 on odd ones;
 - staged in LDS, when several MFMAs reuse a tile's A scales: give the `SharedLinearLayout`'s lowest offset bits to
   the scale layout's register bits (groups +4, +8), then rows, then groups +1, +2. `.load(scale_layout)` then reads a
   lane's four bytes with one `ds_read_b32` instead of four `ds_read_u8` (compiled with Triton 3.8.0 for gfx950).
 
-The whole-word unpack, from DeepSeek-V2's MXFP4 MoE at 1 and 2 tokens (`sw`: the tile's scale words, one `[1, 4]` run per lane):
-
-```python
-@gluon.jit
-def _unpack_bytes(words):
-    b0, b1 = (words.to(gl.uint8), (words >> 8).to(gl.uint8))
-    b2, b3 = ((words >> 16).to(gl.uint8), (words >> 24).to(gl.uint8))
-    return gl.join(gl.join(b0, b2), gl.join(b1, b3))  # two join levels: two new trailing axes of 2
-
-raw = sw.reshape((BN // 32, BK // 256, 4, 16))
-scales = gl.permute(_unpack_bytes(raw), (0, 5, 3, 1, 4, 2))  # back to (row, group) order
-scales = scales.reshape((BN, BK // 32))
-```
+The whole-word unpack, from DeepSeek-V2's MXFP4 MoE at 1 and 2 tokens (the tile's scale words, one `[1, 4]` run per lane), is in
+[cases/mxfp4_moe_gluon_dim6144](../../cases/mxfp4_moe_gluon_dim6144.md) §9.
 
 **Producers write the format their consumer loads.** For aiter's MXFP4 GEMM (`b` preshuffled 16×16,
 `a_scale` and `b_scale` shuffled, `a` not), that is codes row-major (`[m, k/2]` bytes) and scales as aiter's
@@ -444,7 +416,7 @@ Why the residual pays: [../numerics.md](../numerics.md) §5, [../attention.md](.
 (4 K groups, 4 features per program), its loop and compiled kernel: [../gemm.md](../gemm.md) §4.
 
 - **Keep the selection in registers.** The n3072 kernels put the K group in the low column bits (`transposed=True`),
-  the n7168 kernels in the low row bits, picked with `gl.amd.slice` plus an `assert_trivial` convert (code below); a column
+  the n7168 kernels in the low row bits, picked with `gl.amd.slice` plus an `assert_trivial` convert (code: [cases/a8w8_gluon_n3072_n7168](../../cases/a8w8_gluon_n3072_n7168.md) §4); a column
   group sum and a `gl.amd.slice` row pick compiled with no LDS or cross-lane permute. The compiled n3072 m = 1 kernel
   holds 3 scaled MFMAs and 40 VGPRs, 8 of them AGPRs; it picks the diagonal with 10 `v_cndmask_b32`, and the final
   sum over the four groups, whose rows sit in different lanes, takes 2 `v_add_f32_dpp`; there is no
@@ -458,14 +430,7 @@ Why the residual pays: [../numerics.md](../numerics.md) §5, [../attention.md](.
   [../moe.md](../moe.md) §7, [../debugging.md](../debugging.md) §6. Change the constants together.
 - For a bf16 plain-Triton small-M GEMM, a 16-row tile carrying one row lost to FlyDSL M = 1 dot / vector kernels at both of its shapes in one A/B ([../gemm/small_m_gemm.md](../gemm/small_m_gemm.md) §7); the kernels above differ in operand format, loading and fusion. Small-M GEMM and MoE design: [../gemm.md](../gemm.md) §3, §4, [../moe.md](../moe.md) §7, §9.
 
-The n7168 row pick at m = 8 (`dots`: the `[M * PG, PG * BN]` result, rows (token, group), columns (group, feature)):
-
-```python
-columns = gl.amd.slice(dots, (M * PG, BN), (0, GROUP * BN))  # the columns of K group GROUP
-groups = columns.reshape((M, PG, BN)).permute((1, 0, 2))
-chosen = gl.amd.slice(groups, (1, M, BN), (GROUP, 0, 0)).reshape((M, BN))  # of them, the rows of that group
-return gl.convert_layout(chosen, OUT, assert_trivial=True)
-```
+The n7168 row pick at m = 8 is in [cases/a8w8_gluon_n3072_n7168](../../cases/a8w8_gluon_n3072_n7168.md) §4.
 
 ## 9. Epilogues
 

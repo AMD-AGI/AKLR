@@ -8,12 +8,13 @@ dtypes: [bf16]
 regimes: ["M 1-256", read-once B, small-M, skinny, split-k]
 flydsl: 0.3.2
 sources:
-  - aiter/ops/flydsl/kernels/splitk_hgemm.py
-  - aiter/ops/flydsl/kernels/small_m_hgemm.py
-  - aiter/ops/flydsl/gemm_kernels.py
-  - aiter/tuned_gemm.py
-  - csrc/py_itfs_cu/gemm_common.cu
-  - csrc/gemm_a16w16/gemm_a16w16_tune.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/splitk_hgemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/small_m_hgemm.py
+  - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/gemm_kernels.py
+  - ROCm/aiter@dbd8bf5:aiter/tuned_gemm.py
+  - ROCm/aiter@dbd8bf5:csrc/py_itfs_cu/gemm_common.cu
+  - ROCm/aiter@dbd8bf5:csrc/gemm_a16w16/gemm_a16w16_tune.py
+cases: [cases/k3_bf16_splitk_narrow_n.md]
 ---
 
 # GEMM at small M

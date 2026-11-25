@@ -160,6 +160,65 @@ n1280's 8-wave loop raises `s_setprio` around the four MFMA groups of each K til
   `nt` B with A issued first +2.9–6.4% at every size; columns split across the 4 waves +2.7–4.5% at m 21–98;
   whole-line planes +0.3–1.4% at m 28–98. All changes off: +23.2–125.2% *(field, E12)*.
 
+## Code
+
+### 1. A fold in which no split waits: one launch tag per (tile, wave) slot (N 2048 × K 7168, m 16–128)
+
+From the N 2048 × K 7168 kernel of § N 1024 and 2048 × K 7168 below, its path for m 16–128 (K split four ways across
+workgroups), from the store of a workgroup's plane on. The waves' partials are added in wave order and the plane is stored with
+`sc0 sc1` (`CPOL_SYS`); after `vmcnt(0)` each wave stores this launch's 64-bit tag, `dispatch.id ^ rotl(queue.ptr, 32)`,
+into its split's slot of the (tile, wave) group, waits again, reads the slots of all `S` splits once, and folds only
+where every tag is this launch's. `fold` loads the `S` planes, adds them in split order, rounds once and stores C.
+`W` is the waves per workgroup, `NPW` the fragments a wave owns (`frags[i]`) and `parts[i][w]` wave `w`'s partial of
+the `i`-th of them, read from LDS; `plane_off(sp, f)` is the offset of fragment `f` in split `sp`'s plane of the
+per-call workspace (`ws_rsrc`); the slot groups start at `SLOT_BASE`, after the planes, `SLOT_WORDS` dwords each;
+`guarded(cond, fn)` runs `fn` under an `scf.if`. `llvm` is `flydsl._mlir.dialects.llvm`, `ir` is `flydsl._mlir.ir`
+and `T` is `flydsl.expr.typing.T`.
+
+```python
+for i in range_constexpr(NPW):  # this workgroup's plane: its waves' partials added in wave order
+    sm = parts[i][0]
+    for w in range_constexpr(1, W):
+        sm = std_arith.AddFOp(sm, parts[i][w]).result
+    buffer_store(sm, ws_rsrc, plane_off(s_idx, frags[i]), cpol=CPOL_SYS)
+fx.rocdl.s_waitcnt(vmcnt=0)  # the plane is acknowledged before the tag goes out
+
+did = llvm.call_intrinsic(T.i64, "llvm.amdgcn.dispatch.id", [], [], [])
+qp = llvm.call_intrinsic(ir.Type.parse("!llvm.ptr<4>"), "llvm.amdgcn.queue.ptr", [], [], [])
+qpi = llvm.PtrToIntOp(T.i64, qp).result
+qrot = std_arith.OrIOp(
+    std_arith.ShLIOp(qpi, _i64c(32)).result, std_arith.ShRUIOp(qpi, _i64c(32)).result
+).result
+tag = std_arith.XOrIOp(did, qrot).result  # 64 bits, new in every launch
+tag_lo = std_arith.TruncIOp(T.i32, tag).result
+tag_hi = std_arith.TruncIOp(T.i32, std_arith.ShRUIOp(tag, _i64c(32)).result).result
+grp_i32 = fx.Index(SLOT_BASE // 4) + (fx.Index(tile) * W + fx.Index(wid)) * SLOT_WORDS
+tagv = _vector.FromElementsOp(T.vec(2, T.i32), [tag_lo, tag_hi]).result
+buffer_store(tagv, ws_rsrc, grp_i32 + fx.Index(s_idx) * 2, cpol=CPOL_SYS)  # this split's slot
+fx.rocdl.s_waitcnt(vmcnt=0)
+VW = min(4, 2 * S)
+vals = []
+for c in range_constexpr((2 * S) // VW):  # one look at the slots of all S splits; no poll
+    v = buffer_load(ws_rsrc, grp_i32 + c * VW, VW, T.i32, cpol=CPOL_SYS)
+    for e in range_constexpr(VW):
+        vals.append(v_extract(v, e))
+ok = None
+for sp in range_constexpr(S):
+    e_lo = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, vals[2 * sp], tag_lo).result
+    e_hi = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, vals[2 * sp + 1], tag_hi).result
+    e = std_arith.AndIOp(e_lo, e_hi).result
+    ok = e if ok is None else std_arith.AndIOp(ok, e).result
+ok_i = rocdl.readfirstlane(T.i32, std_arith.ExtUIOp(T.i32, ok).result)
+# fold (load the S planes, add them in split order, round once, store) only where every tag is this launch's
+guarded(std_arith.CmpIOp(std_arith.CmpIPredicate.ne, ok_i, _i32c(0)).result, fold)
+```
+
+Not this: a split that polls another split's flag until it appears, as every fold in the table under
+§ Counter-signals does. With part of the grid not resident, that wait ends in a hang, NaN or a wrong sum.
+
+Explained in `../gemm/wait_free_fold.md` § Folding without a counter: launch-tagged slots and `../flydsl/gemm.md`
+§ wait_free_fold How to write it.
+
 ## Result
 
 The last column counts the sizes at or above 1.03 in a repeat measurement: the one-sided lower bound of the aiter /
@@ -248,48 +307,7 @@ fixed order.
   `vmcnt(0)`, stores this launch's 64-bit tag `dispatch.id ^ rotl(queue.ptr, 32)` into its slot for its split, waits
   again and reads the slots of all four splits; a wave that finds all four tags loads the four planes (`sc0 sc1`),
   adds them in split order, rounds once and stores. Unlike every fold in the table under § Counter-signals, no
-  workgroup waits for another; two waves that both fold a fragment write the same bytes.
-
-  ```python
-  for i in range_constexpr(NPW):  # this workgroup's plane: its waves' partials added in wave order
-      sm = parts[i][0]
-      for w in range_constexpr(1, W):
-          sm = std_arith.AddFOp(sm, parts[i][w]).result
-      buffer_store(sm, ws_rsrc, plane_off(s_idx, frags[i]), cpol=CPOL_SYS)
-  fx.rocdl.s_waitcnt(vmcnt=0)  # the plane is acknowledged before the tag goes out
-
-  did = llvm.call_intrinsic(T.i64, "llvm.amdgcn.dispatch.id", [], [], [])
-  qp = llvm.call_intrinsic(ir.Type.parse("!llvm.ptr<4>"), "llvm.amdgcn.queue.ptr", [], [], [])
-  qpi = llvm.PtrToIntOp(T.i64, qp).result
-  qrot = std_arith.OrIOp(
-      std_arith.ShLIOp(qpi, _i64c(32)).result, std_arith.ShRUIOp(qpi, _i64c(32)).result
-  ).result
-  tag = std_arith.XOrIOp(did, qrot).result  # 64 bits, new in every launch
-  tag_lo = std_arith.TruncIOp(T.i32, tag).result
-  tag_hi = std_arith.TruncIOp(T.i32, std_arith.ShRUIOp(tag, _i64c(32)).result).result
-  grp_i32 = fx.Index(SLOT_BASE // 4) + (fx.Index(tile) * W + fx.Index(wid)) * SLOT_WORDS
-  tagv = _vector.FromElementsOp(T.vec(2, T.i32), [tag_lo, tag_hi]).result
-  buffer_store(tagv, ws_rsrc, grp_i32 + fx.Index(s_idx) * 2, cpol=CPOL_SYS)  # this split's slot
-  fx.rocdl.s_waitcnt(vmcnt=0)
-  VW = min(4, 2 * S)
-  vals = []
-  for c in range_constexpr((2 * S) // VW):  # one look at the slots of all S splits; no poll
-      v = buffer_load(ws_rsrc, grp_i32 + c * VW, VW, T.i32, cpol=CPOL_SYS)
-      for e in range_constexpr(VW):
-          vals.append(v_extract(v, e))
-  ok = None
-  for sp in range_constexpr(S):
-      e_lo = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, vals[2 * sp], tag_lo).result
-      e_hi = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, vals[2 * sp + 1], tag_hi).result
-      e = std_arith.AndIOp(e_lo, e_hi).result
-      ok = e if ok is None else std_arith.AndIOp(ok, e).result
-  ok_i = rocdl.readfirstlane(T.i32, std_arith.ExtUIOp(T.i32, ok).result)
-  # fold (load the S planes, add them in split order, round once, store) only where every tag is this launch's
-  guarded(std_arith.CmpIOp(std_arith.CmpIPredicate.ne, ok_i, _i32c(0)).result, fold)
-  ```
-
-  Not this: a split that polls another split's flag until it appears, as every fold in the table under
-  § Counter-signals does. With part of the grid not resident, that wait ends in a hang, NaN or a wrong sum.
+  workgroup waits for another; two waves that both fold a fragment write the same bytes. Code: §1.
 
 Counter-signals:
 - **The slots are read before this call writes them.** A workspace from `torch.empty` holds undefined bytes:

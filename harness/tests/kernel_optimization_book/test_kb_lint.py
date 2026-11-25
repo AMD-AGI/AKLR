@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
-"""The kernel optimization book cites nothing of the repository it is kept in, and lints clean. CPU only."""
+"""The kernel optimization book cites nothing of the repository it is kept in, keeps kernel code in its case pages
+and public source in `sources`, and lints clean. CPU only."""
 
 from __future__ import annotations
 
@@ -67,6 +68,247 @@ def test_an_isa_snapshot_keeps_its_hexadecimal_words_and_numbers():
     assert not list(kb_lint.host_repository_issues("x.md", snapshot, kb_lint.HOST_REPOSITORY_ALWAYS))
     named = f"see {NAME}/ops/README.md\n"
     assert list(kb_lint.host_repository_issues("x.md", named, kb_lint.HOST_REPOSITORY_ALWAYS))
+
+
+CASE = """---
+title: "bf16 GEMM, N 64 x K 512: K split over the waves"
+kind: case
+ops: [gemm]
+dtypes: [bf16]
+regimes: ["M 1-64"]
+accuracy: bitwise
+gens: [gfx950]
+{pin}
+basis: measured N=1
+measured:
+  - {{metric: speedup, value: "1.2", gpu: MI355X, workload: "m 1-64", date: "2026-11"}}
+---
+
+# A case
+
+## Applies when
+## Counter-signals
+## Mechanism
+{code}
+## Result
+"""
+ENTRY = "### {n}. The fold\n\n```python\ntotal = a + b\n```\n"
+TECHNIQUE = """---
+title: "Fold in split order"
+kind: technique
+lever: fold_in_split_order
+ops: [gemm]
+dtypes: [bf16]
+regimes: ["M 1-64"]
+gens: [gfx950]
+flydsl: 0.3.2
+basis: source-semantics
+{backing}
+---
+
+# A technique
+
+## What it does
+## How to write it
+{text}
+## When it applies
+## Counter-signals
+## How to confirm it took effect
+## Cost and risk
+## Evidence
+"""
+
+
+def _book(tmp_path, monkeypatch, pages):
+    """A book of these pages, linted in place of the real one: the errors of one of its pages."""
+    for rel, text in pages.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    for name in ("SKILL_ROOT", "REPO_ROOT", "HOME_ROOT"):
+        monkeypatch.setattr(kb_lint, name, tmp_path)
+
+    def errors(rel):
+        issues = kb_lint.lint_page(kb_lint.read_page(tmp_path / rel))
+        return [issue.message for issue in issues if issue.level == "error"]
+
+    return errors
+
+
+ONE_ENTRY = "## Code\n" + ENTRY.format(n=1)
+
+
+def _case(code=ONE_ENTRY, pin="flydsl: 0.3.2"):
+    return CASE.format(code=code, pin=pin)
+
+
+@pytest.mark.parametrize(
+    ("entry", "passes"),
+    [
+        ("ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py", True),
+        ("ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1633", True),
+        ("ROCm/aiter@dbd8bf5:aiter/ops/flydsl/", True),
+        ("ROCm/FlyDSL@v0.3.2", True),
+        ("someone/aiter@40ae5ad7f (branch split-k)", True),
+        ("https://rocm.blogs.amd.com/software-tools-optimization/cdna4-gemm-kernels/README.html", True),
+        ("https://github.com/ROCm/aiter/issues/5322 (the report)", True),
+        ("aiter/ops/flydsl/kernels/splitk_hgemm.py", False),  # a path of no repository
+        ("ROCm/FlyDSL:kernels/gemm/preshuffle_gemm.py", False),  # a repository at no revision
+        ("ROCm/FlyDSL@main:kernels/gemm/preshuffle_gemm.py", False),  # a branch moves
+        ("ROCm/FlyDSL@dd8373349:kernels/x.py and the kernel's own source", False),  # text after the source
+        ("https://example.com/a page", False),
+        ("../cases/a.md § Mechanism", False),  # a case page is listed under `cases`
+        ("the kernel's own source", False),
+    ],
+)
+def test_a_source_is_public_source_at_a_revision_or_a_url(tmp_path, monkeypatch, entry, passes):
+    page = TECHNIQUE.format(backing=f'sources:\n  - "{entry}"', text="")
+    errors = _book(tmp_path, monkeypatch, {"gemm/fold.md": page})("gemm/fold.md")
+    assert ["`sources` entry" in message for message in errors] == ([] if passes else [True]), errors
+
+
+def test_a_skill_that_may_cite_its_repository_keeps_its_sources(tmp_path, monkeypatch):
+    page = TECHNIQUE.format(backing="sources:\n  - scripts/driver.py", text="")
+    errors = _book(tmp_path, monkeypatch, {"gemm/fold.md": page})
+    monkeypatch.setattr(kb_lint, "CHECK_HOST_REPOSITORY", False)
+    assert not errors("gemm/fold.md")
+
+
+def test_a_technique_is_backed_by_public_source_or_by_a_case(tmp_path, monkeypatch):
+    linked = "The fold: `../cases/a.md` §1."
+    pages = {
+        "cases/a.md": _case(),
+        "gemm/bare.md": TECHNIQUE.format(backing="", text=""),
+        "gemm/case.md": TECHNIQUE.format(backing="cases:\n  - cases/a.md", text=linked),
+    }
+    errors = _book(tmp_path, monkeypatch, pages)
+    assert ["`sources` or `cases`" in message for message in errors("gemm/bare.md")] == [True]
+    assert not errors("gemm/case.md")
+    assert not errors("cases/a.md")
+
+
+@pytest.mark.parametrize(
+    ("listed", "text", "expected"),
+    [
+        ("", "The fold: `../cases/a.md` §1.", "`cases` lacks cases/a.md"),
+        ("cases:\n  - cases/a.md", "", "which the text does not link"),
+        (
+            "cases:\n  - cases/a.md\n  - gemm/other.md",
+            "See [the case](../cases/a.md).",
+            "names no page of kind",
+        ),
+        (
+            "cases:\n  - cases/a.md\n  - cases/INDEX.md",
+            "See [the case](../cases/a.md).",
+            "names no page of kind",
+        ),
+        ("cases:\n  - cases/a.md\n  - cases/b.md", "See [the case](../cases/a.md).", "names no page of kind"),
+        ("cases:\n  - cases/a.md", "The fold: `../cases/a.md` §2.", "has no section 2"),
+        (
+            "cases:\n  - cases/a.md",
+            "[The case](../cases/a.md): `../cases/a.md §1`.",
+            "in one code span is not checked",
+        ),
+        ("cases:\n  - cases/a.md", "The fold: [the case](../cases/a.md) §1, and `../cases/INDEX.md`.", None),
+        ("", "```\nsee `../cases/a.md` §1\n```", None),  # a path in fenced code is no link
+        (
+            "",
+            "A figure: ![the grid](../cases/grid.png).",
+            None,
+        ),  # nor is a file of cases/ that is no case page
+    ],
+)
+def test_cases_lists_the_case_pages_the_text_links(tmp_path, monkeypatch, listed, text, expected):
+    source = "sources:\n  - ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py\n"
+    pages = {
+        "cases/a.md": _case(),
+        "cases/INDEX.md": "---\nkind: index\n---\n",
+        "cases/grid.png": "",
+        "gemm/other.md": TECHNIQUE.format(backing=source, text=""),
+        "gemm/fold.md": TECHNIQUE.format(backing=source + listed, text=text),
+    }
+    errors = _book(tmp_path, monkeypatch, pages)("gemm/fold.md")
+    assert [expected in message for message in errors] == ([True] if expected else []), errors
+
+
+@pytest.mark.parametrize(
+    ("code", "pin", "expected"),
+    [
+        ("## Code\n" + ENTRY.format(n=1) + ENTRY.format(n=2), "flydsl: 0.3.2", None),
+        ("", "triton: 3.8.0", None),  # a case of a Triton kernel pins Triton
+        ("", "", "front matter lacks `flydsl`"),
+        ("### 1. The fold\n", "flydsl: 0.3.2", "which this page lacks"),
+        ("## Code\n" + ENTRY.format(n=1) + ENTRY.format(n=3), "flydsl: 0.3.2", "should be 2"),
+        ("## Code\n" + ENTRY.format(n=2), "flydsl: 0.3.2", "should be 1"),
+        (
+            "## Code\n" + ENTRY.format(n=1) + "### 2. The store\n\nIn words only.\n",
+            "flydsl: 0.3.2",
+            "entry 2 of",
+        ),
+        ("## Code\n### 1. The store\n\nIn words only.\n" + ENTRY.format(n=2), "flydsl: 0.3.2", "entry 1 of"),
+        (
+            "## Code\n" + ENTRY.format(n=1) + "## Notes\n### 2. Late\n```\nx\n```\n",
+            "flydsl: 0.3.2",
+            "outside `## Code`",
+        ),
+        # a numbered heading of the text does not shift the entries' numbers
+        (
+            "### 1. A step\n## Code\n" + ENTRY.format(n=1) + ENTRY.format(n=2),
+            "flydsl: 0.3.2",
+            "outside `## Code`",
+        ),
+        # neither a heading that starts with a decimal nor a line of an excerpt is an entry
+        ("## Code\n" + ENTRY.format(n=1) + "## Notes\n### 1.5× over the baseline\n", "flydsl: 0.3.2", None),
+        (
+            "## Code\n" + ENTRY.format(n=1).replace("total", "### 2. a line of it\ntotal"),
+            "flydsl: 0.3.2",
+            None,
+        ),
+        ("", "flydsl: 0.3.2\ncases:\n  - cases/a.md", "a case page has none"),
+    ],
+)
+def test_a_case_page_numbers_its_code_entries(tmp_path, monkeypatch, code, pin, expected):
+    errors = _book(tmp_path, monkeypatch, {"cases/a.md": _case(code, pin)})("cases/a.md")
+    assert [expected in message for message in errors] == ([True] if expected else []), errors
+
+
+def test_a_section_cited_in_a_case_is_a_heading_not_a_line_of_its_code(tmp_path, monkeypatch):
+    case = _case("## Code\n" + ENTRY.format(n=1).replace("total", "# 2. accumulate the partials\ntotal"))
+    page = TECHNIQUE.format(backing="cases:\n  - cases/a.md", text="The fold: `../cases/a.md` §2.")
+    errors = _book(tmp_path, monkeypatch, {"cases/a.md": case, "gemm/fold.md": page})("gemm/fold.md")
+    assert ["has no section 2" in message for message in errors] == [True], errors
+
+
+def test_a_case_page_is_a_page_of_kind_case_in_the_cases_folder(tmp_path, monkeypatch):
+    technique = TECHNIQUE.format(backing="sources:\n  - ROCm/FlyDSL@v0.3.2", text="")
+    errors = _book(tmp_path, monkeypatch, {"gemm/a.md": _case(), "cases/fold.md": technique})
+    for rel in ("gemm/a.md", "cases/fold.md"):
+        assert ["goes in `cases/`" in message for message in errors(rel)] == [True], rel
+
+
+def test_only_a_case_pins_triton_outside_the_triton_folder(tmp_path, monkeypatch):
+    technique = TECHNIQUE.format(backing="sources:\n  - ROCm/FlyDSL@v0.3.2", text="")
+    page = technique.replace("flydsl: 0.3.2", "triton: 3.8.0")
+    errors = _book(tmp_path, monkeypatch, {"gemm/fold.md": page})("gemm/fold.md")
+    assert ["lacks `flydsl`" in message for message in errors] == [True], errors
+
+
+def test_stale_skips_a_case_that_pins_triton_alone(tmp_path, monkeypatch):
+    pages = {
+        "cases/fly.md": _case(pin="flydsl: 0.3.1"),
+        "cases/tri.md": _case(pin="triton: 3.8.0"),
+        "cases/both.md": _case(pin="flydsl: 0.3.1\ntriton: 3.8.0"),
+    }
+    _book(tmp_path, monkeypatch, pages)
+    assert kb_lint.stale([tmp_path / rel for rel in sorted(pages)], "0.3.2") == [
+        "cases/both.md: flydsl 0.3.1",
+        "cases/fly.md: flydsl 0.3.1",
+    ]
+
+
+def test_the_cases_index_names_the_toolchain_a_case_pins():
+    assert kb_index._toolchain({"flydsl": "0.3.2"}) == "FlyDSL 0.3.2"
+    assert kb_index._toolchain({"triton": "3.8.0"}) == "Triton 3.8.0"
+    assert kb_index._toolchain({"flydsl": "0.3.2", "triton": "3.8.0"}) == "FlyDSL 0.3.2, Triton 3.8.0"
 
 
 def test_the_book_lints_clean_and_its_indexes_are_current(capsys):

@@ -4,6 +4,7 @@ kind: method
 ops: [gemm, moe, attention, gdn]
 gens: [gfx950]
 triton: 3.8.0
+cases: [cases/moe_router_experts_gluon_dim4096.md]
 ---
 
 # Tuning a Triton or Gluon kernel size by size
@@ -124,19 +125,8 @@ bold; each B against the A runs interleaved with it; call time = the sum of the 
 In the gated-attention kernel the head tile follows the split count (`head_tile = 16 if SPLITS
 == 16 else HEADS`), so both changed arms also ran an 8-row head tile: those rows measure the two changes together
 ([attention.md](attention.md) §7). The router reads split, tile and look-ahead from one `@gluon.constexpr_function`
-in kernel (`M: gl.constexpr`) and launch alike ([authoring.md](authoring.md) §5):
-
-```python
-# fields of _ShapeConfig: split, expert_tile, k_tile, lookahead, routing_group
-@gluon.constexpr_function
-def _shape_config(rows):
-    """One source of truth for host launches and compile-time kernel geometry."""
-    if rows == 64:
-        return _ShapeConfig(8, 32, 128, 1, 16)
-    if rows == 128:
-        return _ShapeConfig(4, 32, 128, 2, 4)
-    return _ShapeConfig(4, 64, 64, 2, 8)
-```
+([cases/moe_router_experts_gluon_dim4096](../cases/moe_router_experts_gluon_dim4096.md) §3)
+in kernel (`M: gl.constexpr`) and launch alike ([authoring.md](authoring.md) §5).
 
 The kernel reads it as `config: gl.constexpr = _shape_config(M)`; the host calls `_shape_config(rows)` and sizes the grid
 from `config.split` and `config.expert_tile`.
@@ -346,7 +336,7 @@ Gluon has no `num_stages` pipeliner (S32): the depth is in the code, as in the r
 `AHEAD` ahead, a barrier between a slot's last read and its refill ([gluon/memory.md](gluon/memory.md) §11–12).
 
 - **Depth per size.** Make it a constexpr chosen per size, as the kernels do: the router's look-ahead is 1
-  at 64 rows and 2 at 128 and 256 (the fourth field in §3's excerpt); the N=3072 fp8 GEMM keeps 5 K groups ahead at m = 16 and 32 and 4 at m =
+  at 64 rows and 2 at 128 and 256 (the fourth field in [cases/moe_router_experts_gluon_dim4096](../cases/moe_router_experts_gluon_dim4096.md) §3); the N=3072 fp8 GEMM keeps 5 K groups ahead at m = 16 and 32 and 4 at m =
   64; the N=7168 GEMM rings 3 slots with 2 ahead at M = 64 and 4 with 3 at M = 32, with a per-step wait table;
   a stage less or more: §3. Each slot costs LDS: keep `metadata.shared` (S50) at most 160 KiB per workgroup: 192
   KiB compiles, and the first launch raises `OutOfResources`, "out of resource: shared memory, Required: 196608,
