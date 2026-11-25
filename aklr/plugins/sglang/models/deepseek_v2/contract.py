@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    DeterminismLevel,
+    MOE_MXFP4_SNR,
     DType,
     E8M0Scales,
     FiniteDistribution,
@@ -16,6 +16,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -25,6 +26,14 @@ from aklr.core.contract.spec import (
     attr,
     axis,
     derived_axis,
+)
+from aklr.plugins.sglang.models.deepseek_v2.baseline import (
+    DeepseekV2Fp8MoeBaseline,
+    DeepseekV2Mxfp4MoeBaseline,
+)
+from aklr.plugins.sglang.models.deepseek_v2.reference import (
+    DeepseekV2Fp8MoeReference,
+    DeepseekV2Mxfp4MoeReference,
 )
 
 __all__ = ["CONTRACTS", "DEEPSEEK_V2_FP8_MOE", "DEEPSEEK_V2_MXFP4_MOE"]
@@ -165,11 +174,13 @@ DEEPSEEK_V2_MXFP4_MOE = OpContract(
             shape=("n_tokens", "model_dim"),
             dtype=_SAME_AS_HIDDEN,
             # the experts' MXFP4 activations alone come to about 12 dB
-            error_bounds=SqnrBound(min_sqnr_db=10.0),
+            error_bounds=MOE_MXFP4_SNR,
         )
     },
     layout_variants=_MXFP4_LAYOUTS,
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=DeepseekV2Mxfp4MoeReference(),
+    baseline=DeepseekV2Mxfp4MoeBaseline(),
 )
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -317,6 +328,8 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
         }
     ),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=DeepseekV2Fp8MoeReference(),
+    baseline=DeepseekV2Fp8MoeBaseline(),
 )
 
 CONTRACTS = (DEEPSEEK_V2_MXFP4_MOE, DEEPSEEK_V2_FP8_MOE)

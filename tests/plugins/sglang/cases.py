@@ -118,6 +118,43 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # GLM-5's sparse MLA at TP8 (8 heads) with a short top-k, against tilelang and triton
+    PointSpec(
+        contract_id="sparse_mla_verify@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_heads": 8,
+            "kv_dim": 576,
+            "topk": 128,
+            "n_slots": 512,
+        },
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_cache": "float8_e4m3fn",
+            "topk_indices": "int32",
+            "output": "bfloat16",
+        },
+        attrs={"native": "tilelang"},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="sparse_mla_verify@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_heads": 8,
+            "kv_dim": 576,
+            "topk": 128,
+            "n_slots": 512,
+        },
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_cache": "float8_e4m3fn",
+            "topk_indices": "int32",
+            "output": "bfloat16",
+        },
+        attrs={"native": "triton"},
+        layout_variant_name="row_major",
+    ),
     # GLM-5.2's DSA indexer shrunk: 16 heads (32 on GLM-5.2) and narrow projections, its
     # 128-value heads and keys, 64-value RoPE part and one index-K page as sglang holds them on
     # aiter
@@ -801,6 +838,45 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         )
         for padded in (False, True)
     ),
+    # Kimi-K3's KDA prefill on sglang's Triton backend shrunk to two heads: two sequences in sglang's state pool,
+    # beta a column slice of the [f_a | b] projection
+    PointSpec(
+        contract_id="kimi_k3_sgl_kda_prefill@1.0",
+        axes={"n_tokens": 70, "n_seqs": 2, "n_offsets": 3, "n_slots": 4, "n_heads": 2, "head_dim": 128},
+        dtypes={
+            "qkv": "bfloat16",
+            "raw_g": "bfloat16",
+            "raw_beta": "bfloat16",
+            "a_log": "float32",
+            "g_bias": "float32",
+            "state_cache": "float32",
+            "state_indices": "int32",
+            "cu_seqlens": "int32",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="strided_beta",
+    ),
+    # and with its prefix-cache snapshots (the mamba radix cache's extra buffer)
+    PointSpec(
+        contract_id="kimi_k3_sgl_kda_prefill_track@1.0",
+        axes={"n_tokens": 70, "n_seqs": 2, "n_offsets": 3, "n_slots": 4, "n_heads": 2, "head_dim": 128},
+        dtypes={
+            "qkv": "bfloat16",
+            "raw_g": "bfloat16",
+            "raw_beta": "bfloat16",
+            "a_log": "float32",
+            "g_bias": "float32",
+            "state_cache": "float32",
+            "state_indices": "int32",
+            "cu_seqlens": "int32",
+            "track_chunk_idx": "int32",
+            "track_state": "float32",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="strided_beta",
+    ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
 # tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
@@ -834,6 +910,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen2_moe_fp8_router_experts@1.0",
         "qwen2_moe_mxfp4_moe@1.0",
         "qwen2_moe_router@1.0",
+        "sparse_mla_verify@1.0",
         "qwen3_moe_fp8_moe@1.0",
         "gdn_decode_group_fp8_quant@1.0",
         "qwen3_next_gdn_prefill_group_fp8_quant@1.0",

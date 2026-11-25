@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""aiter's MLA decode ops, served by AKLR's ``aklr.ops.mla``: ``mla_decode_fwd`` (aiter's ASM decode)
+"""aiter's MLA decode ops, served by AKLR's ``aklr.plugins.aiter.mla``: ``mla_decode_fwd`` (aiter's ASM decode)
 by ``mla_decode_fwd``, ``mla_paged_decode`` (the decode mode of aiter's ``mla_gluon``) by
 ``flash_mla_with_kvcache``'s dense pool, and ``fp8_paged_mqa_logits`` (aiter's
 ``deepgemm_fp8_paged_mqa_logits``) by ``fp8_paged_mqa_logits``, or, for the rows of a target verify a
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import torch
 
-from aklr.ops.mla.api import (
+from aklr.plugins.aiter.mla.api import (
     flash_mla_with_kvcache,
     fp8_paged_mqa_logits,
     fp8_paged_mqa_logits_verify,

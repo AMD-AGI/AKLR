@@ -5,19 +5,19 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
     CausalTopkDistribution,
     CuSeqlensDistribution,
-    DeterminismLevel,
     DType,
-    ElementOrder,
     FiniteDistribution,
     IntRangeDistribution,
     PermutationDistribution,
-    SqnrBound,
+    ToleranceBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -26,13 +26,22 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.layers.dsa_backend.baseline import (
+    DsaSparseMlaDecodeBaseline,
+    DsaSparseMlaPrefillBaseline,
+    DsaTopkTransformBaseline,
+)
+from aklr.plugins.sglang.layers.dsa_backend.reference import (
+    ROPE_DIM,
+    DsaSparseMlaReference,
+    DsaTopkTransformReference,
+)
 
 __all__ = [
     "CONTRACTS",
     "DSA_SPARSE_MLA_DECODE",
     "DSA_SPARSE_MLA_PREFILL",
     "DSA_TOPK_TRANSFORM",
-    "ROPE_DIM",
 ]
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -43,9 +52,6 @@ _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 _POOL_BYTES = 2**31 - 2
 # The DSA models' context, 2^20 tokens, and room for the draft tokens sglang's tables add past it
 _CONTEXT_LIMIT = 2**20 + 4096
-# The RoPE part of a query head and of a KV row: the DSA models' (sglang's kernel takes a
-# power of 2)
-ROPE_DIM = 64
 # GLM-5's softmax scale, 1 / sqrt(nope_dim + rope_dim): the default bench's inputs take
 _SM_SCALE = 0.0625
 
@@ -114,10 +120,12 @@ DSA_SPARSE_MLA_DECODE = OpContract(
             dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
             # sglang's own kernel, which rounds the softmax weights to fp8, comes to about
             # 33 dB on these inputs
-            error_bounds=SqnrBound(min_sqnr_db=20.0),
+            error_bounds=ATTENTION_FP8_SNR,
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=DsaSparseMlaReference(),
+    baseline=DsaSparseMlaDecodeBaseline(),
 )
 
 DSA_SPARSE_MLA_PREFILL = OpContract(
@@ -147,6 +155,8 @@ DSA_SPARSE_MLA_PREFILL = OpContract(
     },
     outputs=DSA_SPARSE_MLA_DECODE.outputs,
     layout_variants=DSA_SPARSE_MLA_DECODE.layout_variants,
+    reference=DsaSparseMlaReference(),
+    baseline=DsaSparseMlaPrefillBaseline(),
 )
 
 DSA_TOPK_TRANSFORM = OpContract(
@@ -198,14 +208,14 @@ DSA_TOPK_TRANSFORM = OpContract(
             description="Selected slots; -1 after a short row's entries.",
             shape=("n_tokens", "topk"),
             dtype=_INT32,
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
-    # Ties and a full row's order are the kernel's choice.
-    compare=CompareSpec(
-        determinism=DeterminismLevel.BOUNDED,
-        element_order=ElementOrder.ANY_IN_FULL_ROWS,
-    ),
+    # Ties and a full row's order are the kernel's choice (the reference's check).
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=DsaTopkTransformReference(),
+    baseline=DsaTopkTransformBaseline(),
 )
 
 CONTRACTS = (DSA_SPARSE_MLA_DECODE, DSA_SPARSE_MLA_PREFILL, DSA_TOPK_TRANSFORM)

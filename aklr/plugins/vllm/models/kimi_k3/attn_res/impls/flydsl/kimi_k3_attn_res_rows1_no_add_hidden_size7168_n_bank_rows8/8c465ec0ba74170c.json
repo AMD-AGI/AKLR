@@ -112,8 +112,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.606,
-      "microseconds": 4.31
+      "speedup": 1.633,
+      "microseconds": 4.24
     },
     {
       "axes": {
@@ -124,8 +124,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.609,
-      "microseconds": 4.31
+      "speedup": 1.61,
+      "microseconds": 4.26
     },
     {
       "axes": {
@@ -136,8 +136,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.599,
-      "microseconds": 4.33
+      "speedup": 1.627,
+      "microseconds": 4.28
     },
     {
       "axes": {
@@ -148,8 +148,8 @@
         "norm_eps": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.579,
-      "microseconds": 4.32
+      "speedup": 1.617,
+      "microseconds": 4.28
     }
   ],
   "layout_variants": {
@@ -161,9 +161,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "flydsl",

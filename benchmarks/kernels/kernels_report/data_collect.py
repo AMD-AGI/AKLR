@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import ast
+import inspect
 import math
 import re
 import subprocess
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import torch
 
-from aklr.core.contract import locate
+from aklr.core.contract.baseline import OpBaseline
 from aklr.core.contract.fastkey import FastKeyCodec
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
@@ -116,7 +116,7 @@ class ContractReport:
 
     @property
     def group(self) -> str:
-        """The op package without ``aklr.`` and ``plugins.``: ops.gemm, sglang.models.qwen3_5."""
+        """The op package without ``aklr.`` and ``plugins.``: aiter.gemm, sglang.models.qwen3_5."""
         return re.sub(r"^aklr\.(plugins\.)?", "", self.op_package)
 
 
@@ -209,30 +209,14 @@ def summarize(
     )
 
 
-def baseline_summary(op_dir: Path, name: str) -> str | None:
-    """The first sentence of ``name``'s docstring in ``op_dir/baseline.py``, else ``name``
-    when the module binds it, else None; read with ast, so aiter is never imported."""
-    path = op_dir / "baseline.py"
-    if not path.is_file():
-        return None
-    for node in ast.walk(ast.parse(path.read_text(), str(path))):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
-            doc = ast.get_docstring(node)
-            if not doc:
-                return name
-            paragraph = " ".join(doc.split("\n\n")[0].split())
-            paragraph = re.sub(r"``([^`]*)``|`([^`]*)`", lambda m: m[1] or m[2], paragraph)
-            return re.split(r"(?<=[.;])\s", paragraph, maxsplit=1)[0].rstrip(".;:,")
-        bound = []
-        if isinstance(node, ast.Assign):
-            bound = [t.id for t in node.targets if isinstance(t, ast.Name)]
-        elif isinstance(node, ast.AnnAssign | ast.AugAssign) and isinstance(node.target, ast.Name):
-            bound = [node.target.id]
-        elif isinstance(node, ast.ImportFrom | ast.Import):
-            bound = [alias.asname or alias.name for alias in node.names]
-        if name in bound:
-            return name
-    return None
+def baseline_summary(baseline: OpBaseline) -> str:
+    """The first sentence of ``baseline``'s ``baseline`` docstring, else its class name."""
+    doc = type(baseline).baseline.__doc__
+    if not doc:
+        return type(baseline).__name__
+    paragraph = " ".join(inspect.cleandoc(doc).split("\n\n")[0].split())
+    paragraph = re.sub(r"``([^`]*)``|`([^`]*)`", lambda m: m[1] or m[2], paragraph)
+    return re.split(r"(?<=[.;])\s", paragraph, maxsplit=1)[0].rstrip(".;:,")
 
 
 def parse_measurements(log: str) -> dict[str, Measurement]:
@@ -289,7 +273,7 @@ def collect(
     reports = []
     for contract_id, schemas in sorted(by_contract.items()):
         contract = registry.get(contract_id)
-        baseline = baseline_summary(locate.op_dir(contract.op_package), contract.baseline_name)
+        baseline = baseline_summary(contract.baseline)
         newest = max(
             (measurements[path] for path, _ in schemas if path in measurements),
             key=lambda m: m.measured_at,

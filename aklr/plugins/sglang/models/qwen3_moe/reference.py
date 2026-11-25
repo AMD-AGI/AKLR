@@ -6,47 +6,28 @@ quantized in between (the kernels' float32 and bf16 steps are theirs) but the ro
 logits, rounded once to bf16 as the block's gate returns them, which pick the experts, and
 what the checkpoint's FP8 scheme quantizes: each expert linear's input (_fp8_input)."""
 
-from __future__ import annotations
+import torch
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from aklr.core.contract.reference import OpReference
+from aklr.core.contract.semantics import rounded_to_bfloat16
 
-from aklr.core.contract.semantics import rounded_to_bfloat16, to_float32
-
-if TYPE_CHECKING:
-    from torch import Tensor
-
-__all__ = ["qwen3_moe_fp8_moe_reference"]
+__all__ = ["Qwen3MoeFp8MoeReference"]
 
 _BLOCK = 128  # the FP8 scheme's block: 128 x 128 of a weight, 1 x 128 of an input
 
 
-def _router_logits(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-) -> Tensor:
-    """hidden_states router_weight^T, rounded to bf16, in float32."""
-    x = to_float32(row_major_args["hidden_states"], point.dtypes["hidden_states"])
-    w = to_float32(row_major_args["router_weight"], point.dtypes["router_weight"])
-    return rounded_to_bfloat16(x @ w.T)
-
-
-def _routed(logits: Tensor, topk: int) -> tuple[Tensor, Tensor]:
+def _routed(logits, topk):
     """Each row's ``topk`` experts by descending logit, a tie going to the lower id, and
     their weights: the softmax of their logits, which is the softmax over every expert
     renormalized over them. Returns (weights, ids)."""
-    import torch
-
     ids = torch.sort(logits, dim=-1, descending=True, stable=True).indices[:, :topk]
     return logits.gather(-1, ids).softmax(dim=-1), ids
 
 
-def _fp8_input(x: Tensor) -> Tensor:
+def _fp8_input(x):
     """``x`` as an fp8 linear of the checkpoint's scheme takes it (sglang's
     per-token-group quant): in bf16, then each 1 x 128 group in fp8 at a float32 scale of
     its amax / 448, dequantized."""
-    import torch
-
     fp8 = torch.float8_e4m3fn
     groups = rounded_to_bfloat16(x).float().unflatten(-1, (-1, _BLOCK))
     scale = groups.abs().amax(-1, keepdim=True) / torch.finfo(fp8).max
@@ -54,35 +35,27 @@ def _fp8_input(x: Tensor) -> Tensor:
     return ((groups / scale).to(fp8).to(x.dtype) * scale.to(x.dtype)).flatten(-2)
 
 
-def _dequantized(weight: Tensor, scale: Tensor) -> Tensor:
+def _dequantized(weight, scale):
     """An fp8 weight [rows, cols] (decoded) times its scale per 128 x 128 block."""
     rows, cols = weight.shape
     blocks = scale.repeat_interleave(_BLOCK, 0)[:rows].repeat_interleave(_BLOCK, 1)
     return weight * blocks[:, :cols]
 
 
-def qwen3_moe_fp8_moe_reference(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-) -> Tensor:
-    """This rank's share of the block's output: each token's routed experts (the bf16
-    logits' top-k, _router_logits and _routed) weighed by their renormalized softmax, each
-    expert down(silu(gate(x)) * up(x)) with both linears' inputs quantized (_fp8_input)."""
-    import torch
-
-    def f(name: str, e: int | None = None) -> Tensor:
-        tensor = row_major_args[name]
-        return to_float32(tensor if e is None else tensor[e], point.dtypes[name])
-
-    weights, ids = _routed(_router_logits(point, row_major_args), point.attrs["topk"])
-    x = f("hidden_states")
-    x_fp8 = _fp8_input(x)
-    out = torch.zeros_like(x)
-    for e in ids.unique().tolist():
-        tokens, slots = (ids == e).nonzero(as_tuple=True)
-        w1 = _dequantized(f("w1", e), f("w1_scale", e))
-        w2 = _dequantized(f("w2", e), f("w2_scale", e))
-        gate, up = (x_fp8[tokens] @ w1.T).chunk(2, dim=-1)
-        expert = _fp8_input(torch.nn.functional.silu(gate) * up) @ w2.T
-        out.index_add_(0, tokens, weights[tokens, slots, None] * expert)
-    return out
+class Qwen3MoeFp8MoeReference(OpReference):
+    def reference(self, *, hidden_states, router_weight, w1, w1_scale, w2, w2_scale, topk, **_):
+        """This rank's share of the block's output: each token's routed experts (the bf16
+        logits' top-k, _routed) weighed by their renormalized softmax, each expert
+        down(silu(gate(x)) * up(x)) with both linears' inputs quantized (_fp8_input)."""
+        x = hidden_states.float()
+        weights, ids = _routed(rounded_to_bfloat16(x @ router_weight.float().T), topk)
+        x_fp8 = _fp8_input(x)
+        out = torch.zeros_like(x)
+        for e in ids.unique().tolist():
+            tokens, slots = (ids == e).nonzero(as_tuple=True)
+            gate_up = _dequantized(w1[e].float(), w1_scale[e].float())
+            down = _dequantized(w2[e].float(), w2_scale[e].float())
+            gate, up = (x_fp8[tokens] @ gate_up.T).chunk(2, dim=-1)
+            expert = _fp8_input(torch.nn.functional.silu(gate) * up) @ down.T
+            out.index_add_(0, tokens, weights[tokens, slots, None] * expert)
+        return {"out": out.to(hidden_states.dtype)}

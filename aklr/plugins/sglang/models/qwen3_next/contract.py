@@ -18,10 +18,13 @@ the qwen3_5 contract does not describe its positions."""
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
+    DTYPE_TRAITS,
     BoundedCuSeqlensDistribution,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
+    SqnrBound,
     ToleranceBound,
 )
 from aklr.core.contract.spec import (
@@ -35,7 +38,17 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
-from aklr.plugins.sglang.models.qwen3_5.contract import GATED_ATTENTION_DECODE_GROUP_FP8_QUANT
+from aklr.plugins.sglang.models.qwen3_next.baseline import (
+    Qwen3NextGatedAttentionDecodeGroupFp8QuantBaseline,
+    Qwen3NextGdnDecodeGroupFp8QuantBaseline,
+    Qwen3NextGdnPrefillGroupFp8QuantBaseline,
+)
+from aklr.plugins.sglang.models.qwen3_next.reference import (
+    ROTARY_DIM,
+    Qwen3NextGatedAttentionDecodeGroupFp8QuantReference,
+    Qwen3NextGdnDecodeGroupFp8QuantReference,
+    Qwen3NextGdnPrefillGroupFp8QuantReference,
+)
 
 __all__ = [
     "CONTRACTS",
@@ -136,13 +149,13 @@ _OUTPUTS = {
         # violation_fraction 0.000977, peak_bound_multiple 1.46; prefill 0.000977, 2.21.
         # 0.04 is 2**-7 at a gate of 5; on CI's inputs, a CPU emulation of sglang's path
         # that gives those numbers peaks at 0.33 (decode) and 0.55 (prefill) of it
-        error_bounds=ToleranceBound(absolute_tolerance=0.04, relative_tolerance=0.02),
+        error_bounds=ToleranceBound(absolute_tolerance=0.04, relative_tolerance=0.02 + 2**-7),
     ),
     "values": TensorSpec(
         description="Grouped E4M3FN values.",
         shape=("n_tokens", "value_width"),
         dtype=_FP8,
-        error_bounds=ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125),
+        error_bounds=ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125 + 2**-3),
     ),
     "scales": TensorSpec(
         description="One FP32 scale per token and value head.",
@@ -235,6 +248,8 @@ QWEN3_NEXT_GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
     outputs=_OUTPUTS,
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=Qwen3NextGdnPrefillGroupFp8QuantReference(),
+    baseline=Qwen3NextGdnPrefillGroupFp8QuantBaseline(),
 )
 
 QWEN3_NEXT_GDN_DECODE_GROUP_FP8_QUANT = OpContract(
@@ -282,10 +297,13 @@ QWEN3_NEXT_GDN_DECODE_GROUP_FP8_QUANT = OpContract(
     outputs=_OUTPUTS,
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=Qwen3NextGdnDecodeGroupFp8QuantReference(),
+    baseline=Qwen3NextGdnDecodeGroupFp8QuantBaseline(),
 )
 
-# qwen3_5's gated attention decode: its inputs but the positions, its outputs and bounds
-_QWEN3_5_ATTENTION = GATED_ATTENTION_DECODE_GROUP_FP8_QUANT
+_POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
+# A cache slot a correct kernel writes may round its BF16 value one FP8 step away
+_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=0.125 + 2**-3)
 # The FP8 pools' bytes that the kernels' 32-bit offsets address: larger pools stay on sglang.
 _POOL_BYTES = 2**31
 
@@ -307,7 +325,20 @@ QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
         "E4M3FN with scale=max(amax,1e-10)/448. Unwritten slots and all other inputs are "
         "preserved."
     ),
-    axes=dict(_QWEN3_5_ATTENTION.axes),
+    axes={
+        "n_tokens": axis("Decode rows: one token each, padding rows included.", 1, 2048, is_var=True),
+        "qkv_dim": axis("qkv_proj's output width on this rank.", 256, 81920),
+        "n_kv_heads": axis("KV heads on this rank.", 1, 16),
+        "head_dim": axis("Query, key and value head width.", 64, 512, multiple_of=64),
+        "n_slots": axis("Rows of the KV pools.", 1, 2**31 - 1, is_var=True, any_size=True),
+        "n_positions": axis("Rows of the cos/sin table.", 1, 2**25, is_var=True, any_size=True),
+        "n_offsets": axis("Offsets in kv_indptr: n_tokens + 1.", 2, 2049, is_var=True),
+        "n_kv_tokens": axis("Entries of kv_indices.", 1, 2**29 - 1, is_var=True, any_size=True),
+        "n_heads": derived_axis(
+            "Query heads on this rank.", "(qkv_dim - 2 * n_kv_heads * head_dim) // (2 * head_dim)"
+        ),
+        "n_groups": derived_axis("FP8 groups of 128 channels in a row.", "n_heads * head_dim // 128"),
+    },
     attrs={
         "max_context": attr(
             "The most slots any row attends: the server's context length, rounded up to a "
@@ -333,14 +364,28 @@ QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
         f"n_slots * n_kv_heads * head_dim < {_POOL_BYTES}",
     ),
     inputs={
-        **{n: _QWEN3_5_ATTENTION.inputs[n] for n in ("projected_qkv", "q_norm_weight", "k_norm_weight")},
+        "projected_qkv": _tensor(
+            "qkv_proj's output: each query head's query then gate, then keys, then values.",
+            ("n_tokens", "qkv_dim"),
+            _BF16,
+        ),
+        "q_norm_weight": _tensor("Query RMSNorm weight, applied as 1 + weight.", ("head_dim",), _BF16),
+        "k_norm_weight": _tensor("Key RMSNorm weight, applied as 1 + weight.", ("head_dim",), _BF16),
         "positions": _tensor(
             "Each row's position.",
             ("n_tokens",),
             _INT64,
             distribution=IntRangeDistribution(lo=0, hi="n_positions - 1"),
         ),
-        **{n: _QWEN3_5_ATTENTION.inputs[n] for n in ("cos_sin_cache", "cache_locations")},
+        "cos_sin_cache": _tensor(
+            "Per position, the 32 rotary cosines then the 32 sines.", ("n_positions", ROTARY_DIM), _FP32
+        ),
+        "cache_locations": _tensor(
+            "Each row's KV pool slot.",
+            ("n_tokens",),
+            _INT64,
+            distribution=IntRangeDistribution(lo=0, hi="n_slots - 1", distinct=True),
+        ),
         "key_cache": _tensor(
             "This layer's key pool.",
             ("n_slots", "n_kv_heads", "head_dim"),
@@ -355,9 +400,15 @@ QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
             # at most 0.047 beside the relative 0.125; 2**-6 fails 1-15% of the sets at 32 to
             # 256 rows, 2**-5 up to 1%. Kernels wrong on purpose (GPT-J pairs, the sine's sign,
             # no K norm, an unwritten slot) stay 22x or more past 2**-4.
-            bound=ToleranceBound(absolute_tolerance=2**-4, relative_tolerance=0.125),
+            bound=ToleranceBound(absolute_tolerance=2**-4, relative_tolerance=0.125 + 2**-3),
         ),
-        "value_cache": _QWEN3_5_ATTENTION.inputs["value_cache"],
+        "value_cache": _tensor(
+            "This layer's value pool.",
+            ("n_slots", "n_kv_heads", "head_dim"),
+            _FP8,
+            mutable=True,
+            bound=_CACHE_BOUND,
+        ),
         "kv_indptr": _tensor(
             "Where each row's slots start in kv_indices, then where the last row's end.",
             ("n_offsets",),
@@ -365,15 +416,46 @@ QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
             # bench draws the longest row at max_context, the case a capacity must hold
             distribution=BoundedCuSeqlensDistribution(total="n_kv_tokens", max_seqlen="max_context"),
         ),
-        **{n: _QWEN3_5_ATTENTION.inputs[n] for n in ("kv_indices", "eps", "scale")},
+        "kv_indices": _tensor(
+            "The pool slots each row attends, row after row.",
+            ("n_kv_tokens",),
+            _INT32,
+            distribution=IntRangeDistribution(lo=0, hi="n_slots - 1"),
+        ),
+        "eps": ScalarSpec(
+            description="Q and K RMSNorm epsilon.",
+            dtype=DType.FLOAT32,
+            interval=(9.999999974752427e-7, 1e-6),
+            default=1e-6,
+        ),
+        "scale": ScalarSpec(
+            description="Multiplies every score.",
+            dtype=DType.FLOAT32,
+            interval=_POSITIVE_FLOAT32,
+            default=256**-0.5,
+        ),
     },
-    # sglang's own decode is lossier than the reference, as for qwen3_5's op (whose outputs
-    # these are): aiter's paged_attention_ragged rounds Q and each 256-token partition's
-    # softmax weights to E4M3. An FP64 emulation of Qwen3-Next's sglang path comes to
-    # 20.8-27.1 dB (values) and 25.3-39.7 dB (scales) at its TP4 and TP2 heads.
-    outputs=dict(_QWEN3_5_ATTENTION.outputs),
+    # sglang's own decode is lossier than the reference: aiter's paged_attention_ragged rounds Q and
+    # each 256-token partition's softmax weights to E4M3. An FP64 emulation of Qwen3-Next's sglang
+    # path comes to 20.8-27.1 dB (values) and 25.3-39.7 dB (scales) at its TP4 and TP2 heads.
+    outputs={
+        "values": TensorSpec(
+            description="Each query head's gated attention, grouped E4M3FN values.",
+            shape=("n_tokens", "n_heads", "head_dim"),
+            dtype=_FP8,
+            error_bounds=SqnrBound(min_sqnr_db=15.0),
+        ),
+        "scales": TensorSpec(
+            description="One FP32 scale per row and group of 128 channels.",
+            shape=("n_tokens", "n_groups"),
+            dtype=_FP32,
+            error_bounds=ATTENTION_FP8_SNR,
+        ),
+    },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=Qwen3NextGatedAttentionDecodeGroupFp8QuantReference(),
+    baseline=Qwen3NextGatedAttentionDecodeGroupFp8QuantBaseline(),
 )
 
 CONTRACTS = (

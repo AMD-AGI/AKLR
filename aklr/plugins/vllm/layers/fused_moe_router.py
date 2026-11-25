@@ -12,7 +12,7 @@ import torch
 
 from aklr.core.contract.fastkey._fast_key_fn import MIN_PTR_ALIGN_BYTES
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.gemm.api import gemm
+from aklr.plugins.aiter.gemm.api import gemm
 from aklr.plugins.vllm.hook import _original, vllm_route
 
 __all__: list[str] = []

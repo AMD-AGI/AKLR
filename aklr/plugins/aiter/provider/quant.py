@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import torch
 
-from aklr.ops.quant.api import per_group_quant_fp8, per_group_quant_mxfp8
 from aklr.plugins.aiter.provider._base import offer, selector, served
+from aklr.plugins.aiter.quant.api import per_group_quant_fp8, per_group_quant_mxfp8
 
 _E8M0 = getattr(torch, "float8_e8m0fnu", None)
 

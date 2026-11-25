@@ -17,6 +17,7 @@ from kernels_report.data_collect import (
 from kernels_report.report_render import write_section
 
 from aklr.core.contract import locate
+from aklr.core.contract.baseline import OpBaseline
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import WorkloadSpec
 
@@ -31,7 +32,7 @@ MEASUREMENT = Measurement(
 def gemm_schemas():
     """Two committed gemm@1.0 kernels of one schema name: candidates for the same Points."""
     registry = ContractRegistry.default()
-    schemas, errors = registry.read_schemas("aklr.ops.gemm")
+    schemas, errors = registry.read_schemas("aklr.plugins.aiter.gemm")
     assert not errors
     by_name = {}
     for path, schema in schemas:
@@ -119,31 +120,30 @@ def test_threshold_defaults_to_aklr_min_speedup(monkeypatch, tmp_path, env, argv
     assert seen["t"] == expected
 
 
+class _DocumentedBaseline(OpBaseline):
+    def baseline(self, *, x, **_):
+        """Runs aiter's ``op`` on x; casts after.
+
+        More."""
+        return {"out": x}
+
+
+class _UndocumentedBaseline(OpBaseline):
+    def baseline(self, *, x, **_):
+        return {"out": x}
+
+
 @pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        (
-            'def op_baseline(x):\n    """Runs aiter\'s ``op`` on x; casts after.\n\n    More."""\n',
-            "Runs aiter's op on x",
-        ),
-        ("def op_baseline(x):\n    return x\n", "op_baseline"),
-        ("from aiter import op as op_baseline\n", "op_baseline"),
-        ("def other_baseline(x):\n    return x\n", None),
-    ],
-    ids=["docstring", "no-docstring", "imported", "absent"],
+    ("baseline", "expected"),
+    [(_DocumentedBaseline(), "Runs aiter's op on x"), (_UndocumentedBaseline(), "_UndocumentedBaseline")],
+    ids=["docstring", "no-docstring"],
 )
-def test_baseline_summary_reads_baseline_py_without_importing_it(tmp_path, source, expected):
-    (tmp_path / "baseline.py").write_text("import aiter_is_not_installed\n" + source)
-
-    assert baseline_summary(tmp_path, "op_baseline") == expected
-
-
-def test_baseline_summary_without_baseline_py(tmp_path):
-    assert baseline_summary(tmp_path, "op_baseline") is None
+def test_baseline_summary_is_the_first_sentence_of_the_baseline_docstring(baseline, expected):
+    assert baseline_summary(baseline) == expected
 
 
 def test_collect_reads_every_committed_kernel_with_any_size_axes_as_wildcards():
-    root = locate.op_dir("aklr.ops.gemm").parents[2]
+    root = locate.op_dir("aklr.plugins.aiter.gemm").parents[2]
     reports = collect(root, min_speedup=1.05, measurements={})
 
     registry = ContractRegistry.default()
@@ -159,15 +159,15 @@ def test_collect_reads_every_committed_kernel_with_any_size_axes_as_wildcards():
 def test_measurements_take_each_schema_file_from_its_newest_bot_commit():
     log = (
         f"{'1' * 40}\x1f2026-11-19T09:18:14+00:00\x1fperf: measurements on MI355X (run 44) [skip ci]\x1f"
-        f"perf: measurements on MI355X (run 44)\n\n{MEASURED} aklr/ops/gemm/impls/triton/x/1.json\n\x00"
+        f"perf: measurements on MI355X (run 44)\n\n{MEASURED} aklr/plugins/aiter/gemm/impls/triton/x/1.json\n\x00"
         f"{'2' * 40}\x1f2026-11-18T09:18:14+00:00\x1fperf: measurements on MI355X (run 43) [skip ci]\x1f"
-        f"{'c' * 40} aklr/ops/gemm/impls/triton/x/1.json\n{'c' * 40} aklr/ops/gemm/impls/triton/y/2.json\n\x00"
+        f"{'c' * 40} aklr/plugins/aiter/gemm/impls/triton/x/1.json\n{'c' * 40} aklr/plugins/aiter/gemm/impls/triton/y/2.json\n\x00"
     )
 
     found = parse_measurements(log)
 
-    assert found["aklr/ops/gemm/impls/triton/x/1.json"] == MEASUREMENT
-    assert found["aklr/ops/gemm/impls/triton/y/2.json"].run_id == "43"
+    assert found["aklr/plugins/aiter/gemm/impls/triton/x/1.json"] == MEASUREMENT
+    assert found["aklr/plugins/aiter/gemm/impls/triton/y/2.json"].run_id == "43"
 
 
 def test_section_pages_show_a_dash_for_points_not_served(tmp_path, gemm_schemas):

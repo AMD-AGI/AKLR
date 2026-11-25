@@ -168,8 +168,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 2.105,
-      "microseconds": 17.6
+      "speedup": 2.121,
+      "microseconds": 17.4
     },
     {
       "axes": {
@@ -179,8 +179,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 2.989,
-      "microseconds": 21.2
+      "speedup": 3.045,
+      "microseconds": 20.9
     },
     {
       "axes": {
@@ -190,8 +190,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 2.038,
-      "microseconds": 42.2
+      "speedup": 2.013,
+      "microseconds": 42.1
     },
     {
       "axes": {
@@ -201,8 +201,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.684,
-      "microseconds": 50.2
+      "speedup": 1.69,
+      "microseconds": 48.5
     },
     {
       "axes": {
@@ -212,8 +212,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.348,
-      "microseconds": 87.0
+      "speedup": 1.389,
+      "microseconds": 81.7
     }
   ],
   "layout_variants": {
@@ -245,9 +245,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",
