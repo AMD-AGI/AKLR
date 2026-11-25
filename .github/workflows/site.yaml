@@ -6,7 +6,7 @@ name: AKLR-site
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] reads only main's code and the site-data branch, never the triggering run's artifacts or code
     # Workflow names, not file names. workflow_run uses main's copy of this file.
-    workflows: [AKLR-agentx-ci, AKLR-CI]
+    workflows: [AKLR-agentx-ci, AKLR-CI, AKLR-e2e-perf-ci]
     # completed, not success: a run whose targets failed may still have published.
     types: [completed]
     # The triggering run's head branch: PR runs never deploy.
@@ -23,11 +23,11 @@ concurrency:
 
 jobs:
   deploy:
-    # Only the runs that write site-data: AgentX's scheduled and manual runs, AKLR-CI's main pushes
-    # (publish-kernels).
+    # Only the runs that write site-data: AgentX's and e2e's scheduled and manual runs, AKLR-CI's main
+    # pushes (publish-kernels).
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.name == 'AKLR-agentx-ci' &&
+      contains(fromJSON('["AKLR-agentx-ci", "AKLR-e2e-perf-ci"]'), github.event.workflow_run.name) &&
       contains(fromJSON('["schedule", "workflow_dispatch"]'), github.event.workflow_run.event) ||
       github.event.workflow_run.name == 'AKLR-CI' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest

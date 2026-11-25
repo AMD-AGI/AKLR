@@ -145,7 +145,7 @@ AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
 
 ### 6. 编写 kernel 并验证
 
-按 [Ops 教程](ops_tutorial.zh.md)的第 2 到第 5 节进行，场景换成这个算子的：Kimi-K3 的 attention residual，hidden size 为 7168；93 层每 12 层一块，bank 共 8 行（见 [Kimi-K3 的模型结构](../aklr/benchmarks/models/kimi_k3/README.md#model-structure)）。一次 forward 的 187 次调用里，170 次带 addend、做该层 norm，bank 行数从 1 到 8；7 次还要写 bank；8 次没有 addend，是每块第一层 MLP 前的那次；最后的 norm 之前那 1 次不做该层 norm；第一层 attention 前那 1 次还没有 bank 行。attr 的每种组合各算一个场景。脚本中 contract、Point 和 workload 不同，其中 `score_eps` 和 `norm_eps` 是标量，随每个 workload 给出（不做该层 norm 时，`_apply_attn_res` 传入的 `norm_eps` 是 0.0）；token 数取 1 到 4 个请求的 decode step，每个请求 3 个 token。这个算子已提交的 kernel 用 FlyDSL 编写（脚本里 `language` 写 `flydsl`，`requires` 写 `{"flydsl": ">=0.3.2"}`）：
+按 [Ops 教程](ops_tutorial.zh.md)的第 2 到第 5 节进行，场景换成这个算子的：Kimi-K3 的 attention residual，hidden size 为 7168；93 层每 12 层一块，bank 共 8 行。一次 forward 的 187 次调用里，170 次带 addend、做该层 norm，bank 行数从 1 到 8；7 次还要写 bank；8 次没有 addend，是每块第一层 MLP 前的那次；最后的 norm 之前那 1 次不做该层 norm；第一层 attention 前那 1 次还没有 bank 行。attr 的每种组合各算一个场景。脚本中 contract、Point 和 workload 不同，其中 `score_eps` 和 `norm_eps` 是标量，随每个 workload 给出（不做该层 norm 时，`_apply_attn_res` 传入的 `norm_eps` 是 0.0）；token 数取 1 到 4 个请求的 decode step，每个请求 3 个 token。这个算子已提交的 kernel 用 FlyDSL 编写（脚本里 `language` 写 `flydsl`，`requires` 写 `{"flydsl": ">=0.3.2"}`）：
 
 ```python
 contract = ContractRegistry.default().get("kimi_k3_attn_res@1.0")

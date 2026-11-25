@@ -30,10 +30,6 @@ env:
     from aklr.core.validation.stages.validation_scope import ValidationScope
     scope = ValidationScope.of_working_tree(sys.argv[1], None)
     sys.exit("core" in map(scope.path_kind, scope.changed_paths()))
-  AKLR_SAFE_API_URL: ${{ vars.AKLR_SAFE_API_URL }}
-  AKLR_SAFE_WORKSPACE: ${{ vars.AKLR_SAFE_WORKSPACE }}
-  AKLR_SAFE_RESOURCES: ${{ vars.AKLR_SAFE_RESOURCES }}
-  AKLR_SAFE_CA_URLS: ${{ vars.AKLR_SAFE_CA_URLS }}
 
 on:
   workflow_dispatch:
@@ -630,10 +626,6 @@ jobs:
     # Writes use the App token, not GITHUB_TOKEN.
     permissions:
       contents: read
-    # Every CI that writes site-data shares this group.
-    concurrency:
-      group: site-data
-      cancel-in-progress: false
     steps:
       - name: Mint the bot token
         id: token
