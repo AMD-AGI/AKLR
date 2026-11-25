@@ -239,9 +239,15 @@ class KimiK3KdaVerifyBaseline(OpBaseline):
         """sglang's chain from the f_b GEMM to o_norm's output, as KimiK3DeltaAttention.forward
         and _forward_target_verify run it."""
         from sglang.kernels.ops.attention.fla.fused_norm_gate import rms_norm_gated
-        from sglang.kernels.ops.attention.fla.fused_sigmoid_gating_recurrent import (
-            fused_sigmoid_gating_delta_rule_update,
-        )
+
+        try:  # sglang 0.5.23 moved it from fla to linear
+            from sglang.kernels.ops.attention.linear.fused_sigmoid_gating_recurrent import (
+                fused_sigmoid_gating_delta_rule_update,
+            )
+        except ImportError:
+            from sglang.kernels.ops.attention.fla.fused_sigmoid_gating_recurrent import (
+                fused_sigmoid_gating_delta_rule_update,
+            )
         from sglang.kernels.ops.gemm import kimi_k3_tiny_gemm
         from sglang.kernels.ops.mamba.causal_conv1d_triton import causal_conv1d_update
 

@@ -336,7 +336,7 @@ def _prefill_falls_back(attn, forward_batch) -> bool:
     )
 
 
-@sglang_route("sglang.srt.models.kimi_k3.KimiK3DeltaAttention.forward", versions=("0.5.22",))
+@sglang_route("sglang.srt.models.kimi_k3.KimiK3DeltaAttention.forward", versions=("0.5.22", "0.5.23"))
 def _kda_forward(self, hidden_states, positions, forward_batch, zero_allocator):
     """A KDA layer's speculative verify of dense chains with ReplaySSM rings, graph capture too:
     sglang's two input projections, the op in place of the f_b projection, the conv update,
