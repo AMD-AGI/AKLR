@@ -1,29 +1,28 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
-import torch
+"""The Baselines of the rms_norm op: the backend calls its schemas' standards time a kernel against."""
 
-from aklr.core.contract.baseline import OpBaseline
-
-__all__ = ["AddRmsNormBaseline", "RmsNormBaseline"]
-
-
-class AddRmsNormBaseline(OpBaseline):
-    def baseline(self, *, x, residual, weight, epsilon=1e-6, normalized=None, residual_out=None):
-        """aiter's fused add + RMSNorm, into the outputs; both are ``x``'s shape and dtype."""
-        from aiter.ops.rmsnorm import rmsnorm2d_fwd_with_add
-
-        if normalized is None:
-            normalized = torch.empty_like(x)
-        if residual_out is None:
-            residual_out = torch.empty_like(x)
-        rmsnorm2d_fwd_with_add(normalized, x, residual, residual_out, weight, epsilon)
-        return {"normalized": normalized, "residual_out": residual_out}
+from __future__ import annotations
 
 
-class RmsNormBaseline(OpBaseline):
-    def baseline(self, *, x, weight, epsilon=1e-6, normalized=None):
-        """aiter's RMSNorm."""
-        from aiter.ops.rmsnorm import rmsnorm2d_fwd
+def rmsnorm2d_fwd_with_add_baseline(x, residual, weight, epsilon, normalized, residual_out, **_):
+    from aiter.ops.rmsnorm import rmsnorm2d_fwd_with_add
 
-        return {"normalized": rmsnorm2d_fwd(x, weight, epsilon)}
+    return lambda: rmsnorm2d_fwd_with_add(
+        out=normalized,
+        input=x,
+        residual_in=residual,
+        residual_out=residual_out,
+        weight=weight,
+        epsilon=epsilon,
+    )
+
+
+def rmsnorm2d_fwd_baseline(x, weight, epsilon, **_):
+    from aiter.ops.rmsnorm import rmsnorm2d_fwd
+
+    return lambda: rmsnorm2d_fwd(x, weight, epsilon)

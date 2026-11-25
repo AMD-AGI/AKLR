@@ -1,0 +1,252 @@
+{
+  "name": "gemm_bf16_nt_n32_k4096",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 32,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 4096,
+      "type": "const"
+    }
+  },
+  "variant": {
+    "default": "not use_shuffled_weight"
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 12
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 20
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 24
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 28
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 40
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 48
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 56
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 72
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 80
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 88
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 96
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 104
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 112
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 120
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 160
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 176
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 192
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 224
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 240
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 256
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "tags": [],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": {
+    "name": "gemm_bf16_nt_n32_k4096_triton_aaa261fd9041690b",
+    "author": "unknown",
+    "build": {
+      "language": "triton",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "requires": {
+        "triton": ">=3.8"
+      },
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Decode bf16 GEMM, out = a @ b.T, for n = 32 and k = 4096 on gfx950 (Triton).\n\nThe 256 KiB weight is far too narrow for MFMA tiles to fill the GPU: a 16x16\ntile grid has two workgroups. Instead every workgroup owns one output column\nfor one, two or four rows of `a` and the whole K range: it streams the column's\nweight row (`.cg`) and its rows of `a` in 2048-element chunks, multiplies in\nfp32 elementwise and reduces once at the end. That gives m * 32 / rows\nindependent workgroups, so at small m the call costs little more than its\nlaunch. Each output is one fixed-order reduction, so results are bitwise\nreproducible.\n\n- m <= 40: one row per workgroup.\n- m <= 128: two rows per workgroup share each weight load.\n- larger m: four rows per workgroup.\n\"\"\"\n\nimport functools\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _rows_dot_kernel(\n    A,\n    B,\n    C,\n    M,\n    sam,\n    sak,\n    sbn,\n    sbk,\n    scm,\n    N: tl.constexpr,\n    K: tl.constexpr,\n    BLOCK_M: tl.constexpr,\n    CHUNK: tl.constexpr,\n):\n    pid = tl.program_id(0)\n    col = pid % N\n    rows = (pid // N) * BLOCK_M + tl.arange(0, BLOCK_M)\n    row_ok = rows < M\n    ks = tl.arange(0, CHUNK)\n    acc = tl.zeros((BLOCK_M, CHUNK), dtype=tl.float32)\n    for k0 in tl.static_range(0, K, CHUNK):\n        w = tl.load(B + col * sbn + (k0 + ks) * sbk, cache_modifier=\".cg\")\n        x = tl.load(\n            A + rows[:, None] * sam + (k0 + ks)[None, :] * sak,\n            mask=row_ok[:, None],\n            other=0.0,\n        )\n        acc += x.to(tl.float32) * w.to(tl.float32)[None, :]\n    tl.store(C + rows * scm + col, tl.sum(acc, axis=1).to(C.dtype.element_ty), mask=row_ok)\n\n\n@functools.cache\ndef _launch_for(m, n, k):\n    block_m = 1 if m <= 40 else 2 if m <= 128 else 4\n    grid = (triton.cdiv(m, block_m) * n,)\n\n    def launch(a, b, out):\n        _rows_dot_kernel[grid](\n            a,\n            b,\n            out,\n            m,\n            a.stride(0),\n            a.stride(1),\n            b.stride(0),\n            b.stride(1),\n            out.stride(0),\n            N=n,\n            K=k,\n            BLOCK_M=block_m,\n            CHUNK=2048,\n            num_warps=4,\n        )\n\n    return launch\n\n\ndef run(a, b, bias, out):\n    _launch_for(a.shape[0], b.shape[0], b.shape[1])(a, b, out)\n"
+      }
+    ],
+    "description": null
+  }
+}

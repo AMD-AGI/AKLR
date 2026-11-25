@@ -12,12 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-
 from aklr.core.contract.baseline import OpBaseline
 from aklr.core.contract.fastkey import FastKeyCodec
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import PointSpec
+
 from aklr.core.platform.device import DeviceTarget
 from aklr.core.runtime.dispatch import DispatchTable
 

@@ -1,0 +1,241 @@
+{
+  "name": "gemm_bf16_nt_n32_k6144",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 32,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 6144,
+      "type": "const"
+    }
+  },
+  "variant": {
+    "default": "not use_shuffled_weight"
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 6
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 12
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 18
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 24
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 30
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 36
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 42
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 48
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 54
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 60
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 66
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 72
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 78
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 84
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 90
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 96
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1024
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4096
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "tags": [],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": null
+}

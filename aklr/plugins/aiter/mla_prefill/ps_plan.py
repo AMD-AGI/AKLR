@@ -8,14 +8,6 @@ one in sglang 0.5.22's image) leave a tile one CU reads whole unreduced, so its 
 
 from __future__ import annotations
 
-import math
-
-
-def _ceil_div(a: int, b: int) -> int:
-    """C's ``(a + b - 1) / b``, which truncates toward zero."""
-    n = a + b - 1
-    return n // b if n >= 0 else -(-n // b)
-
 
 def ps_plan(
     qo_indptr: list[int],
@@ -33,6 +25,8 @@ def ps_plan(
     fills them with ``need_lse`` and one query head per key head (only its used rows: ``num_cus + 1``, one
     ``[batch, partial_qo_loc, qo_start, qo_end, kv_start, kv_end, kv_offset, q_head_range]`` per work, one entry per
     query tile), for sequences at ``qo_indptr``'s query rows over ``kv_indptr``'s key blocks, ``kv_lens`` keys each."""
+    import math  # here: a Standard's baseline is saved with the functions it calls, not their module's imports
+
     clusters = math.gcd(num_heads_k, num_cus)
     tgs = num_cus // clusters
     heads = num_heads_k // clusters
@@ -46,7 +40,8 @@ def ps_plan(
         for i in range(len(ranges)):
             start, end = ranges[i // 2 if i % 2 == 0 else len(ranges) - 1 - i // 2]
             kv = min(kv_len - qo_len + end, kv_len) if is_causal else kv_len
-            n = _ceil_div(kv, kvlen_granularity)
+            # C's (kv + granularity - 1) / granularity, which truncates toward zero
+            n = int((kv + kvlen_granularity - 1) / kvlen_granularity)
             tiles.append((b, start + qo_indptr[b], end + qo_indptr[b], n * per_unit, kv))
             units += n
     average, remainder = units // tgs, units % tgs

@@ -1,12 +1,12 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""The ``python -m aklr validate`` command."""
+###############################################################################
 
 from __future__ import annotations
 
 import argparse
-import shutil
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
@@ -27,15 +27,14 @@ DEFAULT_REPORT_DIR: Final = Path("aklr_validation")
 
 
 def main(argv: Sequence[str]) -> int:
-    """Validate the change against its base and return the pipeline exit code."""
     parser = argparse.ArgumentParser(prog="python -m aklr validate")
     parser.add_argument("paths", nargs="*", type=Path, metavar="PATH")
     parser.add_argument("--base", help="a git ref; enables the change rules")
     parser.add_argument(
         "--stages",
         type=lambda text: tuple(text.split(",")),
-        default=("audit", "bench"),
-        help=f"a part of {','.join(STAGE_ORDER)} that starts with audit",
+        default=(AuditStage.name, BenchStage.name),
+        help=f"a part of {','.join(STAGE_ORDER)} that starts with {AuditStage.name}",
     )
     parser.add_argument("--devices", help="0-7 or 0,2,5")
     parser.add_argument(
@@ -48,6 +47,14 @@ def main(argv: Sequence[str]) -> int:
         help="build and check the kernels only, on the workloads not recorded failed: nothing is timed or written back",
     )
     parser.add_argument("--out", type=Path, default=DEFAULT_REPORT_DIR)
+    parser.add_argument("--num-trials", type=int, default=3, help="accuracy trials per workload")
+    parser.add_argument(
+        "--isolate",
+        action="append",
+        default=[],
+        metavar="OP_TYPE",
+        help="run each of this op type's bench tasks in a fresh process (repeatable)",
+    )
     parser.add_argument(
         "--allow-measured-edits",
         action="store_true",
@@ -55,9 +62,10 @@ def main(argv: Sequence[str]) -> int:
     )
     args = parser.parse_args(argv)
     names = args.stages
-    if names[:1] != ("audit",) or names != tuple(n for n in STAGE_ORDER if n in names):
+    if names[:1] != (AuditStage.name,) or names != tuple(n for n in STAGE_ORDER if n in names):
         parser.error(
-            f"--stages {','.join(names)!r} is not a part of {','.join(STAGE_ORDER)} that starts with audit"
+            f"--stages {','.join(names)!r} is not a part of {','.join(STAGE_ORDER)}"
+            f" that starts with {AuditStage.name}"
         )
     Progress().write("collecting schemas and platform")
     try:
@@ -67,7 +75,7 @@ def main(argv: Sequence[str]) -> int:
         if args.exclude is not None:
             scope = scope.under(args.exclude, inside=False)
         stages: list[PipelineStage] = [AuditStage(allow_measured_edits=args.allow_measured_edits)]
-        if "bench" in names:
+        if BenchStage.name in names:
             if args.devices is None:
                 indices = range(PlatformRecord.current().n_visible_devices)
             else:
@@ -79,15 +87,19 @@ def main(argv: Sequence[str]) -> int:
                 ]
             if not indices:
                 raise ValueError("no visible device and no --devices")
-            stages.append(BenchStage([f"cuda:{i}" for i in indices], timed=not args.no_timing))
+            stages.append(
+                BenchStage(
+                    [f"cuda:{i}" for i in indices],
+                    isolate=args.isolate,
+                    num_trials=args.num_trials,
+                    timed=not args.no_timing,
+                )
+            )
         pipeline = Pipeline(stages)
     except ValueError as error:
         parser.error(str(error))
     report = pipeline.run(scope)
     report.write(args.out)
-    if args.no_timing:  # nothing measured: no earlier run's rewrites stay beside this report
-        shutil.rmtree(args.out / "schemas", ignore_errors=True)
-    else:
-        report.write_schemas(scope.root, args.out / "schemas")
+    report.write_schemas(scope.root, args.out / "schemas")
     print(f"validation {report.conclusion}: {args.out / 'report.md'}")
     return report.exit_code

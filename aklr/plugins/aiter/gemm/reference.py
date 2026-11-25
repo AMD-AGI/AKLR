@@ -1,86 +1,166 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
-import torch
+from __future__ import annotations
 
-from aklr.core.contract.reference import OpReference
-from aklr.core.contract.semantics import to_float32
+import math
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 __all__ = [
-    "BmmReference",
-    "GemmA4w4Mxfp4Reference",
-    "GemmA8w8BlockwiseScaledReference",
-    "GemmA8w8Reference",
-    "GemmReference",
+    "bmm_bf16_nn_reference",
+    "bmm_bf16_nn_shuffled_reference",
+    "bmm_bf16_nt_reference",
+    "bmm_bf16_nt_shuffled_reference",
+    "gemm_a8w8_nt_reference",
+    "gemm_a8w8_nt_shuffled_reference",
+    "gemm_bf16_nt_reference",
+    "gemm_bf16_nt_shuffled_reference",
+    "gemm_fp8_nt_blockscaled_mn_reference",
+    "gemm_fp8_nt_blockscaled_reference",
+    "gemm_fp8_nt_blockscaled_shuffled_k_reference",
+    "gemm_fp8_nt_blockscaled_shuffled_mn_reference",
+    "gemm_mxfp4_nt_reference",
+    "gemm_mxfp4_nt_shuffled_reference",
+    "unshuffle_e8m0_scales",
+    "unshuffle_tiles",
+    "unshuffle_weight",
 ]
 
 
-def _weight(b, trans_b):
-    b = b.float()
-    return b if trans_b else b.mT
+def unshuffle_tiles(stored: Tensor, split: tuple[int, ...], order: tuple[int, ...]) -> Tensor:
+    """The inverse of splitting the last two dims of a tensor into ``split`` and
+    permuting them by ``order``: the bytes of ``stored``, in its shape and dtype."""
+    import torch
+
+    x = stored.view(torch.uint8) if stored.element_size() == 1 else stored
+    lead = tuple(x.shape[:-2])
+    inverse = tuple(sorted(range(len(order)), key=order.__getitem__))
+    n = len(lead)
+    x = x.reshape(*lead, *(split[i] for i in order))
+    x = x.permute(*range(n), *(n + i for i in inverse))
+    return x.contiguous().view(stored.shape).view(stored.dtype)
 
 
-def _out(product, bias):
-    return product if bias is None else product + bias.float()
+def unshuffle_weight(stored: Tensor, tile: tuple[int, int]) -> Tensor:
+    """aiter ``shuffle_weight(x, layout=tile)`` undone on the last two dims: tiles of
+    ``tile[0]`` rows by ``2 * tile[1]`` columns, each in 16-byte vectors."""
+    rows, cols = stored.shape[-2:]
+    tile_rows, tile_cols = tile[0], tile[1] * 2
+    vector = 16 // stored.element_size()  # elements per 16-byte load
+    split = (
+        rows // tile_rows,
+        tile_rows,
+        cols // tile_cols,
+        tile_cols // vector,
+        vector,
+    )
+    return unshuffle_tiles(stored, split, (0, 2, 3, 1, 4))
 
 
-class GemmReference(OpReference):
-    def reference(self, *, a, b, trans_b, out_dtype, bias=None, **_):
-        """``a @ b.T + bias``."""
-        return {"out": _out(a.float() @ _weight(b, trans_b).mT, bias).to(out_dtype)}
+def unshuffle_e8m0_scales(stored: Tensor, rows: int, cols: int) -> Tensor:
+    """aiter ``shuffle_scale`` undone on the last two dims, then the padding to
+    multiples of (256, 8) dropped: the ``(..., rows, cols)`` scales."""
+    padded_rows, padded_cols = stored.shape[-2:]
+    split = (padded_rows // 32, 2, 16, padded_cols // 8, 2, 4)
+    order = (0, 3, 5, 2, 4, 1)
+    return unshuffle_tiles(stored, split, order)[..., :rows, :cols].contiguous()
 
 
-def _int8_product(a, b):
-    """a b^T of int8 values, summed exactly: a float32 sum of 1024 products (each at most 2**14
-    in size) is an exact integer, and so is the int32 sum of those while k < 2**17."""
-    k = a.shape[-1]
-    parts = ((a[:, s : s + 1024] @ b[:, s : s + 1024].mT).to(torch.int32) for s in range(0, k, 1024))
-    return sum(parts).float()
+def _plus_bias(product: Tensor, bias: Tensor | None) -> Tensor:
+    return product if bias is None else product + bias.double()
 
 
-class GemmA8w8Reference(OpReference):
-    def reference(self, *, a, b, a_scale, b_scale, trans_b, out_dtype, bias=None, **_):
-        """Per-row scales; a squeezed ``(rows,)`` scale reads as ``(rows, 1)``. int8 operands sum
-        exactly in int32, then take the scales."""
-        a_scale = a_scale.float().reshape(-1, 1)
-        b_scale = b_scale.float().reshape(1, -1)
-        is_int8 = a.dtype == torch.int8
-        a, b = a.float(), _weight(b, trans_b)
-        if is_int8:
-            product = _int8_product(a, b) * a_scale * b_scale
-        else:
-            product = (a * a_scale) @ (b * b_scale.mT).mT
-        return {"out": _out(product, bias).to(out_dtype)}
+def gemm_bf16_nt_reference(a, b, bias=None) -> Tensor:
+    """``a @ b.T + bias``."""
+    return _plus_bias(a.double() @ b.double().mT, bias)
 
 
-class GemmA8w8BlockwiseScaledReference(OpReference):
-    def reference(self, *, a, b, a_scale, b_scale, trans_b, scale_major_mode, out_dtype, bias=None, **_):
-        """A scale per ``(1, 128)`` of ``a`` and ``(128, 128)`` of ``b``; tails partial."""
-        a, b = a.float(), _weight(b, trans_b)
-        (n, k), block = b.shape, 128
-        a_scale = a_scale.float()
-        if scale_major_mode == "MN":
-            a_scale = a_scale.mT
-        a_scale = a_scale.repeat_interleave(block, dim=1)
-        b_scale = b_scale.float().repeat_interleave(block, dim=0).repeat_interleave(block, dim=1)
-        out = (a * a_scale[:, :k]) @ (b * b_scale[:n, :k]).mT
-        return {"out": _out(out, bias).to(out_dtype)}
+def gemm_bf16_nt_shuffled_reference(a, b, bias=None) -> Tensor:
+    return gemm_bf16_nt_reference(a, unshuffle_weight(b, (16, 16)), bias)
 
 
-def _mxfp4(x, scale):
-    """An MXFP4 operand in float32, dequantized by its e8m0 scale per 32 values along k."""
-    return to_float32(x, "float4_e2m1") * to_float32(scale, "float8_e8m0").repeat_interleave(32, dim=-1)
+def gemm_a8w8_nt_reference(a, b, a_scale, b_scale, bias=None) -> Tensor:
+    a = a.double() * a_scale.double().reshape(-1, 1)
+    b = b.double() * b_scale.double().reshape(-1, 1)
+    return _plus_bias(a @ b.mT, bias)
 
 
-class GemmA4w4Mxfp4Reference(OpReference):
-    def reference(self, *, a, b, a_scale, b_scale, alpha, out_dtype, bias=None, **_):
-        """``alpha * (a @ b.T) + bias``, one e8m0 scale per 32 fp4 values along ``k``."""
-        out = _out(alpha * (_mxfp4(a, a_scale) @ _mxfp4(b, b_scale).mT), bias)
-        return {"out": out.to(out_dtype)}
+def gemm_a8w8_nt_shuffled_reference(a, b, a_scale, b_scale, bias=None) -> Tensor:
+    return gemm_a8w8_nt_reference(a, unshuffle_weight(b, (16, 16)), a_scale, b_scale, bias)
 
 
-class BmmReference(OpReference):
-    def reference(self, *, a, b, trans_b, bias=None, **_):
-        """``bias`` is ``(batch, n)``, broadcast over ``m``."""
-        out = _out(a.float() @ _weight(b, trans_b).mT, None if bias is None else bias.unsqueeze(-2))
-        return {"out": out.to(a.dtype)}
+def gemm_fp8_nt_blockscaled_reference(a, b, a_scale, b_scale) -> Tensor:
+    """A scale per ``(1, 128)`` of ``a`` and ``(128, 128)`` of ``b``; tails partial."""
+    a, b = a.double(), b.double()
+    (n, k), block = b.shape, 128
+    a_scale = a_scale.double().repeat_interleave(block, dim=1)
+    b_scale = b_scale.double().repeat_interleave(block, dim=0)
+    b_scale = b_scale.repeat_interleave(block, dim=1)
+    return (a * a_scale[:, :k]) @ (b * b_scale[:n, :k]).mT
+
+
+def gemm_fp8_nt_blockscaled_mn_reference(a, b, a_scale, b_scale) -> Tensor:
+    return gemm_fp8_nt_blockscaled_reference(a, b, a_scale.mT, b_scale)
+
+
+def gemm_fp8_nt_blockscaled_shuffled_mn_reference(a, b, a_scale, b_scale) -> Tensor:
+    """The K-major maths on b unshuffled (16 x 16) and an MN-major a_scale."""
+    return gemm_fp8_nt_blockscaled_reference(a, unshuffle_weight(b, (16, 16)), a_scale.mT, b_scale)
+
+
+def gemm_fp8_nt_blockscaled_shuffled_k_reference(a, b, a_scale, b_scale) -> Tensor:
+    """The K-major maths on b unshuffled (16 x 16)."""
+    return gemm_fp8_nt_blockscaled_reference(a, unshuffle_weight(b, (16, 16)), a_scale, b_scale)
+
+
+def gemm_mxfp4_nt_reference(a, b, a_descale, b_descale, bias=None) -> Tensor:
+    """``a @ b.T + bias``; fp4 packs two values a byte, low nibble first; an e8m0 scale per 32 along k."""
+    import torch
+
+    magnitudes = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
+    e2m1 = torch.tensor(magnitudes, dtype=torch.float64, device=a.device)
+    e2m1 = torch.cat((e2m1, -e2m1))
+
+    def dequantize(x, scale):
+        codes = x.view(torch.uint8).long()
+        x = e2m1[torch.stack((codes & 0xF, codes >> 4), dim=-1).flatten(-2)]
+        codes = scale.view(torch.uint8)
+        scale = torch.exp2(codes.double() - 127).masked_fill(codes == 255, math.nan)
+        return x * scale.repeat_interleave(32, dim=-1)
+
+    return _plus_bias(dequantize(a, a_descale) @ dequantize(b, b_descale).mT, bias)
+
+
+def gemm_mxfp4_nt_shuffled_reference(a, b, a_descale, b_descale, bias=None) -> Tensor:
+    m, n, scale_columns = a.shape[0], b.shape[0], a.shape[1] * 2 // 32
+    return gemm_mxfp4_nt_reference(
+        a,
+        unshuffle_weight(b, (16, 16)),
+        unshuffle_e8m0_scales(a_descale, m, scale_columns),
+        unshuffle_e8m0_scales(b_descale, n, scale_columns),
+        bias,
+    )
+
+
+def bmm_bf16_nt_reference(A, B) -> Tensor:
+    """``B`` is ``(batch_size, n, k)``."""
+    return A.double() @ B.double().mT
+
+
+def bmm_bf16_nn_reference(A, B) -> Tensor:
+    """``B`` is ``(batch_size, k, n)``."""
+    return A.double() @ B.double()
+
+
+def bmm_bf16_nt_shuffled_reference(A, B) -> Tensor:
+    return bmm_bf16_nt_reference(A, unshuffle_weight(B, (16, 16)))
+
+
+def bmm_bf16_nn_shuffled_reference(A, B) -> Tensor:
+    return bmm_bf16_nn_reference(A, unshuffle_weight(B, (16, 16)))

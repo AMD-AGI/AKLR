@@ -1,0 +1,133 @@
+{
+  "name": "gemm_bf16_nt_n768_k7168",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 768,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 7168,
+      "type": "const"
+    }
+  },
+  "variant": {
+    "default": "not use_shuffled_weight"
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 7
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 14
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 21
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 28
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 35
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 42
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 49
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 56
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 70
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 84
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 98
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "tags": [],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": null
+}

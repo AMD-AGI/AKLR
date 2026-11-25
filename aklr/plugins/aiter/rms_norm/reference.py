@@ -1,27 +1,27 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
-from aklr.core.contract.reference import OpReference
+from __future__ import annotations
 
-__all__ = ["AddRmsNormReference", "RmsNormReference"]
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from torch import Tensor
 
-class AddRmsNormReference(OpReference):
-    def reference(self, *, x, residual, weight, epsilon, **_):
-        """normalized and residual_out from the sum x + residual."""
-        total = x.float() + residual.float()
-        return {
-            "normalized": _normalized(total, weight.float(), epsilon).to(x.dtype),
-            "residual_out": total.to(x.dtype),
-        }
+__all__ = ["add_rms_norm_reference", "rms_norm_reference"]
 
 
-class RmsNormReference(OpReference):
-    def reference(self, *, x, weight, epsilon, **_):
-        """x times the reciprocal rms of its row, times weight."""
-        return {"normalized": _normalized(x.float(), weight.float(), epsilon).to(x.dtype)}
+def add_rms_norm_reference(x, residual, weight, epsilon=1e-6) -> tuple[Tensor, Tensor]:
+    """(normalized, residual_out) from the exact sum x + residual."""
+    total = x.double() + residual.double()
+    mean_square = total.square().mean(dim=-1, keepdim=True)
+    return (mean_square + epsilon).rsqrt() * total * weight.double(), total
 
 
-def _normalized(x, weight, epsilon):
-    mean_square = x.square().mean(dim=-1, keepdim=True)
-    return x * (mean_square + epsilon).rsqrt() * weight
+def rms_norm_reference(x, weight, epsilon=1e-6) -> Tensor:
+    """x times the reciprocal rms of its row, times weight."""
+    x = x.double()
+    return (x.square().mean(dim=-1, keepdim=True) + epsilon).rsqrt() * x * weight.double()

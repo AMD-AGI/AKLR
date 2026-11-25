@@ -10,7 +10,7 @@ git config --global --add safe.directory '*'
 mkdir -p "$cache"
 cache=$(cd "$cache" && pwd -P)
 export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
-  TRITON_CACHE_DIR="$cache/triton" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels" PIP_CACHE_DIR="$cache/pip"
+  TRITON_CACHE_DIR="$cache/triton" AKLR_BUILD_CACHE_DIR="$cache/aklr-kernels" PIP_CACHE_DIR="$cache/pip"
 python3 -m pip install -e .
 python3 - <<'PY'
 import json
@@ -57,7 +57,7 @@ PY
 
 out=${GITHUB_ENV:-$cache/aklr.env}
 [[ -n ${GITHUB_ENV:-} ]] || : > "$out"
-for name in FLYDSL_RUNTIME_CACHE_DIR FLYDSL_AUTOTUNE_CACHE_DIR TRITON_CACHE_DIR AKLR_KERNEL_CACHE_DIR PIP_CACHE_DIR; do
+for name in FLYDSL_RUNTIME_CACHE_DIR FLYDSL_AUTOTUNE_CACHE_DIR TRITON_CACHE_DIR AKLR_BUILD_CACHE_DIR PIP_CACHE_DIR; do
   printf '%s=%s\n' "$name" "${!name}"
 done >> "$out"
 echo "AKLR installed from $root; environment in $out"
