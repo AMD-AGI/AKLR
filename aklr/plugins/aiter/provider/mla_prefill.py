@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import torch
 
-from aklr.ops.mla_prefill.api import mla_prefill_varlen_lse, sparse_prefill_mxfp8
+from aklr.plugins.aiter.mla_prefill.api import mla_prefill_varlen_lse, sparse_prefill_mxfp8
 from aklr.plugins.aiter.provider._base import offer, selector, served
 
 # Fewer query rows stay on aiter: a decode step's extends (a few tokens over the whole context) reach

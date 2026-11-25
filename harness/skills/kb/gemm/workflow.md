@@ -138,7 +138,7 @@ These rules come from Primus-Turbo's optimization loop (`agent/skills/kernel-opt
   - A cache keyed on an input tensor's identity works only because the benchmark reuses tensor objects.
   - A shortcut that assumes uniform shapes or distributions will not survive real inputs.
   - A packed or reshuffled copy of a weight kept across calls, which AKLR does not allow
-    (`aklr/ops/README.md` § The kernel section and ABI, `../pitfalls/state_kept_across_calls.md`): repack on every
+    (`aklr/plugins/aiter/README.md` § The kernel section and ABI, `../pitfalls/state_kept_across_calls.md`): repack on every
     call, or serve the contract's shuffled layout variant where it has one.
   - If a gain is larger than the change could structurally produce, look for one of these before
     accepting it.

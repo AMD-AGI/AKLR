@@ -14,9 +14,8 @@ from aklr.plugins.sglang.models.qwen3_5.contract import (
     GDN_DECODE_GROUP_FP8_QUANT,
     GDN_PREFILL,
     GDN_PREFILL_GROUP_FP8_QUANT,
-    MROPE_SECTION,
-    ROTARY_DIM,
 )
+from aklr.plugins.sglang.models.qwen3_5.reference import MROPE_SECTION, ROTARY_DIM
 
 __all__ = [
     "gated_attention_decode",

@@ -18,7 +18,6 @@ from aklr.core.contract.semantics import (
     ToleranceBound,
 )
 from aklr.core.contract.spec import (
-    CompareSpec,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -27,27 +26,25 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.layers.dsa_indexer.baseline import (
+    DsaIndexerKeyPrepareBaseline,
+    DsaIndexerPrepareBaseline,
+)
+from aklr.plugins.sglang.layers.dsa_indexer.reference import (
+    FP8_MAX,
+    HEAD_DIM,
+    PAGE_SIZE,
+    ROPE_DIM,
+    SCALE_FLOOR,
+    DsaIndexerKeyPrepareReference,
+    DsaIndexerPrepareReference,
+)
 
 __all__ = [
     "CONTRACTS",
     "DSA_INDEXER_KEY_PREPARE",
     "DSA_INDEXER_PREPARE",
-    "FP8_MAX",
-    "HEAD_DIM",
-    "PAGE_SIZE",
-    "ROPE_DIM",
-    "SCALE_FLOOR",
 ]
-
-# An indexer head and key: the Hadamard transform's length and the cache's 128 bytes a key
-HEAD_DIM = 128
-# The RoPE part: a head's and a key's first 64 values, in interleaved pairs (2i, 2i + 1)
-ROPE_DIM = 64
-# Keys per index-K page: aiter's preshuffled layout of 16 x 16 tiles
-PAGE_SIZE = 64
-# A key's or head's fp8 scale: 2 ** ceil(log2(max(amax, SCALE_FLOOR) / FP8_MAX))
-SCALE_FLOOR = 1e-4
-FP8_MAX = 448.0
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -74,15 +71,15 @@ _WEIGHTS_BOUND = SqnrBound(min_sqnr_db=10.0)
 # (0.125 of a value) and 2 below a row's largest values (a few one-ulp bf16 differences summed
 # by the Hadamard transform). The emulations meet it everywhere; a key missing, not
 # preshuffled, without LayerNorm or its bias, or at twice its scale, and a scale not stored,
-# fail it. A scale step of one key fails it too unless the pool's bytes outnumber that key's
-# 128 values by more than 1 / max_violation_fraction, as the bench's pools of the fewest pages
-# do from 3200 tokens on; a scale stored at exactly twice the one its values were divided by
-# is not seen (its fp32 bytes differ in a sign bit of fp8 zero and at most one fp8 step).
-_CACHE_BOUND = ToleranceBound(absolute_tolerance=2.0, relative_tolerance=0.125)
+# fail it. A key at a scale step, its scale twice or half the reference's and its values half or
+# twice, passes: the references' check restates it at the reference's scale (the bench's kernels
+# on MI355X had such keys at 6144 and 12288 tokens, 1.5e-4 of the cache, which the emulations
+# above did not). A scale stored at exactly twice the one its values were divided by is not seen
+# (its fp32 bytes differ in a sign bit of fp8 zero and at most one fp8 step).
+_CACHE_BOUND = ToleranceBound(absolute_tolerance=2.0, relative_tolerance=0.125 + 2**-3)
 # The cache's bytes before the call: 64 to 256, far from a stored scale's bytes (0, 0, 0 and
 # about 1.5 as fp8 values), so that a scale that is not stored fails the bound
 _UNWRITTEN = LogUniformDistribution(log2_lo=6, log2_hi=8)
-_COMPARE = CompareSpec(max_violation_fraction=3e-4)
 # no_values has no element to compare
 _EMPTY_BOUND = SqnrBound(min_sqnr_db=0.0)
 
@@ -241,7 +238,8 @@ DSA_INDEXER_PREPARE = OpContract(
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
-    compare=_COMPARE,
+    reference=DsaIndexerPrepareReference(),
+    baseline=DsaIndexerPrepareBaseline(),
 )
 
 DSA_INDEXER_KEY_PREPARE = OpContract(
@@ -266,7 +264,8 @@ DSA_INDEXER_KEY_PREPARE = OpContract(
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
-    compare=_COMPARE,
+    reference=DsaIndexerKeyPrepareReference(),
+    baseline=DsaIndexerKeyPrepareBaseline(),
 )
 
 CONTRACTS = (DSA_INDEXER_PREPARE, DSA_INDEXER_KEY_PREPARE)

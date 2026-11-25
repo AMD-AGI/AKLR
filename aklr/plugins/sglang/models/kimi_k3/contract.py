@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
+    MOE_MXFP8_SNR,
     BoundedCuSeqlensDistribution,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     GateUpInterleavedScales,
@@ -25,6 +26,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -34,6 +36,16 @@ from aklr.core.contract.spec import (
     attr,
     axis,
     derived_axis,
+)
+from aklr.plugins.sglang.models.kimi_k3.baseline import (
+    KimiK3LatentMoeBaseline,
+    KimiK3MlaPrefillGateBaseline,
+    KimiK3MlaVcOutputGateBaseline,
+)
+from aklr.plugins.sglang.models.kimi_k3.reference import (
+    KimiK3LatentMoeReference,
+    KimiK3MlaPrefillGateReference,
+    KimiK3MlaVcOutputGateReference,
 )
 
 __all__ = [
@@ -182,7 +194,7 @@ KIMI_K3_LATENT_MOE = OpContract(
             description="The routed experts' weighed sum on this rank, in the latent space.",
             shape=("n_tokens", "latent_dim"),
             dtype=DTypeSpec(same_as_tensor="hidden_states"),
-            error_bounds=SqnrBound(min_sqnr_db=20.0),
+            error_bounds=MOE_MXFP8_SNR,
         ),
         "shared": TensorSpec(
             description="The shared experts' output on this rank.",
@@ -193,6 +205,8 @@ KIMI_K3_LATENT_MOE = OpContract(
     },
     layout_variants=_LAYOUTS,
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=KimiK3LatentMoeReference(),
+    baseline=KimiK3LatentMoeBaseline(),
 )
 
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
@@ -243,6 +257,8 @@ KIMI_K3_MLA_VC_OUTPUT_GATE = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=KimiK3MlaVcOutputGateReference(),
+    baseline=KimiK3MlaVcOutputGateBaseline(),
 )
 
 KIMI_K3_MLA_PREFILL_GATE = OpContract(
@@ -325,11 +341,13 @@ KIMI_K3_MLA_PREFILL_GATE = OpContract(
             shape=("n_tokens", "gate_dim"),
             dtype=DTypeSpec(same_as_tensor="q"),
             # sglang's own path rounds Q, K and V to FP8: about 26 dB against this reference
-            error_bounds=SqnrBound(min_sqnr_db=20.0),
+            error_bounds=ATTENTION_FP8_SNR,
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=KimiK3MlaPrefillGateReference(),
+    baseline=KimiK3MlaPrefillGateBaseline(),
 )
 
 CONTRACTS = (KIMI_K3_LATENT_MOE, KIMI_K3_MLA_VC_OUTPUT_GATE, KIMI_K3_MLA_PREFILL_GATE)

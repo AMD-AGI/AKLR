@@ -1,0 +1,47 @@
+{
+ "schema": 1,
+ "gpus": 8,
+ "served_model_name": "amd/GLM-5.2-MXFP4",
+ "launch": {
+  "command": [
+   "sglang",
+   "serve",
+   "--trust-remote-code",
+   "--model-path",
+   "${E2E_MODEL_PATH}",
+   "--served-model-name",
+   "amd/GLM-5.2-MXFP4",
+   "--tp",
+   "8",
+   "--ep-size",
+   "1",
+   "--kv-cache-dtype",
+   "fp8_e4m3",
+   "--dsa-prefill-backend",
+   "triton",
+   "--dsa-decode-backend",
+   "triton",
+   "--disable-radix-cache",
+   "--chunked-prefill-size",
+   "131072",
+   "--mem-fraction-static",
+   "0.80",
+   "--watchdog-timeout",
+   "1200",
+   "--host",
+   "127.0.0.1",
+   "--port",
+   "${E2E_PORT}"
+  ],
+  "env": {
+   "HF_HUB_OFFLINE": "1",
+   "SGLANG_OPT_USE_TOPK_V2": "1"
+  }
+ },
+ "runtime": {
+  "ready_timeout_s": 7200,
+  "poll_s": 10,
+  "point_timeout_s": 3600
+ },
+ "notes": "The reviewed SGLang command with MTP removed and the radix cache disabled; TP8."
+}

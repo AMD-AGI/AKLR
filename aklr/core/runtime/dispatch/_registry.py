@@ -108,15 +108,6 @@ class DispatcherRegistry:
             errors += op_errors
         if errors:
             raise LoadError("\n".join(errors))
-        # nothing to beat without a defined baseline (the bench's rule): speedup 1.0
-        # qualifies; an op's baseline.py that fails to import fails the init
-        min_speedups = {}
-        for contract_id, contract in live_contracts.items():
-            try:
-                has_baseline = contract.baseline() is not None
-            except ImportError as e:
-                raise LoadError(f"{contract_id}: its baseline: {e}") from e
-            min_speedups[contract_id] = runtime_env.min_speedup if has_baseline else 0
         device = target = None
         if schemas or (runtime_env.is_export_enabled and live_contracts):
             device, target = self._probe_device()
@@ -141,7 +132,7 @@ class DispatcherRegistry:
                 contract,
                 device,
                 schema_runnables[contract_id],
-                min_speedup=min_speedups[contract_id],
+                min_speedup=runtime_env.min_speedup,
             )
             for contract_id, contract in live_contracts.items()
             # an empty table while exporting: it records the calls no kernel serves yet

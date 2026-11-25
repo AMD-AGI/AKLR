@@ -212,8 +212,8 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.955,
-      "microseconds": 33.5
+      "speedup": 2.953,
+      "microseconds": 33.2
     },
     {
       "axes": {
@@ -225,7 +225,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.629,
+      "speedup": 2.606,
       "microseconds": 49.4
     },
     {
@@ -238,8 +238,8 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.239,
-      "microseconds": 70.7
+      "speedup": 2.289,
+      "microseconds": 69.4
     },
     {
       "axes": {
@@ -251,8 +251,8 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.268,
-      "microseconds": 83.3
+      "speedup": 2.27,
+      "microseconds": 82.5
     }
   ],
   "layout_variants": {
@@ -264,9 +264,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0003,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "triton",
