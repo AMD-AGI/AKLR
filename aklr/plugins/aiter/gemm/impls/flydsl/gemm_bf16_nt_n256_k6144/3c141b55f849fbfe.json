@@ -26,6 +26,84 @@
         "M": 6
       },
       "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1024
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4096
+      },
+      "evaluations": []
     }
   ],
   "inputs": {
