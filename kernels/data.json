@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "commit": "24eb77436a63701864e46a29cf9208db7154ae71",
- "generated_at": "2026-11-25T08:33:39Z",
+ "commit": "736ded933f0a9fd31c4ec518f65bfffe731e0614",
+ "generated_at": "2026-11-25T09:14:17Z",
  "contracts": [
   {
    "contract_id": "add_attn_res@1.0",
@@ -32558,6 +32558,131 @@
     },
     {
      "dims": {
+      "n_tokens": "6144",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "7680",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "9397",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "15360",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16384",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
       "n_tokens": "893",
       "model_dim": "3584",
       "n_experts": "896",
@@ -32730,56 +32855,6 @@
      "microseconds": null,
      "requires": null,
      "candidates": 2
-    },
-    {
-     "dims": {
-      "n_tokens": "9397",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "16384",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
     },
     {
      "dims": {
