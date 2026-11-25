@@ -30,10 +30,16 @@ env:
     from aklr.core.validation.stages.validation_scope import ValidationScope
     scope = ValidationScope.of_working_tree(sys.argv[1], None)
     sys.exit("core" in map(scope.path_kind, scope.changed_paths()))
-  AKLR_SAFE_API_URL: ${{ vars.AKLR_SAFE_API_URL }}
-  AKLR_SAFE_WORKSPACE: ${{ vars.AKLR_SAFE_WORKSPACE }}
-  AKLR_SAFE_RESOURCES: ${{ vars.AKLR_SAFE_RESOURCES }}
-  AKLR_SAFE_CA_URLS: ${{ vars.AKLR_SAFE_CA_URLS }}
+  # A fork's pull request reads no repository variable, so each has its value as the default.
+  AKLR_SAFE_API_URL: ${{ vars.AKLR_SAFE_API_URL || 'https://global.primus-safe.amd.com' }}
+  AKLR_SAFE_WORKSPACE: ${{ vars.AKLR_SAFE_WORKSPACE || 'crusoe-aklr-cicd' }}
+  AKLR_SAFE_RESOURCES: >-
+    ${{ vars.AKLR_SAFE_RESOURCES ||
+    '{"replica":1,"gpu":"8","cpu":"96","memory":"512Gi","sharedMemory":"64Gi","ephemeralStorage":"300Gi"}' }}
+  AKLR_SAFE_CA_URLS: >-
+    ${{ vars.AKLR_SAFE_CA_URLS ||
+    'https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs/amd-root-ca.crt
+    https://raw.githubusercontent.com/AMD-AGI/Primus-SaFE/main/Scripts/setup-certs/amd-issuing-ca.crt' }}
 
 on:
   workflow_dispatch:
