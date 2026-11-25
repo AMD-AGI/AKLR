@@ -1,7 +1,7 @@
 {
  "schema": 4,
- "run_id": "44491219482",
- "generated_at": "2026-11-19T15:16:41Z",
+ "run_id": "45607539059",
+ "generated_at": "2026-11-25T22:21:07Z",
  "targets": [
   {
    "model": {
@@ -11,17 +11,17 @@
    },
    "target": {
     "id": "mi355x",
-    "runner_label": "agentx-mi355x"
+    "runner_label": "conductor-mi355x"
    },
    "framework": {
     "id": "sglang"
    },
    "image": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
    "status": "partial",
-   "error": "测量未全部完成或有失败点 / Measurement incomplete or points failed",
+   "error": "Container exited with status 137: con v0.13.5\n   Compiling inout v0.1.4\n   Compiling simd-adler32 v0.3.10\n   Compiling zstd-sys v2.0.16+zstd.1.5.7\n   Compiling bzip2-sys v0.1.13+1.0.8\n   Compiling rand_core v0.6.4\n   Compiling base64ct v1.8.3\n   Compiling adler2 v2.0.1\n   Compiling miniz_oxide v0.9.1\n   Compiling password-hash v0.4.2\n   Compiling cipher v0.4.4\n   Compiling sha2 v0.10.9\n   Compiling hmac v0.12.1\n   Compiling getrandom v0.2.17\n   Compiling deranged v0.5.8\n   Compiling powerfmt v0.2.0\n   Compiling time-core v0.1.9\n   Compiling anyhow v1.0.104\n   Compiling num-conv v0.2.2\n   Compiling zerocopy v0.8.56\n   Compiling zerocopy-derive v0.8.56\n   Compiling time v0.3.55\n   Compiling pbkdf2 v0.11.0\n   Compiling flate2 v1.1.10\n   Compiling bzip2 v0.4.4\n   Compiling aes v0.8.4\n   Compiling pyo3-build-config v0.29.2\n   Compiling sha1 v0.10.7\n   Compiling num-traits v0.2.19\n   Compiling serde_core v1.0.229\n   Compiling byteorder v1.5.0\n   Compiling constant_time_eq v0.1.5\n   Compiling zmij v1.0.23\n   Compiling pyo3-ffi v0.29.2\n   Compiling matrixmultiply v0.3.11\n   Compiling syn v3.0.4\n   Compiling serde v1.0.229\n   Compiling serde_json v1.0.151\n   Compiling serde_derive v1.0.229\n   Compiling zstd v0.11.2+zstd.1.5.2\n   Compiling zip v0.6.6\n   Compiling ppv-lite86 v0.2.21\n   Compiling torch-sys v0.24.0\n   Compiling thiserror v1.0.69\n   Compiling itoa v1.0.18\n   Compiling memchr v2.8.3\n   Compiling rawpointer v0.2.1\n   Compiling heck v0.5.0\n   Compiling pyo3-macros-backend v0.29.2\n   Compiling rand_chacha v0.3.1\n   Compiling num-integer v0.1.47\n   Compiling num-complex v0.4.6\n   Compiling pyo3 v0.29.2\n   Compiling thiserror-impl v1.0.69\n   Compiling tch v0.24.0\n   Compiling ndarray v0.16.1\n   Compiling rand v0.8.8\n   Compiling safetensors v0.3.3\n   Compiling pyo3-macros v0.29.2\n   Compiling half v2.7.1\n   Compiling equivalent v1.0.2\n   Compiling once_cell v1.21.4\n   Compiling allocator-api2 v0.2.21\n   Compiling foldhash v0.2.0\n   Compiling lazy_static v1.5.0\n   Compiling hashbrown v0.16.1\n   Compiling sglang-radix-tree v0.1.0 (/sgl-workspace/sglang/rust/sglang-radix-tree)\n    Finished `release` profile [optimized] target(s) in 58.27s\nRust TreeCore warmed up\nAKLR installed from /aklr for sglang; environment in /agentx/cache/aklr.env\n[2026-11-25T11:48:25Z] preparing the AgentX traces\n[2026-11-25T11:48:57Z] AKLR disabled · tp4-ep4-dcp4-none-spec-mtp c24\n  -> failed RuntimeError: server exited with code -9 before ready\n[2026-11-25T11:50:47Z] AKLR disabled · tp4-ep4-dram-hicache-spec-mtp c4\n  waited 5 s for GPU VRAM to reach 0%\n  -> ok \n[2026-11-25T12:29:30Z] AKLR disabled · tp4-ep4-dram-hicache-spec-mtp c8\n  -> ok \n[2026-11-25T13:06:12Z] AKLR disabled · tp4-ep4-dram-hicache-spec-mtp c10\n  -> ok \n[2026-11-25T13:43:10Z] AKLR disabled · tp4-ep4-dram-hicache-spec-mtp c12\n  -> ok \n[2026-11-25T14:22:22Z] AKLR disabled · tp4-ep4-dram-hicache-spec-mtp c14\n  -> ok \n[2026-11-25T15:02:29Z] AKLR disabled · tp4-ep4-dram-hicache-spec-mtp c16\n  -> ok \n[2026-11-25T15:47:58Z] AKLR disabled · tp8-ep1-none-spec-mtp c1\n  -> ok \n[2026-11-25T16:21:50Z] AKLR disabled · tp8-ep1-none-spec-mtp c2\n  waited 5 s for GPU VRAM to reach 0%\n  -> ok \n[2026-11-25T16:55:00Z] AKLR disabled · tp8-ep1-none-spec-mtp c4\n  waited 5 s for GPU VRAM to reach 0%\n  -> ok \n[2026-11-25T17:29:04Z] AKLR enabled · tp4-ep4-dcp4-none-spec-mtp c24\n  waited 5 s for GPU VRAM to reach 0%\n  -> failed RuntimeError: server exited with code -9 before ready\n[2026-11-25T17:31:49Z] AKLR enabled · tp4-ep4-dram-hicache-spec-mtp c4\n  -> ok \n[2026-11-25T18:06:58Z] AKLR enabled · tp4-ep4-dram-hicache-spec-mtp c8\n  -> ok \n[2026-11-25T18:43:44Z] AKLR enabled · tp4-ep4-dram-hicache-spec-mtp c10\n  -> ok \n[2026-11-25T19:20:29Z] AKLR enabled · tp4-ep4-dram-hicache-spec-mtp c12\n  -> ok \n[2026-11-25T19:59:43Z] AKLR enabled · tp4-ep4-dram-hicache-spec-mtp c14\n  -> ok \n[2026-11-25T20:39:54Z] AKLR enabled · tp4-ep4-dram-hicache-spec-mtp c16\n  -> ok \n[2026-11-25T21:25:17Z] AKLR enabled · tp8-ep1-none-spec-mtp c1\n  -> ok \n[2026-11-25T21:58:42Z] AKLR enabled · tp8-ep1-none-spec-mtp c2\n  waited 5 s for GPU VRAM to reach 0%",
    "points": 10,
    "point_policy": "pareto",
-   "serving_sha256": "f1d76909f2c8c0d7bb511e5cfb6cd9cc47fbb58eaee7319bbd3dd826a210055a",
+   "serving_sha256": "e3138ee9bbfe29312f84cdc9068cbab29f2429a993fbe2bb26ad5d9b289da7c5",
    "point_ids": [
     "tp4-ep4-dcp4-none-spec-mtp:24",
     "tp4-ep4-dram-hicache-spec-mtp:4",
@@ -34,19 +34,19 @@
     "tp8-ep1-none-spec-mtp:2",
     "tp8-ep1-none-spec-mtp:4"
    ],
-   "selection_manifest_sha256": "9f4a6ab8e4762195bcf741c577b78bb1182cbbc3547476c48db11b1b1daa1995",
+   "selection_manifest_sha256": "e40e3d8fba3d520673c2229916a3757566da13daa69f59d3fa8ec60b6efa9694",
    "report": true,
    "baselines": {},
    "baseline_unavailable": {},
-   "points_ok": 15,
+   "points_ok": 16,
    "points_total": 20,
    "failure_stage": null,
    "mode": "live / pareto",
-   "measured_at": "2026-11-19T13:25:42Z",
+   "measured_at": "2026-11-25T22:13:42Z",
    "source": {
-    "run_id": "44491219482",
-    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/44491219482",
-    "commit": "8806c22a61f61b0fccb1322b4e44edf36d7895e1",
+    "run_id": "45607539059",
+    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45607539059",
+    "commit": "3e191a8b6049fa74c82af735c4f7386ef08c4861",
     "ref": "refs/heads/main",
     "event": "workflow_dispatch"
    }
@@ -59,17 +59,17 @@
    },
    "target": {
     "id": "mi355x",
-    "runner_label": "agentx-mi355x"
+    "runner_label": "conductor-mi355x"
    },
    "framework": {
     "id": "sglang"
    },
    "image": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
-   "status": "partial",
-   "error": "测量未全部完成或有失败点 / Measurement incomplete or points failed",
+   "status": "failed",
+   "error": "/data/huggingface-cache/hub/models--zai-org--GLM-5.2-FP8/refs/main is missing; prepare refs/main at the pinned f33c6dc501ee5a2c7e35155653b1b1abbc320951 for the AgentX client's offline tokenizer",
    "points": 5,
    "point_policy": "pareto",
-   "serving_sha256": "ed488e1708edabcc5541fe1accc0e91bdfdd62a71602ab22407f45bd3cb2d164",
+   "serving_sha256": "207dc43dbfd2fb964ee4f1f2ca2c5044d6646f7985ee6d80110f1d153adac7d5",
    "point_ids": [
     "tp8-ep1-dram-hicache-spec-mtp:16",
     "tp8-ep1-none-spec-mtp:1",
@@ -77,63 +77,19 @@
     "tp8-ep1-none-spec-mtp:4",
     "tp8-ep1-none-spec-mtp:10"
    ],
-   "selection_manifest_sha256": "a8d765dc5d3a7e421553224b83465857a3665968da8456593ef1d3c2785460c4",
-   "report": true,
-   "baselines": {},
-   "baseline_unavailable": {},
-   "points_ok": 5,
-   "points_total": 10,
-   "failure_stage": null,
-   "mode": "live / pareto",
-   "measured_at": "2026-11-19T15:14:19Z",
-   "source": {
-    "run_id": "44491219482",
-    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/44491219482",
-    "commit": "8806c22a61f61b0fccb1322b4e44edf36d7895e1",
-    "ref": "refs/heads/main",
-    "event": "workflow_dispatch"
-   }
-  },
-  {
-   "model": {
-    "id": "minimaxm31flash-fp4",
-    "display_name": "MiniMax-M3.1-Flash MXFP4",
-    "precision": "mxfp4"
-   },
-   "target": {
-    "id": "mi355x",
-    "runner_label": "agentx-mi355x"
-   },
-   "framework": {
-    "id": "vllm"
-   },
-   "image": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1",
-   "status": "failed",
-   "error": "/home/ruibzhan/agentx-ci/hf/hub/models--amd--MiniMax-M3.1-Flash-Quark-MXFP4/refs/main is missing; prepare refs/main at the pinned bf06a0c566b430c620154497cc928c893af5e10c for the AgentX client's offline tokenizer",
-   "points": 6,
-   "point_policy": "pareto",
-   "serving_sha256": "2297de3a9de0ecbe981fa55b6417c621e99956426442bf739aa0228579b12f9f",
-   "point_ids": [
-    "tp4-ep1-dram-vllm-simple-spec-mtp:32",
-    "tp4-ep1-dram-vllm-simple-spec-mtp:64",
-    "tp4-ep1-none-spec-mtp:2",
-    "tp4-ep1-none-spec-mtp:4",
-    "tp4-ep1-none-spec-mtp:8",
-    "tp4-ep1-none-spec-mtp:16"
-   ],
-   "selection_manifest_sha256": "b5b68b01242b2efd93d06db0b40e398065d5794ae830aede3c24dce511c209a1",
+   "selection_manifest_sha256": "8f5d93e6bcff8e3bc1294bab4f3733dc72d4c2fe0e3ae4042a2ea8654f1d4581",
    "report": true,
    "baselines": {},
    "baseline_unavailable": {},
    "points_ok": 0,
-   "points_total": 12,
+   "points_total": 10,
    "failure_stage": null,
    "mode": "live / pareto",
-   "measured_at": "2026-11-19T15:15:19Z",
+   "measured_at": "2026-11-25T22:18:25Z",
    "source": {
-    "run_id": "44491219482",
-    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/44491219482",
-    "commit": "8806c22a61f61b0fccb1322b4e44edf36d7895e1",
+    "run_id": "45607539059",
+    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45607539059",
+    "commit": "3e191a8b6049fa74c82af735c4f7386ef08c4861",
     "ref": "refs/heads/main",
     "event": "workflow_dispatch"
    }
