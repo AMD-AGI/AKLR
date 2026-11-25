@@ -7,7 +7,7 @@ import torch
 
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.builder import BuilderRegistry
-from aklr.plugins.aiter.mla.reference import fp8_paged_mqa_logits_reference
+from aklr.plugins.aiter.mla.reference import Fp8PagedMqaLogitsReference
 
 _MQA_SCHEMA = "fp8_paged_mqa_logits_page_size64_n_heads32"
 
@@ -61,12 +61,10 @@ def test_fp8_paged_mqa_logits_serves_any_pool_and_table(
         q=q, kv_cache=pool, weights=weights, context_lens=context, block_tables=table,
         logits=logits, page_size=64, preshuffled=True,
     )  # fmt: skip
-    axes = {"batch": batch, "n_pages": used.numel(), "max_blocks": max_blocks, "max_seq_len": max_blocks * 64}
-    args = {
-        "q": q, "kv_cache": pool[used], "weights": weights, "context_lens": context,
-        "block_tables": compact.int(),
-    }  # fmt: skip
-    expected = fp8_paged_mqa_logits_reference(schema.point(axes), args, lambda t, _dtype: t.double())
+    reference = Fp8PagedMqaLogitsReference().reference(
+        q=q, kv_cache=pool[used], weights=weights, context_lens=context, block_tables=compact.int()
+    )
+    expected = reference["logits"].double()
     tokens = torch.arange(max_blocks * 64, device="cuda")
     live = tokens < context[:, None]
     tail = ~live & (tokens < (context[:, None] + 63) // 64 * 64)
