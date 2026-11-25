@@ -99,7 +99,10 @@
     {
       "axes": {
         "m": 2
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.446,
+      "microseconds": 4.26
     }
   ],
   "layout_variants": {

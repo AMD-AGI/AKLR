@@ -196,7 +196,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.522,
+      "microseconds": 7.3
     },
     {
       "axes": {
@@ -209,7 +212,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.444,
+      "microseconds": 7.67
     },
     {
       "axes": {
@@ -222,7 +228,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.38,
+      "microseconds": 8.0
     },
     {
       "axes": {
@@ -235,7 +244,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.262,
+      "microseconds": 8.91
     },
     {
       "axes": {
@@ -248,7 +260,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.283,
+      "microseconds": 8.9
     },
     {
       "axes": {
@@ -261,7 +276,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.282,
+      "microseconds": 9.27
     },
     {
       "axes": {
@@ -274,7 +292,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.349,
+      "microseconds": 10.5
     },
     {
       "axes": {
@@ -287,7 +308,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.475,
+      "microseconds": 12.1
     }
   ],
   "layout_variants": {
