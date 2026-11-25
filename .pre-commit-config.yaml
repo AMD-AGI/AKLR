@@ -33,10 +33,10 @@ repos:
       # Checks every recipe, not only the changed ones: a schema edit can break the others.
       - id: agentx-recipes
         name: check AgentX serving recipes
-        entry: python benchmarks/agentx/agentx_bench.py check-recipes
+        entry: env PYTHONPATH=benchmarks/perf python -m agentx check-recipes
         language: python
         additional_dependencies: [pyyaml==6.0.3, jsonschema==4.25.1]
-        files: ^benchmarks/agentx/(recipes/|agentx\.yaml$)
+        files: ^benchmarks/perf/agentx/(recipes/|agentx\.yaml$)
         pass_filenames: false
       - id: tests-layout
         name: tests layout (tests/AGENTS.md)

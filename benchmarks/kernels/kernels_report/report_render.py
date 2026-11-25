@@ -34,9 +34,6 @@ REASON_CLASS = {
     "not_measured": "not-measured",
 }
 
-# The dark console theme of the AgentX pages: palette, header and language switch copied from
-# benchmarks/agentx/agentx_ci/report.py (STYLE, SCRIPT), which needs yaml this CPU job does not
-# install; keep the two in sync.
 STYLE = """
 :root { color-scheme:dark; --fg:#e6edf7; --muted:#8a97ad; --line:#1e2a40; --edge:#2b3d5c; --bg:#070b14; --panel:#0e1525; --panel2:#121b2e; --cyan:#22d3ee; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; }
 * { box-sizing: border-box; }
@@ -267,7 +264,7 @@ def index_page(reports: list[ContractReport], context: Context, lang: str) -> st
         else ""
     )
     meta = (
-        f'<a href="../index.html?lang={lang}">← {tr(lang, "AKLR Weekly Report", "AKLR 每周报告")}</a> · '
+        f'<a href="../index.html?lang={lang}">← {tr(lang, "AKLR Dashboard", "AKLR 看板")}</a> · '
         f"main {commit_link(context, context.commit)}{latest} · "
         f"{tr(lang, 'generated', '生成于')} {escape(when(context.generated_at))}<br>"
         + tr(
