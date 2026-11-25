@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "commit": "6ab27472c299182f71eaa2272454eac559ee0c52",
- "generated_at": "2026-11-25T04:27:05Z",
+ "commit": "24eb77436a63701864e46a29cf9208db7154ae71",
+ "generated_at": "2026-11-25T08:33:39Z",
  "contracts": [
   {
    "contract_id": "add_attn_res@1.0",
@@ -12280,11 +12280,16 @@
     "lse.dtype": "float32",
     "return_lse": "true"
    },
-   "measured": null,
+   "measured": {
+    "run_id": "45564537692",
+    "measured_at": "2026-11-25T08:32:44Z",
+    "commit": "8a20b40ab23d58ea1e186d86d0022cf77e88a8df",
+    "hardware": "MI355X"
+   },
    "group": "aiter.mla",
-   "status": "not-measured",
-   "served": 0,
-   "geomean": null,
+   "status": "partial",
+   "served": 11,
+   "geomean": 5.95443236051088,
    "points": [
     {
      "dims": {
@@ -12733,13 +12738,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 4.159,
+     "microseconds": 107.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -12771,13 +12778,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 6.869,
+     "microseconds": 166.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -12809,13 +12818,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 9.493,
+     "microseconds": 239.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -12847,13 +12858,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 6.538,
+     "microseconds": 340.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -12885,13 +12898,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 6.241,
+     "microseconds": 368.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -12923,13 +12938,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 7.388,
+     "microseconds": 545.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -12961,13 +12978,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 5.197,
+     "microseconds": 615.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -12999,13 +13018,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 6.174,
+     "microseconds": 725.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -13037,13 +13058,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 5.089,
+     "microseconds": 850.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -13075,13 +13098,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 5.421,
+     "microseconds": 1090.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
@@ -13113,13 +13138,15 @@
       "has_sinks": "false",
       "layout": "row_major"
      },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
+     "reason": "served",
+     "kernel": "flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/mla/impls/flydsl/flash_mla_with_kvcache_fp8_e4m3_lse_has_block_table_has_cache_seqlens_kv_cache_float8_e4m3fn_query_length1_n_heads96_page_size1/18c15f40ed060b8b.json",
+     "speedup": 4.61,
+     "microseconds": 1250.0,
+     "requires": {
+      "flydsl": ">=0.3.2"
+     },
      "candidates": 1
     },
     {
