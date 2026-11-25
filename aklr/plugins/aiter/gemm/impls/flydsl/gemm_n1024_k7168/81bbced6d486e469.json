@@ -64,7 +64,7 @@
         "m": 256
       },
       "accuracy": "passed",
-      "speedup": 0.966,
+      "speedup": 0.965,
       "microseconds": 12.7
     },
     {
@@ -80,8 +80,8 @@
         "m": 1024
       },
       "accuracy": "passed",
-      "speedup": 1.105,
-      "microseconds": 25.3
+      "speedup": 1.118,
+      "microseconds": 24.9
     }
   ],
   "layout_variants": {

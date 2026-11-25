@@ -64,88 +64,88 @@
         "m": 7
       },
       "accuracy": "passed",
-      "speedup": 1.026,
-      "microseconds": 4.41
+      "speedup": 1.021,
+      "microseconds": 4.44
     },
     {
       "axes": {
         "m": 14
       },
       "accuracy": "passed",
-      "speedup": 1.032,
-      "microseconds": 4.4
+      "speedup": 1.029,
+      "microseconds": 4.44
     },
     {
       "axes": {
         "m": 21
       },
       "accuracy": "passed",
-      "speedup": 1.173,
-      "microseconds": 4.41
+      "speedup": 1.162,
+      "microseconds": 4.45
     },
     {
       "axes": {
         "m": 28
       },
       "accuracy": "passed",
-      "speedup": 1.195,
-      "microseconds": 4.41
+      "speedup": 1.179,
+      "microseconds": 4.45
     },
     {
       "axes": {
         "m": 35
       },
       "accuracy": "passed",
-      "speedup": 1.047,
-      "microseconds": 4.37
+      "speedup": 1.043,
+      "microseconds": 4.4
     },
     {
       "axes": {
         "m": 42
       },
       "accuracy": "passed",
-      "speedup": 1.05,
-      "microseconds": 4.36
+      "speedup": 1.043,
+      "microseconds": 4.4
     },
     {
       "axes": {
         "m": 49
       },
       "accuracy": "passed",
-      "speedup": 1.286,
-      "microseconds": 4.36
+      "speedup": 1.274,
+      "microseconds": 4.39
     },
     {
       "axes": {
         "m": 56
       },
       "accuracy": "passed",
-      "speedup": 1.303,
-      "microseconds": 4.36
+      "speedup": 1.287,
+      "microseconds": 4.4
     },
     {
       "axes": {
         "m": 70
       },
       "accuracy": "passed",
-      "speedup": 1.077,
-      "microseconds": 4.36
+      "speedup": 1.07,
+      "microseconds": 4.39
     },
     {
       "axes": {
         "m": 84
       },
       "accuracy": "passed",
-      "speedup": 1.084,
-      "microseconds": 4.38
+      "speedup": 1.082,
+      "microseconds": 4.4
     },
     {
       "axes": {
         "m": 98
       },
       "accuracy": "passed",
-      "speedup": 1.533,
-      "microseconds": 4.4
+      "speedup": 1.53,
+      "microseconds": 4.42
     }
   ],
   "layout_variants": {

@@ -164,8 +164,8 @@
         "cp_rank": 7
       },
       "accuracy": "passed",
-      "speedup": 2.032,
-      "microseconds": 29.0
+      "speedup": 2.033,
+      "microseconds": 28.9
     },
     {
       "axes": {
@@ -180,7 +180,7 @@
       },
       "accuracy": "passed",
       "speedup": 1.692,
-      "microseconds": 43.9
+      "microseconds": 43.8
     }
   ],
   "layout_variants": {

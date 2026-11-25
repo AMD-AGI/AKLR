@@ -199,8 +199,8 @@
         "n_positions": 65536
       },
       "accuracy": "passed",
-      "speedup": 1.145,
-      "microseconds": 10.5
+      "speedup": 1.165,
+      "microseconds": 10.3
     }
   ],
   "layout_variants": {
