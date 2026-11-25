@@ -187,8 +187,14 @@ def test_the_site_workflow_deploys_only_after_main_runs():
     assert workflow("agentx-ci.yaml")["name"] == "AKLR-agentx-ci"
     assert workflow("e2e-perf-ci.yaml")["name"] == "AKLR-e2e-perf-ci"
     assert workflow("ci.yaml")["name"] == "AKLR-CI"
-    assert site["jobs"]["deploy"]["permissions"]["pages"] == "write"
-    assert "github.event.workflow_run.event" in site["jobs"]["deploy"]["if"]
-    data = next(step for step in site["jobs"]["deploy"]["steps"] if step.get("id") == "data")
+    build, deploy = site["jobs"]["build"], site["jobs"]["deploy"]
+    assert "github.event.workflow_run.event" in build["if"]
+    assert build["permissions"] == {"contents": "read"}
+    data = next(step for step in build["steps"] if step.get("id") == "data")
     assert "[[ $status == 2 ]]" in data["run"]
     assert 'exit "$status"' in data["run"]
+    # deploy-pages in its own job: right after the upload, the run's artifact list can still miss it.
+    assert any(step.get("uses", "").startswith("actions/upload-pages-artifact") for step in build["steps"])
+    assert deploy["needs"] == "build" and deploy["if"] == "needs.build.outputs.exists == 'true'"
+    assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
+    assert [step.get("uses", "").split("@")[0] for step in deploy["steps"]] == ["actions/deploy-pages"]
