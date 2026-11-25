@@ -61,7 +61,7 @@ ls tc_run1/*/   # per compiled kernel: .source .ttgir .llir .amdgcn .hsaco .json
 
 Validating f3970dec (Gluon) or cf637bff (plain Triton) left only the schema's launched def and AKLR's
 `_flush_l2_cache_kernel` in a fresh cache: these baselines compiled no Triton kernel *(field, E3)*. AKLR imports the
-schema's sources as the package `_aklr_triton_<content hash[:16]>` under `<AKLR_KERNEL_CACHE_DIR>/triton/` (S32; default
+schema's sources as the package `_aklr_triton_<content hash[:16]>` under `<AKLR_BUILD_CACHE_DIR>/triton/` (S32; default
 `${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels`, `aklr/plugins/aiter/README.md` § Environment variables): an MLIR diagnostic's
 `<file>:<line>:<col>` points at that package's `kernel.py`, at the line of the schema's `kernel.sources`; a
 `CompilationError` counts lines from the function's `def` (§4). With `--base`, the incumbent's kernels land in the same
