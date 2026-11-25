@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "commit": "32e17b6ccc395de75bed4f62a6006b523002f540",
- "generated_at": "2026-11-24T16:45:27Z",
+ "commit": "6ab27472c299182f71eaa2272454eac559ee0c52",
+ "generated_at": "2026-11-25T03:49:34Z",
  "contracts": [
   {
    "contract_id": "add_attn_res@1.0",
@@ -25003,7 +25003,7 @@
    "op_package": "aklr.plugins.aiter.fused_moe",
    "baseline": "aiter's fused_moe, in the environment sglang runs it with",
    "min_speedup": 1.05,
-   "kernels": 41,
+   "kernels": 40,
    "fixed": {
     "hidden_states.dtype": "bfloat16",
     "w1.dtype": "float4_e2m1",
@@ -32181,181 +32181,6 @@
     },
     {
      "dims": {
-      "n_tokens": "80",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "100",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "120",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "160",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 2
-    },
-    {
-     "dims": {
-      "n_tokens": "200",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "n_tokens": "240",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 2
-    },
-    {
-     "dims": {
-      "n_tokens": "336",
-      "model_dim": "3584",
-      "n_experts": "896",
-      "topk": "16",
-      "inter_dim": "384",
-      "global_experts": "1",
-      "activation": "situv2",
-      "gate_mode": "separated",
-      "has_expert_mask": "false",
-      "has_num_local_tokens": "false",
-      "has_swiglu_limit": "false",
-      "act_quant": "8",
-      "layout": "gate_up_interleaved"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
       "n_tokens": "96",
       "model_dim": "3584",
       "n_experts": "896",
@@ -32456,6 +32281,31 @@
     },
     {
      "dims": {
+      "n_tokens": "160",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
       "n_tokens": "176",
       "model_dim": "3584",
       "n_experts": "896",
@@ -32532,6 +32382,31 @@
     {
      "dims": {
       "n_tokens": "224",
+      "model_dim": "3584",
+      "n_experts": "896",
+      "topk": "16",
+      "inter_dim": "384",
+      "global_experts": "1",
+      "activation": "situv2",
+      "gate_mode": "separated",
+      "has_expert_mask": "false",
+      "has_num_local_tokens": "false",
+      "has_swiglu_limit": "false",
+      "act_quant": "8",
+      "layout": "gate_up_interleaved"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "240",
       "model_dim": "3584",
       "n_experts": "896",
       "topk": "16",
@@ -38282,7 +38157,7 @@
    "op_package": "aklr.plugins.aiter.gemm",
    "baseline": "aiter's tuned 16-bit gemm, b as (n, k) only",
    "min_speedup": 1.05,
-   "kernels": 140,
+   "kernels": 139,
    "fixed": {
     "a.dtype": "bfloat16",
     "b.dtype": "bfloat16",
@@ -47227,214 +47102,6 @@
      "dims": {
       "m": "4096",
       "n": "3072",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "1",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "2",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "4",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "8",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "16",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "32",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "64",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "128",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "256",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "512",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "1024",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "2048",
-      "n": "32",
-      "k": "6144",
-      "out.dtype": "bfloat16"
-     },
-     "reason": "not_measured",
-     "kernel": null,
-     "language": null,
-     "path": null,
-     "speedup": null,
-     "microseconds": null,
-     "requires": null,
-     "candidates": 1
-    },
-    {
-     "dims": {
-      "m": "4096",
-      "n": "32",
       "k": "6144",
       "out.dtype": "bfloat16"
      },
@@ -75090,6 +74757,578 @@
    ]
   },
   {
+   "contract_id": "kimi_k3_sgl_kda_prefill@1.0",
+   "op_type": "kda_triton",
+   "op_package": "aklr.plugins.sglang.layers.kda_triton",
+   "baseline": "sglang's out [n_tokens, n_heads, head_dim], which chunk_kda allocates",
+   "min_speedup": 1.05,
+   "kernels": 2,
+   "fixed": {
+    "n_slots": "*",
+    "n_heads": "12",
+    "head_dim": "128",
+    "qkv.dtype": "bfloat16",
+    "raw_g.dtype": "bfloat16",
+    "raw_beta.dtype": "bfloat16",
+    "a_log.dtype": "float32",
+    "g_bias.dtype": "float32",
+    "state_cache.dtype": "float32",
+    "state_indices.dtype": "int32",
+    "cu_seqlens.dtype": "int32",
+    "out.dtype": "bfloat16",
+    "layout": "strided_beta"
+   },
+   "measured": null,
+   "group": "sglang.layers.kda_triton",
+   "status": "not-measured",
+   "served": 0,
+   "geomean": null,
+   "points": [
+    {
+     "dims": {
+      "n_tokens": "6144",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "8192",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "8192",
+      "n_seqs": "2",
+      "n_offsets": "3"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "12288",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16320",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16384",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16384",
+      "n_seqs": "2",
+      "n_offsets": "3"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16384",
+      "n_seqs": "4",
+      "n_offsets": "5"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "1024",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "1536",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "2048",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "2048",
+      "n_seqs": "2",
+      "n_offsets": "3"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "3072",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "3346",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "4096",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "4096",
+      "n_seqs": "2",
+      "n_offsets": "3"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "4096",
+      "n_seqs": "4",
+      "n_offsets": "5"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    }
+   ]
+  },
+  {
+   "contract_id": "kimi_k3_sgl_kda_prefill_track@1.0",
+   "op_type": "kda_triton",
+   "op_package": "aklr.plugins.sglang.layers.kda_triton",
+   "baseline": "sglang's out [n_tokens, n_heads, head_dim] of a prefill that snapshots",
+   "min_speedup": 1.05,
+   "kernels": 2,
+   "fixed": {
+    "n_slots": "*",
+    "n_heads": "12",
+    "head_dim": "128",
+    "qkv.dtype": "bfloat16",
+    "raw_g.dtype": "bfloat16",
+    "raw_beta.dtype": "bfloat16",
+    "a_log.dtype": "float32",
+    "g_bias.dtype": "float32",
+    "state_cache.dtype": "float32",
+    "state_indices.dtype": "int32",
+    "cu_seqlens.dtype": "int32",
+    "track_chunk_idx.dtype": "int32",
+    "track_state.dtype": "float32",
+    "out.dtype": "bfloat16",
+    "layout": "strided_beta"
+   },
+   "measured": null,
+   "group": "sglang.layers.kda_triton",
+   "status": "not-measured",
+   "served": 0,
+   "geomean": null,
+   "points": [
+    {
+     "dims": {
+      "n_tokens": "6144",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "8192",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "8192",
+      "n_seqs": "2",
+      "n_offsets": "3"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "12288",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16320",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16384",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16384",
+      "n_seqs": "2",
+      "n_offsets": "3"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16384",
+      "n_seqs": "4",
+      "n_offsets": "5"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "1024",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "1536",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "2048",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "2048",
+      "n_seqs": "2",
+      "n_offsets": "3"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "3072",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "3346",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "4096",
+      "n_seqs": "1",
+      "n_offsets": "2"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "4096",
+      "n_seqs": "2",
+      "n_offsets": "3"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "4096",
+      "n_seqs": "4",
+      "n_offsets": "5"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    }
+   ]
+  },
+  {
    "contract_id": "mega_moe@1.0",
    "op_type": "mega_moe",
    "op_package": "aklr.plugins.aiter.mega_moe",
@@ -86695,6 +86934,705 @@
      "microseconds": null,
      "requires": null,
      "candidates": 2
+    }
+   ]
+  },
+  {
+   "contract_id": "sparse_mla_verify@1.0",
+   "op_type": "sparse_mla",
+   "op_package": "aklr.plugins.sglang.layers.sparse_mla",
+   "baseline": "The native kernel as the backend calls it, the pool as [rows, 1, kv_dim] and the top-k as [tokens, 1, topk]",
+   "min_speedup": 1.05,
+   "kernels": 6,
+   "fixed": {
+    "kv_dim": "576",
+    "topk": "2048",
+    "n_slots": "*",
+    "q.dtype": "float8_e4m3fn",
+    "kv_cache.dtype": "float8_e4m3fn",
+    "topk_indices.dtype": "int32",
+    "output.dtype": "bfloat16"
+   },
+   "measured": null,
+   "group": "sglang.layers.sparse_mla",
+   "status": "not-measured",
+   "served": 0,
+   "geomean": null,
+   "points": [
+    {
+     "dims": {
+      "n_tokens": "20",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "24",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "28",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "32",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "36",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "40",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "44",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "48",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "18",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "24",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "30",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "36",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "42",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "48",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "54",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "60",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "66",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "72",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "78",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "18",
+      "n_heads": "8",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "24",
+      "n_heads": "8",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "30",
+      "n_heads": "8",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "36",
+      "n_heads": "8",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "42",
+      "n_heads": "8",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "48",
+      "n_heads": "8",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "1",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "2",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "3",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "4",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "5",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "6",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "7",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "8",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "9",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "10",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "11",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "12",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "13",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "14",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "15",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "16",
+      "n_heads": "8",
+      "native": "tilelang"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "6",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "12",
+      "n_heads": "16",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "6",
+      "n_heads": "8",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "n_tokens": "12",
+      "n_heads": "8",
+      "native": "triton"
+     },
+     "reason": "not_measured",
+     "kernel": null,
+     "language": null,
+     "path": null,
+     "speedup": null,
+     "microseconds": null,
+     "requires": null,
+     "candidates": 1
     }
    ]
   },
