@@ -813,6 +813,32 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # GLM-5.3's block-fp8 qkv_a projection shrunk the same way, its weight preshuffled as sglang
+    # holds it for aiter's GEMM
+    PointSpec(
+        contract_id="mla_qkv_a_norm_fp8@1.0",
+        axes={
+            "n_tokens": 4,
+            "hidden_dim": 512,
+            "q_lora_rank": 512,
+            "kv_lora_rank": 128,
+            "latent_dim": 704,
+        },
+        dtypes={
+            "hidden_states": "bfloat16",
+            "w_qkv_a": "float8_e4m3fn",
+            "w_qkv_a_scale": "float32",
+            "q_norm_weight": "bfloat16",
+            "kv_norm_weight": "bfloat16",
+            "q_latent": "bfloat16",
+            "q_fp8": "float8_e4m3fn",
+            "q_scale": "float32",
+            "kv_latent": "bfloat16",
+            "k_rope": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="shuffled_16x16",
+    ),
     PointSpec(
         contract_id="mla_v_absorb@1.0",
         axes={"n_tokens": 4, "n_heads": 2, "v_head_dim": 32},
@@ -921,6 +947,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "gated_attention_prefill_group_fp8_quant@1.0",
         "gated_attention_prefill@1.0",
         "mla_qkv_a_norm@1.0",
+        "mla_qkv_a_norm_fp8@1.0",
         "kda_chain_verify_ring@1.0",
         "deepseek_v4_router@1.0",
     }
