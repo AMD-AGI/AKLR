@@ -25,7 +25,7 @@ models:
           gpu_name_pattern: '\bMI355X\b'
           gpu_arch: gfx950
           gpu_count: 8
-        runner_label: agentx-mi355x
+        runner_label: conductor-mi355x
         frameworks: [sglang]
   glm52-fp8:
     display_name: GLM-5.2 FP8
@@ -39,7 +39,5 @@ models:
           gpu_name_pattern: '\bMI355X\b'
           gpu_arch: gfx950
           gpu_count: 8
-        runner_label: agentx-mi355x
+        runner_label: conductor-mi355x
         frameworks: [sglang]
-report:
-  repo_url: https://github.com/AMD-AGI/AKLR

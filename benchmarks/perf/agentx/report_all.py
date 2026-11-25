@@ -9,19 +9,19 @@ import urllib.request
 from html import escape
 from pathlib import Path
 
+from perf_utils.gh import repo_url
+
 from agentx.model_config import validate_framework_id, validate_model_id, validate_target_id
 from agentx.performance_analysis import aklr_pairing_error
 from agentx.report import LANGS, language_switch, render_document, status_label, tr, write_report
 from agentx.serving_config import POLICY, SelectionError, point_id, validate_manifest
 from agentx.utils import (
-    DEFAULT_CONFIG,
     LEGACY_METRIC_AXES,
     METRIC_AXES,
     REPO_ROOT,
     SCHEMA,
     complete_measurement,
     has_successful_measurement,
-    load_config,
     read_json,
     target_path,
     utc_now,
@@ -430,7 +430,6 @@ def build(
     results: Path,
     out: Path,
     *,
-    config: Path | str = DEFAULT_CONFIG,
     git_dir: Path = REPO_ROOT,
     baseline_dir: Path | None = None,
     baseline_url: str | None = None,
@@ -445,6 +444,6 @@ def build(
         results,
         out,
         PreviousSite(baseline_dir, baseline_url),
-        load_config(config)["report"]["repo_url"].rstrip("/"),
+        repo_url(),
         git_dir,
     )

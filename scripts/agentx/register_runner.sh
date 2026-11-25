@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo=AMD-AGI/AKLR
-label=agentx-mi355x
+label=conductor-mi355x
 version=2.338.2
 dir=/opt/agentx-runner
 name="$(hostname -s)-agentx"

@@ -43,7 +43,7 @@ flowchart TD
 
 | 触发方式 | 模型 / target 范围 | 测量点 | AKLR off/on 每次测量时长 | 发布 Pages |
 | --- | --- | --- | --- | --- |
-| PR 标签 `ci:agentx-mi355x` | 白名单 reviewer 的 `/agentx-mi355x` 评论所列模型中，绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 600 秒 | 否 |
+| PR 标签 `ci:agentx-mi355x` | 白名单 reviewer 的 `/agentx-mi355x` 评论所列模型中，绑定 `conductor-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 600 秒 | 否 |
 
 注意：
 - PR 创建、更新提交、重新打开时，如果保留该标签，就会触发运行。添加标签时，只有新增的标签正是 `ci:agentx-mi355x` 才会启动 AgentX 测试。
@@ -57,7 +57,7 @@ flowchart TD
 
 | 触发方式 | 模型 / target 范围 | 测量点 | AKLR off/on 每次测量时长 | 发布 Pages |
 | --- | --- | --- | --- | --- |
-| 定时 | 全部绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 3600 秒 | 是 |
+| 定时 | 全部绑定 `conductor-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 3600 秒 | 是 |
 
 ### 1.4 发布到站点
 
@@ -178,7 +178,7 @@ python3 -m agentx report \
   --out /data/agentx/staged-001/site
 ```
 
-首次没有基线时省略 `--baseline-dir`。`plan` 可通过 `--models`、`--targets` 和 `--frameworks` 生成 CI 所需的多运行计划；本地分阶段示例只运行一个。`--results` 指向包含 `models/` 的根目录，sweep 的 `--out` 则指向具体框架目录。plan 与执行必须使用同一 `--run-id`。
+首次没有基线时省略 `--baseline-dir`。`plan` 可通过 `--models`、`--targets` 和 `--frameworks` 生成 CI 所需的多运行计划；本地分阶段示例只运行一个。`--results` 指向包含 `models/` 的根目录，sweep 的 `--out` 则指向具体框架目录。plan 与执行必须使用同一 `--run-id`。报告中 AKLR commit 链接指向 `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}`（由 GitHub Actions 设置）；在 Actions 之外默认为 `https://github.com/AMD-AGI/AKLR`。
 
 ## 3. 配置介绍
 
@@ -202,7 +202,7 @@ models:
           gpu_name_pattern: '\bMI355X\b'
           gpu_arch: gfx950
           gpu_count: 8
-        runner_label: agentx-mi355x
+        runner_label: conductor-mi355x
         frameworks:
           sglang:
             recipe_source:
@@ -218,8 +218,6 @@ models:
                 framework: sglang
                 runner_pattern: mi355x
   # glm52-fp8 结构相同
-report:
-  repo_url: https://github.com/AMD-AGI/AKLR
 ```
 
 | 字段 | 说明 |
@@ -243,7 +241,6 @@ report:
 | `models.<id>.advisory_env` | 模型级补充环境，覆盖同名全局值。若与 recipe 文件 `launch.env` 中已设置的变量同名，会报冲突；设备变量由 `plan` 生成 |
 | `models.<id>.targets.<target-id>.advisory_env` | target 级补充环境，覆盖同名模型级和全局值；同样不允许与 recipe 文件 `launch.env` 冲突 |
 | `...frameworks.<framework>.advisory_env` | 框架级补充环境，覆盖以上各级同名值。不要在这里设置 AKLR plugin 开关，执行器会按模式设置。冲突规则相同 |
-| `report.repo_url` | 报告中 AKLR commit 链接所用的仓库 URL（历史链接暂时隐藏）；不是 Pages 站点地址 |
 
 `weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像由 plan 从 [`stack.json`](../../../stack.json) 读取对应框架的 CI 镜像，见 3.2 节。
 
@@ -268,7 +265,7 @@ report:
           gpu_name_pattern: '\bMI355X\b'
           gpu_arch: gfx950
           gpu_count: 8
-        runner_label: agentx-mi355x
+        runner_label: conductor-mi355x
         frameworks:
           sglang:
             recipe_source:
@@ -316,7 +313,7 @@ export RUNNER_TOKEN
 
 bash scripts/agentx/register_runner.sh \
   --repo AMD-AGI/AKLR \
-  --label agentx-mi355x \
+  --label conductor-mi355x \
   --dir /opt/agentx-runner \
   --name "$(hostname -s)-agentx" \
   --hf-hub-dir /data/hf/hub
@@ -327,7 +324,7 @@ unset RUNNER_TOKEN
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
 | `--repo` | `AMD-AGI/AKLR` | 注册到哪个仓库；token 必须来自该仓库 |
-| `--label` | `agentx-mi355x` | workflow 用来调度的自定义标签 |
+| `--label` | `conductor-mi355x` | workflow 用来调度的自定义标签 |
 | `--version` | `2.338.2` | 下载的 GitHub Actions runner 版本，可显式覆盖 |
 | `--dir` | `/opt/agentx-runner` | runner 安装目录 |
 | `--name` | `<hostname>-agentx` | GitHub 上显示的 runner 名称 |
@@ -344,6 +341,6 @@ unset RUNNER_TOKEN
 | `AKLR_AGENTX_HF_HUB_DIR` | 必填 | runner 上权重 hub 的绝对路径，例如 `/data/hf/hub` |
 | `AKLR_AGENTX_SCHEDULE_ENABLED` | 启用定时时填写 | 字符串 `true`；只控制定时触发，不影响手动或 PR 标签触发 |
 
-所选 target 在 `agentx.yaml` 中的 `runner_label` 必须与注册时的 `--label` 一致；本例均为 `agentx-mi355x`。
+所选 target 在 `agentx.yaml` 中的 `runner_label` 必须与注册时的 `--label` 一致；本例均为 `conductor-mi355x`。
 
 2. 需要发布报告时，在 **Settings → Pages** 将构建与部署来源设为 **GitHub Actions**。publish job 以 GitHub App `aklr-agentx-ci` 的身份推送，它从 `agentx-bot` environment（部署分支只允许 `main`）读取 secret `AKLR_AGENTX_BOT_APP_ID`、`AKLR_AGENTX_BOT_PRIVATE_KEY` 和变量 `AKLR_AGENTX_BOT_LOGIN`（`aklr-agentx-ci[bot]`）。

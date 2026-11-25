@@ -45,7 +45,7 @@ def results(
     return {
         "schema": 1,
         "model": {"id": model, "display_name": "GLM-5.2 MXFP4"},
-        "target": {"id": "mi355x", "runner_label": "agentx-mi355x"},
+        "target": {"id": "mi355x", "runner_label": "conductor-mi355x"},
         "framework": {"id": framework},
         "run": {
             "id": run_id,

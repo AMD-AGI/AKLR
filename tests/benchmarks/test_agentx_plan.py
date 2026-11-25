@@ -18,7 +18,7 @@ from agentx import plan
 from agentx import serving_config as sc
 from perf_utils import image as ci_image
 
-RUNNER_LABEL = "agentx-mi355x"
+RUNNER_LABEL = "conductor-mi355x"
 IMAGE = "example.invalid/server@sha256:" + "a" * 64
 RUNS = (
     ("first", "mi355x", "sglang"),
@@ -71,7 +71,6 @@ class PlanCase:
                 ),
                 "second": model({"different-target-id": target(RUNNER_LABEL, vllm=framework())}),
             },
-            "report": {"repo_url": "https://example.invalid/repo"},
         }
         self.write_config()
         self.durations = {}

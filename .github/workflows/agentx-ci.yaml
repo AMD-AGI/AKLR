@@ -116,7 +116,7 @@ jobs:
           MODELS: ${{ inputs.models || 'all' }}
           TARGETS: ${{ inputs.targets || 'all' }}
           FRAMEWORKS: ${{ inputs.frameworks || 'all' }}
-          RUNNER_LABEL: ${{ github.event_name != 'workflow_dispatch' && 'agentx-mi355x' || '' }}
+          RUNNER_LABEL: ${{ github.event_name != 'workflow_dispatch' && 'conductor-mi355x' || '' }}
           POINTS: ${{ inputs.points }}
           DURATION_S: ${{ github.event_name == 'pull_request' && '600' || inputs.duration_s }}
           # Verify the recipe duration without a smoke override, preserving baseline eligibility.

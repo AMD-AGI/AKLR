@@ -86,7 +86,7 @@ def site_from(tmp_path, groups, *, run_id="101", name="site"):
         manifest["groups"].append(
             {
                 "model": {"id": parts[1], "display_name": parts[1].upper()},
-                "target": {"id": parts[3], "runner_label": "agentx-mi355x"},
+                "target": {"id": parts[3], "runner_label": "conductor-mi355x"},
                 "framework": {"id": parts[5]},
                 "status": "planned",
                 "run_key": f"key-{path}-{run_id}",

@@ -48,6 +48,13 @@ def summarize(note: str) -> None:
             summary.write(note + "\n")
 
 
+def repo_url() -> str:
+    """The repository that report commit links point at, from the Actions run, else AMD-AGI/AKLR on github.com."""
+    server = os.environ.get("GITHUB_SERVER_URL") or "https://github.com"
+    repository = os.environ.get("GITHUB_REPOSITORY") or "AMD-AGI/AKLR"
+    return f"{server.rstrip('/')}/{repository}"
+
+
 def refuse(message: str, title: str = "AgentX scope") -> NoReturn:
     annotate(message, "error", title)
     summarize(message)

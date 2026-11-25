@@ -222,7 +222,6 @@ def model_config(
                     **validate_env(target.get("advisory_env", {})),
                     **validate_env(serving.get("advisory_env", {})),
                 },
-                "report": config["report"],
             }
         )
     except (KeyError, TypeError, AttributeError) as error:

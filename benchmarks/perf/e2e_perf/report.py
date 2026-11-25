@@ -10,6 +10,8 @@ import sys
 from html import escape
 from pathlib import Path
 
+from perf_utils.gh import repo_url
+
 from e2e_perf.model_config import DEFAULT_CONFIG, group_key, group_path, load_config
 from e2e_perf.utils import INTERACTIVITY, SCHEMA, THROUGHPUT, pair, read_json, utc_now, write_json
 
@@ -446,7 +448,7 @@ def mismatch(results: dict, item: dict, run_id: str) -> str | None:
 def build(plan: Path, results_dir: Path, out: Path, run_url: str | None, config: Path) -> dict:
     """Write site/<group>/index.html and results.json for each measured group, the index and manifest.json."""
     loaded = load_config(config)
-    repo_url = loaded.get("report", {}).get("repo_url", "")
+    repo = repo_url()
     manifest = read_json(plan)
     entries = []
     for item in manifest["groups"]:
@@ -467,12 +469,12 @@ def build(plan: Path, results_dir: Path, out: Path, run_url: str | None, config:
         row = entry(item, results, run_url)
         if results is not None:
             (out / relative).mkdir(parents=True, exist_ok=True)
-            (out / relative / "index.html").write_text(render_group(results, row, repo_url))
+            (out / relative / "index.html").write_text(render_group(results, row, repo))
             shutil.copyfile(source, out / relative / "results.json")
         entries.append(row)
     site = {"schema": SCHEMA, "run_id": manifest["run_id"], "generated_at": utc_now(), "groups": entries}
     write_json(out / "manifest.json", site)
-    (out / "index.html").write_text(render_index(entries, repo_url, loaded["workloads"]))
+    (out / "index.html").write_text(render_index(entries, repo, loaded["workloads"]))
     return site
 
 

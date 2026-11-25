@@ -11,6 +11,8 @@ import sys
 from html import escape
 from pathlib import Path
 
+from perf_utils.gh import repo_url
+
 from agentx.git_history import landed
 from agentx.performance_analysis import (
     X,
@@ -21,10 +23,8 @@ from agentx.performance_analysis import (
     measured,
 )
 from agentx.utils import (
-    DEFAULT_CONFIG,
     REPO_ROOT,
     complete_measurement,
-    load_config,
     read_json,
     utc_now,
     validated_results,
@@ -1004,7 +1004,6 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--baseline-dir", type=Path, help="Previous site directory, with --plan")
     source.add_argument("--baseline-url", help="Previous site URL, with --plan")
     parser.add_argument("--out", type=Path, required=True, help="site directory")
-    parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument(
         "--git-dir",
         type=Path,
@@ -1026,16 +1025,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.plan,
                 args.results,
                 args.out,
-                config=args.config,
                 git_dir=args.git_dir,
                 baseline_dir=args.baseline_dir,
                 baseline_url=args.baseline_url,
             )
         else:
-            repo_url = load_config(args.config)["report"]["repo_url"].rstrip("/")
             results = read_json(args.results)
             baseline = read_json(args.baseline) if args.baseline and args.baseline.is_file() else None
-            write_report(results, baseline, args.out, repo_url, args.git_dir)
+            write_report(results, baseline, args.out, repo_url(), args.git_dir)
     except (OSError, ValueError, KeyError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1

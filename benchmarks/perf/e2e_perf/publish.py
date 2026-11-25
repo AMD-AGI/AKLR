@@ -11,7 +11,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from perf_utils.gh import ConfigError
+from perf_utils.gh import ConfigError, repo_url
 
 from e2e_perf.model_config import (
     DEFAULT_CONFIG,
@@ -101,8 +101,7 @@ def merge(
     latest = {"schema": SCHEMA, "updated_at": utc_now(), "groups": entries}
     write_json(latest_path, latest)
     rows = list(entries.values())
-    repo_url = loaded.get("report", {}).get("repo_url", "")
-    (section / "index.html").write_text(render_index(rows, repo_url, loaded["workloads"]))
+    (section / "index.html").write_text(render_index(rows, repo_url(), loaded["workloads"]))
     counts: dict[str, int] = {}
     for row in rows:
         counts[row["status"]] = counts.get(row["status"], 0) + 1

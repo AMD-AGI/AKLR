@@ -45,7 +45,7 @@ For a PR from a branch in this repository targeting `main`, add **`ci:agentx-mi3
 
 | Trigger | Model / target scope | Points | Duration per AKLR off/on measurement | Publish Pages |
 | --- | --- | --- | --- | --- |
-| PR label `ci:agentx-mi355x` | Enabled frameworks of the targets assigned to `agentx-mi355x`, of the models an allowlisted reviewer's `/agentx-mi355x` comment names | Recipe Pareto points | 600 seconds | No |
+| PR label `ci:agentx-mi355x` | Enabled frameworks of the targets assigned to `conductor-mi355x`, of the models an allowlisted reviewer's `/agentx-mi355x` comment names | Recipe Pareto points | 600 seconds | No |
 
 Notes:
 
@@ -60,7 +60,7 @@ Set the repository variable `AKLR_AGENTX_SCHEDULE_ENABLED` to `true` to enable t
 
 | Trigger | Model / target scope | Points | Duration per AKLR off/on measurement | Publish Pages |
 | --- | --- | --- | --- | --- |
-| Schedule | All enabled frameworks of the targets assigned to `agentx-mi355x` | Recipe Pareto points | 3600 seconds | Yes |
+| Schedule | All enabled frameworks of the targets assigned to `conductor-mi355x` | Recipe Pareto points | 3600 seconds | Yes |
 
 ### 1.4 Publishing to the Site
 
@@ -181,7 +181,7 @@ python3 -m agentx report \
   --out /data/agentx/staged-001/site
 ```
 
-Omit `--baseline-dir` when no baseline exists yet. `plan --models`, `--targets` and `--frameworks` support the multiple runs used by CI; this local example runs one. The report's `--results` points to the root containing `models/`, while sweep's `--out` points to the specific framework directory. Planning and execution must use the same `--run-id`.
+Omit `--baseline-dir` when no baseline exists yet. `plan --models`, `--targets` and `--frameworks` support the multiple runs used by CI; this local example runs one. The report's `--results` points to the root containing `models/`, while sweep's `--out` points to the specific framework directory. Planning and execution must use the same `--run-id`. AKLR commit links point at `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}`, which GitHub Actions sets; outside Actions they default to `https://github.com/AMD-AGI/AKLR`.
 
 ## 3. Configuration
 
@@ -205,7 +205,7 @@ models:
           gpu_name_pattern: '\bMI355X\b'
           gpu_arch: gfx950
           gpu_count: 8
-        runner_label: agentx-mi355x
+        runner_label: conductor-mi355x
         frameworks:
           sglang:
             recipe_source:
@@ -221,8 +221,6 @@ models:
                 framework: sglang
                 runner_pattern: mi355x
   # glm52-fp8 follows the same shape
-report:
-  repo_url: https://github.com/AMD-AGI/AKLR
 ```
 
 | Field | Description |
@@ -246,7 +244,6 @@ report:
 | `models.<id>.advisory_env` | Model-level environment overriding global values. Conflicts with keys already set in the recipe's `launch.env` are rejected; `plan` sets device variables itself |
 | `models.<id>.targets.<target-id>.advisory_env` | Target-level environment overriding model and global values; conflicts with the recipe's `launch.env` keys are also rejected |
 | `...frameworks.<framework>.advisory_env` | Framework-level environment overriding the levels above. Do not set the AKLR plugin switch here; the executor sets it per mode. The same conflict rule applies |
-| `report.repo_url` | Repository URL used for AKLR commit links (history links are temporarily hidden); not the Pages site URL |
 
 Targets and frameworks within a model share its `weights` and `precision`. Plan takes the server image from the framework's CI image in [`stack.json`](../../../stack.json); see section 3.2.
 
@@ -271,7 +268,7 @@ Add a separate entry under the existing `models:` mapping. Replace the angle-bra
           gpu_name_pattern: '\bMI355X\b'
           gpu_arch: gfx950
           gpu_count: 8
-        runner_label: agentx-mi355x
+        runner_label: conductor-mi355x
         frameworks:
           sglang:
             recipe_source:
@@ -319,7 +316,7 @@ export RUNNER_TOKEN
 
 bash scripts/agentx/register_runner.sh \
   --repo AMD-AGI/AKLR \
-  --label agentx-mi355x \
+  --label conductor-mi355x \
   --dir /opt/agentx-runner \
   --name "$(hostname -s)-agentx" \
   --hf-hub-dir /data/hf/hub
@@ -330,7 +327,7 @@ unset RUNNER_TOKEN
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--repo` | `AMD-AGI/AKLR` | Target repository; the token must come from this repository |
-| `--label` | `agentx-mi355x` | Custom label used by the workflow to schedule jobs |
+| `--label` | `conductor-mi355x` | Custom label used by the workflow to schedule jobs |
 | `--version` | `2.338.2` | GitHub Actions runner version to download; can be overridden |
 | `--dir` | `/opt/agentx-runner` | Runner installation directory |
 | `--name` | `<hostname>-agentx` | Runner name displayed on GitHub |
@@ -347,6 +344,6 @@ The script downloads the Linux x64 runner, registers it with `config.sh --unatte
 | `AKLR_AGENTX_HF_HUB_DIR` | Yes | Absolute path to the weights hub on the runner, such as `/data/hf/hub` |
 | `AKLR_AGENTX_SCHEDULE_ENABLED` | To enable scheduled runs | Set to the string `true`; controls scheduled triggers only, independently of manual or PR label triggers |
 
-The selected target's `runner_label` in `agentx.yaml` must match registration's `--label`; both are `agentx-mi355x` in this example.
+The selected target's `runner_label` in `agentx.yaml` must match registration's `--label`; both are `conductor-mi355x` in this example.
 
 2. To publish reports, set the build and deployment source to **GitHub Actions** under **Settings → Pages**. The publish job pushes as the `aklr-agentx-ci` GitHub App. It reads the secrets `AKLR_AGENTX_BOT_APP_ID` and `AKLR_AGENTX_BOT_PRIVATE_KEY` and the variable `AKLR_AGENTX_BOT_LOGIN` (`aklr-agentx-ci[bot]`) from the `agentx-bot` environment, whose deployment branches allow only `main`.
