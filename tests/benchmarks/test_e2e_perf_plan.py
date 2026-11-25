@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -220,3 +221,19 @@ def test_workflow_queue_allowlist_matches_the_allowlist_file():
     assert "format('e2e-perf-pr-{0}', github.event.pull_request.number)" in concurrency["group"]
     assert "format('e2e-perf-refused-{0}', github.run_id)" in concurrency["group"]
     assert concurrency["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
+
+
+@pytest.mark.parametrize("name", ["e2e-perf-ci.yaml", "agentx-ci.yaml"])
+def test_workflow_run_scripts_are_valid_bash(name):
+    workflow = yaml.safe_load((Path(DEFAULT_CONFIG).parents[3] / ".github/workflows" / name).read_text())
+    scripts = [
+        (job_id, step.get("name", step["run"].splitlines()[0]), step["run"])
+        for job_id, job in workflow["jobs"].items()
+        for step in job.get("steps", [])
+        if "run" in step and step.get("shell", "bash") == "bash"
+    ]
+    assert scripts
+    for job_id, step_name, script in scripts:
+        script = re.sub(r"\$\{\{.*?\}\}", "EXPR", script, flags=re.S)
+        check = subprocess.run(["bash", "-n"], input=script, capture_output=True, text=True)
+        assert check.returncode == 0, f"{job_id} / {step_name}: {check.stderr}"
