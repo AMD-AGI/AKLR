@@ -8,10 +8,13 @@ declines and checks, and that its decisions read nothing a rank has alone; the g
 of a gloo group, with HIP's calls failing where a test says; the committed schema."""
 
 import ast
+import contextlib
 import datetime
 import json
 import multiprocessing
+import os
 import sys
+import tempfile
 import time
 import types
 from types import SimpleNamespace
@@ -26,7 +29,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins import vllm as plugin
-from aklr.plugins.vllm.models.kimi_k3.latent_moe import api, failstop
+from aklr.plugins.vllm.models.kimi_k3.latent_moe import api, baseline, failstop
 from aklr.plugins.vllm.models.kimi_k3.latent_moe.contract import KIMI_K3_LATENT_MOE_TAIL
 
 TP, HIDDEN, LATENT = 8, 7168, 3584
@@ -121,6 +124,58 @@ def test_a_rank_outside_the_sum_changes_the_out():
             changed = [dict(a) for a in group]
             changed[r][name] = torch.zeros_like(group[r][name])
             assert not torch.equal(reference(changed)[0], base), (r, name)
+
+
+def _fake_vllm_tp(monkeypatch):
+    """vLLM's config and parallel state as the baseline reaches them, recording VLLM_RPC_BASE_PATH as each group set-up
+    call finds it (where vLLM's message queues bind their sockets)."""
+    seen = []
+    config = types.ModuleType("vllm.config")
+    config.VllmConfig = lambda: None
+    config.set_current_vllm_config = lambda _: contextlib.nullcontext()
+    state = types.ModuleType("vllm.distributed.parallel_state")
+    state.model_parallel_is_initialized = lambda: False
+    state.init_distributed_environment = lambda **_: seen.append(os.environ.get("VLLM_RPC_BASE_PATH"))
+    state.initialize_model_parallel = lambda **_: seen.append(os.environ.get("VLLM_RPC_BASE_PATH"))
+    state.get_tp_group = lambda: SimpleNamespace(world_size=TP, rank_in_group=3, all_reduce=lambda x: x)
+    distributed = types.ModuleType("vllm.distributed")
+    distributed.parallel_state = state
+    for name, module in (("vllm", types.ModuleType("vllm")), ("vllm.config", config),
+                         ("vllm.distributed", distributed), ("vllm.distributed.parallel_state", state)):  # fmt: skip
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: TP)
+    monkeypatch.setattr(dist, "get_rank", lambda: 3)
+    return seen
+
+
+# validation's task directory, nested past what a Unix socket path holds once vLLM adds /<uuid4> (107 bytes)
+NESTED_TMPDIR = (
+    "/tmp/tmp.KzybNYFo4v/aklr-validation-f5qs1sa8/0-0-cuda-0+cuda-1+cuda-2+cuda-3/aklr-validation-g5c0"
+)
+
+
+@pytest.mark.parametrize(
+    ("tmpdir", "preset", "during"),
+    [(NESTED_TMPDIR, None, "/tmp"), ("/tmp/short", None, None), (NESTED_TMPDIR, "/x", "/x")],
+    ids=["nested_tmpdir", "short_tmpdir", "set_by_the_caller"],
+)
+def test_vllms_tp_group_binds_its_sockets_where_a_unix_socket_path_fits(monkeypatch, tmpdir, preset, during):
+    """vLLM's TP group set-up binds its message queue's ZMQ sockets at <VLLM_RPC_BASE_PATH>/<uuid4>, the base by default
+    the temp directory. Under validation's nested TMPDIR that passes 107 bytes and the bind fails (ZMQError: ipc path
+    ... is longer than ...), so the baseline sets up the group with the base at /tmp; a short temp directory and a base
+    the caller set are left alone, and the variable is as it was afterwards."""
+    seen = _fake_vllm_tp(monkeypatch)
+    monkeypatch.setattr(tempfile, "tempdir", tmpdir)
+    if preset is None:
+        monkeypatch.delenv("VLLM_RPC_BASE_PATH", raising=False)
+    else:
+        monkeypatch.setenv("VLLM_RPC_BASE_PATH", preset)
+    _, rank = baseline._vllm_tp(TP, torch.device("cpu"))
+    assert rank == 3 and seen == [during, during]
+    assert os.environ.get("VLLM_RPC_BASE_PATH") == preset
+    base = during or tmpdir
+    assert len(f"{base}/{'0' * 36}") <= 107
 
 
 # ---------------------------------------------------------------- the committed kernel's layout, for eight ranks

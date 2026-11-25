@@ -6,6 +6,10 @@ deployment's), vLLM's RMSNorm layer, the addmm into this rank's columns of the s
 writes it), and the all-reduce of the shared output. vLLM's TP group is set up over the caller's process group on the
 first call."""
 
+import contextlib
+import os
+import tempfile
+
 import torch.distributed as dist
 
 from aklr.core.contract.baseline import DistOpBaseline
@@ -14,6 +18,24 @@ __all__ = ["KimiK3LatentMoeTailBaseline"]
 
 # vLLM's RMSNorm layers by (width, eps, device): made once, not in a timed call
 _NORMS: dict = {}
+# a Unix socket's path holds at most 107 bytes; vLLM's message queue binds one at <VLLM_RPC_BASE_PATH>/<uuid4>
+_SOCKET_PATH_MAX, _UUID_LEN = 107, 36
+
+
+@contextlib.contextmanager
+def _short_rpc_base():
+    """vLLM's RPC base directory (VLLM_RPC_BASE_PATH, by default the temp directory) short enough for the sockets
+    its TP group's message queue binds there: the temp directory itself where it is, else /tmp, as vLLM's default is
+    without TMPDIR (validation gives each task a TMPDIR nested deep enough to pass the limit). A base the caller set
+    is kept, and the variable is put back afterwards."""
+    if os.environ.get("VLLM_RPC_BASE_PATH") or len(tempfile.gettempdir()) + 1 + _UUID_LEN <= _SOCKET_PATH_MAX:
+        yield
+        return
+    os.environ["VLLM_RPC_BASE_PATH"] = "/tmp"
+    try:
+        yield
+    finally:
+        del os.environ["VLLM_RPC_BASE_PATH"]
 
 
 def _vllm_tp(tp_size, device):
@@ -28,7 +50,7 @@ def _vllm_tp(tp_size, device):
     if not ps.model_parallel_is_initialized():
         if not dist.is_initialized() or dist.get_world_size() != tp_size:
             raise NotImplementedError(f"vLLM's tail needs a group of {tp_size} ranks")
-        with set_current_vllm_config(VllmConfig()):
+        with set_current_vllm_config(VllmConfig()), _short_rpc_base():
             ps.init_distributed_environment(
                 world_size=tp_size, rank=dist.get_rank(), local_rank=device.index, backend="nccl"
             )
