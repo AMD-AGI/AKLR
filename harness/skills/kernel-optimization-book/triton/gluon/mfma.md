@@ -23,10 +23,10 @@ sources:
   - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/LinearLayoutConversions.cpp
   - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Dialect.cpp
   - ROCm/aiter@dbd8bf5:aiter/ops/shuffle.py
-cases:
   - cases/a8w8_gluon_n3072_n7168.md
   - cases/dsa_sparse_mla_gluon.md
   - cases/fp8_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim3072.md
   - cases/mxfp4_moe_gluon_dim6144.md
 ---
 

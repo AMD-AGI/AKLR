@@ -7,6 +7,11 @@ gens: [gfx950]
 dtypes: [fp8, bf16, mxfp4, mxfp8]
 regimes: [kernel-A/B, autotune, tuning run]
 flydsl: 0.3.2
+sources:
+  - cases/bf16_n6144_k16384_counter_fold.md
+  - cases/biased_topk_eager_host_time.md
+  - cases/fused_moe_shuffled_16x16_few_tokens.md
+  - cases/mla_causal_bf16_fixed_rows.md
 ---
 
 # Measuring a GEMM change

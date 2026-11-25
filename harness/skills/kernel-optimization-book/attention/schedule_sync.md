@@ -10,6 +10,7 @@ flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:74
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:1754
+  - cases/fp8_paged_mqa_logits.md
 ---
 
 # Scheduling, synchronisation and pipelining in an attention kernel

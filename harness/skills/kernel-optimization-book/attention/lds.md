@@ -7,6 +7,9 @@ gens: [gfx950]
 dtypes: [bf16, fp8]
 regimes: [many query rows, dQ dK dV, transposed operand, sparse]
 flydsl: 0.3.2
+sources:
+  - cases/mla_causal_bf16_fixed_rows.md
+  - cases/mla_sparse_fp8_kv_pool.md
 ---
 
 # LDS layout and transposed reads in an attention kernel

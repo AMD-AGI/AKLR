@@ -12,9 +12,10 @@ sources:
   - ROCm/aiter@dbd8bf5:aiter/fused_moe.py
   - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/moe_sorting.py
   - ROCm/aiter@dbd8bf5:aiter/configs/model_configs/glm5_fp4_tuned_fmoe.csv
-cases:
+  - cases/fused_moe_interleave_swiglu.md
   - cases/fused_moe_shuffled_16x16.md
   - cases/fused_moe_shuffled_16x16_few_tokens.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # MXFP4 fused MoE at 8–64 tokens: one graph node less

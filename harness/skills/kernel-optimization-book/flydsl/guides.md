@@ -12,6 +12,8 @@ sources:
   - ROCm/FlyDSL@dd8373349:.claude/skills/kernel-code-cleanup/SKILL.md
   - ROCm/FlyDSL@dd8373349:python/flydsl
   - ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py
+  - cases/a8w8_n4096_k_sweep.md
+  - cases/fused_moe_shuffled_16x16.md
 ---
 
 # FlyDSL's own skills

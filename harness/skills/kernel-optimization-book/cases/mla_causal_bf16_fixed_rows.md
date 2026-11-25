@@ -81,7 +81,7 @@ workgroups, which this kernel does not do, is [attention/split_kv](../attention/
   log2 e, the rows past the query's causal count are set to −1e30, and the chunk is folded into the state as one
   online-softmax step: the new max, `exp2(old max − new max)` on the sum and on the accumulators, `exp2` of the
   scores; each `exp2` carries `fastmath="afn"` (`../attention/softmax.md` §2, §6.2; `../flydsl/attention.md`
-  § softmax §2).
+  § softmax §2; `../flydsl/language/limits.md` § Unclassified).
 - **The fast path** runs first in every wave, whatever its request holds. It reads entries 8b to 8b + 7 of the page
   table for request b (clamped into the table and the pool), folds that one chunk with the causal count of an 8-row
   request, i + 1 rows for query token i, then normalizes and stores `output` and `lse`.

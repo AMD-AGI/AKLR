@@ -6,10 +6,11 @@ dtypes: [fp8, bf16]
 regimes: ["M 1-64", "M 128-8193", tiny-M K-group folding, ragged-M, split-k]
 gens: [gfx950]
 triton: 3.8.0
-cases:
+sources:
   - cases/a8w8_gluon_n3072_n7168.md
   - cases/a8w8_n4096_k_sweep.md
   - cases/bf16_triton_small_m.md
+  - cases/fp8_moe_gluon_dim3072.md
 ---
 # GEMM in Triton and Gluon (gfx950)
 The Triton side of [`../gemm/`](../gemm/INDEX.md): how 24 Gluon fp8 block-scaled (a8w8 blockwise) GEMMs and two plain-Triton bf16 GEMMs for M ≤ 64 of the library (154 Triton and Gluon kernels for gfx950: [kernels/kernel_library.md](kernels/kernel_library.md) §1) are cut by M, how their K loops feed the matrix core, and what was measured on them. The `../gemm/` cards cover the related mechanisms. The fp8 shapes are named n3072 and n7168 after their N, the bf16 ones by N × K (§1's table); m or M is the row count of `a`.

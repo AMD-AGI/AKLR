@@ -6,12 +6,17 @@ dtypes: [fp8, mxfp4, bf16, fp32]
 regimes: [all]
 gens: [gfx950]
 triton: 3.8.0
-cases:
+sources:
   - cases/a8w8_gluon_n3072_n7168.md
+  - cases/bf16_triton_small_m.md
   - cases/fp8_moe_gluon_dim3072.md
+  - cases/gated_attention_gluon.md
   - cases/gdn_chunked_gluon.md
   - cases/gdn_step_gluon.md
+  - cases/moe_router_experts_gluon_dim4096.md
   - cases/mxfp4_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim6144.md
+  - cases/rmsnorm_triton_hidden6144.md
 ---
 
 # Numerics of a Triton or Gluon kernel on gfx950

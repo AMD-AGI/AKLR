@@ -21,9 +21,12 @@ sources:
   - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/gemm_kernels.py
   - ROCm/aiter@dbd8bf5:aiter/tuned_gemm.py
   - ROCm/aiter@dbd8bf5:csrc/gemm_a16w16/gemm_a16w16_tune.py
-cases:
+  - cases/a8w8_n4096_k_sweep.md
   - cases/bf16_k4096_splitk_hgemm.md
+  - cases/bf16_n6144_k16384_counter_fold.md
+  - cases/bf16_ring_refill_barrier.md
   - cases/bf16_small_m_column_strip.md
+  - cases/biased_topk_eager_host_time.md
   - cases/k3_bf16_splitk_narrow_n.md
 ---
 

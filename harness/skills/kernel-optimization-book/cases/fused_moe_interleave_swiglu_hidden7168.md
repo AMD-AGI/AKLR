@@ -281,13 +281,13 @@ What the three share:
 ### 1. Give stage 2's weight load its cache policy by patching aiter's builder (96 local of 384 experts, calls with `num_local_tokens`, 1024 tokens)
 
 From a fourth kernel of this layer shape, which the rest of this page does not describe: 96 local of 384 experts at
-inter 3072, for calls that pass `num_local_tokens`, written for 1024 tokens. It runs aiter's sort and aiter's two
-FlyDSL stages, retiled, and compiles stage 2 with a patched builder. aiter's mixed stage-2 builder takes the tuned
-row's `b_nt` and discards it (`del b_nt`), so its w2 load carries no cache modifier, where stage 1's B load passes
-`cache_modifier=b_nt`. That kernel restores it without a copy of the builder: on the first stage-2 compile, in a
-cached function, it rewrites the installed builder's source, dropping `del b_nt`, adding `cache_modifier=b_nt` to
-the w2 load and `_nt<b_nt>` to the kernel name so that the variants do not share a cache entry, and it fails if an
-anchor is not found exactly once. `mm` is aiter's module that holds the builder; `pm_tag` is part of aiter's
+inter 3072, for calls that pass `num_local_tokens`, written for 1024 tokens. It runs aiter's sort and aiter's two FlyDSL
+stages, retiled, and compiles stage 2 with a patched builder. aiter's mixed stage-2 builder takes the tuned row's `b_nt`
+and discards it (`del b_nt`), so its w2 load carries no cache modifier, where stage 1's B load passes
+`cache_modifier=b_nt`. That kernel restores it without a copy of the builder: on the first stage-2 compile, in a cached
+function, it rewrites the installed builder's source, dropping `del b_nt`, adding `cache_modifier=b_nt` to the w2 load
+and `_nt<b_nt>` to the kernel name so that the variants do not share a cache entry (`../gemm/autotune.md` §5), and it
+fails if an anchor is not found exactly once. `mm` is aiter's module that holds the builder; `pm_tag` is part of aiter's
 kernel-name string, left as it is.
 
 ```python

@@ -14,7 +14,23 @@ sources:
   - ROCm/aiter@dbd8bf5:aiter/tuned_gemm.py
   - ROCm/aiter@dbd8bf5:csrc/py_itfs_cu/gemm_common.cu
   - ROCm/aiter@dbd8bf5:csrc/gemm_a16w16/gemm_a16w16_tune.py
-cases: [cases/k3_bf16_splitk_narrow_n.md]
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/a8w8_n4096_k_sweep.md
+  - cases/a8w8_row_major_a_scale.md
+  - cases/a8w8_small_n_large_k.md
+  - cases/bf16_glm52_narrow_n.md
+  - cases/bf16_glm52_wide_n.md
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/bf16_n6144_k16384_counter_fold.md
+  - cases/bf16_small_m_column_strip.md
+  - cases/biased_topk_eager_host_time.md
+  - cases/fused_moe_interleave_swiglu.md
+  - cases/fused_moe_interleave_swiglu_hidden7168.md
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/k3_bf16_band_stream.md
+  - cases/k3_bf16_short_k_large_m.md
+  - cases/k3_bf16_splitk_narrow_n.md
+  - cases/k3_bf16_splitk_wide_n.md
 ---
 
 # GEMM at small M

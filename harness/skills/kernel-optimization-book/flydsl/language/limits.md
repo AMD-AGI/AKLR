@@ -18,6 +18,9 @@ sources:
   - ROCm/FlyDSL@dd8373349:lib/Conversion/FlyToROCDL/FastMathOps.cpp
   - ROCm/FlyDSL@dd8373349:docs/language/arithmetic_types.md
   - ROCm/FlyDSL@dd8373349:docs/architecture_guide.md
+  - cases/bf16_glm52_narrow_n.md
+  - cases/k3_bf16_splitk_narrow_n.md
+  - cases/mla_causal_bf16_fixed_rows.md
 ---
 
 # FlyDSL v0.3.2 limits

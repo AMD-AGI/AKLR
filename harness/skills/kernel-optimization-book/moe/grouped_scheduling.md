@@ -25,6 +25,8 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py:1164
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py:1725
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py:1866
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/k3_bf16_short_k_large_m.md
 ---
 
 # Ordering and placing tiles across groups in a grouped GEMM
@@ -238,7 +240,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   persistent (BF16:263-268); an unconditional `s_barrier` added at the boundary does not fix it. Another persistent
   form worth racing: *(field, E36)* a dense persistent grid with
   no workgroup barrier between tiles (C staged per wave, the next tile's stages filled by the last K-blocks) beat
-  one tile per workgroup by 3–5% (`../gemm/grid_pricing.md` §10).
+  one tile per workgroup by 3–5% (`../gemm/grid_pricing.md` §10; `../cases/k3_bf16_short_k_large_m.md`).
 - A persistent grid capped below the CU count exists to leave CUs to a co-running kernel, not for speed (Turbo:
   BF16:622-625; FP8:2669-2670).
 - Which variable-K loop body to run (chunked masked or exact-trip) is keyed on the per-group contraction
@@ -278,7 +280,7 @@ its paired rounds record the NT total 0.88% less time (better in 6 of 6 rounds),
 0.84% less time against the same ramp: over no skew, the 128-rank ramp is level on the total and differs only
 on single dgrad cells (MX4:102-115). Measure a launch skew against no delay, not against another ramp.
 *(field, E40)* On a dense persistent grid, delaying half of each XCD's workgroups paid 1–3% at 6–20 tiles per workgroup
-and nothing at ~60 (`../gemm/grid_pricing.md` §10).
+and nothing at ~60 (`../gemm/grid_pricing.md` §10; `../cases/k3_bf16_short_k_large_m.md`).
 
 ## 9. Why a grouped GEMM trails one large GEMM
 - In one launch, CUs run different groups at the same time and their weight slabs compete for L2 (inferred, not

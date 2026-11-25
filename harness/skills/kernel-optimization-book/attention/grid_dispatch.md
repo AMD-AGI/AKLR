@@ -11,6 +11,8 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:1000
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:4418
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_interface.py:1075
+  - cases/dsa_sparse_mla_8_heads.md
+  - cases/fp8_paged_mqa_logits.md
 ---
 
 # Grid and dispatch for an attention kernel

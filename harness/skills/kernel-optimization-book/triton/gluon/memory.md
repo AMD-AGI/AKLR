@@ -30,12 +30,13 @@ sources:
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/MembarUtility.cpp
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/TritonGPUToLLVM.cpp
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/Utility.cpp
-cases:
   - cases/a8w8_gluon_n3072_n7168.md
+  - cases/dsa_sparse_mla_gluon.md
   - cases/fp8_moe_gluon_dim3072.md
   - cases/gated_attention_gluon.md
   - cases/moe_router_experts_gluon_dim4096.md
   - cases/mxfp4_moe_gluon_dim6144.md
+  - cases/rmsnorm_triton_hidden6144.md
 ---
 
 # Moving data in a Gluon kernel on gfx950

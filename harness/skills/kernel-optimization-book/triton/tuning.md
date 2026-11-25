@@ -4,7 +4,18 @@ kind: method
 ops: [gemm, moe, attention, gdn]
 gens: [gfx950]
 triton: 3.8.0
-cases: [cases/moe_router_experts_gluon_dim4096.md]
+sources:
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/bf16_triton_small_m.md
+  - cases/dsa_sparse_mla_gluon.md
+  - cases/fp8_moe_gluon_dim3072.md
+  - cases/gated_attention_gluon.md
+  - cases/gdn_chunked_gluon.md
+  - cases/gdn_step_gluon.md
+  - cases/moe_router_experts_gluon_dim4096.md
+  - cases/mxfp4_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim6144.md
+  - cases/rmsnorm_triton_hidden6144.md
 ---
 
 # Tuning a Triton or Gluon kernel size by size

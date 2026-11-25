@@ -11,6 +11,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:427
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:1036
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:1614
+  - cases/fp8_paged_mqa_logits.md
 ---
 
 # Registers, occupancy and MFMA–VALU overlap in an attention kernel

@@ -144,9 +144,10 @@ are of the earlier builds, but for E18 on the 257/512 large-m kernel.
   change what runs.
 - **The 257/512 large-m kernel's head launch bounds its sorted-id reads.** At m 2048 and 4096 the last 32-row tile of
   the head launch's scale re-sort reads sorted ids up to index 51,327 and 86,207 (9 past the end) from a buffer of
-  51,319 and 86,199. Its earlier build read them through an unbounded buffer descriptor; the kernel gives the descriptor
-  the buffer's size, so those reads return 0. The rows they feed lie past the valid count and their scales were already
-  stored as 0, so the output does not change (code read).
+  51,319 and 86,199. Its earlier build read them through an unbounded buffer descriptor
+  (`../pitfalls/fault_in_the_wrong_kernel.md` § Root cause); the kernel gives the descriptor the buffer's size, so
+  those reads return 0. The rows they feed lie past the valid count and their scales were already stored as 0, so
+  the output does not change (code read).
 - **At 1024 tokens the 257/512 large-m kernel's stage 1 does not read the activation scales in token order.** With that
   read (the build before), two calls with different inputs on two streams gave a wrong output in about 0.35% of outputs:
   a few tokens each with one route row wrong, by up to the output's mean magnitude. A single call beside an unrelated
@@ -175,9 +176,10 @@ are of the earlier builds, but for E18 on the 257/512 large-m kernel.
 - **257 experts, inter 256, at m 4 and 128: no kernel reaches 1.03.** The fold kernel is not built for them and the
   all-m kernel reads 0.137 and 0.314 *(field, E1)*. At m 4, 16, 128, 512 and 1024 the all-m kernel repacks `w1`, `w2`
   and their scales into a record layout on every call (two extra launches, one per weight with its scales): about 0.64
-  GB read and as much written per call (estimated from the tensor sizes). Those five token counts read 0.137–0.431, its
-  other token counts below 1.03 0.741–0.925 *(field, E1)*. A kernel that keeps nothing derived from its arguments
-  between calls cannot keep a repacked weight, and the 16×16-preshuffled layout is the one its stages read without
+  GB read and as much written per call (estimated from the tensor sizes; `../moe/grouped_host_autotune.md` §4). Those
+  five token counts read 0.137–0.431, its other token counts below 1.03 0.741–0.925 *(field, E1)*. A kernel that keeps
+  nothing derived from its arguments between calls cannot keep a repacked weight
+  (`../pitfalls/state_kept_across_calls.md`), and the 16×16-preshuffled layout is the one its stages read without
   repacking.
 - **At m 8–64 two 257-expert inter-256 kernels cover the same token counts:** the fold kernel reads 1.079–1.113; the
   all-m kernel reads 0.180–0.925 there *(field, E1)*, so the fold kernel is 1.20–6.0× faster (estimated from the two
@@ -387,7 +389,8 @@ or an atomic stage 2.**
     workgroups and expert-stationary: a workgroup holds one panel of w2 (an expert × 1/24 of the output columns) in
     registers while the next panel's loads are in flight and streams the expert's sorted rows 32 at a time through an
     LDS double buffer, writing unweighted MXFP4 route rows; at 2048 and 4096 it takes the experts in descending
-    route-count order. A route-sum kernel then adds each token's rows, weighted, in route order in fp32.
+    route-count order (`../moe/grouped_scheduling.md` §5). A route-sum kernel then adds each token's rows, weighted, in
+    route order in fp32.
   - The persistent expert-stationary stage 2, paired against the version before it was added: about +1.5%, +6.1%
     and +4.7% at 1024, 2048 and 4096 *(field, E10)*.
 - The 65-expert large-m kernel, m 256, 2048, 4096: the 33-expert kernel's pipeline with the constants of its 2048-token
@@ -395,20 +398,20 @@ or an atomic stage 2.**
   separate workgroups; both GEMMs derive their tiles from the expert counts, so no tile-list launch runs. Stage 1 fills
   its LDS panels straight from the routed rows of the quantized input, the next panel prefetched into registers in the
   last slice of each K step into double-buffered LDS; experts' short last tiles run 32- and 64-row copies of the tile
-  body. Stage 2 is software-pipelined, the next activation slab and weights in flight during the current step's MFMAs, 8
-  waves of 32 columns per 256-column tile, and writes MXFP4 route rows that a route-sum launch adds in route order in
-  fp32. At 256 tokens both weights are streamed non-temporally. The direct copy of the activations into LDS with the
-  first weight slice loaded a step ahead, paired against the version before it was added: about +7.0% and +7.2% at 2048
-  and 4096 *(field, E13)*.
+  body (`../moe/grouped_tile_pricing.md` §5). Stage 2 is software-pipelined, the next activation slab and weights in
+  flight during the current step's MFMAs, 8 waves of 32 columns per 256-column tile, and writes MXFP4 route rows that a
+  route-sum launch adds in route order in fp32. At 256 tokens both weights are streamed non-temporally. The direct copy
+  of the activations into LDS with the first weight slice loaded a step ahead, paired against the version before it was
+  added: about +7.0% and +7.2% at 2048 and 4096 *(field, E13)*.
 - The 65-expert all-m kernel, m 512 and 1024 (at or above 1.03 at 1024), five launches: a collect launch (per expert,
   ballot ranks in input order; extra workgroups quantize the input) and a compact launch (expert-major 64-row blocks
   padded with a sentinel row); stage 1 on 64-row tiles, 4 waves of 32 + 32 columns sharing the tile's activation rows
-  through two alternating LDS pages, the next K chunk loaded through a loop-carried `range(..., init=...)`, SiLU·up
-  through LDS and one lane per row quantizing its 32 values; stage 2 on 64-row tiles, 4 waves × 128 columns, with the
-  tile's whole K = 2048 activation panel loaded into LDS once so the MFMA loop has no cross-wave barrier, MFMA operands
-  swapped so a lane holds 4 adjacent columns, 8-byte stores of the weighted rows; a route-sum launch adds each token's 9
-  rows in route order. No atomics on data at any token count at or above 1.03 (the m 4–128 routing takes route ranks
-  with LDS atomics; results stay indexed by route).
+  through two alternating LDS pages, the next K chunk loaded through a loop-carried `range(..., init=...)`
+  (`../flydsl/guides.md` § prefetch-data-load), SiLU·up through LDS and one lane per row quantizing its 32 values; stage
+  2 on 64-row tiles, 4 waves × 128 columns, with the tile's whole K = 2048 activation panel loaded into LDS once so the
+  MFMA loop has no cross-wave barrier, MFMA operands swapped so a lane holds 4 adjacent columns, 8-byte stores of the
+  weighted rows; a route-sum launch adds each token's 9 rows in route order. No atomics on data at any token count at or
+  above 1.03 (the m 4–128 routing takes route ranks with LDS atomics; results stay indexed by route).
 - The 33-expert kernel changes structure with m across all three regimes. Every GEMM maps its workgroup id to a
   contiguous slice of the tile order per XCD (`../gemm/schedule_and_locality.md` §2):
 

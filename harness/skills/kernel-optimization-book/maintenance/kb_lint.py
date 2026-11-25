@@ -186,13 +186,14 @@ HOST_REPOSITORY = (
 )
 # In files that are not pages (ISA snapshots, review notes) hexadecimal words and `#<n>` are the source's own.
 HOST_REPOSITORY_ALWAYS = (0, 3, 5, 6)
-# `sources` names public source of another repository at a fixed revision (a commit or a tag, not a branch), or a
-# URL; a note in parentheses may follow either. A kernel with no public copy is no source: it is written up as a
-# case page, which the page lists under `cases`.
+# `sources` names what a page rests on. Public source of another repository at a fixed revision (a commit or a
+# tag, not a branch), or a URL; a note in parentheses may follow either. And the book's own case pages, as paths
+# from its root: a kernel with no public copy is no source, it is written up as a case page.
 SOURCE_RE = re.compile(
     r"^(?:https?://\S+|[\w.-]+/[\w.-]+@(?!(?:main|master|HEAD)(?:[: ]|$))[\w.-]+(?::\S+)?)(?: \([^()]*\))?$"
 )
 CASES_FOLDER = "cases"
+CASE_SOURCE_RE = re.compile(rf"^{CASES_FOLDER}/[\w.-]+\.md$")
 CODE_SECTION_RE = re.compile(r"^## Code\s*$", re.MULTILINE)
 ABSOLUTE_RE = re.compile(r"\b(always|never)\b", re.IGNORECASE)
 MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s#]+)(?:#[^)]*)?\)")
@@ -509,23 +510,26 @@ def check_front(page: Page) -> Iterable[Issue]:
             1,
             f"pinned to FlyDSL {flydsl}, the skill is on {PINNED_FLYDSL}: re-check",
         )
-    sources = front.get("sources")
-    for entry in sources if isinstance(sources, list) else [sources] if sources else []:
-        if CHECK_HOST_REPOSITORY and not SOURCE_RE.match(str(entry)):
+    sources = _sources(page)
+    for entry in sources:
+        if CASE_SOURCE_RE.match(entry):
+            continue  # a case page of the book: check_cases
+        if CHECK_HOST_REPOSITORY and not SOURCE_RE.match(entry):
             yield Issue(
                 "error",
                 page.rel,
                 1,
-                f"`sources` entry `{str(entry)[:60]}` is not `owner/repo@revision[:path]`, at a commit or a tag, or "
-                "a URL: a kernel with no public copy is written up as a case page and listed under `cases`",
+                f"`sources` entry `{entry[:60]}` is not `owner/repo@revision[:path]`, at a commit or a tag, a URL, "
+                f"or a case page of the book (`{CASES_FOLDER}/<name>.md`): a kernel with no public copy is written "
+                "up as a case page",
             )
-    if kind == "technique" and not sources and not front.get("cases"):
+    if kind == "technique" and not sources:
         yield Issue(
             "error",
             page.rel,
             1,
-            "front matter lacks `sources` or `cases` (kind technique): the public source the technique was read "
-            "from, or the case pages that show its code",
+            "front matter lacks `sources` (kind technique): the public source the technique was read from, or "
+            "the case pages that show its code",
         )
     if kind == "case":
         if front.get("accuracy") not in ("bitwise", "bounded"):
@@ -542,6 +546,12 @@ def _pins_triton(page: Page) -> bool:
     return page.rel.startswith("triton/") or (
         page.kind == "case" and bool(front.get("triton")) and not front.get("flydsl")
     )
+
+
+def _sources(page: Page) -> list[str]:
+    """The entries of a page's `sources`, as written."""
+    sources = (page.front or {}).get("sources")
+    return [str(entry) for entry in (sources if isinstance(sources, list) else [sources] if sources else [])]
 
 
 def _is_case(path: Path) -> bool:
@@ -567,9 +577,38 @@ def linked_cases(page: Page) -> dict[str, int]:
     return found
 
 
+_CASE_LINKS: tuple[tuple, dict[str, frozenset[Path]]] | None = None
+
+
+def _case_links() -> dict[str, frozenset[Path]]:
+    """Each case page, as a path from the skill's root, with the files its text links. Read again when a file of
+    the cases folder changes."""
+    global _CASE_LINKS
+    folder = SKILL_ROOT / CASES_FOLDER
+    files = sorted(folder.glob("*.md")) if folder.is_dir() else []
+    state = (str(folder), tuple((f.name, f.stat().st_mtime_ns, f.stat().st_size) for f in files))
+    if _CASE_LINKS is None or _CASE_LINKS[0] != state:
+        links: dict[str, frozenset[Path]] = {}
+        for file in files:
+            if not _is_case(file):
+                continue
+            case = read_page(file)
+            targets = (_resolve(case, target) for _, target in _links(case))
+            links[f"{CASES_FOLDER}/{file.name}"] = frozenset(path.resolve() for path in targets if path)
+        _CASE_LINKS = (state, links)
+    return _CASE_LINKS[1]
+
+
+def citing_cases(page: Page) -> set[str]:
+    """The case pages whose text links this page, as paths from the skill's root."""
+    here = page.path.resolve()
+    return {case for case, targets in _case_links().items() if here in targets}
+
+
 def check_cases(page: Page) -> Iterable[Issue]:
-    """`cases` lists the case pages a page draws on: exactly the ones its text links. A case page is a page of kind
-    `case` in cases/, and has no `cases` of its own."""
+    """The case pages among a page's `sources` are the ones it draws on and the ones that draw on it: exactly those
+    its text links and those whose text links it. A case page is a page of kind `case` in cases/, and lists no
+    case page."""
     in_folder = page.rel.startswith(f"{CASES_FOLDER}/")
     if (page.kind == "case") != in_folder:
         yield Issue(
@@ -578,37 +617,44 @@ def check_cases(page: Page) -> Iterable[Issue]:
             1,
             f"a page of kind `case` goes in `{CASES_FOLDER}/`, which holds no page of another kind",
         )
-    listed = (page.front or {}).get("cases")
-    entries = [str(e) for e in (listed if isinstance(listed, list) else [listed] if listed else [])]
+    if (page.front or {}).get("cases"):
+        yield Issue(
+            "error", page.rel, 1, "`cases` is not a field: a page lists its case pages under `sources`"
+        )
+    entries = [entry for entry in _sources(page) if CASE_SOURCE_RE.match(entry)]
     if page.kind == "case":
         if entries:
-            yield Issue(
-                "error", page.rel, 1, "`cases` is for a page that draws on cases; a case page has none"
-            )
+            yield Issue("error", page.rel, 1, "a case page lists no case page under `sources`")
         return
     listed_cases = set()
     for entry in entries:
-        path = SKILL_ROOT / entry
-        if entry == f"{CASES_FOLDER}/{path.name}" and _is_case(path):
+        if _is_case(SKILL_ROOT / entry):
             listed_cases.add(entry)
         else:
             yield Issue(
                 "error",
                 page.rel,
                 1,
-                f"`cases` entry `{entry}` names no page of kind `case` in `{CASES_FOLDER}/`",
+                f"`sources` entry `{entry}` names no page of kind `case` in `{CASES_FOLDER}/`",
             )
     linked = linked_cases(page)
-    missing, unused = sorted(set(linked) - listed_cases), sorted(listed_cases - set(linked))
+    wanted = set(linked) | citing_cases(page)
+    missing, unused = sorted(wanted - listed_cases), sorted(listed_cases - wanted)
     if missing:
         yield Issue(
             "error",
             page.rel,
-            linked[missing[0]],
-            f"`cases` lacks {', '.join(missing)}: it lists every case page the text links",
+            min(linked.get(entry, 1) for entry in missing),
+            f"`sources` lacks {', '.join(missing)}: it lists every case page the text links and every case page "
+            "that links this page (`python maintenance/kb_index.py` writes them)",
         )
     if unused:
-        yield Issue("error", page.rel, 1, f"`cases` lists {', '.join(unused)}, which the text does not link")
+        yield Issue(
+            "error",
+            page.rel,
+            1,
+            f"`sources` lists {', '.join(unused)}, which the text does not link and which does not link this page",
+        )
 
 
 def check_code_entries(page: Page) -> Iterable[Issue]:
@@ -935,9 +981,9 @@ def lint_page(page: Page) -> list[Issue]:
         issues += check_links(page, "warn")
     else:
         issues.append(Issue("error", page.rel, 1, f"unknown kind `{kind}`; see CONTRIBUTING.md"))
-    lines = page.text.count("\n")
+    lines = page.body.count("\n")  # the text: `sources` grows with the case pages that cite a page
     if lines > CARD_MAX_LINES and kind != "upstream":
-        issues.append(Issue("warn", page.rel, 1, f"{lines} lines; split it (> {CARD_MAX_LINES})"))
+        issues.append(Issue("warn", page.rel, 1, f"{lines} lines of text; split it (> {CARD_MAX_LINES})"))
     return issues
 
 

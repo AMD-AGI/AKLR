@@ -6,7 +6,7 @@ dtypes: [bf16, fp8, fp32]
 regimes: ["one token per sequence, 1-256 rows", "chunked, 512-16384 tokens in 1-16 sequences", ragged-sequences]
 gens: [gfx950]
 triton: 3.8.0
-cases:
+sources:
   - cases/gdn_chunked_gluon.md
   - cases/gdn_step_gluon.md
 ---

@@ -23,10 +23,12 @@ sources:
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/Utility.cpp
   - triton-lang/triton@c01b677:third_party/amd/language/hip/libdevice.py
   - triton-lang/triton@c01b677:third_party/amd/backend/compiler.py
-cases:
+  - cases/dsa_sparse_mla_gluon.md
   - cases/fp8_moe_gluon_dim3072.md
   - cases/gdn_chunked_gluon.md
   - cases/gdn_step_gluon.md
+  - cases/mxfp4_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # Inline assembly and cross-lane operations in Gluon (gfx950)

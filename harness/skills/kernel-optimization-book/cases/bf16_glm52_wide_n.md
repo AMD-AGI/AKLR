@@ -55,10 +55,10 @@ Triton kernel: N 2624 × K 6144 (the QKV projection) and N 6144 × K 2048 (the o
     launch alone takes 13–16 µs, 56–64% of the call at m = 16 and 10% at N 6144 × K 3072 m = 4096; with the pack
     skipped the same GEMM reads 1.27 at N 2624 m = 1024 and about 1.0 at N 6144 × K 3072 m = 16, but still 0.87 and
     0.78 at N 6144 × K 3072 m = 256 and 4096 *(field, E7)*.
-  - A kernel that may not depend on what an earlier call left cannot keep the packed copy between calls, and the
-    caller hands over only the row-major weight, so no pre-shuffled weight can reach it; the host-side preshuffle of
-    `../gemm/datapath.md` §10 pays only when done once. At these weight sizes, read `b` in its (n, k)
-    layout.
+  - A kernel that may not depend on what an earlier call left cannot keep the packed copy between calls
+    (`../pitfalls/state_kept_across_calls.md`), and the caller hands over only the row-major weight, so no pre-shuffled
+    weight can reach it; the host-side preshuffle of `../gemm/datapath.md` §10 pays only when done once. At these weight
+    sizes, read `b` in its (n, k) layout.
 - **At m 2–64 the Triton kernels win on the two shapes that have one.** They read the unpacked weight once per
   call: N 2624 m 2, 4, 8, 64 at 1.077–1.195 *(field, E5)* and N 6144 × K 2048 m 2–64 at 1.078–1.285 *(field, E6)*.
   At N 6144 × K 2048, m = 2, the FlyDSL m ≤ 2 path itself reads 1.075 *(field, E3)* against Triton's 1.139

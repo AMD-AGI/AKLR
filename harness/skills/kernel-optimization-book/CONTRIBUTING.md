@@ -38,7 +38,7 @@ One page answers one kind of question. A page of each kind has the front matter 
 
 | Kind | Answers | Front matter; sections | Folder |
 |---|---|---|---|
-| `technique` | How to do one thing (one `lever`), when it pays, when it does not, how to see it in the binary | title, lever, ops, dtypes, regimes, gens, flydsl, basis, and `sources` or `cases`; What it does, How to write it, When it applies, Counter-signals, How to confirm it took effect, Cost and risk, Evidence | the op's package (`gemm/`, `moe/`, `attention/`); one that several ops use goes to the package it was measured in, and the others link it |
+| `technique` | How to do one thing (one `lever`), when it pays, when it does not, how to see it in the binary | title, lever, ops, dtypes, regimes, gens, flydsl, basis, sources; What it does, How to write it, When it applies, Counter-signals, How to confirm it took effect, Cost and risk, Evidence | the op's package (`gemm/`, `moe/`, `attention/`); one that several ops use goes to the package it was measured in, and the others link it |
 | `pattern` | What a symptom in a trace or counter means, and which techniques to try | title, signals, ops, gens, flydsl, basis; Symptom, Likely causes, Rule out first, Candidate techniques, Evidence | `patterns/` |
 | `op` | What an op family computes, where its time goes per regime, which kernels to start from | title, ops, dtypes, gens, flydsl, basis; What it computes, Bottleneck by regime, Techniques that apply, Kernels to start from | the op's package; a new op gets its folder with its first design page (MLA and DSA: `attention/`) |
 | `case` | How one kernel or kernel family got its speed, or what went wrong in it: the op, its shapes and dtypes, the GPU, the techniques it uses, its code, what was measured and under which conditions | title, ops, dtypes, regimes, accuracy, gens, flydsl (`triton` for a Triton or Gluon kernel), basis, measured; Applies when, Counter-signals, Mechanism, Result; `## Code` for the excerpts (§ Code) | `cases/`, named `<op>_<gist>.md` |
@@ -70,15 +70,19 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
 (`0.3.2`), `gens` the architectures (`[gfx950]`; `[gfx942]` on a page about gfx942 only, such as
 `gemm/gfx942.md`), `regimes` the M ranges, shapes or mechanisms it covers, never a phase (see below).
 
-- **`sources`** lists the public source a page was read from: another repository at a fixed revision (a commit or
-  a tag, not a branch), or a folder or file of it, as `owner/repo@revision[:path[:line]]`, and URLs; a note in
-  parentheses may follow either. Nothing else goes there: a path with no repository and revision cannot be
-  followed, and a kernel with no public copy is not a source.
-- **`cases`** lists the case pages a page draws on, as paths from the book's root
-  (`cases/k3_bf16_band_stream.md`): exactly the ones its text links. A link is a Markdown link, or the page's path
-  alone in a code span, outside fenced code. A kernel with no public copy enters the book as a case page, with its
-  code, and the pages that learned from it list that case. A technique has `sources`, `cases`, or both; a case page
-  has no `cases`, and `SKILL.md`, `CONTRIBUTING.md` and index pages list none.
+- **`sources`** lists what a page rests on, in two parts.
+  - The public source it was read from: another repository at a fixed revision (a commit or a tag, not a branch),
+    or a folder or file of it, as `owner/repo@revision[:path[:line]]`, and URLs; a note in parentheses may follow
+    either. A path with no repository and revision cannot be followed and does not go there.
+  - The book's case pages it is tied to, as paths from the book's root (`cases/k3_bf16_band_stream.md`), after
+    the public entries: exactly the case pages its text links and the case pages whose text links it. A link is a
+    Markdown link, or the page's path alone in a code span, outside fenced code. A kernel with no public copy is
+    not a source by itself: it enters the book as a case page, with its code, and that page is what the pages
+    that learned from it, and the pages it cites, list. So a reader sees at the head of a page which kernels show
+    it at work. `python maintenance/kb_index.py` writes these entries; do not write them by hand.
+
+  A technique has `sources`. A case page lists no case page, and `SKILL.md`, `CONTRIBUTING.md` and index pages
+  list none.
 
 ## Evidence
 
@@ -164,10 +168,12 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
 ## How a page gets in
 
 1. Write the page in its folder (the table above), with the front matter and sections of its kind.
-2. A kernel the page learned from that has no public copy gets its case page first (§ Code), and the page lists
-   it under `cases`. `python maintenance/kb_lint.py <page>` reports no error. Link the page from where an agent looks
-   for it: a row of `SKILL.md`'s task or symptom table, or the package's `INDEX.md`. `patterns/`, `cases/` and
-   `pitfalls/` need no link by hand: `python maintenance/kb_index.py` rebuilds their generated `INDEX.md`.
+2. A kernel the page learned from that has no public copy gets its case page first (§ Code), and the page links
+   it. Link the page from where an agent looks for it: a row of `SKILL.md`'s task or symptom table, or the
+   package's `INDEX.md`. `patterns/`, `cases/` and `pitfalls/` need no link by hand:
+   `python maintenance/kb_index.py` rebuilds their generated `INDEX.md`, and writes the case pages into the
+   `sources` of your page and of the pages a new case page cites. `python maintenance/kb_lint.py <page>` then
+   reports no error.
 3. Review, in the pull request that adds it: each claim against its source or a run, no existing page that covers
    it, `basis` set.
 
@@ -185,15 +191,16 @@ this skill, its language folders included.
   up; `maintenance/kb_gaps.py` collects them) are the next pages to write. Kernels, fixes and known traps
   without a `cases/` or `pitfalls/` page are the others.
 - **Size**: each `SKILL.md`, this skill's and a language folder's, stays at most 150 lines and 12,000 bytes,
-  because the optimization loop puts both into every round's prompt; a page over 600 lines is split.
+  because the optimization loop puts both into every round's prompt; a page whose text runs over 600 lines is split
+  (its front matter does not count: `sources` grows with the case pages that cite the page).
 
 ## Scripts
 
 | Command | Does |
 |---|---|
-| `python maintenance/kb_lint.py [page ...]` | checks front matter (the form of `sources`, `cases` against the case pages the text links), sections, the entries of a case's `## Code`, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers, sizes, and that nothing cites the repository the book is kept in; exit 1 on an error; `--repo-root` for a copy of the skill |
+| `python maintenance/kb_lint.py [page ...]` | checks front matter (the form of `sources`, and its case pages against the ones the text links and the ones that link the page), sections, the entries of a case's `## Code`, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers, sizes, and that nothing cites the repository the book is kept in; exit 1 on an error; `--repo-root` for a copy of the skill |
 | `python maintenance/kb_lint.py --stale <version>` | lists pages and evidence lines checked against another FlyDSL version |
-| `python maintenance/kb_index.py [--check]` | rebuilds the generated `INDEX.md` of `patterns/`, `cases/` and `pitfalls/` |
+| `python maintenance/kb_index.py [--check]` | rebuilds the generated `INDEX.md` of `patterns/`, `cases/` and `pitfalls/`, and writes the case pages into each page's `sources` |
 | `python maintenance/kb_quote_check.py <sidecar.tsv>` | checks that each quote of an evidence sidecar is at the source line it names |
 | `python maintenance/kb_numbers_guard.py <page> [--rev REV]` | lists the numbers an edit changed outside `## Evidence` and code |
 | `python maintenance/kb_reanchor.py <page> [--dry-run]` | moves the `S<n> path:line` citations of a page whose lines moved |
@@ -204,4 +211,4 @@ this skill, its language folders included.
 | `python analysis/pmc_l2_analyzer.py <counters.csv>` | L2 and HBM efficiency from rocprofv3 PMC counters (`profile.md`) |
 
 They need Python 3.9 or later and PyYAML: without it `maintenance/kb_lint.py` and `maintenance/kb_index.py`
-misread front matter, so lint reports errors and `--check` reports stale indexes that are not there.
+misread front matter, so lint reports errors and `--check` reports stale indexes and `sources` that are not there.

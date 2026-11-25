@@ -12,6 +12,17 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_mxfp4_kernel.py
   - ROCm/FlyDSL@dd8373349:kernels/gemm/gemm_a16w16_gfx950.py:362
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:142
+  - cases/a8w8_n4096_k_sweep.md
+  - cases/a8w8_small_n_large_k.md
+  - cases/bf16_glm52_narrow_n.md
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/bf16_n6144_k16384_counter_fold.md
+  - cases/bf16_ring_refill_barrier.md
+  - cases/bf16_small_m_column_strip.md
+  - cases/fused_moe_interleave_swiglu.md
+  - cases/k3_bf16_splitk_narrow_n.md
+  - cases/k3_bf16_splitk_wide_n.md
+  - cases/mhc_fused_post_pre.md
 ---
 
 # Correctness for a GEMM

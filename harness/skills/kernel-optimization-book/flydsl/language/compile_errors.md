@@ -13,6 +13,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/typing.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/gpu.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py
+  - cases/fused_moe_shuffled_16x16_few_tokens.md
 ---
 
 # FlyDSL v0.3.2 compile errors

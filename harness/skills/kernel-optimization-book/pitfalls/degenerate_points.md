@@ -5,7 +5,8 @@ scope: [benchmark sizes and the distributions that draw their inputs, kernels wi
 gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
-cases: [cases/mla_causal_bf16_fixed_rows.md]
+sources:
+  - cases/mla_causal_bf16_fixed_rows.md
 ---
 
 # Benchmark sizes with degenerate inputs

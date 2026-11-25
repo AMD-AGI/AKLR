@@ -12,6 +12,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp8_kernel.py
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/pytorch/kernels/grouped_gemm/grouped_gemm_utils.py
+  - cases/fused_moe_shuffled_16x16.md
 ---
 
 # Host path and autotune for grouped GEMMs

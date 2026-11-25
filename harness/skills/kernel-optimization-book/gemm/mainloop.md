@@ -16,7 +16,18 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/gemm/fp8_gemm_8wave.py
   - ROCm/FlyDSL@dd8373349:kernels/gemm/fp8_gemm_4wave.py
   - ROCm/FlyDSL@dd8373349:.claude/skills/gemm-optimization/SKILL.md
-cases: [cases/bf16_k4096_splitk_hgemm.md]
+  - cases/a8w8_n4096_k_sweep.md
+  - cases/a8w8_row_major_a_scale.md
+  - cases/a8w8_small_n_large_k.md
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/bf16_large_m_whole_k_tiles.md
+  - cases/fp8_paged_mqa_logits.md
+  - cases/fused_moe_interleave_swiglu.md
+  - cases/fused_moe_interleave_swiglu_hidden7168.md
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/k3_bf16_band_stream.md
+  - cases/k3_bf16_splitk_narrow_n.md
+  - cases/k3_bf16_splitk_wide_n.md
 ---
 
 # The GEMM main loop

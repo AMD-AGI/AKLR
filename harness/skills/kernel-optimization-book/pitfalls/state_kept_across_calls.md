@@ -5,7 +5,13 @@ scope: [launch code and kernels in FlyDSL, Triton / Gluon or HIP, kernels writte
 gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
-cases: [cases/gdn_step_gluon.md]
+sources:
+  - cases/bf16_glm52_narrow_n.md
+  - cases/bf16_glm52_wide_n.md
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/gdn_step_gluon.md
+  - cases/mhc_fused_post_pre.md
 ---
 
 # State kept between calls

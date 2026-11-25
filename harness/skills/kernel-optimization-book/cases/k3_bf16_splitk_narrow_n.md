@@ -346,7 +346,7 @@ and stay with the caller's path.
 
 The kernel keeps the two MFMA paths its tuning ended with. Its configuration rows were tuned at m 1, 2, 4, …, 256; the
 row of each m here is taken from those, then from a race of a few candidates per m
-(below); the step-by-step tuning did not run at these m.
+(below; `../gemm/autotune.md` §2); the step-by-step tuning did not run at these m.
 
 - m 7–154: N 1024's per-wave ring (four waves of 1792 K, a private ring each, fold in wave order) on tiles narrow
   enough for 144–240 workgroups in one round: 16×2 at m 7 (B rows past 2 read zero); 8-row M-blocks × 4, 8 or 16
@@ -367,9 +367,9 @@ What each kept step of that tuning bought, at its sizes, each step timed beside 
 - the port with narrowed tiles: 1.49–2.30× per size over the starting `torch.matmul` (m 256 1.16×);
 - the XCD-blocked order at m 64–256, with 16×2 tiles at m 8: m 256 +17.2%, m 8 +7.6%, m 128 +4.0%, m 64 +2.5%;
 - static-layout tensors, so that the inherited kernarg preload covers every operand pointer of the per-wave-ring
-  launches (`../flydsl/gemm.md` § small_m §6, its E12): +1.3–1.4% at m 16–64, +0.6% at m 128 and 256, +0.3–0.9% at
-  m ≤ 8, against a noise floor of 0.4%.
-  The m 256 launch passes `fx.Pointer`s; the preload length in this kernel's ISA was not checked;
+  launches (`../flydsl/gemm.md` § small_m §6, its E12; `../flydsl/language/limits.md` § By design): +1.3–1.4% at
+  m 16–64, +0.6% at m 128 and 256, +0.3–0.9% at m ≤ 8, against a noise floor of 0.4%. The m 256 launch passes
+  `fx.Pointer`s; the preload length in this kernel's ISA was not checked;
 - the split across workgroups at m 256 with the 2 × 3 XCD block: 9.44–9.47 → 8.48–8.50 µs, +11.4% at that size.
   Without the block the same split read 2.5–4.5% faster than the whole K; on 3 ring slots the split read 8.55 µs with
   2 × 3 tiles per XCD and 11.17 with 1 × 6 *(field, E21)*.

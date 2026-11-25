@@ -6,7 +6,8 @@ dtypes: [bf16, fp8]
 regimes: ["one query token per sequence", gqa, split-kv]
 gens: [gfx950]
 triton: 3.8.0
-cases: [cases/gated_attention_gluon.md]
+sources:
+  - cases/gated_attention_gluon.md
 ---
 
 # Qwen3.5 gated attention in Gluon: K and V into LDS, the merge launch, the prologue (gfx950)

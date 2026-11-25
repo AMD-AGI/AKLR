@@ -6,7 +6,8 @@ dtypes: [bf16]
 regimes: ["M 1-64", weight-stream, split-k]
 gens: [gfx950]
 triton: 3.8.0
-cases: [cases/bf16_triton_small_m.md]
+sources:
+  - cases/bf16_triton_small_m.md
 ---
 
 # Small-M GEMM in Triton (bf16, M ≤ 64, gfx950)

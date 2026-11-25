@@ -8,6 +8,7 @@ basis: single-observation
 sources:
   - "ROCm/FlyDSL@dd8373349:kernels/common/buffer_ops.py:338"
   - "ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py:287"
+  - cases/fused_moe_shuffled_16x16.md
 ---
 
 # A fault in the wrong kernel

@@ -12,6 +12,13 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_fp8_kernel.py
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_mxfp4_kernel.py
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_mxfp8_kernel.py
+  - cases/a8w8_n4096_k_sweep.md
+  - cases/a8w8_row_major_a_scale.md
+  - cases/a8w8_small_n_large_k.md
+  - cases/bf16_large_m_whole_k_tiles.md
+  - cases/fp8_paged_mqa_logits.md
+  - cases/k3_bf16_band_stream.md
+  - cases/k3_bf16_short_k_large_m.md
 ---
 
 # The GEMM epilogue

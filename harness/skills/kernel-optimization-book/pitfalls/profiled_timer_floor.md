@@ -5,6 +5,14 @@ scope: [three timers measured on MI355X, a Kineto graph timer with queue profili
 gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=3
+sources:
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/bf16_glm52_narrow_n.md
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/gated_attention_gluon.md
+  - cases/gdn_step_gluon.md
+  - cases/k3_bf16_short_k_large_m.md
+  - cases/rmsnorm_triton_hidden6144.md
 ---
 
 # The profiled timer's floor

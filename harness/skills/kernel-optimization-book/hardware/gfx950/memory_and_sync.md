@@ -6,6 +6,8 @@ dtypes: [any]
 regimes: [any]
 gens: [gfx950]
 flydsl: 0.3.2
+sources:
+  - cases/dsa_sparse_mla_8_heads.md
 ---
 
 # Memory instructions and synchronization in the CDNA4 ISA

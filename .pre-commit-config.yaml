@@ -47,7 +47,7 @@ repos:
         files: ^harness/skills/kernel-optimization-book/
         pass_filenames: false
       - id: kernel-optimization-book-indexes
-        name: check the generated indexes of the kernel optimization book
+        name: check the generated indexes and sources of the kernel optimization book
         entry: python harness/skills/kernel-optimization-book/maintenance/kb_index.py --check
         language: python
         additional_dependencies: [pyyaml==6.0.3]

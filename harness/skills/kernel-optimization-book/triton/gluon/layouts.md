@@ -33,9 +33,10 @@ sources:
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUTransforms/LowerLoops.cpp
   - triton-lang/triton@c01b677:third_party/amd/lib/Analysis/AMDGPUAllocation.cpp
   - triton-lang/triton@c01b677:third_party/amd/lib/Dialect/TritonAMDGPU/IR/TargetFeatures.cpp
-cases:
   - cases/a8w8_gluon_n3072_n7168.md
+  - cases/gdn_chunked_gluon.md
   - cases/moe_router_experts_gluon_dim4096.md
+  - cases/rmsnorm_triton_hidden6144.md
 ---
 
 # Gluon layouts on gfx950 (Triton 3.8.0)

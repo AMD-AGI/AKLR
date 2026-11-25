@@ -43,10 +43,10 @@ for 64 heads: [mla_sparse_fp8_kv_pool.md](mla_sparse_fp8_kv_pool.md).
 
 - **The pool sizes timed are tied to the token count.** The kernel is compiled once per token count, cached on
   `n_tokens` alone: `sm_scale · log2 e`, the pool's size in bytes and the key sort's bucket shift are launch arguments,
-  so a call at a pool size or scale not seen before runs the kernel already compiled for its token count. A bucket of
-  the key sort is the smallest power of two of slots that covers the pool in 16 or 64 buckets, so at a pool that is not
-  16 or 64 times a power of two the last buckets hold fewer keys or none. The speed at serving pool sizes is not
-  measured.
+  so a call at a pool size or scale not seen before runs the kernel already compiled for its token count
+  (`../gemm/autotune.md` §5). A bucket of the key sort is the smallest power of two of slots that covers the pool in 16
+  or 64 buckets, so at a pool that is not 16 or 64 times a power of two the last buckets hold fewer keys or none. The
+  speed at serving pool sizes is not measured.
 - **Uniform indices.** The timed inputs draw each token's 2048 slots uniformly over the pool. Serving top-k sets overlap
   between adjacent tokens, which moved gather cost on another sparse decode (`../attention/split_kv.md` §7); the key
   sort at 128 and 256 tokens was not measured on such indices.

@@ -14,6 +14,10 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3199
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:5560
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:520
+  - cases/dsa_sparse_mla_8_heads.md
+  - cases/fp8_paged_mqa_logits.md
+  - cases/mla_causal_bf16_fixed_rows.md
+  - cases/mla_sparse_fp8_kv_pool.md
 ---
 
 # MFMA atoms and fragment layouts in an attention kernel

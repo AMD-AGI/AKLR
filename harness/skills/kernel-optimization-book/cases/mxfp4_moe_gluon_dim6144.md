@@ -70,9 +70,9 @@ replays aiter's router GEMM, `biased_grouped_topk` and `fused_moe`. Triton side:
   the ruler re-measured 57 of the library's 96 MoE sizes and moved them by −6.3% to +7.0%, median 0.9%
   *(field, E1)*.
 - **Little room under the bound.** The kernels quantize both expert-GEMM inputs to MXFP4, which the reference leaves
-  unquantized. Inside the reference that rounding alone comes to 13.45 dB at 256 tokens
-  *(field, E4)* against the floor of 10 dB, so a further independent error has to stay above
-  about 12.6 dB (estimated) ([triton/numerics](../triton/numerics.md) §1).
+  unquantized. Inside the reference that rounding alone comes to 13.45 dB at 256 tokens *(field, E4)* against the floor
+  of 10 dB, so a further independent error has to stay above about 12.6 dB (estimated)
+  ([triton/numerics](../triton/numerics.md) §1, [moe/grouped_correctness](../moe/grouped_correctness.md) §6).
 - **The scenario is written as literals, and no kernel of the family asserts it.** 256 experts are `(256,)` vectors
   and top-8 plus the shared expert `row * 9` (DS256/m2); the routed weights are multiplied by 2.5 in device code;
   DS256/m8–m16 sums 12 router splits in its top-k. The host code of DS256/m2 ran at other shapes without an error,
@@ -105,7 +105,7 @@ Kernels with their token counts in parentheses; DS512 has no kernel at 32–128.
 | 1–2 | a kernel per count (1), (2) | one kernel (1, 2) | 3–4 | router (split-K tiles, or one full-K program per expert at DS256, 2 tokens) beside the hidden-state MXFP4 quantization (192 + 24 programs at DS256, 1 token); the gate-up of every route split along K (4 splits at DS256, 12 at DS512 at 1 token) and finished by a small launch, or whole (DS512 at 2); a last launch of down and combine over (token, column tile): 16 columns at DS256, 32 and 64 at DS512 at 1 and 2 |
 | 4–16 | two kernels (4), (8, 16) | a kernel per count (4), (8), (16) | 3 (DS512 at 16 tokens: 5) | router + quantization; one launch runs the gate-up of every route, no separate activation launch; down + combine. Inter 512 at 16 tokens: a front launch, a selection launch that writes masks, two grouped-expert launches, a combine |
 | 32–256 | a kernel per count (32), (128), (256) | one kernel (256) | 5 (DS512: 6) | router, quantization and counter initialization in the first launches; a selection launch on relaxed atomics; gate-up over expert jobs (16 to 128 rows at DS512; DS256 at 128 and 256 tokens derives the job from the counts); down; a last, atomic-free launch reduces the parts and writes `out` |
-| 1024–4192 | two kernels (1024, 2048, 3072), (4096, 4192) | a kernel per count (1024), (2048), (3072), (4096), (4192) | 6 | full-K router + quantization; route selection; a prepare launch writes job lists (at DS512, 1024–3072 tokens: full 128-row tiles first, then tails by falling height down to 16 rows, the mix changing with the routing); grouped gate-up; routed down; the shared expert's down, which writes `out` |
+| 1024–4192 | two kernels (1024, 2048, 3072), (4096, 4192) | a kernel per count (1024), (2048), (3072), (4096), (4192) | 6 | full-K router + quantization; route selection; a prepare launch writes job lists (at DS512, 1024–3072 tokens: full 128-row tiles first, then tails by falling height down to 16 rows, the mix changing with the routing; [moe/grouped_tile_pricing](../moe/grouped_tile_pricing.md) §5); grouped gate-up; routed down; the shared expert's down, which writes `out` |
 
 - **Techniques.** Router tiles and the MXFP4 quantization of the hidden states share one launch, split by program id
   ([triton/moe](../triton/moe.md) §3), but not in the DS256 kernels for 128 and for 256 tokens, where the quantization

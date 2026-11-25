@@ -156,7 +156,7 @@ def _case(code=ONE_ENTRY, pin="flydsl: 0.3.2"):
         ("ROCm/FlyDSL@main:kernels/gemm/preshuffle_gemm.py", False),  # a branch moves
         ("ROCm/FlyDSL@dd8373349:kernels/x.py and the kernel's own source", False),  # text after the source
         ("https://example.com/a page", False),
-        ("../cases/a.md § Mechanism", False),  # a case page is listed under `cases`
+        ("../cases/a.md § Mechanism", False),  # a case page is listed by its path from the book's root
         ("the kernel's own source", False),
     ],
 )
@@ -178,10 +178,10 @@ def test_a_technique_is_backed_by_public_source_or_by_a_case(tmp_path, monkeypat
     pages = {
         "cases/a.md": _case(),
         "gemm/bare.md": TECHNIQUE.format(backing="", text=""),
-        "gemm/case.md": TECHNIQUE.format(backing="cases:\n  - cases/a.md", text=linked),
+        "gemm/case.md": TECHNIQUE.format(backing="sources:\n  - cases/a.md", text=linked),
     }
     errors = _book(tmp_path, monkeypatch, pages)
-    assert ["`sources` or `cases`" in message for message in errors("gemm/bare.md")] == [True]
+    assert ["lacks `sources`" in message for message in errors("gemm/bare.md")] == [True]
     assert not errors("gemm/case.md")
     assert not errors("cases/a.md")
 
@@ -189,35 +189,32 @@ def test_a_technique_is_backed_by_public_source_or_by_a_case(tmp_path, monkeypat
 @pytest.mark.parametrize(
     ("listed", "text", "expected"),
     [
-        ("", "The fold: `../cases/a.md` §1.", "`cases` lacks cases/a.md"),
-        ("cases:\n  - cases/a.md", "", "which the text does not link"),
+        ("", "The fold: `../cases/a.md` §1.", "`sources` lacks cases/a.md"),
+        ("  - cases/a.md\n", "", "which the text does not link"),
         (
-            "cases:\n  - cases/a.md\n  - gemm/other.md",
+            "  - cases/a.md\n  - gemm/other.md\n",
             "See [the case](../cases/a.md).",
-            "names no page of kind",
+            "`sources` entry `gemm/other.md`",
         ),
+        ("  - cases/a.md\n  - cases/INDEX.md\n", "See [the case](../cases/a.md).", "names no page of kind"),
+        ("  - cases/a.md\n  - cases/b.md\n", "See [the case](../cases/a.md).", "names no page of kind"),
+        ("  - cases/a.md\n", "The fold: `../cases/a.md` §2.", "has no section 2"),
         (
-            "cases:\n  - cases/a.md\n  - cases/INDEX.md",
-            "See [the case](../cases/a.md).",
-            "names no page of kind",
-        ),
-        ("cases:\n  - cases/a.md\n  - cases/b.md", "See [the case](../cases/a.md).", "names no page of kind"),
-        ("cases:\n  - cases/a.md", "The fold: `../cases/a.md` §2.", "has no section 2"),
-        (
-            "cases:\n  - cases/a.md",
+            "  - cases/a.md\n",
             "[The case](../cases/a.md): `../cases/a.md §1`.",
             "in one code span is not checked",
         ),
-        ("cases:\n  - cases/a.md", "The fold: [the case](../cases/a.md) §1, and `../cases/INDEX.md`.", None),
+        ("  - cases/a.md\n", "The fold: [the case](../cases/a.md) §1, and `../cases/INDEX.md`.", None),
         ("", "```\nsee `../cases/a.md` §1\n```", None),  # a path in fenced code is no link
         (
             "",
             "A figure: ![the grid](../cases/grid.png).",
             None,
         ),  # nor is a file of cases/ that is no case page
+        ("cases:\n  - cases/a.md\n", "See [the case](../cases/a.md).", "`cases` is not a field"),
     ],
 )
-def test_cases_lists_the_case_pages_the_text_links(tmp_path, monkeypatch, listed, text, expected):
+def test_sources_lists_the_case_pages_the_text_links(tmp_path, monkeypatch, listed, text, expected):
     source = "sources:\n  - ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py\n"
     pages = {
         "cases/a.md": _case(),
@@ -227,7 +224,66 @@ def test_cases_lists_the_case_pages_the_text_links(tmp_path, monkeypatch, listed
         "gemm/fold.md": TECHNIQUE.format(backing=source + listed, text=text),
     }
     errors = _book(tmp_path, monkeypatch, pages)("gemm/fold.md")
-    assert [expected in message for message in errors] == ([True] if expected else []), errors
+    if expected == "`cases` is not a field":  # and the case page it links is missing from `sources`
+        assert sorted(expected in message for message in errors) == [False, True], errors
+    else:
+        assert [expected in message for message in errors] == ([True] if expected else []), errors
+
+
+def test_sources_also_lists_the_case_pages_that_link_the_page(tmp_path, monkeypatch):
+    source = "sources:\n  - ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py\n"
+    citing = _case().replace(
+        "## Mechanism\n", "## Mechanism\nFolded as [gemm/fold](../gemm/fold.md) has it.\n"
+    )
+    pages = {
+        "cases/a.md": citing,
+        "cases/b.md": _case(),
+        "gemm/fold.md": TECHNIQUE.format(backing=source, text=""),
+        "gemm/other.md": TECHNIQUE.format(backing=source + "  - cases/a.md\n", text=""),
+    }
+    errors = _book(tmp_path, monkeypatch, pages)
+    fold = tmp_path / "gemm/fold.md"
+    assert ["`sources` lacks cases/a.md" in message for message in errors("gemm/fold.md")] == [True]
+    assert ["does not link this page" in message for message in errors("gemm/other.md")] == [True]
+    # the index tool writes them: what the text links and what links the page, after the public sources
+    fold.write_text(kb_index.sources_updated(fold))
+    assert "kernels/gemm/preshuffle_gemm.py\n  - cases/a.md\n" in fold.read_text()
+    assert not errors("gemm/fold.md")
+    assert kb_index.sources_updated(fold) == fold.read_text()
+    assert "cases/a.md" not in kb_index.sources_updated(tmp_path / "gemm/other.md")
+    assert kb_index.sources_updated(tmp_path / "cases/a.md") is None  # a case page lists no case page
+
+
+def test_the_index_tool_writes_the_case_pages_after_the_public_sources():
+    page = '---\ntitle: A\nsources:\n  - a/b@c:d.py\n  - "a/b@c:e.py:3"\nbasis: measured N=1\n---\n\n# A\n'
+    two = kb_index.with_case_sources(page, ["cases/a.md", "cases/b.md"])
+    assert two == page.replace("basis:", "  - cases/a.md\n  - cases/b.md\nbasis:")
+    assert kb_index.with_case_sources(two, ["cases/b.md"]) == page.replace("basis:", "  - cases/b.md\nbasis:")
+    assert kb_index.with_case_sources(two, []) == page  # the public sources stay as written
+    bare = "---\ntitle: A\n---\n# A\n"
+    only = kb_index.with_case_sources(bare, ["cases/a.md"])
+    assert only == "---\ntitle: A\nsources:\n  - cases/a.md\n---\n# A\n"  # last, where the page had none
+    assert kb_index.with_case_sources(only, []) == bare  # and no empty field is left
+    flow = "---\nsources: [a/b@c:d.py, a/b@c:e.py]\n---\n# A\n"
+    assert kb_index.with_case_sources(flow, ["cases/a.md"]) == (
+        "---\nsources:\n  - a/b@c:d.py\n  - a/b@c:e.py\n  - cases/a.md\n---\n# A\n"
+    )
+
+
+def test_the_length_of_a_page_is_the_length_of_its_text(tmp_path, monkeypatch):
+    source = "sources:\n" + "  - ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py\n" * 40
+    pages = {
+        "gemm/fold.md": TECHNIQUE.format(backing=source, text="A line.\n" * (kb_lint.CARD_MAX_LINES - 60))
+    }
+    _book(tmp_path, monkeypatch, pages)
+
+    def warnings():
+        issues = kb_lint.lint_page(kb_lint.read_page(tmp_path / "gemm/fold.md"))
+        return [issue.message for issue in issues if issue.level == "warn"]
+
+    assert not warnings()  # over the limit with its front matter, under it without
+    (tmp_path / "gemm/fold.md").write_text(pages["gemm/fold.md"] + "A line.\n" * 60)
+    assert ["split it" in message for message in warnings()] == [True]
 
 
 @pytest.mark.parametrize(
@@ -263,7 +319,7 @@ def test_cases_lists_the_case_pages_the_text_links(tmp_path, monkeypatch, listed
             "flydsl: 0.3.2",
             None,
         ),
-        ("", "flydsl: 0.3.2\ncases:\n  - cases/a.md", "a case page has none"),
+        ("", "flydsl: 0.3.2\nsources:\n  - cases/a.md", "a case page lists no case page"),
     ],
 )
 def test_a_case_page_numbers_its_code_entries(tmp_path, monkeypatch, code, pin, expected):
@@ -273,7 +329,7 @@ def test_a_case_page_numbers_its_code_entries(tmp_path, monkeypatch, code, pin, 
 
 def test_a_section_cited_in_a_case_is_a_heading_not_a_line_of_its_code(tmp_path, monkeypatch):
     case = _case("## Code\n" + ENTRY.format(n=1).replace("total", "# 2. accumulate the partials\ntotal"))
-    page = TECHNIQUE.format(backing="cases:\n  - cases/a.md", text="The fold: `../cases/a.md` §2.")
+    page = TECHNIQUE.format(backing="sources:\n  - cases/a.md", text="The fold: `../cases/a.md` §2.")
     errors = _book(tmp_path, monkeypatch, {"cases/a.md": case, "gemm/fold.md": page})("gemm/fold.md")
     assert ["has no section 2" in message for message in errors] == [True], errors
 

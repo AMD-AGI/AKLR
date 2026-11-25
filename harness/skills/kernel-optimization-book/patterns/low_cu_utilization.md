@@ -7,6 +7,8 @@ ops: [gemm, grouped_gemm, fused_moe, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
+sources:
+  - cases/bf16_n6144_k16384_counter_fold.md
 ---
 
 # Low CU utilization: too few workgroups, or a ragged last round

@@ -18,7 +18,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/quantization/
   - ROCm/aiter@dbd8bf5:aiter/fused_moe.py
   - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/
-cases:
+  - cases/biased_topk_eager_host_time.md
   - cases/fused_moe_interleave_swiglu_hidden7168.md
   - cases/fused_moe_shuffled_16x16_few_tokens.md
 ---

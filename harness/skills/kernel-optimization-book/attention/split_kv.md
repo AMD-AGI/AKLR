@@ -10,9 +10,13 @@ flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:1010
   - ROCm/FlyDSL@dd8373349:kernels/attention/mla_fwd_decode.py:63
-cases:
   - cases/dsa_sparse_mla_16_heads.md
   - cases/dsa_sparse_mla_8_heads.md
+  - cases/dsa_sparse_mla_gluon.md
+  - cases/fp8_paged_mqa_logits.md
+  - cases/gated_attention_gluon.md
+  - cases/mla_causal_bf16_fixed_rows.md
+  - cases/mla_sparse_fp8_kv_pool.md
 ---
 
 # Split KV for few query rows per head

@@ -25,6 +25,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py:584
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/utils/gemm_helper.py:712
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/utils/prims.py:404
+  - cases/fused_moe_shuffled_16x16_few_tokens.md
 ---
 
 # Mapping tiles to groups in a grouped GEMM

@@ -6,7 +6,7 @@ dtypes: [bf16, fp8]
 regimes: ["one query token per sequence", split-kv, sparse, gqa]
 gens: [gfx950]
 triton: 3.8.0
-cases:
+sources:
   - cases/dsa_sparse_mla_16_heads.md
   - cases/dsa_sparse_mla_8_heads.md
   - cases/dsa_sparse_mla_gluon.md

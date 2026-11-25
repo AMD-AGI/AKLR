@@ -8,7 +8,7 @@ regimes: ["M 1-512", "M 512-4096 (bf16, N 64-256)", split-k]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=4–6
-cases:
+sources:
   - cases/bf16_k4096_splitk_hgemm.md
   - cases/bf16_n6144_k16384_counter_fold.md
   - cases/bf16_small_m_column_strip.md

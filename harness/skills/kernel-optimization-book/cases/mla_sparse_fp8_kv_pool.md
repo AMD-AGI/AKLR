@@ -56,10 +56,10 @@ top-2048) is another op, with its own one-launch kernel:
   row's drawn lengths set the work: the nine batch-1 sizes of extra 8256 read 2.809–5.845 *(field, E2)*, and each
   reproduces within 4.1% in the other run *(field, E4)*, so the spread follows each size's inputs
   (drawn from a seed fixed per size), not run noise.
-- **`sm_scale` and `kv_scale` are compile-time constants.** The builder is a `functools.cache` keyed by both
-  values; a
+- **`sm_scale` and `kv_scale` are compile-time constants.** The builder is a `functools.cache` keyed by both values; a
   new value compiles a new kernel pair at the call that brings it, which may be inside a CUDA-graph capture, where
-  launch code must not compile. Every measured size holds `sm_scale` 0.0442 and `kv_scale` 1.0.
+  launch code must not compile (`../gemm/autotune.md` §5). Every measured size holds `sm_scale` 0.0442 and `kv_scale`
+  1.0.
 - **Workspace kept per batch size.** A `functools.cache` function keyed by batch, the two index widths and the
   device holds a bf16 partial
   output and an fp32 partial lse for every slot a row can write, for the life of the process: estimated 0.26 MB,

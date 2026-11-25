@@ -13,6 +13,12 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_mxfp8_kernel.py
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/utils/gemm_helper.py
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/grouped_gemm/grouped_gemm_fp8_kernel.py
+  - cases/dsa_sparse_mla_8_heads.md
+  - cases/fp8_paged_mqa_logits.md
+  - cases/fused_moe_interleave_swiglu_hidden7168.md
+  - cases/k3_bf16_splitk_narrow_n.md
+  - cases/mhc_fused_post_pre.md
+  - cases/mla_sparse_fp8_kv_pool.md
 ---
 
 # Per-shape autotune and the launch path

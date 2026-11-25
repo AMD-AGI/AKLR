@@ -5,6 +5,8 @@ scope: [aiter gemm_a4w4 asm path at K % 256 != 0, hipBLASLt MX GEMMs through tor
 gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
+sources:
+  - cases/biased_topk_eager_host_time.md
 ---
 
 # A wrong baseline

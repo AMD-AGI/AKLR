@@ -13,6 +13,9 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3710
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3766
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3840
+  - cases/dsa_sparse_mla_8_heads.md
+  - cases/mla_causal_bf16_fixed_rows.md
+  - cases/mla_sparse_fp8_kv_pool.md
 ---
 
 # Softmax and exp2 in an attention kernel

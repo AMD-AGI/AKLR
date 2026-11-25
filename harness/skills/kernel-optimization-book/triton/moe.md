@@ -6,7 +6,7 @@ dtypes: [mxfp4, fp8, bf16]
 regimes: ["tokens 1-16", "tokens 32-256", "tokens 1024-16384", sorted-tokens]
 gens: [gfx950]
 triton: 3.8.0
-cases:
+sources:
   - cases/fp8_moe_gluon_dim3072.md
   - cases/moe_router_experts_gluon_dim4096.md
   - cases/mxfp4_moe_gluon_dim3072.md

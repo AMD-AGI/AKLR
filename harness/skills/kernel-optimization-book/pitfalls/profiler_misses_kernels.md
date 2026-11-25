@@ -5,6 +5,8 @@ scope: [torch profiler (Kineto) traces of HIP-graph replays, the per-kernel CUDA
 gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
+sources:
+  - cases/bf16_n6144_k16384_counter_fold.md
 ---
 
 # Kineto misses graph-launched kernels

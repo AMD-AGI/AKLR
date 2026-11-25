@@ -44,10 +44,10 @@ sizes, numbers and counter-signals. "m" is M.
 
 ## Counter-signals
 
-- **Repacking the weight on every call does not pay at N = 1024.** At m = 4, 512, 1024 and 2048, N 1024's
-  launch first packs the whole 8 MiB `b` into MFMA lane order, a second launch, and then runs a split-K GEMM on the
-  packed copy: 0.584, 0.819, 0.884, 0.973 *(field, E2)*. The module docstring still
-  describes a cached relayout invalidated by tensor identity or version; the code repacks on every call.
+- **Repacking the weight on every call does not pay at N = 1024.** At m = 4, 512, 1024 and 2048, N 1024's launch first
+  packs the whole 8 MiB `b` into MFMA lane order, a second launch, and then runs a split-K GEMM on the packed copy:
+  0.584, 0.819, 0.884, 0.973 *(field, E2)*. The module docstring still describes a cached relayout invalidated by tensor
+  identity or version; the code repacks on every call (`../pitfalls/state_kept_across_calls.md`).
 - **N 512 at m ≤ 64 and N 1024 at m 8–32, both splitting K only inside the workgroup on 32–128 workgroups, stay
   below aiter; two kernels in one run, not a rule.** N 512 at m ≤ 64 (16×16 tiles,
   4 waves splitting K, 32, 64 and 128 workgroups): 0.793–0.941 *(field, E4)*. N 1024 at m 8–32 (16×16 tiles, 4–8

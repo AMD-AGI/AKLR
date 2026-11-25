@@ -7,6 +7,8 @@ gens: [gfx950]
 dtypes: [bf16, fp8]
 regimes: [many query rows, dQ dK dV, few query rows, launch-bound, kernel-A/B]
 flydsl: 0.3.2
+sources:
+  - cases/mla_causal_bf16_fixed_rows.md
 ---
 
 # Measuring an attention kernel change

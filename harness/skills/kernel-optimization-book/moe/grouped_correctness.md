@@ -12,6 +12,8 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/utils/gemm_helper.py:118-197
   - AMD-AGI/Primus-Turbo@ca1fdd67:benchmark/ops/training/config.py:487-497
   - AMD-AGI/Primus-Turbo@ca1fdd67:tests/pytorch/ops/test_grouped_gemm.py:209-224
+  - cases/mxfp4_moe_gluon_dim3072.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # Correctness for a grouped GEMM

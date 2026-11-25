@@ -28,7 +28,6 @@ sources:
   - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/mla_reduce_kernels.py
   - ROCm/aiter@dbd8bf5:aiter/fused_moe.py
   - ROCm/aiter@dbd8bf5:aiter/mla.py
-cases:
   - cases/fused_moe_interleave_swiglu.md
   - cases/fused_moe_shuffled_16x16.md
   - cases/k3_bf16_band_stream.md

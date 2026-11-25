@@ -99,9 +99,9 @@ MiniMax-M2's MoE layer on one rank: an fp32 router (sigmoid plus correction bias
   both sizes of MM64-FP4/m128–m256, whose schedule reads each weight once, and 17% slower at MM256-FP4/m16384, whose
   schedule re-reads them *(field, E8)*. MM256-FP4/m4–m16 passes `enable_fp_fusion=False` on its down
   launch at 16 tokens only, and no comment explains the setting ([triton/numerics](../triton/numerics.md) §6).
-- **The bound leaves little room.** The kernels quantize both expert-GEMM inputs to MXFP4, which the reference does
-  not: that alone measured 13.2 dB at 128 tokens against the 10 dB floor *(field, E9)*, so a
-  further independent error has to stay above about 12.8 dB (estimated).
+- **The bound leaves little room.** The kernels quantize both expert-GEMM inputs to MXFP4, which the reference does not:
+  that alone measured 13.2 dB at 128 tokens against the 10 dB floor *(field, E9)*, so a further independent error has to
+  stay above about 12.8 dB (estimated) ([moe/grouped_correctness](../moe/grouped_correctness.md) §6).
 
 ## Mechanism
 
@@ -462,7 +462,7 @@ but for the docstring on both rank shapes, so 1.423 against 1.389 and 1.735 agai
 Call times on the ruler's timer: MM64-FP4/m128–m256 at 256 tokens 103.6–105.4 µs and MM256-FP4/m8192 505.7–518.6 µs,
 4 runs each *(field, E5)*. With routing simulated from the workload's router distribution,
 MM256-FP4/m64 took 99.09–101.7 µs against the baseline's 127.0–127.8 µs, a speedup of 1.249–1.285, and touched 77.2%
-of the experts on average, in 3 runs *(field, E24)*.
+of the experts on average, in 3 runs *(field, E24)* ([moe/grouped_measurement](../moe/grouped_measurement.md) §2).
 
 The ruler, its timer and the bar a size is counted against: [triton/tuning](../triton/tuning.md) §1.
 

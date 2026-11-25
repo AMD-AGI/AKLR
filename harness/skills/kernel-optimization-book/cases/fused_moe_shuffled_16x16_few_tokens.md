@@ -382,7 +382,8 @@ Not this: the same loop in a plain Python helper, where the `if` runs at trace t
 value such as an `llvm.load` result reads as true), so the guard is dropped silently and the atomics fire on the
 padding rows; the kernel's epilogue is a `@flyc.jit` function, which rewrites `if token_id < i32_M` into a device
 branch. By its source comment, FlyDSL's `a16wmix` stage 2 ran about 13× slower without the guard at 896 experts
-*(field, E6)* (`../flydsl/moe.md` § grouped_sorted_tokens §2).
+*(field, E6)* (`../flydsl/moe.md` § grouped_sorted_tokens §2; the error a `Numeric` value raises:
+`../flydsl/language/compile_errors.md`).
 
 Explained in [cases/fused_moe_shuffled_16x16](fused_moe_shuffled_16x16.md) § Mechanism and [moe/few_tokens](../moe/few_tokens.md) § When it applies.
 

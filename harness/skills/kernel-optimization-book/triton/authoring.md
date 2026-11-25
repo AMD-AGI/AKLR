@@ -5,12 +5,16 @@ ops: [gemm, moe, attention, gdn]
 gens: [gfx950]
 triton: 3.8.0
 basis: source-semantics
-cases:
+sources:
   - cases/bf16_triton_small_m.md
+  - cases/dsa_sparse_mla_gluon.md
+  - cases/fp8_moe_gluon_dim3072.md
   - cases/gated_attention_gluon.md
   - cases/gdn_chunked_gluon.md
+  - cases/gdn_step_gluon.md
   - cases/mxfp4_moe_gluon_dim3072.md
   - cases/mxfp4_moe_gluon_dim6144.md
+  - cases/rmsnorm_triton_hidden6144.md
 ---
 
 # Authoring a Triton or Gluon kernel

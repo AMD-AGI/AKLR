@@ -29,6 +29,10 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:34-41
   - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:495-505
   - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:630-641
+  - cases/fused_moe_interleave_swiglu.md
+  - cases/fused_moe_interleave_swiglu_hidden7168.md
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/fused_moe_shuffled_16x16_few_tokens.md
 ---
 
 # MoE expert GEMMs over sorted token ids

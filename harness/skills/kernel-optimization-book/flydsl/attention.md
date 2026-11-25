@@ -44,6 +44,11 @@ sources:
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/kernel_function.py:250
   - ROCm/FlyDSL@dd8373349:lib/Conversion/FlyToROCDL/FastMathOps.cpp:35
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:432
+  - cases/biased_topk_eager_host_time.md
+  - cases/fp8_paged_mqa_logits.md
+  - cases/mhc_fused_post_pre.md
+  - cases/mla_causal_bf16_fixed_rows.md
+  - cases/mla_sparse_fp8_kv_pool.md
 ---
 
 # Attention in FlyDSL

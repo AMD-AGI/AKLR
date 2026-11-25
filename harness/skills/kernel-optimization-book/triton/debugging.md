@@ -4,7 +4,7 @@ kind: method
 ops: [gemm, moe, attention, gdn]
 gens: [gfx950]
 triton: 3.8.0
-cases:
+sources:
   - cases/dsa_sparse_mla_gluon.md
   - cases/mxfp4_moe_gluon_dim3072.md
   - cases/mxfp4_moe_gluon_dim6144.md

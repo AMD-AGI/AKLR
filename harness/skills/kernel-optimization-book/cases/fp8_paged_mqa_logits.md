@@ -65,7 +65,7 @@ requests in a call.
   without a tuned slice count take an untuned one. Those were not measured with the ruler of § Result.
 - **A shape compiles on its first call.** The compiled kernel is cached by the exact (batch, max_blocks, max_seq_len,
   n_pages), so a batch that has run at one shape is not warm at another: a pool size or table width first seen inside a
-  CUDA graph capture compiles there. sglang runs each captured shape eagerly first.
+  CUDA graph capture compiles there. sglang runs each captured shape eagerly first (`../gemm/autotune.md` §6).
 - **Code no timed size reaches**: the slice body's variant with compile-time slice bounds (the slice body is launched
   only at batch ≥ 8; batch ≤ 4 has a body of its own), and the tuned slice counts for batch 64, 128 and 256 (the band
   path sets its own split from 1024 pages).
@@ -114,9 +114,9 @@ for j in range_constexpr(4):  # token tile j: two 16-byte loads give the lane 32
 **Head sum in registers, no LDS.** relu, × weight, accumulated over the four head groups with fma (the first group
 peeled, so no `+ 0.0`), summed over the lane's four heads, then over the four lane groups with `permlane16_swap` and
 `permlane32_swap`: a fixed tree, no atomics. A `sched_barrier(0)` between token tiles keeps one tile's results live at a
-time. Lane group g keeps tile g, so lane l holds token l of the page; it multiplies by that token's scale, writes −inf
-past the context, and the wave stores the page's 64 logits as one 256-byte non-temporal store (`../gemm/epilogue.md`
-§5).
+time (`../attention/registers_occupancy.md` §4). Lane group g keeps tile g, so lane l holds token l of the page; it
+multiplies by that token's scale, writes −inf past the context, and the wave stores the page's 64 logits as one
+256-byte non-temporal store (`../gemm/epilogue.md` §5).
 
 ```python
 tiles = []

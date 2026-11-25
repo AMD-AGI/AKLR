@@ -5,6 +5,8 @@ scope: [any kernel whose speedup is quoted from another ruler than the one that 
 gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
+sources:
+  - cases/fp8_paged_mqa_logits.md
 ---
 
 # A speedup from another ruler

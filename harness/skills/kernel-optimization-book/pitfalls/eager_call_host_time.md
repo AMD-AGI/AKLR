@@ -7,7 +7,7 @@ flydsl: 0.3.2
 basis: single-observation
 sources:
   - "ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1358"
-cases: [cases/biased_topk_eager_host_time.md]
+  - cases/biased_topk_eager_host_time.md
 ---
 
 # Host time outside the graph ruler

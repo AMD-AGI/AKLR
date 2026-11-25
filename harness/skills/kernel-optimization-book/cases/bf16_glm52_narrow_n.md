@@ -59,8 +59,9 @@ Three of this page's four FlyDSL kernels are the GLM-5.2 set, one kernel per N. 
   then depends on what earlier calls left; scratch that every call rewrites before it reads it does not.
 - **Compilation runs inside the first call at a size.** The built launches are kept in a module-level dict, so
   compilation and scratch allocation run inside the first call at each m.
-- **Packing on every call.** N 128's docstring says the packed weight is refreshed for a new or modified weight,
-  N 32's that `b` is packed on first use and repacked when replaced or mutated; both kernels pack on every call.
+- **Packing on every call.** N 128's docstring says the packed weight is refreshed for a new or modified weight, N 32's
+  that `b` is packed on first use and repacked when replaced or mutated; both kernels pack on every call
+  (`../pitfalls/state_kept_across_calls.md`).
 
 ## Mechanism
 
@@ -222,9 +223,9 @@ m 8–128 and not at m 4 *(field, E10)*; later separate runs read 0.972–1.048,
           _bstore(t.to(fx.BFloat16), c_rsrc, (r0 + oi) * n + c0 + oj)
   ```
 - The launch requests kernel-argument preload (`amdgpu-kernarg-preload-count` 16) and passes the three tensors with
-  static layouts (`flyc.from_torch_tensor`). In compiler output read while the kernel was being written, that
-  preloaded all three pointers (kernarg size 24, 8 user SGPRs), where dynamic-layout arguments preloaded only the
-  first *(field, E7)*; the final build's metadata was not read.
+  static layouts (`flyc.from_torch_tensor`; `../flydsl/language/limits.md` § By design). In compiler output read while
+  the kernel was being written, that preloaded all three pointers (kernarg size 24, 8 user SGPRs), where dynamic-layout
+  arguments preloaded only the first *(field, E7)*; the final build's metadata was not read.
 
 Measured as a one-sided lower bound of the aiter / kernel time ratio over 16 rounds of CUDA-graph replays with L2
 flushed before each call, on one MI355X: 1.046–1.330 over aiter, highest at m 8,

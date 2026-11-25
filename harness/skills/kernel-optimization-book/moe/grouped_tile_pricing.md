@@ -13,6 +13,8 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_fp8_kernel.py:3921
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py:1689
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py:1716
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/mxfp4_moe_gluon_dim6144.md
 ---
 
 # Pricing the tile, the occupancy and the boundary bodies of a grouped GEMM

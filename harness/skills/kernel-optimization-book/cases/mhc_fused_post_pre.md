@@ -41,7 +41,7 @@ weight. "T" is the number of tokens.
   closure that compiles a kernel pair for every new tuple of the six scalars and keeps it in a dict.
   The scalars are compile-time constants, and the Sinkhorn loop is unrolled `sinkhorn_iters` times at trace time. A
   scalar tuple first seen inside a CUDA-graph capture would compile there: compile every variant a size's scalars
-  select on its first call, before any capture.
+  select on its first call, before any capture (`../gemm/autotune.md` §6).
 - **Scratch on the current device.** The partials buffer (T × NK × 34 fp32) is allocated once per T with
   `torch.device("cuda")`,
   not on an argument's device, and the cache key holds no device. The projection kernel rewrites every row of it

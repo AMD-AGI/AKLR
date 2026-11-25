@@ -6,7 +6,7 @@ dtypes: [fp8, mxfp4, bf16, fp32]
 regimes: [all]
 gens: [gfx950]
 triton: 3.8.0
-cases:
+sources:
   - cases/a8w8_gluon_n3072_n7168.md
   - cases/bf16_triton_small_m.md
   - cases/dsa_sparse_mla_gluon.md

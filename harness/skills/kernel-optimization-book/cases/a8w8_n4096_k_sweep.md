@@ -194,8 +194,9 @@ Per kernel:
 - Other m: four waves along N, A written from registers into a 2-stage XOR-swizzled LDS ping-pong (async DMA,
   `BufferLoadAsyncLDS128b`, at m = 256), B into registers double-buffered, FlyDSL `preshuffle_gemm`-style
   MFMA/VMEM/DS interleave hints (`../gemm/schedule_and_locality.md` §3,
-  `../flydsl/gemm.md` § mainloop §8). Tiles 16×64×256 (m ≤ 32), 16×128×256 (64, 128), 32×128×256 (256),
-  64×128×256 (512), 64×256×128 (m ≥ 1024); 64 to 1024 workgroups; 2-byte stores.
+  `../flydsl/gemm.md` § mainloop §8, `../flydsl/guides.md` § gemm-optimization). Tiles 16×64×256 (m ≤ 32),
+  16×128×256 (64, 128), 32×128×256 (256), 64×128×256 (512), 64×256×128 (m ≥ 1024); 64 to 1024 workgroups; 2-byte
+  stores.
 
 **N 4096 × K 2048** — no K split.
 - Tiles 16×64×512 (m ≤ 64), 32×64×512 (128, 256), 64×64×512 (512), 64×128×256 (1024), 128×128×128 (2048,

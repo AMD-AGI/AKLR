@@ -10,6 +10,22 @@ flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:142
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:877
+  - cases/a8w8_gluon_n3072_n7168.md
+  - cases/a8w8_n4096_k_sweep.md
+  - cases/a8w8_small_n_large_k.md
+  - cases/bf16_glm52_narrow_n.md
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/bf16_large_m_whole_k_tiles.md
+  - cases/bf16_n6144_k16384_counter_fold.md
+  - cases/bf16_small_m_column_strip.md
+  - cases/fp8_paged_mqa_logits.md
+  - cases/fused_moe_interleave_swiglu.md
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/k3_bf16_band_stream.md
+  - cases/k3_bf16_short_k_large_m.md
+  - cases/k3_bf16_splitk_narrow_n.md
+  - cases/k3_bf16_splitk_wide_n.md
+  - cases/mhc_fused_post_pre.md
 ---
 
 # Wave placement, XCD order, scheduling and epilogue in a GEMM

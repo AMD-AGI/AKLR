@@ -15,6 +15,7 @@ sources:
   - ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/preshuffle_gemm.py
   - ROCm/aiter@dbd8bf5:csrc/gemm_a16w16/gemm_a16w16_tune.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/autotune.py
+  - cases/k3_bf16_short_k_large_m.md
 ---
 
 # The tunable surface of aiter's FlyDSL GEMMs

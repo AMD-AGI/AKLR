@@ -11,6 +11,9 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:agent/rules/iteration_rules.mdc
   - AMD-AGI/Primus-Turbo@7615a5a2:agent/skills/kernel-optimize/workflow/optimize-loop.md
   - AMD-AGI/Primus-Turbo@7615a5a2:agent/skills/kernel-optimize/knowledge/ops/gemm/overview.md
+  - cases/bf16_k4096_splitk_hgemm.md
+  - cases/fused_moe_shuffled_16x16.md
+  - cases/mla_causal_bf16_fixed_rows.md
 ---
 
 # Working on a GEMM
@@ -136,10 +139,12 @@ These rules come from Primus-Turbo's optimization loop (`agent/skills/kernel-opt
   comparison with a reference kernel, fusion or reordering. Do not re-sweep the family that just failed.
 - **No benchmark-only gains.**
   - A cache keyed on an input tensor's identity works only because the benchmark reuses tensor objects.
-  - A shortcut that assumes uniform shapes or distributions will not survive real inputs.
+  - A shortcut that assumes uniform shapes or distributions will not survive real inputs
+    (`../cases/mla_causal_bf16_fixed_rows.md` §1).
   - A packed or reshuffled copy of a weight kept across calls, where the kernel may keep nothing derived from
     its arguments (`../pitfalls/state_kept_across_calls.md`): repack on every
-    call, or have the caller pass the weight already shuffled where it can.
+    call (`../cases/bf16_k4096_splitk_hgemm.md`), or have the caller pass the weight already shuffled where it can
+    (`../cases/fused_moe_shuffled_16x16.md`).
   - If a gain is larger than the change could structurally produce, look for one of these before
     accepting it.
 
