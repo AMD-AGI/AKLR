@@ -174,7 +174,7 @@ jobs:
           HF_HUB_DIR: ${{ vars.AKLR_E2E_PERF_HF_HUB_DIR }}
         # exec: a cancelled run's SIGINT must reach the sweep, which then stops its container.
         run: |
-          : "${HF_HUB_DIR:?set the repository variable AKLR_E2E_PERF_HF_HUB_DIR to the runner's HF hub cache}"
+          : "${HF_HUB_DIR:?set the repository variable AKLR_E2E_PERF_HF_HUB_DIR to the HF hub cache on the runner}"
           run="models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID"
           exec python3 -m e2e_perf sweep --plan "$RUNNER_TEMP/plan/$run/plan.json" \
             --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/e2e-cache/$run" \
