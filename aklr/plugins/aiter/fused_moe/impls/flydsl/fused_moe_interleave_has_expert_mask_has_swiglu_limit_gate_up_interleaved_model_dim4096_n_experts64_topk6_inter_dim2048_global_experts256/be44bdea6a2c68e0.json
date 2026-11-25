@@ -184,8 +184,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 3.004,
-      "microseconds": 11.8
+      "speedup": 2.991,
+      "microseconds": 11.9
     },
     {
       "axes": {
@@ -195,8 +195,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 2.257,
-      "microseconds": 16.2
+      "speedup": 2.216,
+      "microseconds": 16.5
     }
   ],
   "layout_variants": {

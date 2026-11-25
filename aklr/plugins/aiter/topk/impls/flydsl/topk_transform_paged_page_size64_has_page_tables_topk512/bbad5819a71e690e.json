@@ -101,8 +101,8 @@
         "n_pages": 4097
       },
       "accuracy": "passed",
-      "speedup": 1.728,
-      "microseconds": 47.3
+      "speedup": 1.759,
+      "microseconds": 46.3
     }
   ],
   "layout_variants": {

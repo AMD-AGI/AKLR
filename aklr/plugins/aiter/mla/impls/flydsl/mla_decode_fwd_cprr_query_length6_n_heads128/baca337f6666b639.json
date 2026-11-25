@@ -164,7 +164,7 @@
         "cp_rank": 7
       },
       "accuracy": "passed",
-      "speedup": 1.575,
+      "speedup": 1.592,
       "microseconds": 31.0
     },
     {
@@ -180,7 +180,7 @@
       },
       "accuracy": "passed",
       "speedup": 1.373,
-      "microseconds": 46.3
+      "microseconds": 45.9
     }
   ],
   "layout_variants": {
