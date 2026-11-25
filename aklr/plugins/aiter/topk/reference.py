@@ -48,8 +48,9 @@ def biased_grouped_topk_reference(
     the topk_group groups whose two best biased scores sum highest."""
     import torch
 
-    scores = router_logits.double().sigmoid()
-    biased = scores + correction_bias.double()
+    # float32, as main's reference since #293: the kernels rank near ties by this key
+    scores = router_logits.float().sigmoid()
+    biased = scores + correction_bias.float()
     groups = biased.unflatten(-1, (num_expert_group, -1))
     group_scores = groups.topk(min(2, groups.shape[-1]), dim=-1).values.sum(dim=-1)
     kept = group_scores.topk(topk_group, dim=-1).indices

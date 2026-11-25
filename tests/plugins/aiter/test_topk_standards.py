@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import torch
+
 import aklr.plugins.aiter
 from tests.op_sample import OpSample
 
@@ -16,3 +18,11 @@ def test_the_paged_topk_init_draws_untied_scores_and_distinct_pages_the_referenc
     out = sample.template.standard.reference(**call)
     assert list(out.shape) == [3, 8]
     assert sample.template.standard.check([out], [out.flip(-1)])
+
+
+def test_the_biased_topk_reference_ranks_by_its_float32_key() -> None:
+    (template,) = aklr.plugins.aiter.biased_grouped_topk.variants
+    # 0.5 + (1.5 + 2**-23) rounds to 2.0 in float32: the two experts tie there, and the lower one wins
+    bias = torch.tensor([1.5, 1.5 + 2**-23], dtype=torch.float32)
+    _, ids = template.standard.reference(torch.zeros(1, 2), bias, 1, 1, 1, False)
+    assert ids.tolist() == [[0]]
