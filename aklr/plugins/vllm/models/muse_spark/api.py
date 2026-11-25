@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
-from aklr.ops.gemm.api import gemm
+from aklr.plugins.aiter.gemm.api import gemm
 from aklr.plugins.vllm.hook import _original, vllm_route
 from aklr.plugins.vllm.models.muse_spark.contract import MUSE_SPARK_MOE
 

@@ -164,10 +164,7 @@
       "scalars": {
         "beta": 4.0,
         "linear_beta": 25.0
-      },
-      "accuracy": "passed",
-      "speedup": 1.066,
-      "microseconds": 78.1
+      }
     },
     {
       "axes": {
@@ -176,10 +173,7 @@
       "scalars": {
         "beta": 4.0,
         "linear_beta": 25.0
-      },
-      "accuracy": "passed",
-      "speedup": 1.018,
-      "microseconds": 88.7
+      }
     },
     {
       "axes": {
@@ -188,10 +182,7 @@
       "scalars": {
         "beta": 4.0,
         "linear_beta": 25.0
-      },
-      "accuracy": "passed",
-      "speedup": 1.027,
-      "microseconds": 91.4
+      }
     }
   ],
   "layout_variants": {
@@ -236,9 +227,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.001,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "flydsl",

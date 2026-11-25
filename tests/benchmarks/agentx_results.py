@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
-from agentx_ci import serving_config, utils
+from agentx import serving_config, utils
 
 REPO = Path(__file__).resolve().parents[2]
 

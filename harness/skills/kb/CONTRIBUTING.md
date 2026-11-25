@@ -106,7 +106,7 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   Attempts fail lint. Write the current best practice; an attempt that failed becomes a counter-signal or a risk,
   stated as the condition under which it fails.
 - **No copy of an external rule.** AKLR's audit, contracts and serving threshold are linked to the section of
-  `aklr/ops/README.md` that states them, not restated: a restated rule goes stale when the README changes.
+  `aklr/plugins/aiter/README.md` that states them, not restated: a restated rule goes stale when the README changes.
 - **No second page for the same thing.** A technique's `lever` is unique (`maintenance/kb_lint.py` reports a
   duplicate); search the skill for the lever, the op and the symptom before writing, and extend the page you find.
 - **No training-only or inference-only scope.** The same GEMM, attention and MoE kernels run in training and

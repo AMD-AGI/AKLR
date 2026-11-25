@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo=AMD-AGI/AKLR
-label=agentx-mi355x
+label=conductor-mi355x
 version=2.338.2
 dir=/opt/agentx-runner
 name="$(hostname -s)-agentx"
@@ -48,5 +48,5 @@ sudo ./svc.sh install "$(id -un)"
 sudo ./svc.sh start
 
 echo "Registered $name with label $label."
-echo "Next: set AGENTX_HF_HUB_DIR=${hf_hub_dir:-<hub dir>}, set the target's runner_label to $label" \
-  "in benchmarks/agentx/agentx.yaml, then dispatch agentx-ci.yaml."
+echo "Next: set AKLR_AGENTX_HF_HUB_DIR=${hf_hub_dir:-<hub dir>}, set the target's runner_label to $label" \
+  "in benchmarks/perf/agentx/agentx.yaml, then dispatch agentx-ci.yaml."

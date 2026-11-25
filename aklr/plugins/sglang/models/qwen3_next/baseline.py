@@ -16,6 +16,16 @@ quantization of the block-FP8 o_proj."""
 
 import functools
 
+import torch
+
+from aklr.core.contract.baseline import OpBaseline
+
+__all__ = [
+    "Qwen3NextGatedAttentionDecodeGroupFp8QuantBaseline",
+    "Qwen3NextGdnDecodeGroupFp8QuantBaseline",
+    "Qwen3NextGdnPrefillGroupFp8QuantBaseline",
+]
+
 _PARTITION_SIZE = 256  # sglang's _AITER_PARTITION_SIZE_ROCM
 
 
@@ -37,234 +47,239 @@ def _normalize_quantize(core, z, norm_weight, eps, rows):
     normed = normed.reshape(rows, heads, value_dim)
     quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
     values, scales = quantize(normed.reshape(rows, -1), quant_dtype=aiter.dtypes.fp8)
-    return normed, values, scales
+    return {"normalized": normed, "values": values, "scales": scales}
 
 
-def qwen3_next_gdn_prefill_group_fp8_quant_baseline(
-    projected_qkvz,
-    projected_ba,
-    conv_state,
-    delta_state,
-    cache_indices,
-    cu_seqlens,
-    has_initial_state,
-    conv_weight,
-    conv_bias,
-    a_log,
-    dt_bias,
-    norm_weight,
-    scale=128**-0.5,
-    eps=1e-6,
-    max_seq_len=1024,
-    normalized=None,
-    values=None,
-    scales=None,
-):
-    import torch
-    from sglang.kernels.ops.attention.fla.chunk import chunk_gated_delta_rule
-    from sglang.kernels.ops.attention.linear.fused_gdn_gating import fused_gdn_gating
-    from sglang.kernels.ops.attention.triton_gdn_fused_proj import (
-        fused_qkv_split_gdn_prefill,
-        fused_qkvzba_split_reshape_cat,
-    )
-    from sglang.kernels.ops.mamba.causal_conv1d_triton import causal_conv1d_fn
-
-    key_heads, heads, key_dim, value_dim = _heads(conv_state, delta_state)
-    rows = projected_qkvz.shape[0]
-    mixed, z, b, a = fused_qkvzba_split_reshape_cat(
+class Qwen3NextGdnPrefillGroupFp8QuantBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         projected_qkvz,
         projected_ba,
-        key_heads,
-        heads,
-        key_dim,
-        value_dim,
-    )
-    mixed = causal_conv1d_fn(
-        mixed.transpose(0, 1),
-        conv_weight,
-        conv_bias,
-        conv_states=conv_state,
-        query_start_loc=cu_seqlens,
-        seq_lens_cpu=[max_seq_len] * cache_indices.numel(),
-        cache_indices=cache_indices,
-        has_initial_state=has_initial_state,
-        activation="silu",
-    ).transpose(0, 1)[:rows]
-    q, k, v = fused_qkv_split_gdn_prefill(mixed, key_heads, key_heads, heads, key_dim, key_dim, value_dim)
-    g, beta = fused_gdn_gating(a_log, a, b, dt_bias)
-    # sglang allocates fresh slots zeroed; a standalone call must not see stale state
-    initial = delta_state[cache_indices]
-    delta_state[cache_indices] = torch.where(has_initial_state[:, None, None, None], initial, 0)
-    core, _, _ = chunk_gated_delta_rule(
-        q=q,
-        k=k,
-        v=v,
-        g=g,
-        beta=beta,
-        scale=scale,
-        initial_state=delta_state,
-        initial_state_indices=cache_indices,
-        cu_seqlens=cu_seqlens,
-        head_first=False,
-        use_qk_l2norm_in_kernel=True,
-        inplace_update=True,
-    )
-    return _normalize_quantize(core, z, norm_weight, eps, rows)
-
-
-def qwen3_next_gdn_decode_group_fp8_quant_baseline(
-    projected_qkvz,
-    projected_ba,
-    conv_state,
-    delta_state,
-    cache_indices,
-    conv_weight,
-    conv_bias,
-    a_log,
-    dt_bias,
-    norm_weight,
-    scale=128**-0.5,
-    eps=1e-6,
-    normalized=None,
-    values=None,
-    scales=None,
-):
-    """Padding rows (-1) keep their state and give a zero core, as in sglang."""
-    from sglang.kernels.ops.attention.fla.fused_recurrent import (
-        fused_recurrent_gated_delta_rule_packed_decode,
-    )
-    from sglang.kernels.ops.attention.triton_gdn_fused_proj import fused_qkvzba_split_reshape_cat
-    from sglang.kernels.ops.mamba.causal_conv1d_triton import causal_conv1d_update
-
-    key_heads, heads, key_dim, value_dim = _heads(conv_state, delta_state)
-    rows = projected_qkvz.shape[0]
-    mixed, z, b, a = fused_qkvzba_split_reshape_cat(
-        projected_qkvz,
-        projected_ba,
-        key_heads,
-        heads,
-        key_dim,
-        value_dim,
-    )
-    mixed = causal_conv1d_update(
-        mixed,
         conv_state,
+        delta_state,
+        cache_indices,
+        cu_seqlens,
+        has_initial_state,
         conv_weight,
         conv_bias,
-        "silu",
-        conv_state_indices=cache_indices,
-    )
-    core = mixed.new_empty(rows, 1, heads, value_dim)
-    fused_recurrent_gated_delta_rule_packed_decode(
-        mixed_qkv=mixed,
-        a=a,
-        b=b,
-        A_log=a_log,
-        dt_bias=dt_bias,
-        scale=scale,
-        initial_state=delta_state,
-        out=core,
-        ssm_state_indices=cache_indices,
-        use_qk_l2norm_in_kernel=True,
-    )
-    return _normalize_quantize(core, z, norm_weight, eps, rows)
+        a_log,
+        dt_bias,
+        norm_weight,
+        scale=128**-0.5,
+        eps=1e-6,
+        max_seq_len=1024,
+        normalized=None,
+        values=None,
+        scales=None,
+    ):
+        from sglang.kernels.ops.attention.fla.chunk import chunk_gated_delta_rule
+        from sglang.kernels.ops.attention.linear.fused_gdn_gating import fused_gdn_gating
+        from sglang.kernels.ops.attention.triton_gdn_fused_proj import (
+            fused_qkv_split_gdn_prefill,
+            fused_qkvzba_split_reshape_cat,
+        )
+        from sglang.kernels.ops.mamba.causal_conv1d_triton import causal_conv1d_fn
+
+        key_heads, heads, key_dim, value_dim = _heads(conv_state, delta_state)
+        rows = projected_qkvz.shape[0]
+        mixed, z, b, a = fused_qkvzba_split_reshape_cat(
+            projected_qkvz,
+            projected_ba,
+            key_heads,
+            heads,
+            key_dim,
+            value_dim,
+        )
+        mixed = causal_conv1d_fn(
+            mixed.transpose(0, 1),
+            conv_weight,
+            conv_bias,
+            conv_states=conv_state,
+            query_start_loc=cu_seqlens,
+            seq_lens_cpu=[max_seq_len] * cache_indices.numel(),
+            cache_indices=cache_indices,
+            has_initial_state=has_initial_state,
+            activation="silu",
+        ).transpose(0, 1)[:rows]
+        q, k, v = fused_qkv_split_gdn_prefill(mixed, key_heads, key_heads, heads, key_dim, key_dim, value_dim)
+        g, beta = fused_gdn_gating(a_log, a, b, dt_bias)
+        # sglang allocates fresh slots zeroed; a standalone call must not see stale state
+        initial = delta_state[cache_indices]
+        delta_state[cache_indices] = torch.where(has_initial_state[:, None, None, None], initial, 0)
+        core, _, _ = chunk_gated_delta_rule(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            scale=scale,
+            initial_state=delta_state,
+            initial_state_indices=cache_indices,
+            cu_seqlens=cu_seqlens,
+            head_first=False,
+            use_qk_l2norm_in_kernel=True,
+            inplace_update=True,
+        )
+        return _normalize_quantize(core, z, norm_weight, eps, rows)
+
+
+class Qwen3NextGdnDecodeGroupFp8QuantBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        projected_qkvz,
+        projected_ba,
+        conv_state,
+        delta_state,
+        cache_indices,
+        conv_weight,
+        conv_bias,
+        a_log,
+        dt_bias,
+        norm_weight,
+        scale=128**-0.5,
+        eps=1e-6,
+        normalized=None,
+        values=None,
+        scales=None,
+    ):
+        """Padding rows (-1) keep their state and give a zero core, as in sglang."""
+        from sglang.kernels.ops.attention.fla.fused_recurrent import (
+            fused_recurrent_gated_delta_rule_packed_decode,
+        )
+        from sglang.kernels.ops.attention.triton_gdn_fused_proj import fused_qkvzba_split_reshape_cat
+        from sglang.kernels.ops.mamba.causal_conv1d_triton import causal_conv1d_update
+
+        key_heads, heads, key_dim, value_dim = _heads(conv_state, delta_state)
+        rows = projected_qkvz.shape[0]
+        mixed, z, b, a = fused_qkvzba_split_reshape_cat(
+            projected_qkvz,
+            projected_ba,
+            key_heads,
+            heads,
+            key_dim,
+            value_dim,
+        )
+        mixed = causal_conv1d_update(
+            mixed,
+            conv_state,
+            conv_weight,
+            conv_bias,
+            "silu",
+            conv_state_indices=cache_indices,
+        )
+        core = mixed.new_empty(rows, 1, heads, value_dim)
+        fused_recurrent_gated_delta_rule_packed_decode(
+            mixed_qkv=mixed,
+            a=a,
+            b=b,
+            A_log=a_log,
+            dt_bias=dt_bias,
+            scale=scale,
+            initial_state=delta_state,
+            out=core,
+            ssm_state_indices=cache_indices,
+            use_qk_l2norm_in_kernel=True,
+        )
+        return _normalize_quantize(core, z, norm_weight, eps, rows)
 
 
 @functools.cache
 def _unit_scale(device):
     """The aiter backend's KV scale tensor, 1.0, which an FP8 checkpoint's own unit KV
     scales equal."""
-    import torch
-
     return torch.ones(1, dtype=torch.float32, device=device)
 
 
 @functools.cache
 def _last_page_lengths(rows, device):
     """The aiter backend's kv_last_page_len: one-token pages."""
-    import torch
-
     return torch.ones(rows, dtype=torch.int32, device=device)
 
 
-def qwen3_next_gated_attention_decode_group_fp8_quant_baseline(
-    projected_qkv,
-    q_norm_weight,
-    k_norm_weight,
-    positions,
-    cos_sin_cache,
-    cache_locations,
-    key_cache,
-    value_cache,
-    kv_indptr,
-    kv_indices,
-    eps=1e-6,
-    scale=256**-0.5,
-    max_context=8192,
-    values=None,
-    scales=None,
-):
-    """forward_prepare_native's query and gate split, GemmaRMSNorm's ROCm Triton norm of Q
-    and K, the rotary module's sgl_kernel rotary_embedding (BF16 arithmetic), the aiter
-    backend's forward_decode (its fused FP8 KV write, then paged_attention_ragged over
-    one-token pages at unit KV scales, its partitions sized for a max_context-token server),
-    fused_sigmoid_mul, then the per-1x128 AITER quantization the block-FP8 o_proj applies to
-    its BF16 input (row-major scales)."""
-    import aiter
-    import torch
-    from sgl_kernel import rotary_embedding
-    from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
-    from sglang.kernels.ops.kvcache.cache_ops import launch_reshape_and_cache_flash
-    from sglang.kernels.ops.layernorm.minimax_m3_rmsnorm import gemma_rmsnorm
-
-    rows, device = projected_qkv.shape[0], projected_qkv.device
-    _, kv_heads, head_dim = key_cache.shape
-    heads = (projected_qkv.shape[1] - 2 * kv_heads * head_dim) // (2 * head_dim)
-    width, kv_width = heads * head_dim, kv_heads * head_dim
-    query_gate, key, value = projected_qkv.split([2 * width, kv_width, kv_width], dim=-1)
-    query, gate = torch.chunk(query_gate.view(rows, heads, -1), 2, dim=-1)
-    query, gate = query.reshape(rows, -1), gate.reshape(rows, -1)
-    query = gemma_rmsnorm(query.reshape(-1, head_dim), q_norm_weight, eps).view(rows, -1)
-    key = gemma_rmsnorm(key.reshape(-1, head_dim), k_norm_weight, eps).view(rows, -1)
-    rotary_embedding(positions, query, key, head_dim, cos_sin_cache, True)
-    unit = _unit_scale(device)
-    key_pages = key_cache.view(-1, 1, kv_heads, head_dim)
-    value_pages = value_cache.view(-1, 1, kv_heads, head_dim)
-    launch_reshape_and_cache_flash(
-        key.view(-1, kv_heads, head_dim),
-        value.view(-1, kv_heads, head_dim),
-        key_pages,
-        value_pages,
+class Qwen3NextGatedAttentionDecodeGroupFp8QuantBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        projected_qkv,
+        q_norm_weight,
+        k_norm_weight,
+        positions,
+        cos_sin_cache,
         cache_locations,
-        k_scale=unit,
-        v_scale=unit,
-    )
-    partitions = -(-max_context // _PARTITION_SIZE)
-    # the backend's float32 workspace: partial outputs, then exp sums and max logits
-    workspace = torch.empty(rows * heads * partitions * (head_dim + 2) * 4, dtype=torch.uint8, device=device)
-    attended = torch.empty((rows, width), dtype=torch.bfloat16, device=device)
-    aiter.paged_attention_ragged(
-        attended.view(-1, heads, head_dim),
-        workspace,
-        query.view(-1, heads, head_dim),
-        key_pages,
-        value_pages,
-        scale,
+        key_cache,
+        value_cache,
         kv_indptr,
         kv_indices,
-        _last_page_lengths(rows, device),
-        1,
-        partitions,
-        None,
-        "fp8_e4m3",
-        "NHD",
-        0.0,
-        unit,
-        unit,
-        None,
-        _PARTITION_SIZE,
-    )
-    gated = fused_sigmoid_mul(attended, gate)
-    quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
-    quantized, factors = quantize(gated, quant_dtype=aiter.dtypes.fp8)
-    return quantized.view(rows, heads, head_dim), factors
+        eps=1e-6,
+        scale=256**-0.5,
+        max_context=8192,
+        values=None,
+        scales=None,
+    ):
+        """forward_prepare_native's query and gate split, GemmaRMSNorm's ROCm Triton norm of Q
+        and K, the rotary module's sgl_kernel rotary_embedding (BF16 arithmetic), the aiter
+        backend's forward_decode (its fused FP8 KV write, then paged_attention_ragged over
+        one-token pages at unit KV scales, its partitions sized for a max_context-token server),
+        fused_sigmoid_mul, then the per-1x128 AITER quantization the block-FP8 o_proj applies to
+        its BF16 input (row-major scales)."""
+        import aiter
+        from sgl_kernel import rotary_embedding
+        from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
+        from sglang.kernels.ops.kvcache.cache_ops import launch_reshape_and_cache_flash
+        from sglang.kernels.ops.layernorm.minimax_m3_rmsnorm import gemma_rmsnorm
+
+        rows, device = projected_qkv.shape[0], projected_qkv.device
+        _, kv_heads, head_dim = key_cache.shape
+        heads = (projected_qkv.shape[1] - 2 * kv_heads * head_dim) // (2 * head_dim)
+        width, kv_width = heads * head_dim, kv_heads * head_dim
+        query_gate, key, value = projected_qkv.split([2 * width, kv_width, kv_width], dim=-1)
+        query, gate = torch.chunk(query_gate.view(rows, heads, -1), 2, dim=-1)
+        query, gate = query.reshape(rows, -1), gate.reshape(rows, -1)
+        query = gemma_rmsnorm(query.reshape(-1, head_dim), q_norm_weight, eps).view(rows, -1)
+        key = gemma_rmsnorm(key.reshape(-1, head_dim), k_norm_weight, eps).view(rows, -1)
+        rotary_embedding(positions, query, key, head_dim, cos_sin_cache, True)
+        unit = _unit_scale(device)
+        key_pages = key_cache.view(-1, 1, kv_heads, head_dim)
+        value_pages = value_cache.view(-1, 1, kv_heads, head_dim)
+        launch_reshape_and_cache_flash(
+            key.view(-1, kv_heads, head_dim),
+            value.view(-1, kv_heads, head_dim),
+            key_pages,
+            value_pages,
+            cache_locations,
+            k_scale=unit,
+            v_scale=unit,
+        )
+        partitions = -(-max_context // _PARTITION_SIZE)
+        # the backend's float32 workspace: partial outputs, then exp sums and max logits
+        workspace = torch.empty(
+            rows * heads * partitions * (head_dim + 2) * 4, dtype=torch.uint8, device=device
+        )
+        attended = torch.empty((rows, width), dtype=torch.bfloat16, device=device)
+        aiter.paged_attention_ragged(
+            attended.view(-1, heads, head_dim),
+            workspace,
+            query.view(-1, heads, head_dim),
+            key_pages,
+            value_pages,
+            scale,
+            kv_indptr,
+            kv_indices,
+            _last_page_lengths(rows, device),
+            1,
+            partitions,
+            None,
+            "fp8_e4m3",
+            "NHD",
+            0.0,
+            unit,
+            unit,
+            None,
+            _PARTITION_SIZE,
+        )
+        gated = fused_sigmoid_mul(attended, gate)
+        quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
+        quantized, factors = quantize(gated, quant_dtype=aiter.dtypes.fp8)
+        return {"values": quantized.view(rows, heads, head_dim), "scales": factors}

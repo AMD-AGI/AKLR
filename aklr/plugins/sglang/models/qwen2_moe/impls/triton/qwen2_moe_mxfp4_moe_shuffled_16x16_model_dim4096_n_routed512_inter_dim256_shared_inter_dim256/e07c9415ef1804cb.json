@@ -180,27 +180,42 @@
     {
       "axes": {
         "n_tokens": 72
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.275,
+      "microseconds": 123.0
     },
     {
       "axes": {
         "n_tokens": 120
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.237,
+      "microseconds": 142.0
     },
     {
       "axes": {
         "n_tokens": 136
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.273,
+      "microseconds": 149.0
     },
     {
       "axes": {
         "n_tokens": 144
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.289,
+      "microseconds": 144.0
     },
     {
       "axes": {
         "n_tokens": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.256,
+      "microseconds": 157.0
     }
   ],
   "layout_variants": {
@@ -249,9 +264,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

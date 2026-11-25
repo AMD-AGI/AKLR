@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     LecunNormalDistribution,
@@ -21,6 +20,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -30,6 +30,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.models.qwen3_moe.baseline import Qwen3MoeFp8MoeBaseline
+from aklr.plugins.sglang.models.qwen3_moe.reference import Qwen3MoeFp8MoeReference
 
 __all__ = ["CONTRACTS", "QWEN3_MOE_FP8_MOE"]
 
@@ -144,6 +146,8 @@ QWEN3_MOE_FP8_MOE = OpContract(
     layout_variants=_EXPERT_LAYOUTS,
     # atomics order some kernels' routing queues
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=Qwen3MoeFp8MoeReference(),
+    baseline=Qwen3MoeFp8MoeBaseline(),
 )
 
 CONTRACTS = (QWEN3_MOE_FP8_MOE,)

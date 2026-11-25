@@ -16,9 +16,11 @@ def main() -> int:
             errors.append(f"{directory}/: no __init__.py")
     for path in paths:
         is_test = path.name.startswith("test_")
-        package = Path("aklr", *path.parts[1:-1])
+        # tests/benchmarks/ tests benchmarks/ at the repository root, outside aklr/
+        mirrored = "benchmarks" if path.parts[1] == "benchmarks" else "aklr"
+        package = Path(*path.parts[1:-1]) if mirrored == "benchmarks" else Path("aklr", *path.parts[1:-1])
         if is_test and not package.is_dir():
-            errors.append(f"{path}: no {package}/ to test; a test's directory mirrors aklr/")
+            errors.append(f"{path}: no {package}/ to test; a test's directory mirrors {mirrored}/")
         for node in ast.walk(ast.parse(path.read_text(), str(path))):
             if isinstance(node, ast.Import | ast.ImportFrom):
                 # only import statements are seen: importlib.import_module("...") is not

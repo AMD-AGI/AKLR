@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import os
 
-from aklr.ops.topk.api import biased_grouped_topk
 from aklr.plugins.aiter.provider._base import offer, selector, served
+from aklr.plugins.aiter.topk.api import biased_grouped_topk
 
 
 @selector("topk_gating")

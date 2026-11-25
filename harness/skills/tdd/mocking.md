@@ -67,7 +67,7 @@ class ValidationScope:
 
 
 def test_base_without_schema_data_is_a_first_release(monkeypatch, tmp_path):
-    monkeypatch.setattr(ValidationScope, "paths_at_base", lambda self, directory: ("aklr/ops/gemm/api.py",))
+    monkeypatch.setattr(ValidationScope, "paths_at_base", lambda self, directory: ("aklr/plugins/aiter/gemm/api.py",))
     assert ValidationScope(tmp_path, "0" * 40, "1" * 40, (), ()).is_first_release
 
 
@@ -79,7 +79,7 @@ class ValidationScope:
 def test_base_without_schema_data_is_a_first_release(monkeypatch, tmp_path):
     def fake_git(self, *args):
         if args[0] == "ls-tree":
-            return b"aklr/ops/gemm/api.py\0"
+            return b"aklr/plugins/aiter/gemm/api.py\0"
         if args[0] == "cat-file":
             return b"{}"
         raise AssertionError(args)
