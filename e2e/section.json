@@ -1,0 +1,21 @@
+{
+ "schema": 1,
+ "id": "e2e",
+ "title": {
+  "en": "Daily end-to-end performance",
+  "zh": "端到端性能"
+ },
+ "path": "index.html",
+ "updated_at": "2026-11-25T11:06:01Z",
+ "last_run": {
+  "run_id": "45587395751",
+  "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45587395751",
+  "commit": "3e191a8b6049fa74c82af735c4f7386ef08c4861",
+  "ref": "refs/heads/main",
+  "event": "workflow_dispatch"
+ },
+ "targets": 2,
+ "status_counts": {
+  "ok": 2
+ }
+}
