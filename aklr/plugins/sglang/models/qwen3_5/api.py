@@ -1,4 +1,5 @@
 # Created by OpenAI
+import os
 from functools import cache
 
 import torch
@@ -444,8 +445,8 @@ def _verify(layer, hidden_states, hidden, forward_batch, backend):
     if window is None:
         return FallbackReason.OUT_OF_CONTRACT
     out_proj = layer.out_proj
-    if _takes_fp8_groups(out_proj):
-        op = gdn_verify_group_fp8_quant
+    if _takes_fp8_groups(out_proj) and getattr(out_proj.weight, "_ptpc_weight", None) is None:
+        op = gdn_verify if _quantizes_small_m(out_proj, rows) else gdn_verify_group_fp8_quant
     elif _per_token_fp8(out_proj) or _unquantized_projections(layer):
         op = gdn_verify_token_fp8_quant if _fp8_tuple_input(out_proj, rows) else gdn_verify
     else:
@@ -480,6 +481,9 @@ def _conv_window_buffer(backend, cache, layer_id):
     if not buffers or len(cache.intermediate_conv_window) != 1:
         return None
     window, view = buffers[0][pool.mamba2_layer_index(layer_id)], cache.intermediate_conv_window[0]
+    # top-k drafts keep every draft token's window: one more dimension
+    if window.dim() != 3:
+        return None
     rows, channels, width = window.shape
     if (
         width != _DRAFT_TOKENS + 2
@@ -491,6 +495,24 @@ def _conv_window_buffer(backend, cache, layer_id):
     ):
         return None
     return window
+
+
+def _quantizes_small_m(linear, rows) -> bool:
+    """Whether sglang's block-FP8 GEMM quantizes ``rows`` BF16 rows itself: 0.5.23's fused
+    small-M GEMM on gfx950 (fp8_utils.apply_fp8_linear), which takes no FP8 pair."""
+    try:
+        from sglang.kernels.ops.gemm.smallm_fp8_blockscale_gfx950 import SHAPES
+        from sglang.srt.layers.quantization.fp8_utils import _use_aiter_bpreshuffle_gfx95
+    except ImportError:
+        return False
+    weight = linear.weight
+    return (
+        _use_aiter_bpreshuffle_gfx95
+        and getattr(linear, "bias", None) is None
+        and os.environ.get("SGLANG_ROCM_SMALLM_FP8_BS", "1") != "0"
+        and getattr(weight, "is_shuffled", False)
+        and any(rows <= max_m for max_m, *_ in SHAPES.get(tuple(weight.shape), ()))
+    )
 
 
 def _packed_projections(layer, rows) -> bool:

@@ -322,12 +322,38 @@ def test_a_draft_chain_verifies_on_the_op_out_proj_takes(
     assert not sglang.tracked
 
 
+def test_a_draft_chain_hands_bf16_rows_to_a_gemm_that_quantizes_them(sglang, verify_ops, monkeypatch):
+    """sglang 0.5.23's block-FP8 GEMM on gfx950 quantizes a small M's BF16 rows itself (its
+    fused small-M GEMM): out_proj takes the BF16 op's rows there, the FP8 op's above."""
+    gemm = ModuleType("sglang.kernels.ops.gemm.smallm_fp8_blockscale_gfx950")
+    gemm.SHAPES = {(4096, 2048): ((ROWS, 1, 4, 8),)}
+    monkeypatch.setitem(sys.modules, gemm.__name__, gemm)
+    monkeypatch.setattr(
+        sys.modules["sglang.srt.layers.quantization.fp8_utils"],
+        "_use_aiter_bpreshuffle_gfx95",
+        True,
+        raising=False,
+    )
+    layer = Layer((Fp8LinearMethod(), UnquantizedLinearMethod(), Fp8LinearMethod()))
+    layer.out_proj.weight.is_shuffled = True
+    layer.out_proj.bias = None
+    assert forward(layer, ForwardMode.TARGET_VERIFY) == "out_proj output"
+    group, _, bf16 = verify_ops
+    assert (group.asked, bf16.asked) == (0, 1)
+    (projected,) = layer.out_proj.inputs
+    assert projected.shape == (ROWS, 2048) and projected.dtype == torch.bfloat16
+    gemm.SHAPES = {(4096, 2048): ((ROWS - 1, 1, 4, 8),)}
+    forward(layer, ForwardMode.TARGET_VERIFY)
+    assert (group.asked, bf16.asked) == (1, 1)
+
+
 @pytest.mark.parametrize(
     "change",
-    ["draft_tokens", "tree", "kernel", "replayssm", "dense_window", "out_proj"],
+    ["draft_tokens", "tree", "kernel", "replayssm", "dense_window", "tree_window", "ptpc", "out_proj"],
 )
 def test_other_verifies_stay_on_sglang(sglang, verify_ops, change):
-    """Other draft shapes or verify kernels, ReplaySSM, a dense conv window or another out_proj:
+    """Other draft shapes or verify kernels, ReplaySSM, a dense conv window (top-k drafts too), a
+    block-FP8 out_proj with a per-token copy, or another out_proj:
     sglang's own path, before any op or projection runs."""
     methods = (Fp8LinearMethod(), UnquantizedLinearMethod(), Fp8LinearMethod())
     cache = sglang.req_to_token_pool.mamba2_layer_cache(0)
@@ -339,9 +365,15 @@ def test_other_verifies_stay_on_sglang(sglang, verify_ops, change):
         cache.replayssm_rawv = torch.zeros(1)
     elif change == "dense_window":
         cache.intermediate_conv_window = [torch.zeros(3, 4, 3072, 3)]
+    elif change == "tree_window":
+        # top-k drafts keep a dense window of every draft token: a 5-D buffer per GDN layer
+        sglang.req_to_token_pool.mamba_pool._intermediate_conv_window_phys = [torch.zeros(1, 3, 4, 3072, 3)]
     elif change == "out_proj":
         methods = (UnquantizedLinearMethod(), UnquantizedLinearMethod(), object())
     layer = Layer(methods)
+    if change == "ptpc":
+        # an MXFP8 weight served as block FP8 also keeps a per-token copy for small M
+        layer.out_proj.weight._ptpc_weight = torch.zeros(1)
     result = forward(layer, ForwardMode.TARGET_VERIFY, draft_tokens=2 if change == "draft_tokens" else 4)
     assert result is FallbackReason.OUT_OF_CONTRACT
     assert all(op.asked == 0 and not op.calls for op in verify_ops)
