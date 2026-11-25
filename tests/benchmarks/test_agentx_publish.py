@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from agentx_ci import publish, utils
-from agentx_ci.model_config import ConfigError
+from agentx import publish, utils
+from agentx.model_config import ConfigError
 
 from tests.benchmarks.agentx_results import REPO
 
@@ -155,7 +155,7 @@ def test_only_main_schedules_and_manual_runs_publish():
     jobs = workflow("agentx-ci.yaml")["jobs"]
     assert "pages" not in jobs
     assert all("pages" not in job.get("permissions", {}) for job in jobs.values())
-    rendered = next(step for step in jobs["report"]["steps"] if "agentx_bench report" in step.get("run", ""))
+    rendered = next(step for step in jobs["report"]["steps"] if "agentx report" in step.get("run", ""))
     assert "--baseline" not in rendered["run"]
     job = jobs["publish"]
     assert "github.ref == 'refs/heads/main'" in job["if"]
@@ -168,7 +168,7 @@ def test_only_main_schedules_and_manual_runs_publish():
     assert token["with"]["private-key"] == "${{ secrets.AKLR_AGENTX_BOT_PRIVATE_KEY }}"
     publish = next(step for step in job["steps"] if "commit_site_data.sh agentx" in step.get("run", ""))
     assert publish["env"]["BOT_LOGIN"] == "${{ vars.AKLR_AGENTX_BOT_LOGIN }}"
-    assert job["concurrency"] == {"group": "site-data", "cancel-in-progress": False}
+    assert "concurrency" not in job
     runs = [step.get("run", "") for step in job["steps"]]
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout"))
     assert checkout["with"]["ref"] == "${{ github.sha }}"
@@ -179,10 +179,22 @@ def test_only_main_schedules_and_manual_runs_publish():
 def test_the_site_workflow_deploys_only_after_main_runs():
     site = workflow("site.yaml")
     run = site[True]["workflow_run"]
-    assert (run["workflows"], run["types"], run["branches"]) == (["AKLR-agentx-ci"], ["completed"], ["main"])
+    assert (run["workflows"], run["types"], run["branches"]) == (
+        ["AKLR-agentx-ci", "AKLR-CI", "AKLR-e2e-perf-ci"],
+        ["completed"],
+        ["main"],
+    )
     assert workflow("agentx-ci.yaml")["name"] == "AKLR-agentx-ci"
-    assert site["jobs"]["deploy"]["permissions"]["pages"] == "write"
-    assert "github.event.workflow_run.event" in site["jobs"]["deploy"]["if"]
-    data = next(step for step in site["jobs"]["deploy"]["steps"] if step.get("id") == "data")
+    assert workflow("e2e-perf-ci.yaml")["name"] == "AKLR-e2e-perf-ci"
+    assert workflow("ci.yaml")["name"] == "AKLR-CI"
+    build, deploy = site["jobs"]["build"], site["jobs"]["deploy"]
+    assert "github.event.workflow_run.event" in build["if"]
+    assert build["permissions"] == {"contents": "read"}
+    data = next(step for step in build["steps"] if step.get("id") == "data")
     assert "[[ $status == 2 ]]" in data["run"]
     assert 'exit "$status"' in data["run"]
+    # deploy-pages in its own job: right after the upload, the run's artifact list can still miss it.
+    assert any(step.get("uses", "").startswith("actions/upload-pages-artifact") for step in build["steps"])
+    assert deploy["needs"] == "build" and deploy["if"] == "needs.build.outputs.exists == 'true'"
+    assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
+    assert [step.get("uses", "").split("@")[0] for step in deploy["steps"]] == ["actions/deploy-pages"]

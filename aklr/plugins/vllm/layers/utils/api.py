@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from aklr.ops.gemm.api import gemm
+from aklr.plugins.aiter.gemm.api import gemm
 from aklr.plugins.vllm.hook import vllm_route
 
 __all__: list[str] = []

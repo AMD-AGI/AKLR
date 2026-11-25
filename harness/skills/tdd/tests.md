@@ -47,14 +47,14 @@ Red flags:
 # BAD: Reaches behind the interface
 def test_git_raises_outside_a_repository(tmp_path):
     with pytest.raises(ValueError, match="git cat-file"):
-        ValidationScope._git(tmp_path, "cat-file", "blob", f"{'1' * 40}:aklr/ops/gemm/api.py")
+        ValidationScope._git(tmp_path, "cat-file", "blob", f"{'1' * 40}:aklr/plugins/aiter/gemm/api.py")
 
 
 # GOOD: Verifies through interface
 def test_text_at_base_raises_outside_a_repository(tmp_path):
     scope = ValidationScope(tmp_path, "0" * 40, "1" * 40, (), ())
     with pytest.raises(ValueError, match="git cat-file"):
-        scope.text_at_base("aklr/ops/gemm/api.py")
+        scope.text_at_base("aklr/plugins/aiter/gemm/api.py")
 ```
 
 **Tautological tests**: Expected value restates the implementation, so the test passes by construction.

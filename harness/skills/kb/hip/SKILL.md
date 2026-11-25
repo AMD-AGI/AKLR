@@ -15,7 +15,7 @@ allowed-tools: Read Edit Bash Grep Glob Agent
 | Task | Read |
 |---|---|
 | A memory-bound kernel (norm, elementwise) against AITER | `memory_bound.md` |
-| The ABI and audit of a hip schema kernel (`TORCH_LIBRARY_EXPAND`, SH0 – SH5) | `aklr/ops/README.md` (hip kernels) |
+| The ABI and audit of a hip schema kernel (`TORCH_LIBRARY_EXPAND`, SH0 – SH5) | `aklr/plugins/aiter/README.md` (hip kernels) |
 | Cache bits, waits and hazards of an instruction | `../hardware/gfx950/memory_and_sync.md` |
 | How AKLR times a Point | `harness/skills/read-validation/references/ruler.md` |
 | What makes a kernel fast whatever its language (op packages, symptoms, cases, AKLR's rules) | `../SKILL.md` |

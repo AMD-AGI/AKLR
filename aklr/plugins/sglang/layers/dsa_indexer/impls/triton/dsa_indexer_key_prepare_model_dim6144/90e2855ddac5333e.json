@@ -150,8 +150,8 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.39,
-      "microseconds": 9.42
+      "speedup": 2.447,
+      "microseconds": 9.02
     }
   ],
   "layout_variants": {
@@ -163,9 +163,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0003,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "triton",

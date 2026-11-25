@@ -9,7 +9,6 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
     CuSeqlensDistribution,
-    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
@@ -17,6 +16,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -24,6 +24,8 @@ from aklr.core.contract.spec import (
     TensorSpec,
     axis,
 )
+from aklr.plugins.sglang.layers.mla_decode.baseline import KimiK3MlaDecodeBaseline
+from aklr.plugins.sglang.layers.mla_decode.reference import KimiK3MlaDecodeReference
 
 __all__ = ["CONTRACTS", "KIMI_K3_MLA_DECODE"]
 
@@ -91,6 +93,8 @@ KIMI_K3_MLA_DECODE = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=KimiK3MlaDecodeReference(),
+    baseline=KimiK3MlaDecodeBaseline(),
 )
 
 CONTRACTS = (KIMI_K3_MLA_DECODE,)

@@ -41,8 +41,8 @@ Per row of the one-token contracts (one token with its own state slot; slot −1
    `S ← g·S;  u = β(v − S k);  S ← S + u kᵀ;  core = S q`, rounded to BF16.
 5. Gated RMSNorm with silu(z), BF16; then per value head (the fp8 group: its 128 values) E4M3FN codes, one fp32 scale.
 
-Where the reference rounds differs per model and regime: read the contract's description and the reference function
-(Qwen3.5's `reference_prefill` has no docstring). Qwen3.5 decode rounds each conv tap product to BF16, Qwen3-Next sums
+Where the reference rounds differs per model and regime: read the contract's description and its reference
+(Qwen3.5's `_prefill` has no docstring). Qwen3.5 decode rounds each conv tap product to BF16, Qwen3-Next sums
 exact products; both prefills round the normalized q and k to BF16 and multiply the core S q by `scale`, where decode
 multiplies q (S1; [numerics.md](numerics.md) for rounding points). Prefill runs the recurrence over each sequence of a
 ragged batch (`cu_seqlens`) in the chunked WY form, as one kernel's docstring states it (S3):
@@ -85,7 +85,7 @@ token's decay to the chunk end, G(last, j), W and U solve the triangular system,
   64 KiB state no other row reads, 0.875 flop per byte (estimated). All 26 prefill files use both the BF16 and the
   fp32 MFMA *(field, E2)*. No file uses atomics. Bitwise determinism is required (S2); five calls on fresh copies of the inputs were byte-identical at each file's first and last listed Point (61 file-Points, 305 calls; the 13 Points between them not run) *(field, E6)*.
 - The 20 Qwen3-Next files store no speedup at 43e112e, so dispatch there served none of them at the default
-  `AKLR_MIN_SPEEDUP` (`aklr/ops/README.md` § Environment variables); their numbers below are from the CI run recorded
+  `AKLR_MIN_SPEEDUP` (`aklr/plugins/aiter/README.md` § Environment variables); their numbers below are from the CI run recorded
   in d908d01, 43e112e's child. A later validate of each read its speedup within 4.7% of that run at the schema's lowest
   Point, but none of the 20 passed: each failed accuracy or exited nonzero *(field, E2)*.
 - Files are named by their uuid's leading hex digits: `<model package>/impls/triton/<scenario>/<uuid>.json`, sources
@@ -303,7 +303,7 @@ Every prefill file runs, in launch order (`010e`, `70f4`, `11f6` add a conv-hist
 - Ragged batches without host reads: grids come from shapes only *(field, E17)*; a chunk program finds its sequence by
   binary search over `cu_seqlens`, the slot formula `begin // BT + sequence` "reserves enough space for every ragged
   tail", and programs past the device-written chunk count do nothing (S28).
-- Scratch is `torch.empty` per call (`aklr/ops/README.md` § The kernel section and ABI) and large: 173–294 MB of fp32 at
+- Scratch is `torch.empty` per call (`aklr/plugins/aiter/README.md` § The kernel section and ABI) and large: 173–294 MB of fp32 at
   8–16K tokens in the summary designs (MAP at 10000 tokens: 246 MB of factors, 36 MB of maps) *(field, E17)*; buffers
   with disjoint live ranges are aliased. Write every element a later launch reads in the same call, padding rows and
   ragged tails included: a NaN left in old memory survives a zero β or a decay of 1 (0 × NaN is NaN). `98af` zeroes each
@@ -327,7 +327,7 @@ summaries of runs of chunks. The last column times another design's kernel, or t
   chunks and produces the outputs; BV makes sequences × 16 heads × 128/BV = 256, one program per CU: SEQ32L at 2
   sequences (BV 16), SEQ32G at 3–4 (BV 32), SEQ16 at 5–8 (BV 64) (S27, S30, S31). The Points that fill 256 programs
   measure 1.374–1.475; the two with fewer sequences than their file assumes (160 and 192 programs) 0.997 and 1.029,
-  below the default `AKLR_MIN_SPEEDUP` (`aklr/ops/README.md` § Environment variables), so sglang serves them. Their
+  below the default `AKLR_MIN_SPEEDUP` (`aklr/plugins/aiter/README.md` § Environment variables), so sglang serves them. Their
   longest sequence is 2048 tokens, as at the full Points, and the time does not follow the work: about half the work
   took 0.97× (`2ece`) and 0.85–0.86× (`c53b`) the full Point's time, 2 runs *(field, E19)*, which does not separate the
   serial chain from the program count; the other strip was slower (table).
@@ -549,7 +549,7 @@ AKLR paths are on `AMD-AGI/AKLR@0e02a81` unless a line names another commit; a c
 - E26 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, CUDA-graph replay, 7 rounds, median of the per-round ratios] E23's 256-step chain, `k_width = 4` over direct `k_width = 1` time: at 4 programs per CU 0.543–0.890 in all five tile and wave shapes; 1 wave 32 × 16 0.543, 0.708, 0.803 at 4, 8 and 16 programs per CU (toy Gluon kernel)
 - E27 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, per-kernel times from AKLR `bench_cudagraph`, 5 rounds per arm, medians] Qwen3.5 decode, AKLR's file against the five-call baseline, a trivial kernel 4.26 µs: 2 rows, 2 launches against 5, ratio 2.486, launch floors 0.959 and 0.966 of each side's time; 16 rows floors 0.797 and 0.800 (AKLR@3b315a7)
 - E28 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, CUDA graph of 10 launches per arm, 7 rounds rotated, an arm's GB/s over the same round's unhinted arm, median] fp32 Gluon stream probes at 256 MiB, 1 GiB and 4 GiB, one range per program or grid-stride: hinted loads 1.064–1.132 at 1 and 4 GiB, 0.965–1.012 at 256 MiB; `.cs` and `.wt` stores 0.822–1.178; every output checked (probe kernels)
-- S1 aklr/plugins/sglang/models/qwen3_5/reference.py:113 decode rounding points (to :121): each conv tap product to BF16, SiLU output, beta, core, normalized output, then E4M3FN; padding rows; q times `scale` :148; `reference_prefill` :19 has no docstring, rounds q and k to BF16 :77-78, multiplies the core by `scale` :88, starts a fresh sequence from zero history :63, history = the window's last three :74. aklr/plugins/sglang/models/qwen3_next/reference.py:4-11: q and k rounded to BF16 in prefill only (:132-133), core times `scale` :153, decode q times `scale` :197
+- S1 aklr/plugins/sglang/models/qwen3_5/reference.py:113 decode rounding points (to :121): each conv tap product to BF16, SiLU output, beta, core, normalized output, then E4M3FN; padding rows; q times `scale` :148; `_prefill` :33 has no docstring, rounds q and k to BF16 :77-78, multiplies the core by `scale` :88, starts a fresh sequence from zero history :63, history = the window's last three :74. aklr/plugins/sglang/models/qwen3_next/reference.py:4-11: q and k rounded to BF16 in prefill only (:132-133), core times `scale` :153, decode q times `scale` :197
 - S2 aklr/plugins/sglang/models/qwen3_5/contract.py:116 `conv_state` bound 0/0 (to :122); `CompareSpec(determinism="bitwise")` :189; `n_slots` 1–2047, `any_size`, :74; Qwen3-Next: aklr/plugins/sglang/models/qwen3_next/contract.py:99-105, :236, :283
 - S3 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_max_seq_len10000_n_v_heads16_key_dim128_value_dim128_conv_dim3072/7a69337f81190952.json#kernel.py:249 WY-form docstring of `_block_factors` (to :258); W and U from the inverse :343-351; `Ktail` from the last row of the relative decay :352-355, :365; `response` = tril(Q Kᵀ ⊙ G) :367-380
 - S4 aklr/plugins/sglang/models/qwen3_5/baseline.py:127 decode baseline: `fused_qkvzba_split_reshape_cat_contiguous` :154, `causal_conv1d_update` :162, `fused_recurrent_gated_delta_rule_packed_decode` :171, `_layer_norm_fwd` :183, aiter `per_1x128` :227; the prefill baseline (:28) ends with `per_token_group_quant_fp8` :123; aklr/plugins/sglang/models/qwen3_next/baseline.py:38 aiter `per_1x128` in `_normalize_quantize`, used by prefill :112 and decode :170
@@ -565,7 +565,7 @@ AKLR paths are on `AMD-AGI/AKLR@0e02a81` unless a line names another commit; a c
 - S14 aklr/plugins/sglang/models/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_n_v_heads8_key_dim128_value_dim128_conv_dim2048/06780bcbbb3e3c70.json#kernel.py:70 `gl.static_assert(NW * 64 <= conv_width)` on `BlockedLayout([1], [64], [NW], [0])` :78; "no replicated lanes/waves" :79-80; inline shift :48-51
 - S15 aklr/plugins/sglang/models/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_n_v_heads8_key_dim128_value_dim128_conv_dim2048/c7840603329d5ed5.json#kernel.py:40 `gl.barrier()` between the history loads (:24-28) and stores (:41-44); 38a742cfd908c997.json#kernel.py:312 `packed_history = T == 32`, history retired after "the full-CTA core redistribution" :447-454
 - S16 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/MemoryOpToLLVM.cpp:719 a barrier on local and global spaces becomes release fence, `s_barrier`, acquire fence (:719-736); TritonGPUToLLVM.cpp:113 Membar analysis runs before lowering (:113-115)
-- S17 aklr/core/utils/testing.py:164 `bench_cudagraph`: a call's time is the sum of the device durations of the kernels in its profiler scope, from AKLR's rocprofiler-sdk collector (`_collect_scope_times`, :139-160), the flush outside the scope (:206-210)
+- S17 aklr/core/utils/testing.py:136 `bench_cudagraph`: a call's time is the sum of the device durations of the kernels in its profiler scope, from AKLR's rocprofiler-sdk collector (`_collect_scope_times`, :112-133), the flush outside the scope (:169-174)
 - S18 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/Utility.cpp:492 buffer-op `.cs` sets sc0 and nt; pointer loads and stores get only the nontemporal flag for `.cs` (:305-336)
 - S19 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/BufferOpsEmitter.cpp:104 `num_records` INT_MAX − 1 bytes; element offset times element size in 32 bits and masked lanes selected to an out-of-range offset :282-283
 - S20 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/ElementwiseOpToLLVM.cpp:433 `ClampFOp` lowers to `ROCDL::FMed3Op` (:433-451)

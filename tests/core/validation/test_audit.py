@@ -243,6 +243,20 @@ class TestCheckKernel:
                 "SA4",
                 id="extra_kwargs",
             ),
+            pytest.param(
+                '"""K."""\nfrom aklr.plugins.aiter.gemm.baseline import GemmBaseline\n\n\n'
+                + _SIGNATURE
+                + "\n    out.copy_(a @ b.mT)\n",
+                "SA5",
+                id="imports_the_baseline",
+            ),
+            pytest.param(
+                '"""K."""\n'
+                + _SIGNATURE
+                + "\n    import aklr.plugins.aiter.gemm.reference\n    out.copy_(a @ b.mT)\n",
+                "SA5",
+                id="imports_aklr_in_launch",
+            ),
         ],
     )
     def test_rejects_rule_violation(self, source: str, rule: str) -> None:
@@ -385,9 +399,9 @@ class TestCheckHsacoKernel:
 
 
 _BAD_SOURCE = '"""K."""\n' + _SIGNATURE + "\n    a.zero_()\n"
-_OLD_FORMAT_PATH = "aklr/ops/gemm/kernels/gemm.py"  # a base that predates the format
+_OLD_FORMAT_PATH = "aklr/plugins/aiter/gemm/kernels/gemm.py"  # a base that predates the format
 # origin/main's solution file layout: under impls/, but its stem is not a schema uuid
-_LEGACY_SOLUTION_PATH = "aklr/ops/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
+_LEGACY_SOLUTION_PATH = "aklr/plugins/aiter/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
 
 
 class TestAuditStage:
@@ -454,7 +468,7 @@ class TestAuditStage:
                 workloads=[{"axes": {"m": m}, **measurement} for m in ms],
                 kernel=case.schema(source).kernel.model_copy(update={"author": author}),
             )
-            return f"aklr/ops/{op_type}/{schema.relative_path()}", schema.schema_text()
+            return f"aklr/plugins/aiter/{op_type}/{schema.relative_path()}", schema.schema_text()
 
         head_path, head_text = schema_at(head_source, head_ms, head_author)
         (tmp_path / head_path).parent.mkdir(parents=True)
@@ -482,11 +496,11 @@ class TestAuditStage:
         assert {f.code.value for f in report.findings} == codes
 
     def test_hip_kernel_takes_the_sh_rules(self, tmp_path: Path) -> None:
-        """A hip schema's kernel is audited by SH0-SH5, not SA0-SA4."""
+        """A hip schema's kernel is audited by SH0-SH5, not SA0-SA5."""
         case = OpCase.of("gemm@1.0")
         source = HIP_GEMM_KERNEL_SOURCE.replace(_LAUNCH, '    (void)getenv("X");\n' + _LAUNCH)
         schema = case.schema(source, language="hip")
-        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path = tmp_path / "aklr/plugins/aiter" / case.contract.op_type / schema.relative_path()
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
@@ -495,13 +509,13 @@ class TestAuditStage:
         assert finding.detail.startswith("SH3 kernel.hip:")
 
     def test_hsaco_kernel_takes_the_sa_and_sc_rules(self, tmp_path: Path) -> None:
-        """An hsaco schema's kernel is audited by SA0-SA4, then SC1-SC2."""
+        """An hsaco schema's kernel is audited by SA0-SA5, then SC1-SC2."""
         case = OpCase.of("gemm@1.0")
         source = HSACO_GEMM_KERNEL_SOURCE.replace(
             "import struct\n", "import ctypes\nimport struct\n"
         ).replace(_HSACO_LAUNCH, "    a.zero_()\n" + _HSACO_LAUNCH)
         schema = case.schema(source, language="hsaco", other_sources=_CODE_OBJECTS)
-        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path = tmp_path / "aklr/plugins/aiter" / case.contract.op_type / schema.relative_path()
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())

@@ -11,9 +11,11 @@
    GPU (`conftest.py`), and a skip is neither red nor green: run them on a GPU, a remote node from the
    `remote-gpu` skill if none is local.
 4. **Layout.** `tests/<path>/test_<what>.py` tests code in `aklr/<path>/`; every directory has an
-   `__init__.py`. The one exception: `tests/benchmarks/test_agentx_*.py` test `benchmarks/agentx/`,
-   which is outside `aklr/`. Code shared by test modules that is not a fixture goes in a plain module beside
-   them (`agentx_results.py`). No module imports a `test_*.py` or a `conftest.py`.
+   `__init__.py`. The exception: `tests/benchmarks/` tests `benchmarks/` at the repository root,
+   outside `aklr/` (`test_agentx_*.py` test `benchmarks/perf/agentx/`, `test_e2e_perf_*.py` test
+   `benchmarks/perf/e2e_perf/`, `test_kernels_report.py` tests `benchmarks/kernels/`). Code
+   shared by test modules that is not a fixture goes in a plain module beside
+   them (`agentx_results.py`, `e2e_results.py`). No module imports a `test_*.py` or a `conftest.py`.
 5. **Fixtures.** A fixture starts in the test module that uses it. When a second module needs it,
    move it to the `conftest.py` of their nearest common directory. A `conftest.py` holds fixtures
    and hooks only.

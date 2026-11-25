@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from agentx_ci import report_all, serving_config, utils
+from agentx import report_all, serving_config, utils
 
 from tests.benchmarks.agentx_results import REPO
 

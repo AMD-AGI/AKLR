@@ -17,9 +17,8 @@ from aklr.plugins.sglang.models.qwen3_5.contract import (
     GDN_VERIFY,
     GDN_VERIFY_GROUP_FP8_QUANT,
     GDN_VERIFY_TOKEN_FP8_QUANT,
-    MROPE_SECTION,
-    ROTARY_DIM,
 )
+from aklr.plugins.sglang.models.qwen3_5.reference import MROPE_SECTION, ROTARY_DIM
 
 # sglang's EAGLE draft chain the verify ops serve: 3 steps, one top token each
 _DRAFT_TOKENS = 4

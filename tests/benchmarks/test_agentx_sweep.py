@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from agentx_ci import docker_launch, serving_config, sweep
+from agentx import docker_launch, serving_config, sweep
 
 
 class SweepCase:
@@ -233,7 +233,8 @@ def test_container_runs_bash_instead_of_the_image_entrypoint(docker_case):
     assert create[create.index("--entrypoint") + 1] == "bash"
     image = create.index("sha256:fixture")
     assert create[image + 1 : image + 3] == ["-c", docker_launch.CONTAINER_COMMAND]
-    assert "install_aklr.sh /agentx/cache /agentx/serving.json" in docker_launch.CONTAINER_COMMAND
+    assert 'scripts/install_aklr.sh /agentx/cache "$AGENTX_FRAMEWORK"' in docker_launch.CONTAINER_COMMAND
+    assert f"AGENTX_FRAMEWORK={docker_case.serving['framework']['id']}" in create
 
 
 def test_container_failure_remains_failed_even_after_a_successful_point(docker_case):

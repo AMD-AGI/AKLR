@@ -212,10 +212,30 @@ class _EntryRule(SourceRule):
             yield Rejection.from_node(entry_path, entry, f"{symbol} {what}")
 
 
+class _AklrImportRule(SourceRule):
+    """A kernel imports nothing of aklr but ``aklr.core.jit``, aklr's api for kernels: it is
+    checked and timed against aklr's reference and baseline, and served without them."""
+
+    number = 5
+
+    def source_rejections(self, source: ParsedSource) -> Iterable[Rejection]:
+        for node in ast.walk(source.tree):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                if name.partition(".")[0] == "aklr" and not f"{name}.".startswith("aklr.core.jit."):
+                    yield Rejection.from_node(source.path, node, f"imports {name}")
+
+
 SOURCE_RULES: Final = (
     _ParseRule(),
     _GlobalStatementRule(),
     _InputWriteRule(),
     _SideEffectRule(),
     _EntryRule(),
+    _AklrImportRule(),
 )
