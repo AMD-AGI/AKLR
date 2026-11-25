@@ -280,7 +280,10 @@ def test_the_safe_backend_runs_each_group_in_its_own_workload():
     workflow = e2e_workflow()
     inputs = workflow[True]["workflow_dispatch"]["inputs"]
     assert inputs["gpu_runner"]["options"] == ["aklr-gpu", "aklr-safe"]
-    assert inputs["gpu_runner"]["default"] == "aklr-gpu"
+    assert inputs["gpu_runner"]["default"] == "aklr-safe"
+    assert workflow["env"]["E2E_GPU_RUNNER"] == (
+        "${{ inputs.gpu_runner || vars.AKLR_E2E_PERF_GPU_RUNNER || 'aklr-safe' }}"
+    )
     plan_steps = workflow["jobs"]["plan"]["steps"]
     inspect = next(step for step in plan_steps if "inspect-images" in step.get("run", ""))
     assert inspect["if"] == "env.E2E_GPU_RUNNER == 'aklr-safe' && steps.resolve.outputs.count != '0'"

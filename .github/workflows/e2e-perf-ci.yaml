@@ -35,7 +35,7 @@ on:
         options:
           - aklr-gpu
           - aklr-safe
-        default: aklr-gpu
+        default: aklr-safe
       gpu_priority:
         description: SaFE workload priority (aklr-safe only)
         type: choice
@@ -78,7 +78,7 @@ env:
   PYTHONDONTWRITEBYTECODE: '1'
   # The GPU backend: aklr-gpu (Docker on the target's runner_label) or aklr-safe (a SaFE
   # workload per group, as ci.yaml's GPU jobs). The repository variable sets it for scheduled and PR runs.
-  E2E_GPU_RUNNER: ${{ inputs.gpu_runner || vars.AKLR_E2E_PERF_GPU_RUNNER || 'aklr-gpu' }}
+  E2E_GPU_RUNNER: ${{ inputs.gpu_runner || vars.AKLR_E2E_PERF_GPU_RUNNER || 'aklr-safe' }}
   AKLR_GPU_PRIORITY: ${{ inputs.gpu_priority || 'medium' }}
 
 jobs:
