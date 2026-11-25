@@ -21,6 +21,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.layers.dsa_backend.reference import ROPE_DIM, DsaSparseMlaReference
+from aklr.plugins.sglang.layers.sparse_mla.baseline import SparseMlaVerifyBaseline
 
 __all__ = ["CONTRACTS", "NATIVES", "ROPE_DIM", "SPARSE_MLA_VERIFY"]
 
@@ -29,8 +31,6 @@ _FINITE = FiniteDistribution()
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 # The KV pool's bytes that 32-bit buffer offsets address: rows past them stay on sglang.
 _POOL_BYTES = 2**31 - 2
-# The RoPE part of a query head and of a KV row: the DSA models'
-ROPE_DIM = 64
 # GLM-5's softmax scale, 1 / sqrt(nope_dim + rope_dim): the default bench's inputs take
 _SM_SCALE = 0.0625
 # The sglang kernels a call replaces: DeepseekSparseAttnBackend's tilelang sparse MLA, or
@@ -114,6 +114,8 @@ SPARSE_MLA_VERIFY = OpContract(
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=DsaSparseMlaReference(),
+    baseline=SparseMlaVerifyBaseline(),
 )
 
 CONTRACTS = (SPARSE_MLA_VERIFY,)
