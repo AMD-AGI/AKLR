@@ -70,7 +70,8 @@ Kernels: of the library's 154, those whose sources hold the instruction in an as
   prefill swap (`pack=8`, §6.7) is written on. The verifier checks only the tensor's element count against `pack` (S21);
   a thread holding fewer, or not a multiple, gets undefined inputs for the rest without a message (S20): compiled, the
   §6.7 swap on 4 fp32 per thread swapped the 4 real registers with 4 unwritten VGPRs. Give each thread a multiple of
-  `pack` elements and pin the shape the asm assumes with `gl.static_assert` (§6.7).
+  `pack` elements and pin the shape the asm assumes with `gl.static_assert` (the swap's:
+  [cases/gdn_chunked_gluon](../../cases/gdn_chunked_gluon.md) §6; the scan's: §6.6).
 - **Statements.** With `args=[]` the result is a scalar and the asm appears once per thread. With a tensor argument it
   appears once per `pack` elements: compiled, a non-pure `s_nop 7` on a 4-element-per-thread tensor was emitted 4
   times, with `args=[]` once. Waits and mode changes take `args=[]` or a scalar (§8, §7).

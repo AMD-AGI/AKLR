@@ -22,6 +22,7 @@ sources:
   - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/ConvertFpCastOpToLLVM.cpp
   - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/LinearLayoutConversions.cpp
   - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Dialect.cpp
+  - ROCm/aiter@dbd8bf5:aiter/ops/shuffle.py
 cases:
   - cases/a8w8_gluon_n3072_n7168.md
   - cases/dsa_sparse_mla_gluon.md
@@ -158,9 +159,11 @@ The bf16 convert is two `v_cvt_scalef32_pk_bf16_fp8` per four values with scale 
 
 - Load the fp8 data in a layout whose per-lane run equals the bf16 operand's, so the convert stays in registers:
   DSA 8-head reads K from LDS into `BlockedLayout([16, 1], [4, 16], [1, 4], [1, 0])`, converts, and hands it to
-  `DotOperandLayout(1, mma, 16)` (code: [cases/dsa_sparse_mla_gluon](../../cases/dsa_sparse_mla_gluon.md) §8). That hand-over passes `assert_trivial=True`, which makes
-  `gl.convert_layout` raise at compile time if the conversion would move data between lanes or waves (§7), and the
-  convert is `v_cvt_scalef32_pk_bf16_fp8` (compiled with Triton 3.8.0 for gfx950).
+  `DotOperandLayout(1, mma, 16)` (code: [cases/dsa_sparse_mla_gluon](../../cases/dsa_sparse_mla_gluon.md) §8). The kernels write that hand-over as a plain
+  `gl.convert_layout`, without `assert_trivial=True`; with the flag, which makes
+  `gl.convert_layout` raise at compile time if the conversion would move data between lanes or waves (§7), it still
+  compiles, to the same instructions in a probe of that hand-over at 64 and 128 key rows, and the convert is
+  `v_cvt_scalef32_pk_bf16_fp8` (compiled with Triton 3.8.0 for gfx950).
 - When P·V needs more than bf16's 8 significant bits and V is fp8, run both in fp16: 11 bits for P ∈ [2^-14, 1], V
   exact (gated attention at n = 4); bf16 P passes the attention bounds ([../attention.md](../attention.md) §10).
 - Where: a bf16 or fp16 MFMA runs in 7 gated-attention, 3 DSA 8-head, 5 DSA 64-head (on [32,32,16]) and 3
@@ -345,7 +348,7 @@ All four ways the library's kernels load an operand with no conversion: [layouts
 and scales: [memory.md](memory.md) §13. Below, KB is the bytes of a stored weight row (K for fp8, K/2 for fp4), KG
 the stored 32-groups per row, padded to a multiple of 8 (rows to a multiple of 256), as aiter's shuffled scales are.
 
-**Preshuffled weights.** In the 16×16 preshuffle these kernels read (tiles of 16 rows in 16-byte vectors; not compared with aiter's `shuffle_weight`), byte
+**Preshuffled weights.** In the 16×16 preshuffle these kernels read, the order aiter's `shuffle_weight(w, layout=(16, 16))` leaves (tiles of 16 rows in 16-byte vectors; S64), byte
 `(n, k)` of expert `e`'s weight is at `e·N·KB + n//16·KB·16 + k//16·256 + n%16·16 + k%16`,
 so a lane's 16-byte `k_width`-16 run (16 fp8 or 32 fp4 of a row) is one aligned vector; 16 rows are 256 bytes.
 
@@ -375,7 +378,7 @@ loads (all compiled with Triton 3.8.0 for gfx950). The library's kernels use:
   the scale layout's register bits (groups +4, +8), then rows, then groups +1, +2. `.load(scale_layout)` then reads a
   lane's four bytes with one `ds_read_b32` instead of four `ds_read_u8` (compiled with Triton 3.8.0 for gfx950).
 
-The whole-word unpack, from DeepSeek-V2's MXFP4 MoE at 1 and 2 tokens (the tile's scale words, one `[1, 4]` run per lane), is in
+The whole-word unpack, from DeepSeek-V2's MXFP4 MoE at 1 and 2 tokens (the tile's scale words, loaded in a 1-D layout with one contiguous word per lane), is in
 [cases/mxfp4_moe_gluon_dim6144](../../cases/mxfp4_moe_gluon_dim6144.md) §9.
 
 **Producers write the format their consumer loads.** For aiter's MXFP4 GEMM (`b` preshuffled 16×16,
@@ -405,7 +408,7 @@ at the sizes named, the ruler's stored values against the implementation it repl
 
 | Design | Rows and columns of the instruction | Family and sizes |
 |---|---|---|
-| Fold K groups into the rows | rows (token, K group), columns (feature, K group); keep the diagonal blocks | a8w8 n3072 and n7168 at m = 1–8 (values per size: [../gemm.md](../gemm.md) §3), e.g. n3072 m = 1: 1.429, n7168 m = 8: 1.840 *(field, E3)*; MM256-FP4, n = 1: 3.444 *(field, E3)*; MM256-FP8, n = 4: 2.452 *(field, E7)* |
+| Fold K groups into the rows | rows (token, K group), columns (feature, K group); keep the diagonal blocks | a8w8 n3072 at m = 1–8 and n7168 at m = 1 and 8; n7168 at m = 2 and 4 folds A only (values per size: [../gemm.md](../gemm.md) §3), e.g. n3072 m = 1: 1.429, n7168 m = 8: 1.840 *(field, E3)*; MM256-FP4, n = 1: 3.444 *(field, E3)*; MM256-FP8, n = 4: 2.452 *(field, E7)* |
 | K packed into the rows, split-K over warps | rank-3 [16,16,32], `warps_per_cta=[4, 1, 1]`: each warp takes a quarter of K; rows alternate two K chunks of the token, columns hold 8 gate + 8 up features per chunk; keep the matching blocks, then `gl.sum` over the warps; plain fp8 (§4) | MM256-FP8, n = 1, 2: 4.115, 3.755 *(field, E7)* |
 | Route block diagonal | rows: one token's 8 routes; columns: 8 experts' features side by side; keep block r of row r | MM256-FP4, n = 4, 8, 16: 2.549, 1.977, 1.595 *(field, E3)* |
 | Replicate | 16 copies of one route's row, store row 0; or one loaded row broadcast in registers (`gl.broadcast(arow[None, :], gl.full((16, 128), 0, ..., al))`), keeping one of a lane's four accumulator registers | DS256, n = 2: 2.186 *(field, E3)*; MM256-FP8, n = 8, 16: 1.841, 1.732 *(field, E7)* |
@@ -416,7 +419,10 @@ Why the residual pays: [../numerics.md](../numerics.md) §5, [../attention.md](.
 (4 K groups, 4 features per program), its loop and compiled kernel: [../gemm.md](../gemm.md) §4.
 
 - **Keep the selection in registers.** The n3072 kernels put the K group in the low column bits (`transposed=True`),
-  the n7168 kernels in the low row bits, picked with `gl.amd.slice` plus an `assert_trivial` convert (code: [cases/a8w8_gluon_n3072_n7168](../../cases/a8w8_gluon_n3072_n7168.md) §4); a column
+  the n7168 kernels in the low row bits, picked with `gl.amd.slice` plus an `assert_trivial` convert at M = 8 (code: [cases/a8w8_gluon_n3072_n7168](../../cases/a8w8_gluon_n3072_n7168.md) §4),
+  with a `gl.amd.slice` of the column group and two `gl.split`s for the row at M = 1
+  ([cases/a8w8_gluon_n3072_n7168](../../cases/a8w8_gluon_n3072_n7168.md) §11), and with two `gl.split`s and an
+  `assert_trivial` convert at M = 2 and 4 (read from their sources); a column
   group sum and a `gl.amd.slice` row pick compiled with no LDS or cross-lane permute. The compiled n3072 m = 1 kernel
   holds 3 scaled MFMAs and 40 VGPRs, 8 of them AGPRs; it picks the diagonal with 10 `v_cndmask_b32`, and the final
   sum over the four groups, whose rows sit in different lanes, takes 2 `v_add_f32_dpp`; there is no
@@ -563,3 +569,4 @@ Triton paths are `triton-lang/triton@c01b677`. "The library" is the set of kerne
 - S50 triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Dialect.cpp:2594 `getInstrShapeForOperand`: operand K extent = kWidth · (64 / min(mDim, nDim)) (:2601-2604), the size the lowering compares the operand K with
 - S62 triton-lang/triton@c01b677:python/triton/_utils.py:77 `type_canonicalisation_dict`: no fp4 or e8m0 entry
 - S63 triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Dialect.cpp:3168 "Wrong opIdx"; "Incompatible parent encoding" at :3178
+- S64 ROCm/aiter@dbd8bf5:aiter/ops/shuffle.py:137 `shuffle_weight(x, layout=(16, 16))`: tiles of 16 rows by 32 columns, in vectors of 16 bytes (:181-184); the view `(-1, N // 16, 16, KB // 32, 2, 16)` of 1-byte elements (KB bytes per row) permuted `(0, 1, 3, 4, 2, 5)` (:189-190), which puts byte (n, k) of a tensor's last two dimensions at `n//16·KB·16 + k//16·256 + n%16·16 + k%16` (worked out from the view and the permute); the result carries `is_shuffled = True` (:194)

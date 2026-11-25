@@ -190,9 +190,14 @@ a choice: [../tuning.md](../tuning.md) §1–§2.
 
 ## 9. Kept, not separated
 
-`waves_per_eu = 2` and `num_stages = 3` on every GEMM launch; `matrix_instr_nonkdim = 16` on all but the N 6144 × K 2048 kernel's
+`waves_per_eu = 2` on every GEMM launch; `matrix_instr_nonkdim = 16` on all but the N 6144 × K 2048 kernel's
 M ≤ 16 launch, which passes none; and on the N 6144 × K 2048 kernel's M = 32 launch
 `schedule_hint="memory-bound-attention"` (that launch: [cases/bf16_triton_small_m](../../cases/bf16_triton_small_m.md) §5).
+`num_stages = 3`, also on every GEMM launch, is not among them: with 1 in its place the N 6144 × K 2048 kernel took
+1.533–1.625× the time at M = 2, 4, 8, 16, 3.246–3.258× at M = 32 and 1.469–1.473× at M = 64 (one run, 4 pairs per
+size in a fixed order), and the N 2624 × K 6144 kernel 2.21–2.30× at M = 2, 4, 8 (3 runs) *(field, E22)*; only the
+N 2624 × K 6144 kernel's M = 64 launch was not timed with another stage count. What the stages compile to:
+[../authoring.md](../authoring.md) §2.
 
 Triton 3.8.0 reads the hint nowhere: its only mention is the
 `HIPOptions` field ("Experimental; right now no effect", S5), and the N 6144 × K 2048 kernel's M = 32 kernel compiled to byte-identical
@@ -235,6 +240,7 @@ E16–E21 name their own torch build in their lines. "The ruler" and "the ruler'
 - E19 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=1, the ruler's timer (rocprofiler-sdk), 30 random-order rounds] each kernel's `KROT` flipped, outputs within the accuracy bound, flipped over unflipped time: N 6144 × K 2048, 1 → 0: 1.116 at m = 64, 1.011 at m = 32; N 2624 × K 6144, 1 → 0: 1.016, 1.024, 1.019 at m = 2, 4, 8; m = 64, 0 → 1: 1.004, under that size's A/A threshold of 1.7 %
 - E20 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=2, the `.amdgcn` of the JIT entry each call compiled; the ruler's timer (rocprofiler-sdk), 30 random-order rounds] the kernels' launches at m = 1 compile M as the constant 1: the N 2624 × K 6144 kernel 192 `v_mfma_f32_16x16x32_bf16` with no loop back-branch, the N 6144 × K 2048 kernel 64, 0 `v_dot2` in both; the N 2624 × K 6144 kernel with `do_not_specialize=['M']`: 48 with one back-branch, outputs bitwise equal, 1.077× the specialized time
 - E21 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=1, two timers: E11's device-graph event timer with a 1 GiB flush (800 rounds) and the ruler's timer (rocprofiler-sdk, 236 rounds); input seeds 3301 and 7717] (M, N, K) = (64, 2624, 6144) at E11's configuration, `BLOCK_N` 64, split 4 over split 6 time: 1.1081 on the event timer and 1.1505 on the ruler's timer, above 1 in every round (the N 2624 × K 6144 kernel's GEMM and reduce kernels)
+- E22 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1 for the N 6144 × K 2048 kernel and N=3 for the N 2624 × K 6144 kernel, the ruler (Kineto) on one GPU, the kernel (A) and a copy with `num_stages` 1 in place of 3 (B), 4 runs per arm alternated A, B, A, B, kernel time as the mean of an arm's 4 runs] the N 6144 × K 2048 kernel with all three of its launches changed, B/A time in the 4 pairs: 1.61–1.625 at m = 2, 1.611–1.62 at m = 4, 1.599–1.604 at m = 8, 1.533–1.542 at m = 16, 3.246–3.258 at m = 32 and 1.469–1.473 at m = 64 (A 5.96, 5.97, 6.05, 6.36, 7.18, 8.53 µs against B 9.63, 9.65, 9.69, 9.77, 23.32, 12.55 µs), no accuracy finding in either arm; the N 2624 × K 6144 kernel with only its m ≤ 16 launch changed, A against B at m = 2, 4, 8 in the three runs: 7.97, 8.11, 8.35 against 18.34, 18.43, 18.49 µs; 8.03, 8.13, 8.36 against 18.45, 18.53, 18.61 µs; 8.00, 8.08, 8.34 against 18.33, 18.43, 18.49 µs (2.21–2.30× the time), its unchanged m = 64 launch 1.003, 1.000, 0.9948 in speedup B/A, no accuracy finding in either arm
 - S5 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:104 `schedule_hint`: "Experimental; right now no effect", the field (:105) the only mention of `schedule_hint` in Triton 3.8.0's Python
 - S6 triton/backends/amd/compiler.py:393 in the Triton 3.7.0 wheel (3.7.0+gitb4e20bbe.rocm7.14.0a20260608): `memory-bound-attention` in `schedule_hint` adds `amdgpu-sched-strategy` `iterative-ilp` (:394)
 - S14 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:110 `llvm_fn_attrs`, set on the kernel function at :479-481

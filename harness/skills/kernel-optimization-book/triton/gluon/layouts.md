@@ -390,8 +390,8 @@ took 32 KB and 3 `s_barrier`; a transposed 32×32×2 fp32 accumulator into its `
   movement, asserted; its compiled cost and the pointer to the code are in `../gdn.md` §11.
 - **Two permlane steps can avoid LDS; whether they are faster depends on the case.** For the 16×16 fp32 accumulator →
   `DotOperandLayout(0, mma, 1)`, two register–lane transpositions go through LDS; the middle `DistributedLinearLayout`
-  compiles to 2 `v_permlane32_swap` + 2 `v_permlane16_swap`, no LDS, with or without the empty asm (`../gdn.md`
-  §11). Over 256 dependent conversion + MFMA steps, two steps took 0.892× the direct time for one wave on 16×16 at 4
+  compiles to 2 `v_permlane32_swap` + 2 `v_permlane16_swap`, no LDS, with or without an empty inline asm between the two conversions
+  (`../gdn.md` §11; `wave_ops.md` §8). Over 256 dependent conversion + MFMA steps, two steps took 0.892× the direct time for one wave on 16×16 at 4
   programs per CU (0.876× in an earlier run *(field, E21)*) but 1.259× at 16, and 1.137× and 1.212× for four waves on
   64×16 (within 1.6e-6 of fp64) *(field, E20)*: no general replacement for the direct conversion.
 - **At a required bf16 rounding boundary, round first, then redistribute**: the exchange then moves half the data it

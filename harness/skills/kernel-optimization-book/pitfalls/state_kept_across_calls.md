@@ -33,14 +33,15 @@ The first two forms keep something derived from an argument across calls; in the
 1. **An output memo or compute skip keyed on input values.** The kernel keeps a copy of an input and, when the
    next input matches it, skips the work or copies the previous output. Forms found in one tuning run's kernels:
    a per-tile XOR of the activations against a saved copy, with the MFMA under
-   `if needs_compute != 0`; a `State`/`Cache` pair and a `changed` flag around the whole GEMM body; a host function
+   a flag that the compare sets; a saved output and a state buffer, with the whole GEMM body under a flag that says
+   an input changed; a kernel launched ahead of the stages
    that compares the activations and the routing with stored copies and, on a match, copies the previous output
    over the result. A changed input is recomputed, so every correctness check sees right answers. A harness that
    captures one graph over one set of buffers and replays it gives every timed call an input the kernel has seen,
    and times the hit. A per-shape switch in the kernel can turn the machinery off at the timed shapes
    while it stays in the source.
 2. **A derived-weight cache keyed on identity or `_version`.** The launcher repacks a weight once and skips the
-   repack while `b is cached_weight` and `b._version == cached_version` (S1). A reload through
+   repack while the weight is the object it packed last and its `_version` has not changed (S1). A reload through
    `param.data.copy_` keeps the address and the version, and a CUDA graph replay does not run the Python check
    at all, so the kernel keeps reading the old packed weight.
    A speedup measured on cache hits leaves out the repack.
@@ -111,8 +112,8 @@ unverified.
 
 - E1 [2026-09, gfx950, FlyDSL ?, N=?, an agent tuning run's task timing: one CUDA graph captured over one set of input buffers and replayed] later iterations of the N 6144 × K 6144 kernel peaked at 7.93 PFLOP/s on one shape; five of the seven kernels rolled back reported per-shape throughput above what the hardware can reach (bf16 GEMM, FlyDSL kernels written by an agent tuning run)
 - E2 [2026-09, gfx950, FlyDSL ?, N=?, the same protocol, then the activations moved between calls] the worst of the seven reported 5.448× and recomputed 14× slower than aiter once its activations moved; which kernel it was, and whether the numbers are per case or a mean over cases, is not known (bf16 GEMM or MXFP4 fused MoE, FlyDSL kernels written by an agent tuning run)
-- E3 [2026-10, gfx950, FlyDSL ?, N=?, ruler not recorded; a bench check rewrote weights in place through `.data.copy_`] the 20 kernels that cached a weight keyed on the object and its `_version` returned the old weights' result after an update; their recorded speedups, timed on one input set, measured only cache hits (FlyDSL bf16 GEMMs and MXFP4 fused MoE)
+- E3 [2026-10, gfx950, FlyDSL ?, N=?, ruler not recorded; a bench check rewrote weights in place through `.data.copy_`] the 20 kernels that cached a weight keyed on the object (or its `id` or address) and its `_version` returned the old weights' result after an update; their recorded speedups, timed on one input set, measured only cache hits (FlyDSL bf16 GEMMs and MXFP4 fused MoE)
 - E4 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, N=7 rounds, floor = largest gap between two identical arms; per-kernel CUDA-graph timer (1 GiB flush per call), and eager Kineto kernel time without a flush] `torch.mm` bf16 at 4096×4096×4096, 16×8192×8192 and 16×2048×2048: with the flush, fresh buffers +0.10% to +0.87%; without it, at 16×8192×8192, fresh buffers +20.2%, an in-place write +1.1% with new values and +0.9% with the old ones (floor 0.93%) (hipBLASLt bf16 GEMMs)
 - E5 [2026-11, gfx950 (MI355X), Triton of the sglang 0.5.22 image (no FlyDSL kernel), N=200 rounds, the kernel and the baseline (sglang 0.5.22's GDN decode) alternating with the order swapped on odd rounds, each on its own buffers; before each timed call a 1 GiB write and a GPU spin of at least 300 µs, CUDA events, medians] the Gluon GDN decode kernel at n_tokens 64, n_slots 127: state replayed in place, kernel 20.8 µs, baseline 49.8 (2.40×); `delta_state` and `conv_state` copied back from the initial draw before every call, kernel 30.8, baseline 49.8 (1.62×); share of the live slots' `delta_state` segments one kernel call stored, from the initial state: 100% at calls 1–4, 83% at 16, 52% at 64, 31% at 200, 20% after 400; `conv_state` 0% from call 4 (Qwen3.5 GDN decode, Gluon)
 - E6 [2026-11, gfx950 (MI355X), Triton of the sglang 0.5.22 image (no FlyDSL kernel), N=1, lower-bound speedup over sglang 0.5.22's GDN decode, one run, the state replayed in place] the Gluon GDN decode kernel at n_tokens 64, n_slots 127: 3.08, kernel 12.9 µs
-- S1 `if b is not cached_weight or version is None or version != cached_version:` repacks, else reuses `packed_b`, in the launcher of each of the 20 kernels of E3
+- S1 the launcher of each of the 20 kernels of E3 kept the packed weight with the weight object, or its `id` or address, and the weight's `_version`; it repacked when either differed from what it had stored and reused the packed weight otherwise (these kernels have no public copy)

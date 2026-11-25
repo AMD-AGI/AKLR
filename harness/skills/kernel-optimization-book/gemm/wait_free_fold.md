@@ -7,7 +7,7 @@ dtypes: [bf16]
 regimes: ["M 1-512", "M 512-4096 (bf16, N 64-256)", split-k]
 gens: [gfx950]
 flydsl: 0.3.2
-basis: measured N=4
+basis: measured N=4–6
 cases:
   - cases/bf16_k4096_splitk_hgemm.md
   - cases/bf16_n6144_k16384_counter_fold.md
@@ -284,9 +284,9 @@ What was checked, and what was not, is under Cost and risk.
 
 ## Evidence
 
-- E1 [2026-11, gfx950, FlyDSL 0.3.2, N=4, per-kernel CUDA-graph timer through the run's bench harness, arms interleaved] owner-per-slice spin fold → wait-free flat fold: N 6144 × K 16384 m=128 37.95 → 43.90 µs, m=64 32.54 → 33.19 µs, m≤32 within 0.5%; m=256 56.2 → 68.6 µs, m=512 87.1 → 94.3 µs
-- E2 [2026-11, gfx950, FlyDSL 0.3.2, N=4, per-kernel CUDA-graph timer through the run's bench harness, arms interleaved] fixed-order pairwise tree vs flat fold: m=128 43.79 vs 43.90 µs, m=64 33.94 vs 33.19, m=32 33.04 vs 32.10, m=256 70.2 vs 68.6, m=512 95.9 vs 94.3
-- E3 [2026-11, gfx950, FlyDSL 0.3.2, N=3, eager on a CU-masked stream, output against the call alone] spin fold at m=256: 3,151,872 NaN on 64 CUs, 2,340,864 on 128 CUs, 35.5 and 12.4 ms per call; m=512: 4,276,224 and 3,158,016 NaN; the wait-free fold: none, bit for bit equal
+- E1 [2026-11, gfx950, FlyDSL 0.3.2, N=4–6, per-kernel CUDA-graph timer through the run's bench harness, arms interleaved, medians of 6 rounds at m ≤ 128 and of 4 at m 256 and 512] owner-per-slice spin fold → wait-free flat fold, its counters launch-tagged: N 6144 × K 16384 m=128 37.95 → 43.90 µs, m=64 32.54 → 33.19 µs, m≤32 within 0.5%; m=256 56.2 → 68.6 µs, m=512 87.1 → 94.3 µs (another reading of the same two kernels: `small_m.md` E107)
+- E2 [2026-11, gfx950, FlyDSL 0.3.2, N=4–6, the run of E1, its third arm] fixed-order pairwise tree vs flat fold: m=128 43.79 vs 43.90 µs, m=64 33.94 vs 33.19, m=32 33.04 vs 32.10, m=256 70.2 vs 68.6, m=512 95.9 vs 94.3
+- E3 [2026-11, gfx950, FlyDSL 0.3.2, N=3 tries a case in one run of the stress test, eager on a CU-masked stream, output against the call alone, NaN summed over the tries] spin fold at m=256: 3,151,872 NaN on 64 CUs, 2,340,864 on 128 CUs, 35.5 and 12.4 ms per call; m=512: 4,276,224 and 3,158,016 NaN; the wait-free fold: none, bit for bit equal
 - E4 [2026-11, gfx950, FlyDSL 0.3.2, N=2, per-kernel CUDA-graph timer through the run's bench harness, the two versions interleaved] counters zeroed in the call vs counters kept in state that outlives the call: N 6144 × K 16384 m=32 36.41 vs 32.23 µs, m=64 37.30 vs 33.12, m=128 48.73 vs 44.06, m=256 70.62 vs 67.48, m=512 98.59 vs 94.49; m ≤ 16 and m ≥ 1024 within 0.4 µs
 - E5 [2026-11, gfx950, FlyDSL 0.3.2, N=6–8, a probe on the per-kernel CUDA-graph timer, arms interleaved per case with the order alternating, median of 6–8 rounds] one `torch.zeros(64, int32)` launched before the GEMM: 11.909 µs against 8.013 without it (ratio 0.6728); `torch.empty` in its place 0.9993 (bf16 GEMM N=4096, K=2048, m=128, one column band of B per workgroup through LDS DMA rings)
 - E6 [2026-11, gfx950, FlyDSL 0.3.2, N=3, ablation ladder (remeasured), 3 pairs, per-kernel CUDA-graph timer, one-sided 95% bounds] split-K 4 at m=64 folded in the GEMM by the split that counts in last on a launch-tagged counter, against its parent's separate fixed-order fold launch: +0.66% [+0.52, +0.80], m=64 +5.87%, the other seven cases −0.24% to +0.13% (bf16 GEMM N=K=6144, m 1–128, 256 workgroups × 8 waves, 96 columns each)

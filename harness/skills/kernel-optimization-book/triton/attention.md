@@ -66,7 +66,7 @@ One tile's step in the 32-row gated-attention kernel (`../cases/gated_attention_
 peels the first tile (no rescale) and compiles the masks only into the variant for a row's last, partial tile.
 
 P·V follows, `gl.amd.cdna4.mfma(gl.convert_layout(probability.to(gl.bfloat16), a_layout), value, numerator)`, V read
-through padded LDS ([attention/gated_attention_launches.md](attention/gated_attention_launches.md) §1); K and V are gathered by slot above (§5); these `gl.max` and `gl.sum` cross waves (§12). A
+through padded LDS ([attention/gated_attention_launches.md](attention/gated_attention_launches.md) §1); K is gathered by slot ahead of that case entry's excerpt and V at its `# ...` (§5); these `gl.max` and `gl.sum` cross waves (§12). A
 later launch reads the records of all splits of a (token, head), weighs split s by exp(m_s − M), M the largest m_s,
 sums in a fixed order and divides once, as the 24-token DSA merge does (`../cases/dsa_sparse_mla_gluon.md` §1).
 
@@ -93,9 +93,9 @@ per lane, compiled with Triton 3.8.0 for gfx950 (`numerics.md` §6). The gated-a
 - **Lay the records out for both launches.** Simplest, Qwen3.5's: numerators `[rows, heads, splits, 256]` bf16 and
   statistics `[rows, heads, splits, 2]` fp32, the numerator converted to
   `BlockedLayout([1, 8], [8, 8], [1, gl.num_warps()], [1, 0])` so each lane stores 16 bytes (`query_layout` in `../cases/gated_attention_gluon.md` §2). The 64-head DSA
-  producers store straight from the transposed 32 × 32 accumulator in `[channel // 8][head][channel % 8]` order, read
-  back 8 channels per lane, and at 64 heads XOR the channel group with `split * 4`, for a reason the source does not
-  state (`../cases/dsa_sparse_mla_gluon.md` §2).
+  producers at 12–32 tokens store straight from the transposed 32 × 32 accumulator in `[channel // 8][head][channel % 8]`
+  order, read back 8 channels per lane, and with a 64-head tile, which only the 24-token kernel has, XOR the channel
+  group with `split * 4`, for a reason the source does not state (`../cases/dsa_sparse_mla_gluon.md` §2).
 
   The 12- and 16-token kernels pad a record to 544 channels, the 16-token one keeping the statistics in
   the padding; the 256-row Qwen3.5 kernel interleaves 4 heads for its 4-wave finish. None is measured.
@@ -105,8 +105,9 @@ per lane, compiled with Triton 3.8.0 for gfx950 (`numerics.md` §6). The gated-a
   does (`../cases/dsa_sparse_mla_gluon.md` §3).
 
   Not this: `next_max` in place of `safe_max` in the exponentials. Without the guard,
-  a split whose first two tiles are empty rescales by exp(−inf − (−inf)) = NaN in its token; the merges guard their
-  max likewise (all 9 merges, read from the sources); without it a token with no row is NaN, and the 24-token merge
+  a split whose first two tiles are empty rescales by exp(−inf − (−inf)) = NaN in its token; the DSA merges guard
+  their max likewise (all 7 merge launches, read from the sources; none of the 9 Qwen3.5 finishes does); without it a
+  token with no row is NaN, and the 24-token merge
   turns 0/0 into 0 *(field, E13)*. A benchmark whose slots are distinct cannot catch a
   missing guard: no tile is empty, and the 24-token kernel without both
   guards passes its accuracy check there *(field, E13)*. Test against the reference with −1 tails covering whole tiles, a split
@@ -168,7 +169,7 @@ read from Kineto *(field, E1)*; a second run of the ruler read
 - **Head tile and split count are coupled in the source.** The host code sets both from the token count,
   `head_tile = 64 if rows == 24 and heads == 64 else 32` and `splits = 8 if rows <= 16 or head_tile == 64 else 4`,
   and launches the producer on the grid `(rows, heads // head_tile, splits)`. The 64-head path is written for one
-  256-key tile per program: it reads the whole-tile LDS buffer (`cache_shared` in `../cases/dsa_sparse_mla_gluon.md` §5), which the kernel
+  256-key tile per program: it reads the whole-tile LDS buffer (`cache_shared` in `../cases/dsa_sparse_mla_gluon.md` §7), which the kernel
   allocates only with one tile per program. Four
   splits at 24 tokens give two tiles per program, and the producer fails to compile
   (`NameError: cache_shared is not defined`) *(field, E6)*, without a GPU too (Triton 3.8.0, gfx950). A second tile

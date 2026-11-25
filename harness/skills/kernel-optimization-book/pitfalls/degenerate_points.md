@@ -21,8 +21,8 @@ per request it was 4.6–8.7× slower, and both were within the accuracy bounds 
 ## Root cause
 
 - **The kernel bets on the benchmark's inputs.** It first computes every request as if it held exactly 8 KV rows
-  starting at row 8·b, and stores that; a request whose rows differ sets `slow` and is recomputed serially in 8-row
-  chunks, one wave per (request, query, 16 heads), with no split over the keys
+  starting at entry 8·b of the page table, and stores that; a request whose rows differ sets `slow` and is
+  recomputed serially in 8-row chunks, one wave per (request, query, 16 heads), with no split over the keys
   (`../cases/mla_causal_bf16_fixed_rows.md` §1).
 
 - **Every benchmark size gives every request exactly 8 rows.** Each workload sets the page table's width to 8 × batch, and

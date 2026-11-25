@@ -236,7 +236,7 @@ Below one per CU the m = 16 GEMM's 192 one-wave programs lean on each wave's dep
 | Qwen3.5 gated attention partials | 1 to 256 rows | (row, head, split) at 1 to 2 rows; (row, split) from 4 rows; rows × splits = 512 from 16 rows | 256 and 512 at 1 and 2 rows; 128 at 4; 256 at 8; 512 × 4 from 16 rows |
 | DSA split, 64 heads | 8 to 32 tokens | tokens × head groups × splits; 144 to 160 KiB of LDS, so one workgroup per CU (160 KiB is the most a workgroup may take, `../hardware/gfx950/memory_and_sync.md`) and grid size / 256 is a CU-coverage upper bound, not measured wave occupancy | 256 × 4 at 8 tokens; 192 to 256 × 8 at 12 to 32 *(field, E20)* |
 | Qwen3.5 GDN decode recurrence | 1 to 256 rows | value-row tiles per head at 1 to 4 rows, one program per (token, head) from 8 rows | 256 at 1, 2, 4, 16 rows; 128 at 8; 512 at 32; 1024 to 4096 × 16 at 64 to 256 |
-| Qwen3.5 GDN prefill with 16 value heads (5 kernels), sequential phase | one to 8 sequences | value block chosen so sequences × 16 heads × 128 / BV reaches 256 at the sequence count the kernel is written for (8, 4 or 2) | 256 at the several-sequence sizes except 160 at five sequences and 192 at three; 128 at one sequence |
+| Qwen3.5 GDN prefill with 16 value heads (5 kernels), sequential phase | one to 8 sequences | value block chosen so sequences × 16 heads × 128 / BV reaches 256 at the larger of the kernel's sequence counts (8, 4 or 2) | 256 at the several-sequence sizes except 160 at five sequences and 192 at three; 128 at one sequence |
 | fp8 block-scaled GEMM | m = 1 to 64 | one narrow N tile per program | 768 × 1 (m ≤ 4), 192 × 2 (8), 192 / 384 / 768 × 1 (16 / 32 / 64); N=7168: 448 × 1 to 224 × 4 (`gemm.md`) |
 
 - **Across the 15 GDN prefill kernels the sequential phase runs 128 to 512 programs, and the stored speedups are not monotonic
@@ -249,7 +249,8 @@ Below one per CU the m = 16 GEMM's 192 one-wave programs lean on each wave's dep
 - **It is part of the layouts.** Gluon sets the module's warp count from the launch option before it verifies the
   layouts, and rejects a layout whose `warps_per_cta` multiplies to another count (S20, S21). Changing `num_warps` at
   launch is a code change unless the layouts read `gl.num_warps()`, a constexpr of the launch option (S22), as the
-  gated-attention kernels do: `gl.BlockedLayout([1, 16], [4, 16], [gl.num_warps(), 1], [1, 0])`.
+  gated-attention kernels for 16, 32 and 64 rows, as measured, do:
+  `gl.BlockedLayout([1, 16], [4, 16], [gl.num_warps(), 1], [1, 0])`.
 - It must be a power of two, defaults to 4 and sets the work-group size LLVM schedules for (S23).
 - **Choosing it.** One wave when a program's work fits a wave (a GEMV row, a per-token selection): the work-group then
   has 64 lanes and LLVM drops `s_barrier` (0 in the one-wave m=16 GEMM, 16 in the four-wave router projection *(field, E20)*). More waves when they split an MFMA tile (8 warps halve each wave's `v_mfma` on a 32 × 256 tile, not a 32 × 32
@@ -304,7 +305,7 @@ When to try it:
   cap made 8192 programs 1.50× faster (1376 → 917 µs) and 256 programs, under one wave per SIMD, 13% slower (70.3 → 79.8
   µs) *(field, E13)*. The LDS-full case (the DSA split's 160 KiB) is untested;
 - the natural count sits just above a tier (512 / N rounded down to 8, as compiled: 256, 168, 128, 96, 80, 72, 64). Even
-  a small cut can cost: a Qwen3-Next GDN decode template (one kernel written for all nine sizes: [gdn.md](gdn.md) §1; no stored speedup) compiles to 138 and 131 VGPRs at 16 and
+  a small cut can cost: a Qwen3-Next GDN decode template (one kernel written for all nine sizes: [gdn.md](gdn.md) §1; its stored speedups: [gdn.md](gdn.md) §2) compiles to 138 and 131 VGPRs at 16 and
   64 rows; forced to 4, both kernels compiled to 128 VGPRs, spilling 9 and 20 (2.6%, 5.3% more
   instructions), and the call ran 1.60× slower at both (speedup ratio 0.62–0.63; a comment in its source says ~19%) *(field, E13)*. On FlyDSL attention kernels `../attention/registers_occupancy.md` §2 records a forward kernel 5.47× slower under a cap and a sparse-MLA backward dQ kernel 2× and 4× slower (repeat counts unknown there). No A/B on the kernels of this page shows a cap helping (§5) *(field, E13)*: measure every cap.
 
@@ -337,13 +338,14 @@ Gluon has no `num_stages` pipeliner (S32): the depth is in the code, as in the r
 
 - **Depth per size.** Make it a constexpr chosen per size, as the kernels do: the router's look-ahead is 1
   at 64 rows and 2 at 128 and 256 (the fourth field in [cases/moe_router_experts_gluon_dim4096](../cases/moe_router_experts_gluon_dim4096.md) §3); the N=3072 fp8 GEMM keeps 5 K groups ahead at m = 16 and 32 and 4 at m =
-  64; the N=7168 GEMM rings 3 slots with 2 ahead at M = 64 and 4 with 3 at M = 32, with a per-step wait table;
+  64; the N=7168 GEMM rings 3 slots with 2 ahead at M = 64, with a per-step wait table, and 4 with 3 at M = 32, each
+  wait worked out from the stage;
   a stage less or more: §3. Each slot costs LDS: keep `metadata.shared` (S50) at most 160 KiB per workgroup: 192
   KiB compiles, and the first launch raises `OutOfResources`, "out of resource: shared memory, Required: 196608,
   Hardware limit: 163840" (S60). Recount workgroups per CU past one dispatch round (§6).
 - **Placement per size.** Where a load is issued relative to the math is a knob too: gated attention issues the V
   gather before QK, or before or after the softmax sum, chosen per row count (not A/B-tested); a Qwen3-Next
-  decode template (no stored speedup) issues the state load early at 1 and 32 rows, late at 128 and 256:
+  decode template issues the state load early at 1 and 32 rows, late at 128 and 256:
   early costs 7, 0, 77 and 12 more VGPRs (compiles with Triton 3.8.0 for gfx950), and at 32 rows late ran 10.28 µs
   against 8.39 at equal VGPRs *(field, E43)*.
 - **Latency-bound programs: issue order and live ranges.** Where a program at a few rows is one chain of loads and dependent
@@ -454,8 +456,8 @@ producer carries (`"amdgpu-waves-per-eu"="2,2"`, Triton 3.8.0). Resolve the bran
 | DSA sparse MLA decode | 64 heads: head tile and split count chosen together to keep 192 to 256 programs; 8 heads: split at 32 and 128 tokens, one program per token without a merge at 256 | 64 heads 1.030–2.188; 8 heads 1.050–1.196 *(field, E30)* |
 | Qwen3.5 gated attention decode | FMA dot products per (row, head, split) at 1 and 2 rows; all 8 heads in one MFMA tile from 4 rows; splits shrink as rows grow (rows × splits = 512 from 16 rows) | 2.182 at 1 row; 1.671–1.803 at 2 to 32; 1.401, 1.204, 1.066 at 64, 128, 256 *(field, E31)* |
 | Qwen3.5 GDN decode | each head's state split over programs at 1 to 4 rows; one program owns a (token, head) state from 8 rows, 16 waves from 64 | 2.336–2.507 at ≤ 16 rows; 1.282–1.651 at 32 to 256 *(field, E32)* |
-| Qwen3.5 GDN prefill | value block of the sequential phase chosen for the sequence count the kernel is written for (§6) | 0.997–2.638 *(field, E33)* |
-| Qwen3-Next GDN decode and prefill | per-size kernels plus a nine-row template (decode); constexpr and runtime-count twins (prefill) | none stored in these runs |
+| Qwen3.5 GDN prefill | value block of the sequential phase sized for the larger of the kernel's sequence counts (§6) | 0.997–2.638 *(field, E33)* |
+| Qwen3-Next GDN decode and prefill | per-size kernels plus a nine-row template (decode); constexpr and runtime-count twins (prefill) | none in these runs; one later run of the ruler stored them: [gdn.md](gdn.md) §2, §8 |
 
 Families added to the library after its 154 kernels (DSA indexer, Qwen3-Next gated attention and MoE, DSA with 16 heads, Qwen2-MoE MXFP4) and the kernels added to existing ones: [kernels/kernel_library.md](kernels/kernel_library.md).
 
@@ -519,7 +521,7 @@ runs on a second MI355X over all of the library's kernels (§1).
 - E48 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, the ruler (Kineto) on one GPU, 4 alternated runs per arm] at 64, 128 and 256 tokens the fastest measured of half, own and double split had 512, 256 and 256 four-wave programs; at 64 tokens double 8.356 against 8.414 µs, pairs 0.979–1.001, not resolved; at 256 tokens look-ahead 4 against 2: 9.583 against 9.883 µs (Qwen2 router)
 - E49 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, cold-cache device-graph timing, 32 random balanced confirmation pairs per comparison, family-corrected 99% intervals with A/A and order controls] (M, N, K) = (64, 2624, 6144), bf16: split 1/2/3/4/6/8/12 × BN 16/32/64 with BM 64, BK 128, NXCD 8, KROT 0, 8 warps, 3 stages, `waves_per_eu` 2, MFMA 16; 3 input seeds pass the full-output accuracy check and 100 bitwise repeats per configuration and seed, timing on seed 12011 only; the pilot picked BN 32 for splits 1/2/3 and BN 64 for 4/6/8/12; time over split 6: split 1/2/3/8/12 1.744/1.242/1.085/1.215/1.178, split 6 faster; split 4 1.095 (interval 1.068–1.123), short of the decision margin the A/A pilot set (about 6.9%), not resolved; whole minus partial 1.868 µs (interval 1.466–2.269) (the N 2624 × K 6144 bf16 GEMM, split + reduce)
 - E50 [2026-11, CPU only, Triton 3.8.0 and 3.7.0, N=1, source executed without a GPU] the scheduling AST of a Qwen2-MoE experts kernel: 16,384 nonzero configurations, 4,202,496 pass/cohort sets, no missing or duplicate work, worst pass-size spread 4080; zero-job and balance configurations not run on a GPU; on Triton 3.7.0 `HIPOptions` has no `llvm_fn_attrs` field and rejects the keyword (`TypeError`); a 3.7.0 launch not run
-- E51 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1 (m = 64 depth 4 → 6: N=2), four adjacent AB/BA-balanced pairs per candidate, paired-log 95% intervals widened by the order effect] fp8 GEMM N=3072 (m = 64, the kernel's own `waves_per_eu=6`), depth 4 → 6: time ratio 0.9567, interval 0.92676–0.98761; with `waves_per_eu=0` (no spill) 0.94460–1.04020, unresolved; an earlier run of the same comparison: depth 4 → 6 1.0226, all four pairs slower (1.013–1.034); shallower: m = 32 ratio 1.1923 (spill-free 1.1471), m = 64 1.7790 (spill-free 1.7716); an MM64-FP8 kernel (4 tokens) shallower / deeper 1.0368 / 1.0155, the conservative intervals showing no two-to-one asymmetry
+- E51 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1 (m = 64 depth 4 → 6: N=2), four adjacent AB/BA-balanced pairs per candidate, paired-log 95% intervals widened by the order effect] fp8 GEMM N=3072 (m = 64, the kernel's own `waves_per_eu=6`), depth 4 → 6: time ratio 0.9567, interval 0.92676–0.98761; with `waves_per_eu=0` (no spill) 0.94460–1.04020, unresolved; an earlier run of the same comparison: depth 4 → 6 1.0226, all four pairs slower (1.013–1.034); shallower: m = 32 ratio 1.1923 (spill-free 1.1471), m = 64 1.7790 (spill-free 1.7716); an MM64-FP8 kernel (4 tokens), its up projection's register look-ahead of 2 operand tuples one tuple shallower / deeper 1.0368 / 1.0155, the conservative intervals showing no two-to-one asymmetry
 - E52 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, 6 counterbalanced rounds per arm (3 forward, 3 reverse), paired-log 99% intervals] Qwen3.5 gated attention decode at 16, 64 and 128 rows: half split call time +44.07%, +56.44%, +78.22%, double +3.257%, −2.690%, −21.82%; at 16 rows half with the head tile pinned +42.77%; every arm accurate; fastest tested grids 512, 1024 and 1024 four-wave programs; the double split's intervals 1.018381–1.046948, 0.970714–0.975498, 0.780215–0.783308; a conservative union bound sharing the A arm gives at least 98% joint coverage per group; look-ahead, prefetch and CU residency not measured
 - E53 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=80 rounds, the ruler's timer in one process, arms in a random order each round, geometric mean of per-round time ratios] fp8 GEMM (N 3072, K 1536, m = 64), `waves_per_eu=6`: depth 4 → 6 0.9987; the unchanged kernel against itself with another output buffer 0.9986
 - E54 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=240 rounds, the ruler's timer in one process, arms in a balanced order each round, geometric mean of per-round time ratios] DS256 (2 tokens), gate-up K split 4 → 2 with its scratch, grid (2306 → 1154 one-wave programs) and activation launch: 1.0271, slower in 240 of 240 rounds

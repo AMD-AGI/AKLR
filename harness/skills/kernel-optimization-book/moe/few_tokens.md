@@ -36,11 +36,14 @@ the zeroing of the output moves into the same launch. Two graph nodes instead of
 
 ### 1. Count the graph nodes
 
-- The unfolded source runs three nodes at these sizes: aiter's MXFP4 routing sort (per expert, padded to 16-row
+- The kernel was ported from an implementation with no public copy, written for serving GLM-5.2's MXFP4 MoE as a
+  wrapper around aiter's fused MoE: "the source" on this page.
+  The unfolded source runs three nodes at these sizes: aiter's MXFP4 routing sort (per expert, padded to 16-row
   blocks; it also zeroes the output buffer), stage 1 (gate/up GEMM, activation, quantization of the intermediate)
   and stage 2 (down GEMM, weighted accumulation into the output) (S2; read from the source, not
   from a trace).
-- A call took 39.1–102.0 µs with three nodes and 34.4–95.7 µs folded *(field, E1)*.
+- A call of the source took 39.1–102.0 µs with three nodes and 34.4–95.7 µs with its fold switched on at these
+  sizes *(field, E1)*.
 - On the per-kernel CUDA-graph timer (`../gemm/measurement.md` §1; here through Kineto, queue profiling forced) a
   node that did almost no work
   still read about 4 µs: a fully empty kernel timed in place of a dense GEMM read 4.21 µs at m = 8 *(field, E2)*, and
@@ -65,7 +68,8 @@ Two nodes instead of three:
 - Stage 1 quantizes its 16 gathered hidden rows to MXFP4 inline instead of reading a pre-quantized copy: amax over
   8 bf16 values, a DPP quad max, E8M0 round-up, `cvt_scalef32_pk_fp4_bf16` into the swizzled LDS A tile.
 
-Measured with the same inputs, one median per arm *(field, E1)*:
+Measured on the source, its fold off and on at these sizes, with the same inputs, one median per arm
+*(field, E1)*:
 
 | tokens | 3 nodes (µs) | folded (µs) | vs aiter, 3 nodes | vs aiter, folded |
 |---|---|---|---|---|
@@ -103,7 +107,8 @@ Step d, in which thread t holds expert t's count, is in `../cases/fused_moe_shuf
 Step f, in which the wave totals go through LDS as in step d, is in
 `../cases/fused_moe_shuffled_16x16_few_tokens.md` §4.
 
-- The device then computes `bound = total_m_blocks × 2` n-blocks; a workgroup at or past it exits, and at 32
+- After step d the device computes `bound = total_m_blocks × 2` n-blocks, `total_m_blocks` being the kernel's name
+  for the last value that step returns, the call's total of blocks; a workgroup at or past it exits, and at 32
   tokens the tile id is remapped per XCD only after that test
   (`grouped_sorted_tokens.md` §2).
 - The first two weight and weight-scale prologue stages are issued as soon as step e has the expert id, before the
@@ -123,7 +128,7 @@ In FlyDSL: `../flydsl/moe.md` § few_tokens How to write it.
 ## When it applies
 
 - Token counts where a call lasts tens of µs and the sort is a node of its own: 8–64 tokens here, 34.4–95.7
-  µs folded *(field, E1)*.
+  µs folded, on the source *(field, E1)*.
 - The sort fits one 256-thread workgroup: 9M items (72–576 here); one thread per expert in the scan, with expert
   256 counted apart, so up to 256 + 1 experts as written.
 - Tile-M 16 and inline activation quantization in stage 1. One compile per token count, which suits a caller with a
@@ -174,7 +179,8 @@ SQNR. Measured on 3 input sets per token count *(field, E7)*: folded port vs ait
 ## Cost and risk
 
 - **Repeated work.** Every stage-1 workgroup, those past the device bound included, loads the items, builds the
-  histogram and runs the scans: 144–554 workgroups at 8–64 tokens. The head's own cost is not measured here; on the
+  histogram and runs step d's scan: 144–554 workgroups at 8–64 tokens; steps e–g run only in the workgroups below
+  the device bound. The head's own cost is not measured here; on the
   896-expert fold above, running the sort chain twice added 0.5–1.5%, and a barrier-free per-wave sort did not gain *(field, E9)*.
 - **LDS.** (352 + 256 · ⌈9M / 256⌉) words of sort scratch, 2.4–4.4 KiB, beside the GEMM's stages.
 - **Idle HBM during the head**, until step e names the expert; the early weight issue above is the mitigation.
@@ -186,7 +192,7 @@ SQNR. Measured on 3 input sets per token count *(field, E7)*: folded port vs ait
 - E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, per-kernel CUDA-graph timer (Kineto); one run per arm, aiter re-timed in each arm] the source with the fold off at these counts (three nodes) against the fold on: 8 tokens 39.086 vs 34.376 µs, 16 53.201 vs 49.683, 32 84.284 vs 79.193, 64 102.04 vs 95.673; aiter / candidate 1.007 vs 1.146, 1.015 vs 1.088, 1.058 vs 1.132, 1.043 vs 1.099 (257 experts, inter 256, top-9, the bench's input sets)
 - E2 [2026-10, gfx950, FlyDSL ?, N=?, per-kernel CUDA-graph timer (Kineto) in an in-process harness] a fully empty kernel, timed in place of the GEMM, read 4.21 µs at m = 8 (a dense bf16 GEMM, N 2112 × K 7168)
 - E3 [2026-10, gfx950, HIP, N=5, per-kernel CUDA-graph timer (Kineto), median of 5 rounds] an add + RMSNorm HIP kernel read 3.93–4.04 µs at m 1, 2, 4, 8, 12, 16, 32, 64, 128, 256 with hidden 6144; aiter's 4.04–4.46 µs (add + RMSNorm)
-- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, lower-bound speedup over aiter, one run, L2 flushed per call] 1.1220, 1.0786, 1.0987, 1.0805 at 8, 16, 32, 64 tokens (the same kernel sources)
+- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, lower-bound speedup over aiter, one run, L2 flushed per call] 1.1220, 1.0786, 1.0987, 1.0805 at 8, 16, 32, 64 tokens (the same kernel sources as the kernel this page reads from)
 - E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, a separate run of 2026-10, ruler not stated in the record; later builds of the kernel read differently] speedup over aiter 1.129, 1.087, 1.117, 1.090 at 8, 16, 32, 64 tokens (257 experts, top-9, model dim 6144, inter 256, the folded kernel)
 - E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, one run of 2026-10 on the kernel as it was then, ruler not stated in the record; later builds of the kernel read differently] speedup over aiter 2.472 at 1 token and 1.990 at 2 (257 experts, top-9, model dim 6144, inter 256, the kernel for 1 and 2 tokens)
 - E7 [2026-10, gfx950, FlyDSL 0.3.2, N=3, three of the bench's input sets per token count, SQNR of the bf16 outputs] port vs aiter 45.88–49.89 dB, source vs aiter 45.85–51.88, port vs source 48.49–51.53, port run 2 vs run 1 48.35–51.87 at 8, 16, 32, 64 tokens
@@ -195,7 +201,7 @@ SQNR. Measured on 3 input sets per token count *(field, E7)*: folded port vs ait
 - E10 [2026-10, gfx950, FlyDSL 0.3.2, N=1, per-kernel CUDA-graph timer (Kineto), median of the readings; per-kernel times from Kineto after a flush] sort, token quant and `out` zeroing folded into stage 1, grid y = min(upper-bound m-blocks, 112): 80.66 / 83.84 / 110.13 / 128.70 / 175.01 µs against 45.66 / 62.58 / 97.07 / 119.84 / 169.06 at 8 / 12 / 16 / 24 / 32 tokens; stage 1 at 8 tokens 78.9 µs folded, 43.4 with an exact host-computed grid, against 38.0 + 4.6 µs sort (a8w4 SiTUv2 MoE, 112 of 896 experts local, top-16, model dim 3584, inter 3072)
 - E11 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=9, CUDA-graph replay of 20 back-to-back calls without a flush, arms alternated, ratios paired per round; per-kernel times from Kineto] the fold (stage 1 rebuilds the sort and quantizes only the live rows; stage 2 at 16 rows per block) against the same kernel's 4.64–5.00 µs prelude kernel with the unfolded stage 1: 10.2% / 8.3% / 6.6% / 5.0% / 4.9% less at 8 / 12 / 16 / 24 / 32 tokens; stage 2 1.28 / 1.48 / 0.98 µs of the 5.10 / 5.42 / 6.54 µs difference at 8 / 12 / 16 tokens (fp8-activation × MXFP4 SiTUv2 fused MoE, gate and up rows interleaved, 896 experts, top-16, model dim 3584, inter 384, the kernel built for 8–32 tokens)
 - E12 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8 / 6 / 5 rounds; back-to-back replay of a 20-call graph without a flush, and the per-kernel CUDA-graph timer through a rocprofiler-sdk tracer and through Kineto; differences paired per round] the folded kernel with aiter's MXFP4 sort node (`mxfp4_moe_sort`) in front minus the folded kernel alone, at 8–64 tokens: back to back 2.80–5.82 µs, the timer through the rocprofiler-sdk tracer 3.96–6.03, through Kineto 3.85–5.80 (257 experts, top-9, model dim 6144, inter 256)
-- S2 the AgentX deployment's fused-MoE seam (not public) folds only at M in {6, 12, …, 42} and otherwise calls aiter's `_fused_moe_impl`, whose sort is `aiter.mxfp4_moe_sort` (`aiter/fused_moe.py:161` of the baseline); the baseline's `aiter/ops/flydsl/moe_sorting.py:4-8` is a drop-in for `moe_sorting_fwd`, with the same signature
+- S2 the implementation the kernel was ported from (no public copy) folds only at M in {6, 12, …, 42} and otherwise calls aiter's `_fused_moe_impl`, whose sort is `aiter.mxfp4_moe_sort` (`aiter/fused_moe.py:161` of the baseline); the baseline's `aiter/ops/flydsl/moe_sorting.py:4-8` is a drop-in for `moe_sorting_fwd`, with the same signature
 - S6 aiter/configs/model_configs/glm5_fp4_tuned_fmoe.csv:52 tokens 4–128 at model_dim 6144, inter_dim 256, 257 experts: `flydsl_mxmoe_g1_a4w4_16x256x256_f16in_nt` (rows 52–57); tokens 1 and 2: `flydsl_moe1_afp4_wfp4_bf16_…_fp4` (rows 50–51)
 
 ## Related

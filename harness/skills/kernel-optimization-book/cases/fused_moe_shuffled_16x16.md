@@ -306,7 +306,8 @@ What the nine kernels share:
   quantization in the loop, and runs 256-column gate/up tiles; the grid zeroes `out`. Stage 2 walks (m-block, n-block)
   tiles in interleaved groups, loads each row's sorted id and routing weight before the GEMM and adds pairs of bf16
   columns into `out` atomically. At m 32 stage 1 takes XCD-contiguous tiles and stage 2 an XCD-major block order; both
-  preload 16 kernel arguments. Paired against the version before the fold was added, about +3.9% at m 32 *(field, E11)*.
+  set a kernel-argument preload count of 16. Paired against the version before the fold was added, about +3.9% at m 32
+  *(field, E11)*.
 - The 65-expert mid-m kernel, m 4–128. Stage 1 is aiter's builder copied (32-row tiles of 128 gate/up columns), with w1
   loaded two K tiles ahead and SiLU·up quantized to MXFP4 in its epilogue with 4-byte stores; stage 2 is aiter's copied
   too, adding into `out` with bf16 atomics, each expert block's K split over two workgroups (the atomics sum them too),

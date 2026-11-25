@@ -368,8 +368,10 @@ same slot, no barrier, issued the refill first, with 4 waves and with 1; a `gl.b
 order *(field, E23)*. What it buys: Membar treats the `.index()` slots of one allocation as one buffer (§10), so a plain
 read of one slot got a barrier before a copy into another, 3 `s_barrier` against 2 relaxed; with separate allocations,
 or a `gl.barrier()` of your own before each refill, the two compiled the same, waits included *(field, E30)*. So read
-with `.load` by default and relaxed only for the `.index()` slots of one allocation, as the n = 7168 fp8 GEMM does at
-M = 32 (separate allocations and `.load` at M = 64); then order each refill after the last read of its slot: a
+with `.load` by default and relaxed only for the `.index()` slots of one allocation, the form the source of the
+n = 7168 fp8 GEMM for M = 64 keeps in a path for M = 32 that its own size does not take (at M = 64, and in the kernel
+written for M = 32, the slots are separate allocations read with `.load`); then order each refill after the last read
+of its slot: a
 `gl.barrier()` or ring slack (§12), and in a one-wave kernel, where `gl.barrier()` only orders the compiler, an explicit
 retire of the reads, as the one-warp router in MM64-FP8 does with an inline `s_waitcnt lgkmcnt(0)` and a
 `~{memory}` clobber between its relaxed reads and the refill of the same slot (code: [cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §6; [wave_ops.md](wave_ops.md) §8).
@@ -400,7 +402,9 @@ In a delayed-reader probe (1024 programs, 2000 launches per arm, N=2), no barrie
 **Register look-ahead.** Operands loaded straight into the operand layout (§13) need no LDS. MM64-FP8 keeps up to three K steps' operand tuples (A, B and both scales) in flight and rotates them; the rotation is loop-carried, so the loop stays a rolled `range` (its three-tuple branch, which the up projection takes at 8 tokens:
 [cases/fp8_moe_gluon_dim3072](../../cases/fp8_moe_gluon_dim3072.md) §5).
 
-The depth is set per token count (up projection: 2 tuples at 1, 4 and 16 tokens, 1 at 2, 3 at 8). No timing isolates it;
+The depth is set per token count (up projection: 2 tuples at 1, 4 and 16 tokens, 3 at 8; at 2 tokens a different
+launch runs it, unrolled, with three operand sets of four K groups each loaded before its first MFMA). At 4 tokens one
+tuple fewer took 1.0368× the call time and one more 1.0155× ([../tuning.md](../tuning.md) E51);
 in its fp8 projection kernel the second tuple cost 16–24 VGPRs, the third none *(field, E34)*.
 
 ## 13. Weight and scale streaming
@@ -429,8 +433,10 @@ not show which tensor sizes survive a flush. Remap when programs of a call share
 grid (the remap of a bf16 GEMM at N 2624 × K 6144 was checked for grids of 1–699 programs), such as the XCD remap of
 [../gemm/small_m_gemm.md](../gemm/small_m_gemm.md) §3, which compiled in Gluon *(field, E25, E33)*. The kernels:
 
-- Above 4096 tokens, DS256's router walks `GROUP = 8` row tiles per column, so the 4 column tiles
-  of one row tile share an XCD (derived from the code: [cases/mxfp4_moe_gluon_dim6144](../../cases/mxfp4_moe_gluon_dim6144.md) §8); below that it walks rows within a column,
+- Above 4096 tokens (4192, the one such size DS256 is built for), its router walks `GROUP = 8` row tiles per column
+  over the 256 programs of its first 4096 tokens, so the 4 column tiles of one row tile share an XCD (derived from the
+  code: [cases/mxfp4_moe_gluon_dim6144](../../cases/mxfp4_moe_gluon_dim6144.md) §8); the 12 programs of its last 96
+  tokens walk rows within a column, as all of the router's programs do at 1024–4096 tokens,
   `(pid % ROWS, pid // ROWS)`.
 - The n = 3072 fp8 GEMM at m = 4096 walks a group of M tiles per N tile; the n = 7168 GEMM's m = 64 permutation changes
   no reuse, one reader per weight tile, all for the activation panel (inferred; [../tuning.md](../tuning.md) §12), nor

@@ -421,8 +421,8 @@ A replayed graph pays none of the host cost; eager calls (an uncaptured many-tok
 - **Which Triton ran.** Record the versions of Triton, torch, ROCm and FlyDSL with every result, and check after
   installing aiter that the image's Triton (3.8.0) is still the one installed (below). The setup these kernels
   were run under skips, without measuring it, a kernel whose stated Triton requirement the installed Triton does not meet: of the library's 154 kernels, 135 required `>=3.8` (261 of the 280
-  after its growth), and the other 19 (the 15 N = 3072 fp8 GEMMs, the two plain bf16 GEMMs and the two RMSNorms) run
-  on whatever Triton is installed *(field, E2)*.
+  after its growth), and the other 19 (the 15 N = 3072 fp8 GEMMs, the two plain bf16 GEMMs and the two RMSNorms), which
+  as measured stated none, ran on whatever Triton was installed *(field, E2)*.
 - **Same version, another build.** The image's Triton 3.8.0 is built from another tree than the PyPI
   `triton==3.8.0` wheel: the padded `gl.bank_conflicts` assertion of §4 sits at `LinearLayoutConversions.cpp:1364` in
   the image and at `:1379` in the wheel and in the v3.8.0 tag *(field, E12)*: confirm compile-only findings on the

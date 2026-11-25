@@ -103,18 +103,20 @@ of its benchmark sizes gives it; the first `finish(chunk(0, …))` computes and 
 wave. The bet fails for any other request, one of another length or one that starts elsewhere in the table: `slow`
 is set and the wave starts over, folding the `nch` chunks of 8 rows that hold the `nvalid` rows its query may read,
 one per trip of a run-time loop. `cup` is the cumulative lengths (`cu_seqlens_k`), `btp` the page table, `b` the
-wave's request and `qpos` its query token, `rt` the index of the request's first entry in the page table (the
-comments' "row") and `ln` its row count, `key` the lane's row within a chunk, `slot_s` the lane's pool row under
+wave's request and `qpos` its query token, `rt` the index of the request's first entry in the page table
+and `ln` its row count, `key` the lane's row within a chunk, `slot_s` the lane's pool row under
 the 8-row guess and `init` the empty online-softmax state; `chunk` folds 8 rows into the state it is given, and
 `finish` normalizes and stores the wave's `output` and `lse`. The fix the trap page states is on the benchmark:
 sizes with realistic pool sizes and per-request lengths, so that both branches are timed
 (`../attention/measurement.md` §8).
 
 ```python
-rt = fx.Int32(fx.ptr_load(fx.add_offset(cup, b)))  # request b's first KV row, from the cumulative lengths
+rt = fx.Int32(fx.ptr_load(fx.add_offset(cup, b)))  # index of request b's first page-table entry, from the cumulative lengths
 re = fx.Int32(fx.ptr_load(fx.add_offset(cup, b + fx.Int32(1))))
+# ...
 ln = re - rt
-slow = (rt != b * CH) | (ln != fx.Int32(CH))  # CH = 8: anything but 8 rows starting at row 8 b
+# ...
+slow = (rt != b * CH) | (ln != fx.Int32(CH))  # CH = 8: anything but 8 rows starting at page-table entry 8 b
 # ...
 finish(chunk(0, slot_s, init, qpos + fx.Int32(1)))  # the 8-row result, computed and stored first
 if slow:  # every other request: recomputed serially, one 8-row chunk at a time

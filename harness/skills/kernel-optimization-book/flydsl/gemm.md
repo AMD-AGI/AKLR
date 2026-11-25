@@ -397,6 +397,9 @@ aiter's tuner `tile_m` filter reaches one M-block only when M ≤ 16 or M is its
   `splitk_hgemm.py:353-357`).
 - **Preload the leading kernel arguments into SGPRs**: `flyc.compile[{"llvm_options": {"amdgpu-kernarg-preload-count": <n args>}}]`;
   the dumped ISA then shows `.amdhsa_user_sgpr_kernarg_preload_length` > 0.
+  - The count is a number of kernel arguments, taken from the first one on; the length the ISA shows is a number of
+    SGPRs, two per pointer. LLVM describes the option as "How many kernel arguments to preload onto SGPRs", and on
+    three pointer arguments a count of 3 gave length 6, as a count of 16 did *(field, E12)*.
   - Pass the operands as `fx.Pointer` (`from_c_void_p`): a raw `torch.Tensor` lowers to a pointer plus a layout
     struct, so only the first pointer is preloaded (length 2 at count 16).
   - Or pass static-layout tensors, `flyc.from_torch_tensor(t, assumed_align=16)`: *(field, E12)* on five bf16 GEMMs
