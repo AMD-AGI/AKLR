@@ -91,4 +91,3 @@ basis: source-semantics
 - S30 flydsl/gemm.md:412 re-tune instead of copying rows
 - S31 gemm/measurement.md:203 ablate every component on the full table, including an all-off arm
 - S32 gemm/measurement.md:208 keep a change only if it beats BASE-to-BASE drift and its sign agrees
-
