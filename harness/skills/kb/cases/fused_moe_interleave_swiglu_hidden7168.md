@@ -20,7 +20,7 @@ sources:
 
 # MXFP4 fused MoE with clamped SwiGLU, gate/up-interleaved weights, hidden 7168, top-6
 
-DeepSeek-V4-Pro's MoE (hidden 7168, 384 routed experts, top-6: `aklr/benchmarks/models/deepseekv4/README.md`)
+DeepSeek-V4-Pro's MoE (hidden 7168, 384 routed experts, top-6: `config.json` of `deepseek-ai/DeepSeek-V4-Pro`)
 under three schema names, one kernel file each: all 384 experts local at inter dim 384 (`15ab9c15…`) and 768
 (`99a7b2a5…`), and expert parallel with 96 local experts of 384 at inter dim 3072 (`d2b807e1…`). Each embeds one
 `kernel.py`; the function names below are in it. "m" is the Point's `n_tokens`: the tokens in the call, the input
