@@ -62,26 +62,17 @@
     {
       "axes": {
         "m": 256
-      },
-      "accuracy": "passed",
-      "speedup": 1.174,
-      "microseconds": 22.1
+      }
     },
     {
       "axes": {
         "m": 512
-      },
-      "accuracy": "passed",
-      "speedup": 1.224,
-      "microseconds": 30.8
+      }
     },
     {
       "axes": {
         "m": 1024
-      },
-      "accuracy": "passed",
-      "speedup": 1.184,
-      "microseconds": 47.4
+      }
     }
   ],
   "layout_variants": {

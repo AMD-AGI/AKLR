@@ -162,10 +162,7 @@
       "scalars": {
         "sm_scale": 0.07216878235340118,
         "cp_rank": 7
-      },
-      "accuracy": "passed",
-      "speedup": 2.032,
-      "microseconds": 29.0
+      }
     },
     {
       "axes": {
@@ -177,10 +174,7 @@
       "scalars": {
         "sm_scale": 0.07216878235340118,
         "cp_rank": 7
-      },
-      "accuracy": "passed",
-      "speedup": 1.692,
-      "microseconds": 43.9
+      }
     }
   ],
   "layout_variants": {

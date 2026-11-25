@@ -152,10 +152,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 4.416,
-      "microseconds": 56.2
+      }
     },
     {
       "axes": {
@@ -168,10 +165,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 5.741,
-      "microseconds": 72.8
+      }
     },
     {
       "axes": {
@@ -184,10 +178,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 7.034,
-      "microseconds": 87.9
+      }
     },
     {
       "axes": {
@@ -200,10 +191,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 14.666,
-      "microseconds": 120.0
+      }
     },
     {
       "axes": {
@@ -216,10 +204,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 11.178,
-      "microseconds": 153.0
+      }
     },
     {
       "axes": {
@@ -232,10 +217,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 10.582,
-      "microseconds": 186.0
+      }
     },
     {
       "axes": {
@@ -248,10 +230,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 11.963,
-      "microseconds": 221.0
+      }
     },
     {
       "axes": {
@@ -264,10 +243,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 8.933,
-      "microseconds": 247.0
+      }
     },
     {
       "axes": {
@@ -280,10 +256,7 @@
         "head_dim_v": 512,
         "sm_scale": 0.07216878235340118,
         "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 10.804,
-      "microseconds": 263.0
+      }
     }
   ],
   "layout_variants": {
