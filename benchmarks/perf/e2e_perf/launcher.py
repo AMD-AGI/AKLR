@@ -31,7 +31,7 @@ mkdir /aklr
 tar -C /src --exclude='./.git' -cf - . | tar -C /aklr -xf -
 printf 'gitdir: %s\n' "$SOURCE_GIT_DIR" > /aklr/.git
 cd /aklr
-scripts/install_aklr.sh /e2e/cache "$E2E_FRAMEWORK" 2>&1 | tee /e2e/out/install.log
+scripts/install_aklr.sh /e2e/cache "$E2E_FRAMEWORK" "$E2E_AITER" 2>&1 | tee /e2e/out/install.log
 set -a; . /e2e/cache/aklr.env; set +a
 cd benchmarks/perf
 python3 -m e2e_perf sweep --in-container --plan /e2e/plan.json --work /e2e/work --out /e2e/out "$@"
@@ -273,6 +273,7 @@ def run(args, runtime_options: list[str]) -> int:
                 "SOURCE_GIT_DIR": git_dir.strip(),
                 "AKLR_EXECUTION_FILE": "/e2e/execution.json",
                 "E2E_FRAMEWORK": plan["framework"]["id"],
+                "E2E_AITER": plan["recipe"].get("aiter", "image"),
             }.items():
                 command.extend(["-e", f"{key}={value}"])
             command.extend([image_id, "-c", CONTAINER_COMMAND, "sweep", *runtime_options])
