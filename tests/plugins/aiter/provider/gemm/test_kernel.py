@@ -16,8 +16,9 @@ from aklr.core.contract.locate import committed_schema_paths, op_dir
 from aklr.core.contract.registry import ContractRegistry
 from aklr.plugins.aiter.provider.gemm.contract import GEMM
 
-# the K3 kernel of these shapes past 128 rows (main's sibling of it serves the small m): its tiles' fold counters
-# (kernel.py, tiled.py) and skw.py's tag slots
+# the K3 kernel of these shapes: its tiles' fold counters (kernel.py, tiled.py) and skw.py's tag slots, on the
+# scratch its entry hands each launch (_scratch). main's sibling of it has skw.py too and no scratch of its own; it
+# is told apart by that, not by its sizes (a schema may hold any m)
 _NAMES = ("gemm_n2112_k7168", "gemm_n6288_k7168")
 
 
@@ -25,11 +26,11 @@ def _schemas():
     picked = []
     for path in committed_schema_paths(op_dir(GEMM.op_package)):
         data = json.loads(path.read_text())
-        sources = {s["path"] for s in data["kernel"]["sources"]}
+        sources = {s["path"]: s["content"] for s in data["kernel"]["sources"]}
         if (
             path.parent.name in _NAMES
             and "skw.py" in sources
-            and min(w["axes"]["m"] for w in data["workloads"]) > 128
+            and any("def _scratch(" in text for text in sources.values())
         ):
             picked.append(path)
     return picked
