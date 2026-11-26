@@ -10,10 +10,10 @@ flydsl: 0.3.2
 basis: measured N=1, AKLR validate measurement profile 19
 measured:
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.130–1.290; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n6144_k4096 file c735728bd507cf29, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.085–1.309; 7 of 7 Points at or above AKLR_MIN_SPEEDUP; m 64 left out, where the predecessor runs a one-launch fold", gpu: MI355X, workload: "gemm_n6144_k6144 file feac6650c272c5eb, measured as its predecessor, whose code differs only at m 64, m 1, 2, 4, 8, 16, 32, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.085–1.309; 7 of 7 Points at or above AKLR_MIN_SPEEDUP; m 64 left out, where the predecessor runs a one-launch fold", gpu: MI355X, workload: "gemm_n6144_k6144 file bf74e6e2b7edd005, measured as the predecessor of feac6650c272c5eb, the file it replaced: that code differs at m 64 and lacks #354's LDS wait at the barriers and in-stage strip reads, m 1, 2, 4, 8, 16, 32, 128", date: "2026-11-09"}
 sources:
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k4096/c735728bd507cf29.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k6144/feac6650c272c5eb.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k6144/bf74e6e2b7edd005.json
 ---
 
 # bf16 GEMM at m 1–128, N 6144 × K 4096 and K 6144: one column strip of B per workgroup
@@ -76,13 +76,15 @@ Shared by both strip kernels (all of N 6144 × K 4096; N 6144 × K 6144 at m ≤
 - Fold: every thread adds two adjacent columns over the four waves in order and stores them as one 4 B word. The
   three pointer arguments are preloaded into SGPRs.
 
-**N 6144 × K 6144** (`feac6650…`):
+**N 6144 × K 6144** (`bf74e6e2…`, which replaced `feac6650…` in #354: every barrier also waits for LDS writes, and the
+strip's MFMA reads stay in their ring stage; the measurements below are of the earlier code, E2):
 - m ≤ 32, `_build_strip`, eight waves, each taking an eighth of every K tile; BK 256 with 10 slots (m ≤ 8), 512 with 4
   (m 16), 256 with 4 (m 32). It differs from the K 4096 strip in three ways: workgroup b takes strip b (no
-  renumbering); each B stage holds only the 24 strip rows, so MFMA columns 24–31 read the next stage's bytes and are
-  never stored; and when the last DMA of a stage covers fewer than all eight waves' worth of chunks, only the first
-  waves issue it. Workgroups 8r to 8r + 7 start on K tile r mod the tile count (`bid >> 3`), meant to keep the B
-  stream from moving in lockstep. Each thread adds one output over the eight waves in order and stores 2 bytes.
+  renumbering); each B stage holds only the 24 strip rows, so MFMA columns 24–31 read the stage's own B rows again
+  (row mod 24) and are never stored; and when the last DMA of a stage covers fewer than all eight waves' worth of
+  chunks, only the first waves issue it. Workgroups 8r to 8r + 7 start on K tile r mod the tile count (`bid >> 3`),
+  meant to keep the B stream from moving in lockstep. Each thread adds one output over the eight waves in order and
+  stores 2 bytes.
 - m 64 and 128, `_build_splitk`: 256 workgroups = 64 column groups of 96 columns × 4 K slices of 1536; eight waves as
   4 (rows) × 2 (columns), so no wave splits K inside the workgroup; BK 128 with 3 slots (m 64), 64 with 5 (m 128).
   Workgroup b takes K slice (b mod 8) / 2, meant to keep a slice's workgroups on one pair of XCDs (the code calls it
@@ -105,7 +107,7 @@ served (#125).
 | File | Points | Speedup over aiter | Highest |
 |---|---|---|---|
 | N 6144 × K 4096 `c735728b…` *(field, E1)* | m 1–128 | 1.130–1.290 | 1.290 at m 4 |
-| N 6144 × K 6144 `feac6650…` *(field, E2)* | m 1–32, 128 | 1.085–1.309 | 1.309 at m 128 (split-K, two launches) |
+| N 6144 × K 6144 `bf74e6e2…` *(field, E2)* | m 1–32, 128 | 1.085–1.309 | 1.309 at m 128 (split-K, two launches) |
 
 Every Point passed accuracy. Kernel times at K 6144 ran from 12.91 µs (m 1) to 24.23 µs (m 128) *(field, E2)*.
 Under stress every listed Point gave the output of the call alone, K 6144 as its predecessor *(field, E3)*.
@@ -116,7 +118,7 @@ On an MI355X, from the repository root, one file at a time:
 
 ```
 python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k4096/c735728bd507cf29.json
-python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k6144/feac6650c272c5eb.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k6144/bf74e6e2b7edd005.json
 ```
 
 The report goes to `aklr_validation/report.md` (`aklr/plugins/aiter/README.md` § Commands). Add `--base origin/main` only on a
@@ -140,4 +142,4 @@ GEMM schema included. A Point CI measures below the threshold stops being served
 - E5 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=10 rounds in one process, AKLR's `bench_cudagraph` (per-kernel times summed per call) and the wall time per call of one CUDA graph of 525 back-to-back calls] the predecessor of feac6650c272c5eb (E2) at K 6144, its one-launch tagged fold against the fold launch, outputs bitwise equal: per-kernel 18.34 against 19.46 µs at m 64, the fold launch's second kernel 4.43 µs against 4.39 for a one-element `zero_()`; wall time 19.29 against 18.50 µs at m 64, 26.42 against 25.07 at m 128
 - S1 harness/scripts/forge_task/assets/aklr_forge_driver.py:437 `_stress_conditions`; `beside_another` at :456 gives the second call the same inputs (`twin = {**call, …}`, :457)
 - S2 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k4096/c735728bd507cf29.json#kernel.py:26 `_SKINNY` per m; `B_LIVE` at :116; rows past the strip sent past the descriptor at :180; XCD-major index kid at :154, strip and row half at :155-160; first K tile at :187; fold at :274-312; preload at :325
-- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k6144/feac6650c272c5eb.json#kernel.py:21 `_STRIP` and `_SPLITK` (:30); strip number at :183; 24-row B stages and the comment on reading the next stage at :140 and :156-157; last DMAs from the first waves only at :219-228; K start at :205; K slice per XCD pair at :385-389; partial stores at the default policy (`aux` 0) at :495-504, every row of the plane over `OUT_PASSES`; fold kernel in split order at :506-527, launched after the split-K kernel at :529-535; `torch.empty` workspace of the four planes per call at :552-553
+- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k6144/bf74e6e2b7edd005.json#kernel.py:21 `_STRIP` and `_SPLITK` (:30); strip number at :183; 24-row B stages and the comment on reading inside the stage at :140 and :156-157, the wrapped B row at :241; last DMAs from the first waves only at :219-228; K start at :205; K slice per XCD pair at :385-389; partial stores at the default policy (`aux` 0) at :495-504, every row of the plane over `OUT_PASSES`; fold kernel in split order at :506-527, launched after the split-K kernel at :529-535; `torch.empty` workspace of the four planes per call at :552-553

@@ -17,7 +17,7 @@ measured:
 sources:
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json
-  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/f1dc78b3e8b7c074.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/93d75fc23aa2cf3e.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json
   - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json
 ---
@@ -162,7 +162,7 @@ On an MI355X with the repository's FlyDSL 0.3.2, from the repository root, one s
 ```
 python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json
 python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json
-python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/f1dc78b3e8b7c074.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/93d75fc23aa2cf3e.json
 python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json
 python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json
 ```
@@ -204,6 +204,6 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - S2 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json#kernel.py:25 `_CONFIGS`; preload 16 and AGPR form at :121, :124; `fx.Tensor` arguments at :232; `_count_ready` "this call's tag" at :139; launch tag at :619, NaN at :678; last-split poll at :732; `_CONFIGS4` at :786
 - S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json#kernel.py:26 `_CONFIGS`; `_count_ready` at :127; poll at :427, NaN at :436; `_CONFIGS4` at :505; `fx.Pointer` arguments at :197; preload 8 at :822
 - S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json#kernel.py:1 docstring "sum … in fixed order and round once"; `_RED_FLAGS` at :41; `_pack24` (+0x80, keep the top 24 bits) at :109; preload 8 at :172, `fx.Pointer` arguments at :294; `_count_ready` at :199; reducer poll at :619; `_CONFIGS4` at :710
-- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/f1dc78b3e8b7c074.json#kernel.py:22 `_SKINNY`; `_SPIN_LIMIT` "writes an unfolded value" at :33; launch tag at :354; partner's pairs first at :380; poll at :424; own + partner sum at :441; `_CONFIG4` at :727; preload 12 at :738, `fx.Tensor` arguments of the large-m kernel at :786; `run` allocating `out` at :986
+- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/93d75fc23aa2cf3e.json#kernel.py:22 `_SKINNY`; `_SPIN_LIMIT` "writes an unfolded value" at :33; launch tag at :354; partner's pairs first at :380; poll at :424; own + partner sum at :441; `_CONFIG4` at :727; preload 12 at :738, `fx.Tensor` arguments of the large-m kernel at :786; `run` allocating `out` at :986
 - S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json#kernel.py:27 `_CONFIGS`; `_TAIL_SPLITS` at :80; `_SPIN_LIMIT` at :90; one K slice per XCD at :283; fold at :538; dispatch tag at :661
 - E15 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1–10 tries per condition, eager calls compared byte for byte with a call on the idle GPU] wrong output, every value finite, no hang: n6288 at m 32 and 60 in every try on a stream limited to 64 or 16 CUs and while another kernel held half the CUs of every XCD for 3 s; k35840 at m 8, 112 and 893 in 4 of 6 tries while another kernel held all of one XCD for 3 s; both 0 of 10 per Point beside a ~8 ms matmul chain on another stream (gemm_n6288_k7168, gemm_n7168_k35840)
