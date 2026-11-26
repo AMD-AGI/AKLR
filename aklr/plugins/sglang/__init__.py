@@ -31,12 +31,10 @@ def _register() -> None:
         from aklr.plugins.aiter.provider import enable
 
         enable("AKLR sglang plugin, AKLR_AITER_PLUGIN=1")
-    if env.is_all_disabled:
+    if env.is_all_disabled or not env.is_sglang_plugin_enabled:
         return
     # inert unless a server passes --enable-amd-monokernel
     monokernels.register_specs()
-    if not env.is_sglang_plugin_enabled:
-        return
     # imports this package's api modules, which declare its routes, and its other routes
     for package in op_packages():
         if package.startswith(f"{__name__}."):
