@@ -14,7 +14,9 @@ __all__ = ["deepseek_v4_wo_a_mxfp8"]
 def deepseek_v4_wo_a_mxfp8(o, wo_a, quantized=None, scales=None, *, storage="row_major"): ...
 
 
-@sglang_route("sglang.srt.models.deepseek_common.amd.deepseek_v4_hip.wo_a_fp8_grid_matmul", versions=("0.5.23",))
+@sglang_route(
+    "sglang.srt.models.deepseek_common.amd.deepseek_v4_hip.wo_a_fp8_grid_matmul", versions=("0.5.23",)
+)
 def _wo_a_fp8_grid_matmul(o, wo_a, fp8_grid, emit_fp8=False):
     """V4.1's wo_a on gfx950 when wo_b takes MXFP8 activations, returned as sglang's Mxfp8Activation;
     the bf16 and fp8-grid outputs, a process without sglang's fork of the GEMM, and deterministic

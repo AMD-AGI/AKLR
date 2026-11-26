@@ -52,9 +52,13 @@ DEEPSEEK_V4_WO_A_MXFP8 = OpContract(
         "n_tokens": axis("Tokens in this call.", 1, 65536, is_var=True),
         "n_groups": axis("Output groups on this rank.", 1, 64),
         "o_lora_rank": axis("Columns of a group's projection.", 32, 8192, multiple_of=32),
-        "group_dim": axis("The reduction: a group's slice of the attention output.", 128, 65536, multiple_of=128),
+        "group_dim": axis(
+            "The reduction: a group's slice of the attention output.", 128, 65536, multiple_of=128
+        ),
         "out_dim": derived_axis("Columns of the output: every group's.", "n_groups * o_lora_rank"),
-        "out_blocks": derived_axis("Scales per output row: one per 32 columns.", "n_groups * o_lora_rank // 32"),
+        "out_blocks": derived_axis(
+            "Scales per output row: one per 32 columns.", "n_groups * o_lora_rank // 32"
+        ),
     },
     inputs={
         "o": TensorSpec(
@@ -92,7 +96,9 @@ DEEPSEEK_V4_WO_A_MXFP8 = OpContract(
         by_name={
             "row_major": LayoutVariant(detect_facts=_storage_facts("row_major")),
             # sglang's o: rows that may lie apart in a wider buffer
-            "strided_rows": LayoutVariant(layouts={"o": StridedRows()}, detect_facts=_storage_facts("strided_rows")),
+            "strided_rows": LayoutVariant(
+                layouts={"o": StridedRows()}, detect_facts=_storage_facts("strided_rows")
+            ),
         }
     ),
     reference=DeepseekV4WoAMxfp8Reference(),
