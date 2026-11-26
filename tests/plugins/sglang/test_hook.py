@@ -16,8 +16,9 @@ from packaging.version import Version
 
 import aklr.plugins.sglang as plugin
 from aklr.core.contract.locate import op_packages
-from aklr.core.platform.env import ENV_DISABLE, ENV_SGLANG_PLUGIN, ENV_TRACE
+from aklr.core.platform.env import ENV_AITER_PLUGIN, ENV_DISABLE, ENV_SGLANG_PLUGIN, ENV_TRACE
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.plugins.aiter import provider
 from aklr.plugins.sglang import hook
 
 # at collection, as the plugin does at start-up: before any test empties hook._ROUTES
@@ -278,6 +279,7 @@ def register_calls(monkeypatch):
     )
     monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
     monkeypatch.setattr(hook, "install", lambda: calls.append("install"))
+    monkeypatch.setattr(hook, "install_warm_up", lambda: calls.append("warm-up"))
     return calls
 
 
@@ -295,15 +297,22 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = (
-        [
-            "aklr.plugins.sglang.x.y.api",
-            "install",
-        ]
-        if hooked
-        else []
-    )
+    # no warm-up: it calls aiter's GEMMs, which are AKLR's kernels only with aiter's provider on
+    routes = ["aklr.plugins.sglang.x.y.api", "install"] if hooked else []
     assert register_calls == ["aklr starts", *routes]
+
+
+def test_the_warm_up_hooks_with_aiters_provider_alone(monkeypatch, register_calls):
+    """AKLR's GEMMs reach a runner through aiter's provider: with it on and the layer routes off, the warm-up
+    hooks; where this aiter has no plugin interface, nothing does."""
+    monkeypatch.setenv(ENV_AITER_PLUGIN, "1")
+    monkeypatch.setattr(provider, "enable", lambda source: True)
+    plugin.register()
+    assert register_calls == ["aklr starts", "warm-up"]
+    del register_calls[:]
+    monkeypatch.setattr(provider, "enable", lambda source: False)
+    plugin.register()
+    assert register_calls == ["aklr starts"]
 
 
 def test_any_other_switch_value_ends_the_process(monkeypatch, register_calls):

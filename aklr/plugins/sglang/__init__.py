@@ -27,11 +27,16 @@ def register() -> None:
 def _register() -> None:
     register_sglang_plugin()
     env = RuntimeEnv()
+    is_provider = False
     if env.is_aiter_plugin_enabled and not env.is_all_disabled:
         from aklr.plugins.aiter.provider import enable
 
-        enable("AKLR sglang plugin, AKLR_AITER_PLUGIN=1")
-    if env.is_all_disabled or not env.is_sglang_plugin_enabled:
+        is_provider = enable("AKLR sglang plugin, AKLR_AITER_PLUGIN=1")
+    is_routed = not env.is_all_disabled and env.is_sglang_plugin_enabled
+    if is_provider:
+        # the warm-up calls aiter's GEMMs: only the provider makes those AKLR's kernels
+        hook.install_warm_up()
+    if not is_routed:
         return
     # imports this package's api modules, which declare its routes, and its other routes
     for package in op_packages():
