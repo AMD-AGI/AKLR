@@ -50,6 +50,39 @@ def remove_tree(path: Path, root: Path) -> None:
             parent.rmdir()
 
 
+def index_workloads(section: Path, rows: list[dict], configured: list[dict]) -> list[dict]:
+    """The workloads the shown results measured, from their own records; the config's when none hold any."""
+    measured: dict[tuple, dict] = {}
+    for row in rows:
+        path = section / group_path(row["model"]["id"], row["target"]["id"], row["framework"]["id"])
+        if not row.get("report") or not (path / "results.json").is_file():
+            continue
+        for workload in read_json(path / "results.json")["run"].get("workloads") or []:
+            measured.setdefault((workload["id"], workload["isl"], workload["osl"]), workload)
+    return list(measured.values()) or configured
+
+
+def write_summary(section: Path, latest: dict, last_run: dict | None) -> None:
+    """The section's entry for the dashboard home page: its groups' status counts and last run."""
+    rows = list(latest["groups"].values())
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    write_json(
+        section / "section.json",
+        {
+            "schema": 1,
+            "id": "e2e",
+            "title": dict(TITLE),
+            "path": "index.html",
+            "updated_at": latest["updated_at"],
+            "last_run": last_run,
+            "targets": len(rows),
+            "status_counts": counts,
+        },
+    )
+
+
 def merge(
     site: Path,
     section: Path,
@@ -104,23 +137,9 @@ def merge(
     latest = {"schema": SCHEMA, "updated_at": utc_now(), "groups": entries}
     write_json(latest_path, latest)
     rows = list(entries.values())
-    (section / "index.html").write_text(render_index(rows, repo_url(), loaded["workloads"]))
-    counts: dict[str, int] = {}
-    for row in rows:
-        counts[row["status"]] = counts.get(row["status"], 0) + 1
-    write_json(
-        section / "section.json",
-        {
-            "schema": 1,
-            "id": "e2e",
-            "title": dict(TITLE),
-            "path": "index.html",
-            "updated_at": latest["updated_at"],
-            "last_run": source,
-            "targets": len(rows),
-            "status_counts": counts,
-        },
-    )
+    workloads = index_workloads(section, rows, loaded["workloads"])
+    (section / "index.html").write_text(render_index(rows, repo_url(), workloads))
+    write_summary(section, latest, source)
     return latest
 
 
@@ -143,7 +162,10 @@ def rerender(section: Path, *, config: Path | str = DEFAULT_CONFIG) -> dict:
         latest["groups"][key] = fresh
     write_json(latest_path, latest)
     rows = list(latest["groups"].values())
-    (section / "index.html").write_text(render_index(rows, repo, load_config(config)["workloads"]))
+    workloads = index_workloads(section, rows, load_config(config)["workloads"])
+    (section / "index.html").write_text(render_index(rows, repo, workloads))
+    summary = section / "section.json"
+    write_summary(section, latest, read_json(summary).get("last_run") if summary.is_file() else None)
     return latest
 
 

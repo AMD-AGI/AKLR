@@ -3,7 +3,8 @@ name: AKLR-site-rerender
 # Re-renders site-data's sections with main's code after a front-end change, without measuring anything:
 # agentx/ and e2e/ from the results they already hold, kernels/ from main's committed measurements as
 # publish-kernels does. Each section is rewritten by the bot that publishes it, through
-# commit_site_data.sh; AKLR-site then deploys the new site-data tip.
+# commit_site_data.sh; AKLR-site then deploys the new site-data tip. Every job checks out main's tip,
+# not the dispatched commit, so re-running an old run cannot publish older code or measurements.
 on:
   workflow_dispatch:
     inputs:
@@ -30,6 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           # Full history: target pages list the AKLR changes between a run and its baseline.
           fetch-depth: 0
           persist-credentials: false
@@ -51,7 +53,7 @@ jobs:
           BOT_LOGIN: ${{ vars.AKLR_AGENTX_BOT_LOGIN }}
         run: |
           bash ../../.github/scripts/commit_site_data.sh agentx \
-            "agentx: re-render with main ${GITHUB_SHA::12} (run $GITHUB_RUN_ID)" \
+            "agentx: re-render with main $(git rev-parse --short=12 HEAD) (run $GITHUB_RUN_ID)" \
             python3 -m agentx rerender
 
   e2e:
@@ -67,6 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -86,7 +89,7 @@ jobs:
           BOT_LOGIN: ${{ vars.AKLR_E2E_PERF_BOT_LOGIN }}
         run: |
           bash ../../.github/scripts/commit_site_data.sh e2e \
-            "e2e: re-render with main ${GITHUB_SHA::12} (run $GITHUB_RUN_ID)" \
+            "e2e: re-render with main $(git rev-parse --short=12 HEAD) (run $GITHUB_RUN_ID)" \
             python3 -m e2e_perf rerender
 
   kernels:
@@ -101,6 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           # The history holds the bot's measurement commits.
           fetch-depth: 0
           persist-credentials: false
@@ -125,5 +129,5 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           PYTHONPATH=benchmarks/kernels bash .github/scripts/commit_site_data.sh kernels \
-            "kernels: re-render with main ${GITHUB_SHA::12} (run $GITHUB_RUN_ID)" \
+            "kernels: re-render with main $(git rev-parse --short=12 HEAD) (run $GITHUB_RUN_ID)" \
             python3 -m kernels_report --run-id "$GITHUB_RUN_ID" --run-url "$RUN_URL"

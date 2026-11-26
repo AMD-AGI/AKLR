@@ -14,9 +14,10 @@ from pathlib import Path
 from perf_utils.gh import repo_url
 
 from agentx.model_config import ConfigError, select_runs
-from agentx.report import write_report
+from agentx.report import COMPARED_BASELINE, write_report
 from agentx.report_all import (
     baseline_kind,
+    failure_summary,
     indexed_targets,
     measured_fields,
     page_notice,
@@ -113,7 +114,11 @@ def merge(site: Path, section: Path, source: dict, *, config: Path | str = DEFAU
 
 
 def rerender(section: Path, *, git_dir: Path = REPO_ROOT) -> dict:
-    """Re-render every target page and the index from the section's own results; no data changes."""
+    """Re-render every target page and the index from the section's own results; no data changes.
+
+    A page keeps the baseline it was published against. An older page that compared with a baseline
+    since replaced by its own run cannot be rebuilt faithfully and is left as it is.
+    """
     manifest = read_json(section / "manifest.json")
     if manifest.get("schema") != SCHEMA:
         raise ValueError(f"site-data/agentx manifest schema {manifest.get('schema')!r} is not {SCHEMA}")
@@ -128,19 +133,24 @@ def rerender(section: Path, *, git_dir: Path = REPO_ROOT) -> dict:
         if target_key(shown) != target_key(item):
             raise ValueError(f"{relative} holds results of another target")
         view = validated_results(shown)
-        baseline_path = section / relative / f"baseline-{baseline_kind(view)}.json"
-        baseline = read_json(baseline_path) if baseline_path.is_file() else None
-        if baseline is not None and baseline["run"].get("id") == view["run"].get("id"):
-            baseline = None
-        historical = str(view["run"].get("id")) != str((item.get("source") or {}).get("run_id"))
+        historical = item.get("failure_stage") is not None or item.get("status") == "not-run"
+        baseline = None
+        if not historical:
+            compared = section / relative / COMPARED_BASELINE
+            promoted = section / relative / f"baseline-{baseline_kind(view)}.json"
+            if compared.is_file():
+                baseline = read_json(compared)
+            elif promoted.is_file() and read_json(promoted)["run"].get("id") != view["run"].get("id"):
+                baseline = read_json(promoted)
+            elif (section / relative / "report.json").is_file() and read_json(
+                section / relative / "report.json"
+            ).get("history") is not None:
+                print(f"{relative}: its comparison baseline is no longer stored; kept the existing page")
+                continue
+            item["error"] = failure_summary(view) if item.get("status") != "ok" else None
         item.update(measured_fields(view, url))
         write_report(
-            shown,
-            None if historical else baseline,
-            section / relative,
-            url,
-            git_dir,
-            notice=page_notice(item, shown, historical),
+            shown, baseline, section / relative, url, git_dir, notice=page_notice(item, shown, historical)
         )
     write_json(section / "manifest.json", manifest)
     (section / "index.html").write_text(render_index(manifest, home="../index.html"))

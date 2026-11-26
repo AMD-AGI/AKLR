@@ -43,6 +43,7 @@ NOTABLE = 0.03
 # computed and written to report.json; set this back to True to restore them.
 SHOW_BASELINE_SECTIONS = False
 LANGS = ("en", "zh")
+COMPARED_BASELINE = "compared-baseline.json"
 ZH_MESSAGES = [
     (r"no valid successful measurement points to compare", "没有可用于比较的有效成功测量点"),
     (r"source is dirty or its state is unknown", "源码包含未提交改动或状态未知，不计算周环比"),
@@ -1103,7 +1104,7 @@ def write_report(
     notice: str | dict[str, str] | None = None,
 ) -> dict:
     """Archive the supplied records unchanged; normalize a separate report view."""
-    archive = results
+    archive, baseline_archive = results, baseline
     results = validated_results(results)
     if baseline is not None:
         baseline = validated_results(baseline)
@@ -1148,6 +1149,10 @@ def write_report(
     out.mkdir(parents=True, exist_ok=True)
     (out / "index.html").write_text(render(results, baseline, comparison, history, repo_url, notices))
     write_json(out / "results.json", archive)
+    if baseline is not None:
+        write_json(out / COMPARED_BASELINE, baseline_archive)
+    else:
+        (out / COMPARED_BASELINE).unlink(missing_ok=True)
     write_json(
         out / "report.json",
         {

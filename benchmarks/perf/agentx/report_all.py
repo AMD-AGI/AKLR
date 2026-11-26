@@ -162,6 +162,20 @@ def page_notice(item: dict, shown: dict, historical: bool) -> dict[str, str] | N
     return None
 
 
+def failure_summary(results: dict) -> str:
+    """The index error of a run that is not fully OK: its missing points and the first line of its error."""
+    run_error = (results["run"].get("error") or "").strip().splitlines()
+    parts = (
+        missing_summary(results, "zh"),
+        missing_summary(results, "en"),
+        run_error[0] if run_error else "",
+    )
+    return (
+        " ".join(part for part in parts if part)
+        or "测量未全部完成或有失败点 / Measurement incomplete or points failed"
+    )
+
+
 class PreviousSite:
     def __init__(self, directory: Path | None, url: str | None):
         self.directory, self.url = directory, url.rstrip("/") if url else None
@@ -221,10 +235,15 @@ def index_page(manifest: dict, lang: str, title: str, home: str | None = None) -
             repo, _, _ = str(source.get("run_url") or "").partition("/actions/runs/")
             if repo:
                 commit = f'<a href="{escape(repo)}/commit/{escape(source["commit"])}">{commit}</a>'
+        status = escape(status_label(lang, item["status"]))
+        if not item.get("report") and source.get("run_url"):
+            error = str(item.get("error") or "")
+            hint = f' title="{escape(error[:300])}"' if error else ""
+            status = f'<a href="{escape(source["run_url"])}"{hint}>{status}</a>'
         rows.append(
             f"<tr><td>{label}<br><code>{model_id}</code></td><td><code>{target_id}</code></td>"
             f"<td><code>{framework_id}</code></td>"
-            f"<td>{escape(status_label(lang, item['status']))}</td>"
+            f"<td>{status}</td>"
             f"<td>{item.get('points_ok', 0)}/{item.get('points_total', 0)}</td>"
             f"<td>{measured}</td><td>{commit}</td></tr>"
         )
@@ -362,19 +381,7 @@ def collect(
                         "ok" if complete and ok == total and total else "partial" if ok else "failed"
                     )
                     if item["status"] != "ok":
-                        run_error = (current["run"].get("error") or "").strip().splitlines()
-                        item["error"] = (
-                            " ".join(
-                                part
-                                for part in (
-                                    missing_summary(current, "zh"),
-                                    missing_summary(current, "en"),
-                                    run_error[0] if run_error else "",
-                                )
-                                if part
-                            )
-                            or "测量未全部完成或有失败点 / Measurement incomplete or points failed"
-                        )
+                        item["error"] = failure_summary(current)
                 except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
                     current, current_archive = None, None
                     item.update(status="failed", error=str(error), failure_stage="report")

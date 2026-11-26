@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 import yaml
-from agentx import publish, utils
+from agentx import publish, report_all, utils
 from agentx.model_config import ConfigError
 
-from tests.benchmarks.agentx_results import REPO
+from tests.benchmarks.agentx_results import REPO, formal_results
 
 RUNS = [("alpha", "mi355x", "sglang"), ("alpha", "mi355x", "vllm"), ("beta", "mi355x", "sglang")]
 
@@ -100,11 +100,13 @@ def test_section_lists_the_main_commits_of_its_targets(tmp_path, published):
 
 def test_a_failed_target_replaces_its_previous_report(tmp_path, published):
     section, config = published
-    site = write_site(tmp_path / "run-2", "2", [entry(RUNS[0], status="failed")])
+    site = write_site(tmp_path / "run-2", "2", [{**entry(RUNS[0], status="failed"), "error": "boom"}])
     manifest = publish.merge(site, section, source("2"), config=config)
     assert page(section, RUNS[0]) is None
     assert [item["status"] for item in manifest["targets"]] == ["failed", "ok", "ok"]
     assert utils.read_json(section / "section.json")["status_counts"] == {"failed": 1, "ok": 2}
+    index = (section / "index.html").read_text()
+    assert '<a href="https://github.com/o/r/actions/runs/2" title="boom">Failed</a>' in index
 
 
 def test_targets_no_longer_enabled_are_removed(tmp_path, published):
@@ -199,3 +201,69 @@ def test_the_site_workflow_deploys_only_after_main_runs():
     assert deploy["needs"] == "build" and deploy["if"] == "needs.build.outputs.exists == 'true'"
     assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
     assert [step.get("uses", "").split("@")[0] for step in deploy["steps"]] == ["actions/deploy-pages"]
+
+
+def stored_target(section: Path, results: dict, files: dict[str, dict], **fields) -> dict:
+    """A section holding one target that shows results, with its stored baselines and report."""
+    key = report_all.target_key(results)
+    folder = section / utils.target_path(*key)
+    for name, data in {"results.json": results, **files}.items():
+        utils.write_json(folder / name, data)
+    item = {**entry(key), "failure_stage": None, "error": None, "source": source("2"), **fields}
+    utils.write_json(
+        section / "manifest.json",
+        {"schema": utils.SCHEMA, "run_id": "2", "generated_at": "now", "targets": [item]},
+    )
+    return item
+
+
+@pytest.fixture
+def rendered(monkeypatch) -> list[tuple]:
+    calls = []
+
+    def record(shown, baseline, _out, *_args, notice=None):
+        calls.append((shown["run"]["id"], baseline and baseline["run"]["id"], notice))
+
+    monkeypatch.setattr(publish, "write_report", record)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("promoted", "compared"),
+    [("2", "1"), ("1", None)],
+    ids=["run-promoted-to-baseline", "baseline-kept"],
+)
+def test_rerender_compares_with_the_baseline_the_page_was_published_against(
+    tmp_path, rendered, promoted, compared
+):
+    files = {"baseline-pareto.json": formal_results(promoted)}
+    if compared:
+        files["compared-baseline.json"] = formal_results(compared)
+    stored_target(tmp_path, formal_results("2"), files)
+    publish.rerender(tmp_path)
+    assert rendered == [("2", "1", None)]
+
+
+def test_rerender_keeps_a_page_whose_comparison_baseline_was_replaced(tmp_path, rendered):
+    files = {"baseline-pareto.json": formal_results("2"), "report.json": {"history": {"commits": []}}}
+    stored_target(tmp_path, formal_results("2"), files)
+    publish.rerender(tmp_path)
+    assert rendered == []
+
+
+def test_rerender_shows_history_without_a_baseline_when_the_run_left_no_results(tmp_path, rendered):
+    files = {"compared-baseline.json": formal_results("0")}
+    stored_target(tmp_path, formal_results("2"), files, status="failed", failure_stage="report", error="boom")
+    manifest = publish.rerender(tmp_path)
+    [(shown, baseline, notice)] = rendered
+    assert (shown, baseline) == ("2", None) and "boom" in notice["en"]
+    assert manifest["targets"][0]["error"] == "boom"
+
+
+def test_rerender_refreshes_the_error_of_an_incomplete_run(tmp_path, rendered):
+    results = formal_results("2")
+    results["points"] = results["points"][:2]
+    stored_target(tmp_path, results, {}, status="partial", error="old generic error")
+    manifest = publish.rerender(tmp_path)
+    assert "tp1 c3" in manifest["targets"][0]["error"]
+    assert manifest["targets"][0]["points_ok"] == 5
