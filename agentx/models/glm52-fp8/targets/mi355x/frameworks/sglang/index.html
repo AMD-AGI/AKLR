@@ -138,7 +138,7 @@ dt { color:var(--muted); overflow-wrap:anywhere; } dd { margin:0; min-width:0; o
 AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/3e191a8b6049fa74c82af735c4f7386ef08c4861">3e191a8b60</a> · client SemiAnalysisAI/InferenceX <a href="https://github.com/SemiAnalysisAI/InferenceX/commit/8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4">8f29d8dc12</a> · AKLR on 0/5 · off 0/5 · no previous run</div>
 </header>
 <main>
-<div class="warn">Incomplete measurement or failed points.</div>
+<div class="warn">Incomplete measurement or failed points. AKLR on: 5 selected points have no result (tp8-ep1-dram-hicache-spec-mtp c16, tp8-ep1-none-spec-mtp c1, tp8-ep1-none-spec-mtp c2, tp8-ep1-none-spec-mtp c4, tp8-ep1-none-spec-mtp c10); the run stopped before they finished. AKLR off: 5 selected points have no result (tp8-ep1-dram-hicache-spec-mtp c16, tp8-ep1-none-spec-mtp c1, tp8-ep1-none-spec-mtp c2, tp8-ep1-none-spec-mtp c4, tp8-ep1-none-spec-mtp c10); the run stopped before they finished.</div>
 <div class="card"><p>Upstream Pareto frontier: 5 points selected; 0/5 succeeded. This validates the selected points, not the full grid.</p><p>Selection <code>4043a012f700</code> · the chart below connects every successful point of this run by its full-response interactivity.</p></div>
 <h2>Throughput vs interactivity</h2>
 <p class="muted">Throughput counts input + output tokens. P90 interactivity matches the InferenceX CSV: 1 / P90(full-response ITL), using the exported ITL in seconds. It excludes time to first token and includes the time from the final content chunk to HTTP completion.</p>
@@ -179,8 +179,8 @@ AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/3e191a8b6049fa74c82af735c4f
 <p class="muted">Same run, image, hardware, weights and pinned trace dataset. Short runs can sample different requests. Disabled mode runs first. Higher and farther right is better. Deltas use only arm/concurrency pairs that succeeded in both modes with matching settings. They are not interpolated comparisons at equal interactivity; no statistical significance is implied.</p>
 <p class="notes">Paired comparison unavailable. Curves show available successful measurements. <span class="muted">AKLR modes have different or unverified execution identities.</span></p>
 <h2>Points</h2>
-<table><thead><tr><th>arm</th><th>conc</th><th>point</th><th>status</th><th title='Input + output throughput per GPU'>Total tok/s/GPU</th><th title='P90 interactivity (full response)'>P90 tok/s/user</th><th>serve spec</th><th></th></tr></thead><tbody></tbody></table>
-<h3>AKLR disabled points</h3><table><thead><tr><th>arm</th><th>conc</th><th>point</th><th>status</th><th title='Input + output throughput per GPU'>Total tok/s/GPU</th><th title='P90 interactivity (full response)'>P90 tok/s/user</th><th>serve spec</th><th></th></tr></thead><tbody></tbody></table>
+<table><thead><tr><th>arm</th><th>conc</th><th>point</th><th>status</th><th title='Input + output throughput per GPU'>Total tok/s/GPU</th><th title='P90 interactivity (full response)'>P90 tok/s/user</th><th>serve spec</th><th></th></tr></thead><tbody><tr><td>tp8-ep1-dram-hicache-spec-mtp</td><td>c16</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c1</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c2</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c4</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c10</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr></tbody></table>
+<h3>AKLR disabled points</h3><table><thead><tr><th>arm</th><th>conc</th><th>point</th><th>status</th><th title='Input + output throughput per GPU'>Total tok/s/GPU</th><th title='P90 interactivity (full response)'>P90 tok/s/user</th><th>serve spec</th><th></th></tr></thead><tbody><tr><td>tp8-ep1-dram-hicache-spec-mtp</td><td>c16</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c1</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c2</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c4</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c10</td><td>—</td><td class='bad'>No result (run stopped early)</td><td>—</td><td>—</td><td>—</td><td class='muted'>no result recorded</td></tr></tbody></table>
 <h2>Provenance</h2>
 <div class="card"><dl>
 <dt>model id</dt><dd>glm52-fp8</dd>
@@ -192,7 +192,7 @@ AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/3e191a8b6049fa74c82af735c4f
 <dt>recipe source</dt><dd>inferencex · <code>glm5.2-fp8-mi355x-sglang-agentic-mtp</code></dd>
 <dt>client</dt><dd>SemiAnalysisAI/InferenceX <a href="https://github.com/SemiAnalysisAI/InferenceX/commit/8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4">8f29d8dc12</a></dd>
 <dt>tp8-ep1-dram-hicache-spec-mtp</dt><dd>c16 · <code>8cd5ffe97a519353</code></dd><dt>tp8-ep1-none-spec-mtp</dt><dd>c1, c2, c4, c10 · <code>e9ff2454ecb22330</code></dd>
-<dt>generated</dt><dd>2026-11-25T22:20:27Z</dd>
+<dt>generated</dt><dd>2026-11-26T06:27:54Z</dd>
 </dl></div>
 </main>
 </div>
@@ -205,7 +205,7 @@ AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/3e191a8b6049fa74c82af735c4f
 AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/3e191a8b6049fa74c82af735c4f7386ef08c4861">3e191a8b60</a> · 客户端 SemiAnalysisAI/InferenceX <a href="https://github.com/SemiAnalysisAI/InferenceX/commit/8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4">8f29d8dc12</a> · 开启 AKLR 0/5 · 关闭 AKLR 0/5 · 没有上次运行</div>
 </header>
 <main>
-<div class="warn">测量未完成或有失败点。</div>
+<div class="warn">测量未完成或有失败点。 开启 AKLR：5 个选中的点没有结果（tp8-ep1-dram-hicache-spec-mtp c16, tp8-ep1-none-spec-mtp c1, tp8-ep1-none-spec-mtp c2, tp8-ep1-none-spec-mtp c4, tp8-ep1-none-spec-mtp c10），运行在这些点完成前中止。 关闭 AKLR：5 个选中的点没有结果（tp8-ep1-dram-hicache-spec-mtp c16, tp8-ep1-none-spec-mtp c1, tp8-ep1-none-spec-mtp c2, tp8-ep1-none-spec-mtp c4, tp8-ep1-none-spec-mtp c10），运行在这些点完成前中止。</div>
 <div class="card"><p>上游 Pareto 前沿选点：选中 5 个，成功 0/5。本次只验证选中的点，不代表完整并发矩阵。</p><p>选点 <code>4043a012f700</code> · 下图按本次实测的完整响应交互速度，把每个成功的点连成曲线。</p></div>
 <h2>吞吐与交互速度</h2>
 <p class="muted">吞吐统计输入与输出 token 总量。P90 交互速度与 InferenceX CSV 口径一致：1 / P90（完整响应 ITL），使用导出的秒单位 ITL。不包含首 token 等待时间，包含最后内容块到 HTTP 响应结束的收尾时间。</p>
@@ -246,8 +246,8 @@ AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/3e191a8b6049fa74c82af735c4f
 <p class="muted">同一次运行，使用相同镜像、硬件、权重和固定的请求轨迹数据集。短时运行可能覆盖不同请求。先关闭再开启 AKLR。曲线越靠右上越好。增幅只对两种模式均成功完成且配置一致的相同实验组和并发点计算，不代表相同交互速度下的插值对比，也不代表统计显著性。</p>
 <p class="notes">暂不计算成对增幅。曲线展示已获得的成功测量点。 <span class="muted">两种 AKLR 模式的执行身份不同或未经验证。</span></p>
 <h2>数据点</h2>
-<table><thead><tr><th>实验组</th><th>并发</th><th>数据点</th><th>状态</th><th title='单 GPU 输入+输出吞吐'>总 tok/s/GPU</th><th title='P90 完整响应交互速度'>P90 tok/s/user</th><th>服务配置</th><th></th></tr></thead><tbody></tbody></table>
-<h3>关闭 AKLR 数据点</h3><table><thead><tr><th>实验组</th><th>并发</th><th>数据点</th><th>状态</th><th title='单 GPU 输入+输出吞吐'>总 tok/s/GPU</th><th title='P90 完整响应交互速度'>P90 tok/s/user</th><th>服务配置</th><th></th></tr></thead><tbody></tbody></table>
+<table><thead><tr><th>实验组</th><th>并发</th><th>数据点</th><th>状态</th><th title='单 GPU 输入+输出吞吐'>总 tok/s/GPU</th><th title='P90 完整响应交互速度'>P90 tok/s/user</th><th>服务配置</th><th></th></tr></thead><tbody><tr><td>tp8-ep1-dram-hicache-spec-mtp</td><td>c16</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c1</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c2</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c4</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c10</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr></tbody></table>
+<h3>关闭 AKLR 数据点</h3><table><thead><tr><th>实验组</th><th>并发</th><th>数据点</th><th>状态</th><th title='单 GPU 输入+输出吞吐'>总 tok/s/GPU</th><th title='P90 完整响应交互速度'>P90 tok/s/user</th><th>服务配置</th><th></th></tr></thead><tbody><tr><td>tp8-ep1-dram-hicache-spec-mtp</td><td>c16</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c1</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c2</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c4</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr><tr><td>tp8-ep1-none-spec-mtp</td><td>c10</td><td>—</td><td class='bad'>无结果（运行提前中止）</td><td>—</td><td>—</td><td>—</td><td class='muted'>没有记录到结果</td></tr></tbody></table>
 <h2>来源信息</h2>
 <div class="card"><dl>
 <dt>模型标识</dt><dd>glm52-fp8</dd>
@@ -259,7 +259,7 @@ AKLR <a href="https://github.com/AMD-AGI/AKLR/commit/3e191a8b6049fa74c82af735c4f
 <dt>recipe 来源</dt><dd>inferencex · <code>glm5.2-fp8-mi355x-sglang-agentic-mtp</code></dd>
 <dt>客户端</dt><dd>SemiAnalysisAI/InferenceX <a href="https://github.com/SemiAnalysisAI/InferenceX/commit/8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4">8f29d8dc12</a></dd>
 <dt>tp8-ep1-dram-hicache-spec-mtp</dt><dd>c16 · <code>8cd5ffe97a519353</code></dd><dt>tp8-ep1-none-spec-mtp</dt><dd>c1, c2, c4, c10 · <code>e9ff2454ecb22330</code></dd>
-<dt>生成时间</dt><dd>2026-11-25T22:20:27Z</dd>
+<dt>生成时间</dt><dd>2026-11-26T06:27:54Z</dd>
 </dl></div>
 </main>
 </div>
