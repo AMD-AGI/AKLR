@@ -69,4 +69,4 @@ models:
           gpu_arch: gfx950
           gpu_count: 8
         runner_label: conductor-mi355x
-        frameworks: [sglang]
+        frameworks: [sglang, vllm]
