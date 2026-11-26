@@ -260,14 +260,19 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
         "correction_bias": TensorSpec(
             description="Added to the scores to pick experts; never weighs them.",
             shape=("n_routed",),
-            # bf16, as sglang's aiter top-k reads it for fp8 checkpoints: DeepSeek-R1 holds it in
-            # bf16, GLM-5.2 in fp32, which top-k reads through a bf16 copy (the route passes that)
-            # TODO: fp32 for an fp32 bias (GLM-5.x) once the sglang AKLR targets has sglang PR
-            # #44797, whose aiter top-k reads an fp32 bias as it is; 0.5.22 and 0.5.23 do not
-            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
-            # centred on 0 and narrow beside the scores' spread: it moves most tokens' picks,
-            # yet keeps the routes spread over the experts, as a balanced model's are
-            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            # The release takes a bf16 copy; the verified daily preserves a checkpoint's
+            # fp32 bias and routes on fp32 logits. These are separate dispatch keys.
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16, DType.FLOAT32)),
+            # GLM's FP32 checkpoint bias has a positive layer offset and narrow
+            # within-layer spread; sample around8, as the MXFP4 GLM contract does.
+            # Keep the legacy BF16 calibration unchanged.
+            distribution=(
+                (
+                    "correction_bias.dtype == 'float32' and num_expert_group == 1",
+                    LogUniformDistribution(log2_lo="2.99", log2_hi="3.01"),
+                ),
+                (None, LecunNormalDistribution(fan_in="model_dim")),
+            ),
             lifetime="weight",
         ),
         "w1": TensorSpec(
