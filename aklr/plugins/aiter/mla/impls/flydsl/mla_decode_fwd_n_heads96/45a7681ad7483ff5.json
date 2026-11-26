@@ -134,7 +134,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.342,
+      "microseconds": 96.8
     },
     {
       "axes": {
@@ -145,7 +148,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.293,
+      "microseconds": 110.0
     },
     {
       "axes": {
@@ -156,7 +162,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.319,
+      "microseconds": 43.0
     },
     {
       "axes": {
@@ -167,7 +176,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.297,
+      "microseconds": 125.0
     },
     {
       "axes": {
@@ -178,7 +190,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.257,
+      "microseconds": 602.0
     },
     {
       "axes": {
@@ -189,7 +204,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.291,
+      "microseconds": 137.0
     },
     {
       "axes": {
@@ -200,7 +218,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.303,
+      "microseconds": 149.0
     },
     {
       "axes": {
@@ -211,7 +232,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.312,
+      "microseconds": 161.0
     },
     {
       "axes": {
@@ -222,7 +246,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.302,
+      "microseconds": 175.0
     },
     {
       "axes": {
@@ -233,7 +260,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.303,
+      "microseconds": 200.0
     },
     {
       "axes": {
@@ -244,7 +274,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.325,
+      "microseconds": 210.0
     },
     {
       "axes": {
@@ -255,7 +288,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.324,
+      "microseconds": 223.0
     }
   ],
   "layout_variants": {

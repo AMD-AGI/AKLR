@@ -149,7 +149,10 @@
         "n_seqs": 1,
         "n_offsets": 2,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 4.623,
+      "microseconds": 19.5
     },
     {
       "axes": {
@@ -157,7 +160,10 @@
         "n_seqs": 1,
         "n_offsets": 2,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 4.935,
+      "microseconds": 21.0
     },
     {
       "axes": {
@@ -165,7 +171,10 @@
         "n_seqs": 3,
         "n_offsets": 4,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 4.909,
+      "microseconds": 21.2
     },
     {
       "axes": {
@@ -173,7 +182,10 @@
         "n_seqs": 4,
         "n_offsets": 5,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 4.766,
+      "microseconds": 21.9
     },
     {
       "axes": {
@@ -181,7 +193,10 @@
         "n_seqs": 1,
         "n_offsets": 2,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 4.954,
+      "microseconds": 21.2
     },
     {
       "axes": {
@@ -189,7 +204,10 @@
         "n_seqs": 3,
         "n_offsets": 4,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 4.909,
+      "microseconds": 21.6
     },
     {
       "axes": {
@@ -197,7 +215,10 @@
         "n_seqs": 4,
         "n_offsets": 5,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 4.786,
+      "microseconds": 22.1
     },
     {
       "axes": {
@@ -205,7 +226,10 @@
         "n_seqs": 1,
         "n_offsets": 2,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.139,
+      "microseconds": 25.6
     },
     {
       "axes": {
@@ -213,7 +237,10 @@
         "n_seqs": 1,
         "n_offsets": 2,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.286,
+      "microseconds": 26.0
     },
     {
       "axes": {
@@ -221,7 +248,10 @@
         "n_seqs": 1,
         "n_offsets": 2,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.344,
+      "microseconds": 30.4
     },
     {
       "axes": {
@@ -229,7 +259,10 @@
         "n_seqs": 2,
         "n_offsets": 3,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.413,
+      "microseconds": 30.4
     },
     {
       "axes": {
@@ -237,7 +270,10 @@
         "n_seqs": 3,
         "n_offsets": 4,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.404,
+      "microseconds": 30.5
     },
     {
       "axes": {
@@ -245,7 +281,10 @@
         "n_seqs": 4,
         "n_offsets": 5,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.477,
+      "microseconds": 30.9
     },
     {
       "axes": {
@@ -253,7 +292,10 @@
         "n_seqs": 1,
         "n_offsets": 2,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.41,
+      "microseconds": 30.4
     },
     {
       "axes": {
@@ -261,7 +303,10 @@
         "n_seqs": 1,
         "n_offsets": 2,
         "n_slots": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.378,
+      "microseconds": 32.2
     }
   ],
   "layout_variants": {

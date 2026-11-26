@@ -81,7 +81,10 @@
     {
       "axes": {
         "n_tokens": 256
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.138,
+      "microseconds": 4.51
     }
   ],
   "layout_variants": {

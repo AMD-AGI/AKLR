@@ -62,7 +62,10 @@
     {
       "axes": {
         "m": 32
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.061,
+      "microseconds": 6.04
     }
   ],
   "layout_variants": {

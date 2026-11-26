@@ -22,7 +22,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # Build and deploy are separate jobs, as GitHub documents: the artifact service lists a new artifact
+  # only after a delay (seconds lately), so deploy-pages right after the upload in the same job finds none.
+  # A failed deploy is re-run alone, with the artifact already uploaded; re-running an upload in the same
+  # run would leave two github-pages artifacts, which deploy-pages refuses.
+  build:
     # Only the runs that write site-data: AgentX's and e2e's scheduled and manual runs, AKLR-CI's main
     # pushes (publish-kernels).
     if: >-
@@ -34,11 +38,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    outputs:
+      exists: ${{ steps.data.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,6 +73,18 @@ jobs:
         if: steps.data.outputs.exists == 'true'
         with:
           path: ${{ runner.temp }}/site/
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.exists == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
-        if: steps.data.outputs.exists == 'true'
         uses: actions/deploy-pages@v4
