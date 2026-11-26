@@ -182,16 +182,16 @@
         "n_tokens": 32
       },
       "accuracy": "passed",
-      "speedup": 1.328,
-      "microseconds": 85.7
+      "speedup": 1.333,
+      "microseconds": 86.1
     },
     {
       "axes": {
         "n_tokens": 64
       },
       "accuracy": "passed",
-      "speedup": 1.214,
-      "microseconds": 117.0
+      "speedup": 1.259,
+      "microseconds": 113.0
     }
   ],
   "layout_variants": {

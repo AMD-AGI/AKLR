@@ -127,8 +127,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.427,
-      "microseconds": 8.24
+      "speedup": 1.404,
+      "microseconds": 8.23
     },
     {
       "axes": {
@@ -138,7 +138,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.626,
+      "speedup": 1.619,
       "microseconds": 10.9
     },
     {
@@ -149,7 +149,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.476,
+      "speedup": 1.498,
       "microseconds": 16.0
     },
     {
@@ -160,7 +160,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.719,
+      "speedup": 1.713,
       "microseconds": 16.5
     },
     {
@@ -171,8 +171,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.999,
-      "microseconds": 17.1
+      "speedup": 2.0,
+      "microseconds": 17.0
     },
     {
       "axes": {
@@ -182,7 +182,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.526,
+      "speedup": 1.522,
       "microseconds": 25.4
     },
     {
@@ -193,8 +193,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.695,
-      "microseconds": 26.0
+      "speedup": 1.71,
+      "microseconds": 25.9
     },
     {
       "axes": {
@@ -204,8 +204,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.923,
-      "microseconds": 26.3
+      "speedup": 1.938,
+      "microseconds": 26.1
     },
     {
       "axes": {
@@ -215,8 +215,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.042,
-      "microseconds": 26.6
+      "speedup": 2.018,
+      "microseconds": 26.8
     },
     {
       "axes": {
@@ -226,7 +226,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.189,
+      "speedup": 2.161,
       "microseconds": 27.3
     },
     {
@@ -237,7 +237,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.304,
+      "speedup": 2.317,
       "microseconds": 27.8
     },
     {
@@ -248,7 +248,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 1.907,
+      "speedup": 1.913,
       "microseconds": 36.7
     },
     {
@@ -259,8 +259,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.134,
-      "microseconds": 36.8
+      "speedup": 2.101,
+      "microseconds": 36.9
     },
     {
       "axes": {
@@ -270,8 +270,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.122,
-      "microseconds": 37.1
+      "speedup": 2.117,
+      "microseconds": 37.2
     },
     {
       "axes": {
@@ -281,8 +281,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.37,
-      "microseconds": 37.5
+      "speedup": 2.342,
+      "microseconds": 37.6
     },
     {
       "axes": {
@@ -292,8 +292,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.371,
-      "microseconds": 37.9
+      "speedup": 2.396,
+      "microseconds": 38.1
     },
     {
       "axes": {
@@ -303,8 +303,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.344,
-      "microseconds": 38.4
+      "speedup": 2.302,
+      "microseconds": 38.5
     },
     {
       "axes": {
@@ -314,7 +314,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.176,
+      "speedup": 2.142,
       "microseconds": 46.9
     },
     {
@@ -325,8 +325,8 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.142,
-      "microseconds": 47.3
+      "speedup": 2.199,
+      "microseconds": 47.4
     },
     {
       "axes": {
@@ -347,7 +347,7 @@
         "max_seq_len": 45056
       },
       "accuracy": "passed",
-      "speedup": 2.182,
+      "speedup": 2.178,
       "microseconds": 47.5
     }
   ],

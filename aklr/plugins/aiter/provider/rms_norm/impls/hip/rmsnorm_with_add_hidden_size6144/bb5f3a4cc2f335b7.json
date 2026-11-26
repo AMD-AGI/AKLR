@@ -84,8 +84,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.024,
-      "microseconds": 4.3
+      "speedup": 1.025,
+      "microseconds": 4.41
     },
     {
       "axes": {
@@ -95,8 +95,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.023,
-      "microseconds": 4.31
+      "speedup": 1.022,
+      "microseconds": 4.41
     },
     {
       "axes": {
@@ -106,8 +106,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.026,
-      "microseconds": 4.3
+      "speedup": 1.028,
+      "microseconds": 4.41
     },
     {
       "axes": {
@@ -117,8 +117,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.042,
-      "microseconds": 4.31
+      "speedup": 1.039,
+      "microseconds": 4.42
     },
     {
       "axes": {
@@ -128,8 +128,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.063,
-      "microseconds": 4.32
+      "speedup": 1.057,
+      "microseconds": 4.44
     },
     {
       "axes": {
@@ -139,8 +139,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.082,
-      "microseconds": 4.38
+      "speedup": 1.077,
+      "microseconds": 4.52
     },
     {
       "axes": {
@@ -150,8 +150,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.049,
-      "microseconds": 5.7
+      "speedup": 1.053,
+      "microseconds": 5.65
     },
     {
       "axes": {
@@ -161,8 +161,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.069,
-      "microseconds": 16.6
+      "speedup": 1.059,
+      "microseconds": 16.7
     },
     {
       "axes": {
@@ -172,8 +172,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.061,
-      "microseconds": 30.3
+      "speedup": 1.07,
+      "microseconds": 29.9
     },
     {
       "axes": {
@@ -183,8 +183,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.05,
-      "microseconds": 56.7
+      "speedup": 1.062,
+      "microseconds": 56.8
     }
   ],
   "layout_variants": {
