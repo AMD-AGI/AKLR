@@ -39,7 +39,6 @@ def _register() -> None:
     if enabled:
         for name, method, callback, hook_type, order in (
             ("routes", "init_device", _install_routes, _hooks.HookType.AFTER, 10),
-            ("warmup", "compile_or_warm_up_model", _warm_up, _hooks.HookType.AFTER, 0),
             ("execute", "execute_model", _execute, _hooks.HookType.AROUND, 0),
         ):
             registry.register(
@@ -59,15 +58,6 @@ def _register() -> None:
 def _install_routes(result, *args, **kwargs):
     # The runtime AFTER hook is inside this one, so initialization has completed.
     _install_once()
-    return _hooks.KEEP_RESULT
-
-
-def _warm_up(result, worker, *args, **kwargs):
-    # Preserve the existing supplementary warmup and its version-specific runner calls.
-    if _install_once():
-        from aklr.plugins.vllm.warmup import warm_up
-
-        warm_up(worker)
     return _hooks.KEEP_RESULT
 
 
