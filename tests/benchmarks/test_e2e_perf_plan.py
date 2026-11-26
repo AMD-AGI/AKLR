@@ -129,16 +129,15 @@ def test_manual_runs_need_an_allowlisted_reviewer(tmp_path):
 @pytest.mark.parametrize(
     "workloads",
     [
-        {"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1]},
+        {"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10},
         [],
-        [{"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1, 1]}],
-        [{"id": "8k1k", "isl": 0, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1]}],
+        [{"id": "8k1k", "isl": 0, "osl": 1024, "num_prompts_per_conc": 10}],
         [
-            {"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1]},
-            {"id": "8k1k", "isl": 102400, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1]},
+            {"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10},
+            {"id": "8k1k", "isl": 102400, "osl": 1024, "num_prompts_per_conc": 10},
         ],
     ],
-    ids=["mapping", "empty", "repeated-conc", "zero-isl", "repeated-id"],
+    ids=["mapping", "empty", "zero-isl", "repeated-id"],
 )
 def test_workloads_must_be_a_list_of_valid_distinct_workloads(tmp_path, workloads):
     config = yaml.safe_load(DEFAULT_CONFIG.read_text())
@@ -146,6 +145,18 @@ def test_workloads_must_be_a_list_of_valid_distinct_workloads(tmp_path, workload
     path = tmp_path / "e2e.yaml"
     path.write_text(yaml.safe_dump(config))
     with pytest.raises(ConfigError):
+        load_config(path)
+
+
+@pytest.mark.parametrize("concurrency", [None, [1, 1]], ids=["missing", "repeated"])
+def test_every_model_needs_a_valid_concurrency(tmp_path, concurrency):
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config["models"]["glm52-fp8"]["concurrency"] = concurrency
+    if concurrency is None:
+        del config["models"]["glm52-fp8"]["concurrency"]
+    path = tmp_path / "e2e.yaml"
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ConfigError, match="model glm52-fp8 needs concurrency"):
         load_config(path)
 
 
