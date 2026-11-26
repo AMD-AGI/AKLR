@@ -168,8 +168,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.14,
-      "microseconds": 37.6
+      "speedup": 1.193,
+      "microseconds": 37.1
     },
     {
       "axes": {
@@ -179,8 +179,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.066,
-      "microseconds": 62.2
+      "speedup": 1.048,
+      "microseconds": 62.6
     },
     {
       "axes": {
@@ -190,8 +190,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.03,
-      "microseconds": 90.9
+      "speedup": 1.024,
+      "microseconds": 91.2
     },
     {
       "axes": {
@@ -201,8 +201,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 0.994,
-      "microseconds": 115.0
+      "speedup": 1.015,
+      "microseconds": 111.0
     },
     {
       "axes": {
@@ -212,8 +212,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.058,
-      "microseconds": 123.0
+      "speedup": 1.078,
+      "microseconds": 122.0
     },
     {
       "axes": {
@@ -223,8 +223,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 0.999,
-      "microseconds": 146.0
+      "speedup": 1.031,
+      "microseconds": 142.0
     },
     {
       "axes": {
@@ -234,8 +234,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.023,
-      "microseconds": 167.0
+      "speedup": 1.029,
+      "microseconds": 166.0
     },
     {
       "axes": {
@@ -245,8 +245,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 0.99,
-      "microseconds": 184.0
+      "speedup": 0.997,
+      "microseconds": 182.0
     },
     {
       "axes": {
@@ -256,8 +256,8 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 0.954,
-      "microseconds": 207.0
+      "speedup": 0.957,
+      "microseconds": 208.0
     }
   ],
   "layout_variants": {
