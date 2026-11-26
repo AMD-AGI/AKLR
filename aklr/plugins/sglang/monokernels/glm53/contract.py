@@ -317,7 +317,7 @@ GLM53_MOE_LAYER = OpContract(
         "out": TensorSpec(
             description="hidden_states plus the group's attention and MoE outputs.",
             shape=("n_tokens", "model_dim"),
-            dtype=DTypeSpec(same_as_tensor="hidden_states"),
+            dtype=DTypeSpec(same_as_tensor="hidden_states", param_name="out_dtype"),
             # deepseek_v2_fp8_moe's: the layer's MoE rounds as that op's does (35 to 36 dB in its CPU
             # emulation of the kernels' rounding)
             error_bounds=SqnrBound(min_sqnr_db=30.0),
@@ -508,7 +508,12 @@ GLM53_DENSE_INDEX_LAYER = OpContract(
     },
     # layer_out at glm53_moe_layer's bound: the dense MLP routes no expert (sglang's own layer came to
     # 41.3 dB at the lowest of 24 workloads)
-    outputs={**GLM53_MOE_INDEX_LAYER.outputs, "layer_out": GLM53_MOE_LAYER.outputs["out"]},
+    outputs={
+        **GLM53_MOE_INDEX_LAYER.outputs,
+        "layer_out": GLM53_MOE_INDEX_LAYER.outputs["layer_out"].model_copy(
+            update={"error_bounds": GLM53_MOE_LAYER.outputs["out"].error_bounds}
+        ),
+    },
     layout_variants=LayoutVariantsSpec(
         by_name={
             "row_major": LayoutVariant(detect_facts=_shuffled_facts(_DENSE_FACTS, False)),
@@ -628,7 +633,7 @@ GLM53_NEXTN_ENTRY = OpContract(
         "out": TensorSpec(
             description="The NextN decoder layer's input.",
             shape=("n_tokens", "model_dim"),
-            dtype=DTypeSpec(same_as_tensor="hidden_states"),
+            dtype=DTypeSpec(same_as_tensor="hidden_states", param_name="out_dtype"),
             # bf16's common bound: a bf16 GEMM's outputs on bf16 RMSNorms
             error_bounds=tolerance(DType.BFLOAT16),
         )
