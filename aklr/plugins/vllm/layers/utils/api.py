@@ -18,3 +18,16 @@ def _wv_split_krc(a, b, cu_count, bias=None):
     from aiter.tuned_gemm import gemm_a16w16
 
     return gemm_a16w16(a, b, bias)
+
+
+@vllm_route(
+    "vllm.model_executor.layers.utils.rocm_unquantized_gemm_impl",
+    "vllm._custom_ops.wvSplitK",
+    versions=("0.34.0",),
+)
+def _wv_split_k(a, b, cu_count, bias=None):
+    """vLLM's skinny GEMM on gfx9 for at most 5 tokens (a the weight, b the token rows) as aiter's GEMM, which
+    AKLR's aiter provider answers: the rows vLLM never hands to aiter's GEMM."""
+    from aiter.tuned_gemm import gemm_a16w16
+
+    return gemm_a16w16(b, a, bias)
