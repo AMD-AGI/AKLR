@@ -178,6 +178,54 @@ def test_vllms_tp_group_binds_its_sockets_where_a_unix_socket_path_fits(monkeypa
     assert len(f"{base}/{'0' * 36}") <= 107
 
 
+@pytest.mark.parametrize("initialized", [True, False], ids=["vllm_tp_group", "no_vllm_tp_group_yet"])
+def test_the_timings_graphs_are_captured_in_vllms_graph_capture(monkeypatch, initialized):
+    """vLLM's TP all-reduce (aiter's custom all-reduce on ROCm) registers the buffers a CUDA graph reads as vLLM's
+    graph_capture ends; a graph captured outside it read unregistered peer addresses at its replays (a GPU memory fault
+    at a null address on every rank, CI's vllm-test). So the baseline's clock, the candidate's too, captures each graph
+    inside it, on the timing's own stream, and replays it after the context ended; the eager calls stay outside it; with
+    no vLLM TP group yet nothing changes; the capture helper is put back."""
+    testing = pytest.importorskip("aklr.core.utils.testing")
+    _fake_vllm_tp(monkeypatch)
+    state = sys.modules["vllm.distributed.parallel_state"]
+    events = []
+
+    @contextlib.contextmanager
+    def graph_capture(context):
+        events.append(("vllm enters", context.stream))
+        yield context
+        events.append(("vllm registers", context.stream))
+
+    state.model_parallel_is_initialized = lambda: initialized
+    state.GraphCaptureContext = lambda stream: SimpleNamespace(stream=stream)
+    state.get_tp_group = lambda: SimpleNamespace(graph_capture=graph_capture)
+
+    @contextlib.contextmanager
+    def capture(graph, stream=None):
+        events.append(("captures", stream))
+        yield graph
+        events.append("captured")
+
+    def bench_cudagraph(
+        fn, rep=None, *, group=None
+    ):  # as aklr's: eager calls, a capture on its stream, the replays
+        fn()
+        events.append("eager")
+        with testing.cuda_graph_without_gc("graph", stream="timing stream"):
+            fn()
+        events.append("replays")
+        return 1.5
+
+    monkeypatch.setattr(testing, "cuda_graph_without_gc", capture)
+    monkeypatch.setattr(testing, "bench_cudagraph", bench_cudagraph)
+    assert baseline.KimiK3LatentMoeTailBaseline().profile(lambda: None) == 1.5
+    captured = [("captures", "timing stream"), "captured"]
+    if initialized:
+        captured = [("vllm enters", "timing stream"), *captured, ("vllm registers", "timing stream")]
+    assert events == ["eager", *captured, "replays"]
+    assert testing.cuda_graph_without_gc is capture
+
+
 # ---------------------------------------------------------------- the committed kernel's layout, for eight ranks
 
 

@@ -74,8 +74,49 @@ def _vllm_norm(width, eps, device):
     return _NORMS[key]
 
 
+@contextlib.contextmanager
+def _captures_in_vllm_graph_capture():
+    """The timing's graph captures inside vLLM's ``graph_capture``, each on the timing's own stream, as vLLM captures
+    its decode graphs. vLLM's TP all-reduce (aiter's custom all-reduce on ROCm) registers the buffers a graph reads as
+    that context ends; captured outside it, a replay reads unregistered peer addresses (a GPU memory fault at a null
+    address). Only the captures: the timing's eager calls run vLLM's eager all-reduce. Without vLLM's TP group (no
+    baseline call yet) the captures are left as they are. The capture helper is put back afterwards."""
+    from vllm.distributed.parallel_state import (
+        GraphCaptureContext,
+        get_tp_group,
+        model_parallel_is_initialized,
+    )
+
+    from aklr.core.utils import testing
+
+    if not model_parallel_is_initialized():
+        yield
+        return
+    capture = testing.cuda_graph_without_gc
+
+    @contextlib.contextmanager
+    def in_vllm_graph_capture(graph, stream=None, **kwargs):
+        with (
+            get_tp_group().graph_capture(GraphCaptureContext(stream)),
+            capture(graph, stream=stream, **kwargs) as g,
+        ):
+            yield g
+
+    testing.cuda_graph_without_gc = in_vllm_graph_capture
+    try:
+        yield
+    finally:
+        testing.cuda_graph_without_gc = capture
+
+
 class KimiK3LatentMoeTailBaseline(DistOpBaseline):
     """vLLM's tail needs no setup of its own: vLLM's TP group is set up at the first call (``_vllm_tp``)."""
+
+    def profile(self, fn):
+        """DistOpBaseline's, its graphs captured as vLLM captures them (``_captures_in_vllm_graph_capture``); the
+        candidate shares this clock, and the context changes nothing for a graph without vLLM's all-reduce."""
+        with _captures_in_vllm_graph_capture():
+            return super().profile(fn)
 
     def baseline(
         self,
