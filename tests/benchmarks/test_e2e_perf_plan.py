@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from e2e_perf import plan
-from e2e_perf.model_config import DEFAULT_CONFIG, load_config
+from e2e_perf import launcher, plan
+from e2e_perf.model_config import DEFAULT_CONFIG, groups, load_config, load_recipe, recipe_path
 from e2e_perf.utils import read_json
 from perf_utils.gh import ConfigError, load_reviewers
 
@@ -116,6 +116,25 @@ def test_a_missing_recipe_fails_only_its_group(tmp_path, monkeypatch):
     failed = [g for g in manifest["groups"] if g["status"] != "planned"]
     assert [(g["model"]["id"], g["status"]) for g in failed] == [("glm52-fp8", "resolve-failed")]
     assert "no recipe" in failed[0]["error"]
+
+
+@pytest.mark.parametrize("setup", ["pip install x", [""], ["pip install x", 3]])
+def test_a_recipe_setup_must_be_a_list_of_shell_commands(tmp_path, setup):
+    (group,) = groups(load_config(DEFAULT_CONFIG), "glm52-fp8", "sglang")
+    recipe = read_json(recipe_path(group))
+    path = recipe_path(group, tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({**recipe, "setup": setup}))
+    with pytest.raises(ConfigError, match="setup must be a list of shell commands"):
+        load_recipe(group, tmp_path)
+    path.write_text(json.dumps({**recipe, "setup": ["pip install --no-deps x==1"]}))
+    assert load_recipe(group, tmp_path)["setup"] == ["pip install --no-deps x==1"]
+
+
+def test_the_container_runs_the_recipe_setup_before_installing_aklr():
+    command = launcher.CONTAINER_COMMAND
+    assert '["recipe"].get("setup", [])' in command
+    assert command.index("/tmp/e2e-setup.sh") < command.index("scripts/install_aklr.sh")
 
 
 def test_manual_runs_need_an_allowlisted_reviewer(tmp_path):
