@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 import time
 import uuid
 from pathlib import Path
@@ -99,6 +100,12 @@ def begin_attempt(out: Path) -> str:
     return attempt
 
 
+def ci_job_url() -> str | None:
+    """The GitHub Actions job that measures this run, when the workflow supplies its check run ID."""
+    url = os.environ.get("AGENTX_JOB_URL", "")
+    return url if url.rpartition("/job/")[2].isdigit() else None
+
+
 def pending_results(serving: dict, points: list[dict], run_fields: dict) -> dict:
     """Keep plan identity available if setup fails."""
     if serving.get("schema") != SCHEMA or not all(
@@ -133,6 +140,7 @@ def pending_results(serving: dict, points: list[dict], run_fields: dict) -> dict
             "duration_override_s": selection.get("duration"),
             "model_path_override": None,
             "selection": selection,
+            **({"job_url": job_url} if (job_url := ci_job_url()) else {}),
             **run_fields,
         },
         "serving": {
