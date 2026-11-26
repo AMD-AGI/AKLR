@@ -56,7 +56,8 @@ concurrency:
     ${{ github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         contains(github.event.pull_request.labels.*.name, 'ci:e2e-perf-mi355x') &&
-        (github.event.action != 'labeled' || github.event.label.name == 'ci:e2e-perf-mi355x') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'ci:e2e-perf-mi355x' ||
+         github.event.label.name == 'ci:priority-high') &&
         format('e2e-perf-pr-{0}', github.event.pull_request.number) ||
         github.event_name == 'pull_request' && format('e2e-perf-ignored-{0}', github.run_id) ||
         github.event_name == 'workflow_dispatch' &&
@@ -65,8 +66,8 @@ concurrency:
                    github.triggering_actor)) &&
         format('e2e-perf-refused-{0}', github.run_id) ||
         'e2e-perf' }}
-  # A new commit on a labeled PR supersedes its running e2e run; ignored PR events have a group of
-  # their own, and scheduled and manual runs still queue.
+  # A new commit on a labeled PR, or ci:priority-high added to it, supersedes its running e2e run;
+  # ignored PR events have a group of their own, and scheduled and manual runs still queue.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -79,7 +80,13 @@ env:
   # The GPU backend: aklr-gpu (Docker on the target's runner_label) or aklr-safe (a SaFE
   # workload per group, as ci.yaml's GPU jobs). The repository variable sets it for scheduled and PR runs.
   E2E_GPU_RUNNER: ${{ inputs.gpu_runner || vars.AKLR_E2E_PERF_GPU_RUNNER || 'aklr-safe' }}
-  AKLR_GPU_PRIORITY: ${{ inputs.gpu_priority || 'medium' }}
+  # The SaFE workload priority: a manual run's choice, high for a PR with ci:priority-high as in ci.yaml,
+  # else medium. Adding ci:priority-high to a PR with ci:e2e-perf-mi355x restarts its run at high.
+  AKLR_GPU_PRIORITY: >-
+    ${{ inputs.gpu_priority ||
+        (github.event_name == 'pull_request' &&
+         contains(github.event.pull_request.labels.*.name, 'ci:priority-high') && 'high') ||
+        'medium' }}
 
 jobs:
   plan:
@@ -88,7 +95,8 @@ jobs:
       (github.event_name != 'pull_request' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         contains(github.event.pull_request.labels.*.name, 'ci:e2e-perf-mi355x') &&
-        (github.event.action != 'labeled' || github.event.label.name == 'ci:e2e-perf-mi355x')))
+        (github.event.action != 'labeled' || github.event.label.name == 'ci:e2e-perf-mi355x' ||
+         github.event.label.name == 'ci:priority-high')))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

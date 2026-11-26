@@ -72,6 +72,8 @@ SaFE workloads carry a priority; `aklr-gpu` has none:
 
 `ci:priority-high` alone starts no GPU job. It stays on the PR, so every later push runs at high
 too: remove it once the urgent run is done.
+It also raises a SaFE e2e perf run of a PR with `ci:e2e-perf-mi355x` to high: adding it to such a PR
+cancels the running e2e perf run and starts it again at high. Scheduled e2e perf runs stay at medium.
 
 An `aklr-gpu` runner needs Linux, Docker access, ROCm GPU devices (`/dev/kfd` and `/dev/dri`),
 network access to the images in `stack.json`, and enough local disk for image pulls, source
