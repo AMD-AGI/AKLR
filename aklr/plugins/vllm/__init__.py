@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import pkgutil
 from collections.abc import Callable
 from typing import Any
@@ -42,10 +43,11 @@ def register() -> None:
 def _register() -> None:
     # Validate switches before changing any framework bindings.
     env = RuntimeEnv()
+    provider_enabled = False
     if env.is_aiter_plugin_enabled and not env.is_all_disabled:
         from aklr.plugins.aiter.provider import enable
 
-        enable("AKLR vllm plugin, AKLR_AITER_PLUGIN=1")
+        provider_enabled = enable("AKLR vllm plugin, AKLR_AITER_PLUGIN=1")
     enabled = not env.is_all_disabled and env.is_vllm_plugin_enabled
     _register_runtime_hook()
     registry = _hooks.HookRegistry.default()
@@ -68,6 +70,17 @@ def _register() -> None:
                     source=__name__,
                 )
             )
+    if enabled and provider_enabled and os.environ.get("AKLR_MUSE_QKVO") == "1":
+        registry.register(
+            _hooks.HookSpec(
+                hook_id="vllm.plugin.muse_qkvo",
+                target="vllm.v1.worker.gpu_worker.Worker.load_model",
+                hook=_configure_muse_qkvo,
+                hook_type=_hooks.HookType.AFTER,
+                phase="bootstrap",
+                source=__name__,
+            )
+        )
     registry.apply("bootstrap")
 
 
@@ -77,6 +90,13 @@ def _exists(path: str) -> bool:
     except (ImportError, AttributeError):
         return False
     return True
+
+
+def _configure_muse_qkvo(result, worker, *args, **kwargs):
+    from aklr.plugins.vllm.models.muse_spark.qkvo import configure_qkvo
+
+    configure_qkvo(worker)
+    return _hooks.KEEP_RESULT
 
 
 def _install_routes(result, *args, **kwargs):
