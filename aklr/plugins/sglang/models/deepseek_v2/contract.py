@@ -172,7 +172,7 @@ DEEPSEEK_V2_MXFP4_MOE = OpContract(
         "out": TensorSpec(
             description=("The experts' output on this rank, before sglang's all-reduce sums the ranks'."),
             shape=("n_tokens", "model_dim"),
-            dtype=_SAME_AS_HIDDEN,
+            dtype=_SAME_AS_HIDDEN.model_copy(update={"param_name": "out_dtype"}),
             # the experts' MXFP4 activations alone come to about 12 dB
             error_bounds=MOE_MXFP4_SNR,
         )
@@ -314,7 +314,7 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
         "out": TensorSpec(
             description=("The experts' output on this rank, before sglang's all-reduce sums the ranks'."),
             shape=("n_tokens", "model_dim"),
-            dtype=_SAME_AS_HIDDEN,
+            dtype=_SAME_AS_HIDDEN.model_copy(update={"param_name": "out_dtype"}),
             # implementations round the second linear's input to fp8 from values they round
             # at other points than the reference does, which flips some fp8 codes: a CPU
             # emulation of the kernels' rounding comes to 35 to 36 dB on the bench's inputs

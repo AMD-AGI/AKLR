@@ -17,13 +17,13 @@ import torch
 
 from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.aiter.situv2_a4w4_moe.api import situv2_a4w4_moe
+from aklr.plugins.aiter.provider.situv2_a4w4_moe.api import situv2_a4w4_moe
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
-moe = importlib.import_module("aklr.plugins.aiter.provider.moe")
-topk = importlib.import_module("aklr.plugins.aiter.provider.topk")
-aklr_fused_moe = importlib.import_module("aklr.plugins.aiter.fused_moe.api").fused_moe
+moe = importlib.import_module("aklr.plugins.aiter.provider.fused_moe.selector")
+topk = importlib.import_module("aklr.plugins.aiter.provider.topk.selector")
+aklr_fused_moe = importlib.import_module("aklr.plugins.aiter.provider.fused_moe.api").fused_moe
 
 BF16, F32, FP8 = torch.bfloat16, torch.float32, torch.float8_e4m3fn
 FP4 = getattr(torch, "float4_e2m1fn_x2", torch.uint8)

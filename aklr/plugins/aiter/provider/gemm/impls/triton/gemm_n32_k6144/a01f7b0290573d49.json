@@ -1,0 +1,135 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n32_k6144",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 32,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 6144,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 120
+      }
+    },
+    {
+      "axes": {
+        "m": 132
+      }
+    },
+    {
+      "axes": {
+        "m": 144
+      }
+    },
+    {
+      "axes": {
+        "m": 156
+      }
+    },
+    {
+      "axes": {
+        "m": 168
+      }
+    },
+    {
+      "axes": {
+        "m": 180
+      }
+    },
+    {
+      "axes": {
+        "m": 192
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8.0"
+    },
+    "author": "RuibinCheung",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"out = a @ b.T in one split-K launch: the program of a tile that sees every split's tag for this launch sums\nthe fp32 partials in split order, so the result is bitwise deterministic whichever program folds.\"\"\"\n\nimport torch\nimport triton\nimport triton.language as tl\nfrom triton.language import core\n\n\n@core.extern\ndef _dispatch_id(_semantic=None):\n    return core.extern_elementwise(\n        \"\", \"\", [], {(): (\"llvm.amdgcn.dispatch.id\", core.int64)}, is_pure=False, _semantic=_semantic\n    )\n\n\n@core.extern\ndef _queue_ptr(_semantic=None):\n    return core.extern_elementwise(\n        \"\",\n        \"\",\n        [],\n        {(): (\"llvm.amdgcn.queue.ptr\", core.pointer_type(core.int8, 4))},\n        is_pure=True,\n        _semantic=_semantic,\n    )\n\n\n@triton.jit\ndef _wait_vm(x):\n    # Returns x so that code using the result stays after the wait for every memory operation of this wave.\n    return tl.inline_asm_elementwise(\"s_waitcnt vmcnt(0)\", \"=s,s\", [x], dtype=tl.int32, is_pure=False, pack=1)\n\n\n@triton.jit\ndef _splitk_fold(\n    A,\n    B,\n    C,\n    WS,\n    M,\n    sam: tl.constexpr,\n    sak: tl.constexpr,\n    sbn: tl.constexpr,\n    sbk: tl.constexpr,\n    scm: tl.constexpr,\n    scn: tl.constexpr,\n    N: tl.constexpr,\n    K: tl.constexpr,\n    BM: tl.constexpr,\n    S: tl.constexpr,\n    BK: tl.constexpr,\n):\n    pid = tl.program_id(0)\n    tile = pid // S\n    split = pid % S\n    KS: tl.constexpr = K // S\n    tl.static_assert(KS == 3 * BK)\n    rows = tile * BM + tl.arange(0, BM)\n    rl = tl.minimum(rows, M - 1)\n    cols = tl.arange(0, N)\n    ks = tl.arange(0, BK)\n    k0 = split * KS\n    pa = A + rl[:, None] * sam + (k0 + ks)[None, :] * sak\n    pb = B + cols[None, :] * sbn + (k0 + ks)[:, None] * sbk\n    x0 = tl.load(pa)  # every load of the slice is issued before the first dot\n    w0 = tl.load(pb)\n    x1 = tl.load(pa + BK * sak)\n    w1 = tl.load(pb + BK * sbk)\n    x2 = tl.load(pa + 2 * BK * sak)\n    w2 = tl.load(pb + 2 * BK * sbk)\n    acc = tl.dot(x0, w0)\n    acc = tl.dot(x1, w1, acc)\n    acc = tl.dot(x2, w2, acc)\n    PLANE: tl.constexpr = BM * N\n    off = tl.arange(0, BM)[:, None] * N + cols[None, :]\n    tl.store(WS + pid * PLANE + off, acc, cache_modifier=\".wt\")\n    # The tag slots follow the planes; deriving them from M keeps the runtime arguments in the preload window.\n    TAGS = (WS + ((M + BM - 1) // BM) * (S * PLANE)).to(tl.pointer_type(tl.int64))\n    q = _queue_ptr().to(tl.int64, bitcast=True)\n    tag = _dispatch_id() ^ ((q << 32) | ((q >> 32) & 0xFFFFFFFF))  # dispatch ids repeat across queues\n    plane_acked = _wait_vm(pid)\n    tl.debug_barrier()\n    tl.store(TAGS + pid + plane_acked * 0, tag, cache_modifier=\".wt\")\n    tag_acked = _wait_vm(pid)\n    tl.debug_barrier()\n    base = tile * S\n    tags = tl.load(TAGS + base + tl.arange(0, S) + tag_acked * 0, cache_modifier=\".cv\")\n    if tl.sum((tags == tag).to(tl.int32)) == S:\n        tot = tl.load(WS + base * PLANE + off, cache_modifier=\".cv\")\n        for s in tl.static_range(1, S):\n            tot += tl.load(WS + (base + s) * PLANE + off, cache_modifier=\".cv\")\n        tl.store(\n            C + rows[:, None] * scm + cols[None, :] * scn,\n            tot.to(C.dtype.element_ty),\n            mask=(rows < M)[:, None],\n            cache_modifier=\".wt\",\n        )\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    m, k = a.shape\n    n = out.shape[1]\n    if trans_b:\n        sbn, sbk = b.stride(0), b.stride(1)\n    else:\n        sbn, sbk = b.stride(1), b.stride(0)\n    bm, s, bk = 16, 16, 128\n    g = triton.cdiv(m, bm) * s\n    plane = g * bm * n * torch.float32.itemsize\n    ws = torch.empty(plane + g * torch.int64.itemsize, dtype=torch.uint8, device=a.device)\n    _splitk_fold[(g,)](\n        a,\n        b,\n        out,\n        ws.view(torch.float32),\n        m,\n        a.stride(0),\n        a.stride(1),\n        sbn,\n        sbk,\n        out.stride(0),\n        out.stride(1),\n        N=n,\n        K=k,\n        BM=bm,\n        S=s,\n        BK=bk,\n        num_warps=2,\n    )\n"
+      }
+    ]
+  }
+}

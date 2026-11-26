@@ -138,7 +138,7 @@ PointSpec(
 `GFX950_CONTRACT_IDS` in the same file lists the contracts whose baseline runs only on gfx950; vLLM's Triton kernel is not one of them, so this contract is not listed. Then update `tests/plugins/vllm/names.txt`:
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/provider/test_contracts.py
 ```
 
 `tests/plugins/vllm/test_hook.py` checks every route: that the function it replaces exists in the installed vLLM with the same parameters, and that no other route replaces it. How the route maps vLLM's arguments `test_hook.py` cannot check, so it is tested on its own in `tests/plugins/vllm/test_kimi_k3_attn_res.py`: the fp8 output and a bank write before the last row go back to vLLM without the op called, a supported call hands each operand to the op under its name, and the baseline's copy of vLLM's Triton kernel gives vLLM's bits for the output, the updated prefix and the bank.

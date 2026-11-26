@@ -11,9 +11,11 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from aklr.core.contract.registry import ContractRegistry
 from aklr.core.platform.env import ENV_AITER_PLUGIN, RuntimeEnv
 from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
+from tests.plugins.aiter.provider.cases import SMALL_POINTS
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
@@ -254,6 +256,10 @@ AITER_CONTRACTS = {
             "num_kv_splits",
         ),
     ),
+    "mhc_post": (
+        1,
+        ("out", "x", "residual", "post_layer_mix", "comb_res_mix", "store_nt", "res_preshuffle"),
+    ),
     "mhc_fused_post_pre": (
         1,
         (
@@ -432,9 +438,9 @@ def aklr_serves(monkeypatch):
 
 def _selector_modules():
     return [
-        module
-        for _, module in inspect.getmembers(provider, inspect.ismodule)
-        if module.__name__.startswith(f"{provider.__name__}.") and module is not base
+        family.selector
+        for _, family in inspect.getmembers(provider, inspect.ismodule)
+        if family is not base and hasattr(family, "selector")
     ]
 
 
@@ -462,9 +468,6 @@ def test_a_served_call_offers_a_run_taking_aiters_contract(aklr_serves, case):
 
 
 DECLINED = [
-    ("rmsnorm", {"use_model_sensitive_rmsnorm": 1}),
-    ("rmsnorm_with_add", {"gemma_norm": True}),
-    ("rmsnorm_with_add", {"use_model_sensitive_rmsnorm": 1}),
     ("gemm_a8w8_blockscale", {"isBpreshuffled": True}),
     ("gemm_a8w8_blockscale", {"split_k": 2}),
     ("gemm_a8w8_blockscale", {"x_scale": torch.zeros(4, 4, dtype=torch.uint8)}),
@@ -496,6 +499,33 @@ def _row_major(scale):
 DECLINED.append(("gemm_a8w8_blockscale_bpreshuffle", {"x_scale": _row_major(torch.zeros(4, 1))}))
 
 
+@pytest.mark.parametrize(
+    ("contract_id", "attrs"),
+    [
+        ("rmsnorm@1.0", {"use_model_sensitive_rmsnorm": 1}),
+        ("rmsnorm_with_add@1.0", {"gemma_norm": True}),
+        ("rmsnorm_with_add@1.0", {"use_model_sensitive_rmsnorm": 1}),
+    ],
+)
+def test_a_variant_of_aiters_op_aklr_does_not_compute_is_outside_its_contract(contract_id, attrs):
+    """The contract takes aiter's call as it is, so its domain declines the call, not the selector."""
+    (point,) = [p for p in SMALL_POINTS if p.contract_id == contract_id]
+    domain = ContractRegistry.default().get(contract_id).domain
+    assert domain.contains(point)
+    assert not domain.contains(point.model_copy(update={"attrs": {**point.attrs, **attrs}}))
+
+
+def test_a_selector_hands_aklr_aiters_call_as_it_is(monkeypatch, aklr_serves):
+    norm = importlib.import_module("aklr.plugins.aiter.provider.rms_norm.selector")
+    asked = []
+    monkeypatch.setattr(norm.rmsnorm_with_add, "serving", lambda *a, **k: asked.append((a, k)) or KERNEL)
+    args = _args("rmsnorm_with_add")
+    base.SELECTORS["rmsnorm_with_add"][1](args, {})
+    assert [len(a) for a, _ in asked] == [len(args)]
+    assert all(given is handed for given, handed in zip(asked[0][0], args, strict=True))
+    assert asked[0][1] == {}
+
+
 @pytest.mark.parametrize(("case", "changes"), DECLINED)
 def test_a_call_outside_aklrs_contract_is_declined_before_aklr_is_asked(aklr_serves, case, changes):
     assert _select(case, **changes) is None
@@ -523,14 +553,14 @@ def _api(fn):
 def test_runs_hand_aklr_aiters_layouts(monkeypatch, aklr_serves):
     """The transposed fp8 scales come back as aiter shapes them, (rows, groups) over AKLR's
     group-major bytes; the shuffled-weight GEMM asks for AKLR's preshuffled operand format."""
-    quant = importlib.import_module("aklr.plugins.aiter.provider.quant")
+    quant = importlib.import_module("aklr.plugins.aiter.provider.quant.selector")
     scales = torch.arange(4.0).view(1, 4)  # AKLR's (groups, rows) for 4 rows of 128
     monkeypatch.setattr(quant, "per_group_quant_fp8", _api(lambda x: ("q", scales)))
     _, run = _select("per_group_quant_fp8")
     quantized, aiter_scales = run(*_args("per_group_quant_fp8"))
     assert quantized == "q" and aiter_scales.shape == (4, 1) and aiter_scales.data_ptr() == scales.data_ptr()
 
-    gemm = importlib.import_module("aklr.plugins.aiter.provider.gemm")
+    gemm = importlib.import_module("aklr.plugins.aiter.provider.gemm.selector")
     calls = []
     monkeypatch.setattr(gemm, "gemm_a8w8_blockwise_scaled", _api(lambda *a, **k: calls.append(k) or "y"))
     _, run = _select("gemm_a8w8_blockscale_bpreshuffle")
@@ -539,16 +569,16 @@ def test_runs_hand_aklr_aiters_layouts(monkeypatch, aklr_serves):
 
 
 def test_mxfp8_is_declined_on_a_torch_without_e8m0(monkeypatch, aklr_serves):
-    quant = importlib.import_module("aklr.plugins.aiter.provider.quant")
+    quant = importlib.import_module("aklr.plugins.aiter.provider.quant.selector")
     monkeypatch.setattr(quant, "_E8M0", None)
     assert _select("per_group_quant_fp8", group_size=32, transpose_scale=False, scale_type=None) is None
 
 
 def test_a_fallback_after_select_accepted_raises(monkeypatch, aklr_serves):
     """aiter does not fall back once run started; a fallback there is a bug, not a decline."""
-    norm = importlib.import_module("aklr.plugins.aiter.provider.norm")
+    norm = importlib.import_module("aklr.plugins.aiter.provider.rms_norm.selector")
     _, run = _select("rmsnorm")
-    monkeypatch.setattr(norm, "rms_norm", _api(lambda *a: FallbackReason.NOT_WARMED))
+    monkeypatch.setattr(norm, "rmsnorm", _api(lambda *a: FallbackReason.NOT_WARMED))
     with pytest.raises(RuntimeError, match="not_warmed"):
         run(*_args("rmsnorm"))
 
@@ -611,11 +641,11 @@ def test_aiter_routes_a_call_aklr_serves_to_aklrs_kernel(monkeypatch, aiter_plug
             raise AssertionError("explain runs nothing")
 
     provider.enable("test")
-    norm = importlib.import_module("aklr.plugins.aiter.provider.norm")
-    monkeypatch.setattr(norm.rms_norm, "serving", lambda *a: KERNEL)
+    norm = importlib.import_module("aklr.plugins.aiter.provider.rms_norm.selector")
+    monkeypatch.setattr(norm.rmsnorm, "serving", lambda *a: KERNEL)
     decision = aiter_plugin.explain("rmsnorm", *_args("rmsnorm")).decision
     assert (decision.route, decision.provider, decision.kernel_id) == ("provider", "aklr", KERNEL.kernel_ref)
-    monkeypatch.setattr(norm.rms_norm, "serving", lambda *a: FallbackReason.NO_WORKLOAD)
+    monkeypatch.setattr(norm.rmsnorm, "serving", lambda *a: FallbackReason.NO_WORKLOAD)
     assert aiter_plugin.explain("rmsnorm", *_args("rmsnorm")).decision.route == "native"
 
 
