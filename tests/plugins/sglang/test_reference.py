@@ -171,6 +171,21 @@ def test_glm53_embed_over_two_ranks_is_one_ranks() -> None:
         assert torch.equal(case.contract.reference.reference(group, rank)["embeddings"], whole)
 
 
+@pytest.mark.parametrize("contract_id", ["glm53_moe_index_layer@1.0", "glm53_dense_index_layer@1.0"])
+def test_glm53_a_kv_pool_smaller_than_the_page_table_is_outside_the_domain(contract_id: str) -> None:
+    """A page table names pages of the KV pool: max_pages of them must fit in it."""
+    point = OpCase.of(contract_id).point
+    with pytest.raises(ValueError, match="outside the domain"):
+        OpCase(point.model_copy(update={"axes": {**point.axes, "n_slots": INDEX_PAGE}}))
+
+
+def test_glm53_page_table_names_only_pages_of_the_kv_pool() -> None:
+    """The index-K cache may hold a page more than the KV pool, as SGLang's does; the page table never names it."""
+    point = OpCase.of("glm53_moe_index_layer@1.0").point
+    case = OpCase(point.model_copy(update={"axes": {**point.axes, "n_pages": point.axes["n_pages"] + 1}}))
+    assert int(case.inputs()["page_table"].max()) < point.axes["n_slots"] // INDEX_PAGE
+
+
 def test_glm53_topk_of_equal_scores_may_swap() -> None:
     """glm53_moe_index_layer: row 1 scores every key, row 0 fewer than it takes. A copy of row 1's
     lowest taken key at a slot it leaves scores alike, and either may be taken; row 1 may come in any

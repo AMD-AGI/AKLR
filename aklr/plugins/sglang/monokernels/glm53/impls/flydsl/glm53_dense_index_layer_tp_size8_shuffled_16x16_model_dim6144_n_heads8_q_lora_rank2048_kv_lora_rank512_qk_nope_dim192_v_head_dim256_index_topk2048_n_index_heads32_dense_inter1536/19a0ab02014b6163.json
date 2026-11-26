@@ -489,10 +489,10 @@
       "distribution": {
         "kind": "int_range",
         "lo": 0,
-        "hi": "n_pages - 1",
+        "hi": "n_slots // 64 - 1",
         "distinct": true
       },
-      "description": "Each row's pages, 64 keys a page, distinct within a row."
+      "description": "Each row's pages, 64 keys a page, distinct within a row, all in the KV pool."
     },
     "seq_lens": {
       "shape": [

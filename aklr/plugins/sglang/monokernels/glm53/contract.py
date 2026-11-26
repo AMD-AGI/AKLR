@@ -357,7 +357,7 @@ GLM53_MOE_INDEX_LAYER = OpContract(
         "bf16(bf16(x weights_proj^T) * n_index_heads^-0.5) times that scale times 128^-0.5. After every "
         "row's key is stored, each row scores its seq_lens visible keys, key p at page_table[row, p // 64]'s "
         "slot p % 64: the sum over heads of gate * relu(q . k), times the key's scale; topk_indices is the "
-        "index_topk highest scores' slots (page * 64 + p % 64) in any order, or for a row of at most "
+        "index_topk highest scores' slots (page * 64 + p % 64) in any order, or for a row of fewer than "
         "index_topk keys all of its slots in order, then -1. wk and wq_b take their input in fp8 per 1 x "
         "128 group as the other linears do. A row's position is seq_lens - 1."
     ),
@@ -381,8 +381,9 @@ GLM53_MOE_INDEX_LAYER = OpContract(
     constraints=(
         *(c for c in GLM53_MOE_LAYER.constraints if "index_topk" not in c),
         # a slot is a KV pool row and an index-K page's key (SGLang's index-K cache may hold a page more); a
-        # position reads both rotary tables
+        # row's pages are the KV pool's; a position reads both rotary tables
         f"n_slots <= {INDEX_PAGE} * n_pages",
+        f"{INDEX_PAGE} * max_pages <= n_slots",
         "n_index_positions >= n_positions",
     ),
     inputs={
@@ -425,10 +426,10 @@ GLM53_MOE_INDEX_LAYER = OpContract(
             error_bounds=ToleranceBound(absolute_tolerance=2.0, relative_tolerance=0.125 + 2**-3),
         ),
         "page_table": _tensor(
-            f"Each row's pages, {INDEX_PAGE} keys a page, distinct within a row.",
+            f"Each row's pages, {INDEX_PAGE} keys a page, distinct within a row, all in the KV pool.",
             ("n_tokens", "max_pages"),
             DTypeSpec(any_of=(DType.INT32,)),
-            IntRangeDistribution(lo=0, hi="n_pages - 1", distinct=True),
+            IntRangeDistribution(lo=0, hi=f"n_slots // {INDEX_PAGE} - 1", distinct=True),
         ),
         "seq_lens": _tensor(
             f"The keys each row scores: its position + 1, at most {_MAX_ROW_KEYS}.",

@@ -2,7 +2,7 @@
   "schema_version": 5,
   "name": "glm53_moe_index_layer_tp_size8_shuffled_16x16_model_dim6144_n_heads8_q_lora_rank2048_kv_lora_rank512_qk_nope_dim192_v_head_dim256_index_topk2048_n_routed256_inter_dim256_n_index_heads32",
   "contract_id": "glm53_moe_index_layer@1.0",
-  "description": "A GLM-5.3 decoder layer selecting its own top-k, on one rank of the TP group: glm53_moe_layer, its topk_indices this layer's DSA indexer's, as sglang's gfx950 indexer computes them (gfx950_fused_indexer.py). With x the attention's normalized input rounded to bf16 and q_lora RMSNorm(q_a) rounded to bf16: each row's key, wk(x) rounded to bf16, through k_norm's LayerNorm (k_norm_weight, k_norm_bias, index_eps), the interleaved RoPE of its first 64 values by index_cos and index_sin at its position and the 128-point Hadamard transform times 128^-0.5, each step rounded to bf16, is stored into index_k_cache at its cache_locations slot as E4M3 at the scale 2^ceil(log2(max(amax, 1e-4) / 448)), then that scale in f32; each head of wq_b(q_lora) rounded to bf16 is turned and transformed alike and in E4M3 at its own scale (amax floored at 1e-10), its gate bf16(bf16(x weights_proj^T) * n_index_heads^-0.5) times that scale times 128^-0.5. After every row's key is stored, each row scores its seq_lens visible keys, key p at page_table[row, p // 64]'s slot p % 64: the sum over heads of gate * relu(q . k), times the key's scale; topk_indices is the index_topk highest scores' slots (page * 64 + p % 64) in any order, or for a row of at most index_topk keys all of its slots in order, then -1. wk and wq_b take their input in fp8 per 1 x 128 group as the other linears do. A row's position is seq_lens - 1.",
+  "description": "A GLM-5.3 decoder layer selecting its own top-k, on one rank of the TP group: glm53_moe_layer, its topk_indices this layer's DSA indexer's, as sglang's gfx950 indexer computes them (gfx950_fused_indexer.py). With x the attention's normalized input rounded to bf16 and q_lora RMSNorm(q_a) rounded to bf16: each row's key, wk(x) rounded to bf16, through k_norm's LayerNorm (k_norm_weight, k_norm_bias, index_eps), the interleaved RoPE of its first 64 values by index_cos and index_sin at its position and the 128-point Hadamard transform times 128^-0.5, each step rounded to bf16, is stored into index_k_cache at its cache_locations slot as E4M3 at the scale 2^ceil(log2(max(amax, 1e-4) / 448)), then that scale in f32; each head of wq_b(q_lora) rounded to bf16 is turned and transformed alike and in E4M3 at its own scale (amax floored at 1e-10), its gate bf16(bf16(x weights_proj^T) * n_index_heads^-0.5) times that scale times 128^-0.5. After every row's key is stored, each row scores its seq_lens visible keys, key p at page_table[row, p // 64]'s slot p % 64: the sum over heads of gate * relu(q . k), times the key's scale; topk_indices is the index_topk highest scores' slots (page * 64 + p % 64) in any order, or for a row of fewer than index_topk keys all of its slots in order, then -1. wk and wq_b take their input in fp8 per 1 x 128 group as the other linears do. A row's position is seq_lens - 1.",
   "op_type": "glm53",
   "axes": {
     "n_tokens": {
@@ -582,10 +582,10 @@
       "distribution": {
         "kind": "int_range",
         "lo": 0,
-        "hi": "n_pages - 1",
+        "hi": "n_slots // 64 - 1",
         "distinct": true
       },
-      "description": "Each row's pages, 64 keys a page, distinct within a row."
+      "description": "Each row's pages, 64 keys a page, distinct within a row, all in the KV pool."
     },
     "seq_lens": {
       "shape": [
