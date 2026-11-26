@@ -41,3 +41,18 @@ models:
           gpu_count: 8
         runner_label: conductor-mi355x
         frameworks: [sglang]
+  dsv41flash-fp4:
+    display_name: DeepSeek-V4.1-Flash
+    family: DeepSeek
+    weights:
+      repo: deepseek-ai/DeepSeek-V4.1-Flash
+      revision: dba1be0a40aa45a94ad051997016db3960a90277
+    concurrency: [1, 32] # optional; overrides the workloads' concurrency
+    targets:
+      mi355x:
+        hardware:
+          gpu_name_pattern: '\bMI355X\b'
+          gpu_arch: gfx950
+          gpu_count: 8
+        runner_label: conductor-mi355x
+        frameworks: [sglang]

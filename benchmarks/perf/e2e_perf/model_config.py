@@ -23,6 +23,15 @@ def positive_int(value) -> bool:
     return type(value) is int and value > 0
 
 
+def valid_concurrency(concurrency) -> bool:
+    return (
+        isinstance(concurrency, list)
+        and bool(concurrency)
+        and all(positive_int(conc) for conc in concurrency)
+        and len(set(concurrency)) == len(concurrency)
+    )
+
+
 def check_workloads(workloads, path) -> None:
     if not isinstance(workloads, list) or not workloads:
         raise ConfigError(f"{path} needs workloads as a non-empty list")
@@ -33,13 +42,7 @@ def check_workloads(workloads, path) -> None:
         ids.append(validate_id(workload.get("id"), "workload"))
         if not all(positive_int(workload.get(key)) for key in WORKLOAD_INTS):
             raise ConfigError(f"{path}: workload {ids[-1]} needs positive ints {', '.join(WORKLOAD_INTS)}")
-        concurrency = workload.get("concurrency")
-        if (
-            not isinstance(concurrency, list)
-            or not concurrency
-            or not all(positive_int(conc) for conc in concurrency)
-            or len(set(concurrency)) != len(concurrency)
-        ):
+        if not valid_concurrency(workload.get("concurrency")):
             raise ConfigError(
                 f"{path}: workload {ids[-1]} needs concurrency as a non-empty list of distinct positive ints"
             )
@@ -54,6 +57,11 @@ def load_config(path: str | Path = DEFAULT_CONFIG) -> dict:
     if not isinstance(config.get("client"), dict):
         raise ConfigError(f"{path} needs a client mapping")
     check_workloads(config.get("workloads"), path)
+    for model_id, model in config["models"].items():
+        if "concurrency" in model and not valid_concurrency(model["concurrency"]):
+            raise ConfigError(
+                f"{path}: model {model_id} needs concurrency as a non-empty list of distinct positive ints"
+            )
     return config
 
 
@@ -89,6 +97,12 @@ def selection(value: str, known: list[str], kind: str) -> set[str]:
     return chosen
 
 
+def model_workloads(config: dict, model: dict) -> list[dict]:
+    if "concurrency" not in model:
+        return config["workloads"]
+    return [{**workload, "concurrency": model["concurrency"]} for workload in config["workloads"]]
+
+
 def groups(config: dict, models: str = "all", frameworks: str = "all") -> list[dict]:
     """Every selected model × target × framework group, in e2e.yaml order."""
     model_ids = selection(models, list(config["models"]), "model")
@@ -111,6 +125,7 @@ def groups(config: dict, models: str = "all", frameworks: str = "all") -> list[d
                         "family": model["family"],
                         "weights": dict(model["weights"]),
                         "hardware": dict(target["hardware"]),
+                        "workloads": model_workloads(config, model),
                     }
                 )
     return out

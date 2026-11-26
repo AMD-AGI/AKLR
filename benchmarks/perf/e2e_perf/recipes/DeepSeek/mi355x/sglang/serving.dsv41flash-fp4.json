@@ -1,0 +1,63 @@
+{
+ "schema": 1,
+ "gpus": 2,
+ "served_model_name": "deepseek-ai/DeepSeek-V4.1-Flash",
+ "launch": {
+  "command": [
+   "sglang",
+   "serve",
+   "--trust-remote-code",
+   "--model-path",
+   "${E2E_MODEL_PATH}",
+   "--served-model-name",
+   "deepseek-ai/DeepSeek-V4.1-Flash",
+   "--tp",
+   "2",
+   "--ep-size",
+   "1",
+   "--mem-fraction-static",
+   "0.85",
+   "--speculative-algorithm",
+   "DSPARK",
+   "--speculative-dspark-block-size",
+   "5",
+   "--enforce-shared-experts-fusion",
+   "--fp8-gemm-backend",
+   "aiter",
+   "--enable-decoder-swa-bounded-replay",
+   "--cuda-graph-max-bs-decode",
+   "128",
+   "--max-running-requests",
+   "128",
+   "--cuda-graph-backend-prefill",
+   "disabled",
+   "--disable-radix-cache",
+   "--watchdog-timeout",
+   "3600",
+   "--host",
+   "127.0.0.1",
+   "--port",
+   "${E2E_PORT}"
+  ],
+  "env": {
+   "HF_HUB_OFFLINE": "1",
+   "SGLANG_ENABLE_DSV41_ENGRAM_HOST_TABLE": "1",
+   "SGLANG_DSV41_ENGRAM_HOST_TABLE_LAYOUT": "per_rank",
+   "SGLANG_USE_ROCM700A": "0",
+   "TORCH_BLAS_PREFER_HIPBLASLT": "1",
+   "SGLANG_OPT_HIP_OPUS_SPARSE_PREFILL": "true",
+   "SGLANG_OPT_HIP_FLYDSL_MXFP8": "1",
+   "SGLANG_HIP_FP4_INDEXER_ROWGROUP": "1",
+   "SGLANG_HIP_DSV41_INDEX_K_PAGE8": "1",
+   "SGLANG_SIMULATE_ACC_LEN": "4.07",
+   "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+   "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token"
+  }
+ },
+ "runtime": {
+  "ready_timeout_s": 7200,
+  "poll_s": 10,
+  "point_timeout_s": 3600
+ },
+ "notes": "SGLang v0.5.23 cookbook's MI355X High-Throughput command with the radix cache off; DSpark at InferenceX's golden AL 4.07."
+}

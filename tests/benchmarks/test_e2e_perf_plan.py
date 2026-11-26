@@ -40,7 +40,7 @@ def published(manifest, complete=True):
 
 def test_without_published_results_every_group_is_planned(tmp_path):
     manifest = run_plan(tmp_path)
-    assert [g["status"] for g in manifest["groups"]] == ["planned"] * 2
+    assert [g["status"] for g in manifest["groups"]] == ["planned"] * 3
     spec = read_json(tmp_path / "plan/models/glm52-fp8/targets/mi355x/frameworks/sglang/plan.json")
     assert spec["model"]["id"] == "glm52-fp8" and spec["image"]["run"].split("@")[1].startswith("sha256:")
     assert spec["aklr_sha"] == COMMIT and spec["run_key"] == manifest["groups"][1]["run_key"]
@@ -49,16 +49,16 @@ def test_without_published_results_every_group_is_planned(tmp_path):
 def test_unchanged_complete_groups_are_skipped_and_force_runs_them(tmp_path):
     first = run_plan(tmp_path, out="first")
     again = run_plan(tmp_path, latest=published(first), out="again")
-    assert [g["status"] for g in again["groups"]] == ["skipped"] * 2
+    assert [g["status"] for g in again["groups"]] == ["skipped"] * 3
     assert not (tmp_path / "again/models").exists()
     forced = run_plan(tmp_path, "--force", latest=published(first), out="forced")
-    assert [g["status"] for g in forced["groups"]] == ["planned"] * 2
+    assert [g["status"] for g in forced["groups"]] == ["planned"] * 3
 
 
 def test_an_incomplete_published_result_runs_again(tmp_path):
     first = run_plan(tmp_path, out="first")
     again = run_plan(tmp_path, latest=published(first, complete=False), out="again")
-    assert [g["status"] for g in again["groups"]] == ["planned"] * 2
+    assert [g["status"] for g in again["groups"]] == ["planned"] * 3
 
 
 def test_only_the_changed_group_runs(tmp_path):
@@ -66,7 +66,7 @@ def test_only_the_changed_group_runs(tmp_path):
     latest = published(first)
     latest["groups"]["glm52-fp8/mi355x/sglang"]["run_key"] = "stale"
     again = run_plan(tmp_path, latest=latest, out="again")
-    assert [g["status"] for g in again["groups"]] == ["skipped", "planned"]
+    assert [g["status"] for g in again["groups"]] == ["skipped", "planned", "skipped"]
 
 
 @pytest.mark.parametrize(
@@ -103,7 +103,7 @@ def test_a_missing_recipe_fails_only_its_group(tmp_path, monkeypatch):
 
     monkeypatch.setattr(plan, "load_recipe", load)
     manifest = run_plan(tmp_path)
-    assert [g["status"] for g in manifest["groups"]] == ["planned", "resolve-failed"]
+    assert [g["status"] for g in manifest["groups"]] == ["planned", "resolve-failed", "planned"]
     assert "no recipe" in manifest["groups"][1]["error"]
 
 
