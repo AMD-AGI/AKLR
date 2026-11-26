@@ -358,6 +358,12 @@ def op_kwargs(
             act_quant = 8
         else:
             return FallbackReason.OUT_OF_CONTRACT
+        # sglang 0.5.24 names the a8w4 experts' gate-up-interleaved preshuffle (shuffle_weight_a16w4) by
+        # gate_mode 'interleave', which aiter's MXFP8 stage 1 reads the weights by; 0.5.23 passed 'separated'
+        # for the same weights. The contract tells that layout by its gate_up_interleaved variant, gate and
+        # up rows apart in the logical w1: its gate_mode stays 'separated'
+        if attr_value(gate_mode) == "interleave":
+            gate_mode = "separated"
     # fused_moe rounds SwiGLU's activations to fp4 from SWIGLU_BF16_ROWS rows on, aiter from its
     # GPTOSS_SWIGLU_MXFP4_BF16_BOUND: a call they would round differently goes back to aiter
     elif name == "swiglu" and attr_value(gate_mode) == "separated":

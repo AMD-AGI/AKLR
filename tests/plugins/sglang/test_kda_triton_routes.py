@@ -3,7 +3,7 @@
 
 """The route of Kimi-K3's KDA prefill on sglang's Triton backend (TritonKDAKernel.extend): how the KDA backend's
 calls map onto the ops, which calls stay with sglang, and the baselines' calls of sglang's own kernel, on stand-ins of
-sglang 0.5.22 and 0.5.23 (whose extend takes the same parameters)."""
+sglang 0.5.22, 0.5.23 and 0.5.24.dev809 (whose extend takes the same parameters)."""
 
 import inspect
 import sys
@@ -25,7 +25,7 @@ HEADS, DIM, SLOTS = 2, 128, 5
 # a row of sglang's [f_a | b] projection at this head count (f_a, b, the pad to 8): beta is a column slice of it
 BFA = DIM + HEADS + 6
 
-# sglang 0.5.22's and 0.5.23's TritonKDAKernel.extend (srt/layers/attention/linear/kernels/kda_triton.py)
+# sglang 0.5.22-0.5.24.dev809's TritonKDAKernel.extend (srt/layers/attention/linear/kernels/kda_triton.py)
 P, K, V = (
     inspect.Parameter.POSITIONAL_OR_KEYWORD,
     inspect.Parameter.KEYWORD_ONLY,

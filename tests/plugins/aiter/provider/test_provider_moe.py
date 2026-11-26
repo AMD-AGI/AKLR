@@ -438,6 +438,23 @@ def test_fused_moes_run_takes_situv2s_fp8_activations(monkeypatch, aklr_serves):
     assert (kwargs["beta"], kwargs["linear_beta"]) == (1.5, 2.5)
 
 
+def test_situv2s_interleave_gate_mode_is_the_contracts_separated_rows(monkeypatch, aklr_serves):
+    """sglang 0.5.24 passes gate_mode 'interleave' for the a8w4 experts' gate-up-interleaved preshuffle, the weights
+    0.5.23 passed as 'separated': the contract's gate_up_interleaved layout holds them, gate and up rows apart."""
+    calls = []
+    monkeypatch.setattr(moe, "fused_moe", _api(lambda *a, **k: calls.append(k) or "y"))
+    changes = {
+        "activation": ActivationType.Situv2.value,
+        "beta": 4.0,
+        "linear_beta": 25.0,
+        "gate_mode": "interleave",
+    }
+    _, run = _select("fused_moe", **changes)
+    run(*_args("fused_moe", **changes))
+    (kwargs,) = calls
+    assert kwargs["gate_mode"] == "separated" and kwargs["act_quant"] == 8 and kwargs["swiglu_limit"] is None
+
+
 def test_biased_grouped_topks_run_writes_in_place_and_returns_none(monkeypatch, aklr_serves):
     """aiter's op returns None, which its registration as a torch op holds it to; the results are the two
     buffers AKLR writes."""
