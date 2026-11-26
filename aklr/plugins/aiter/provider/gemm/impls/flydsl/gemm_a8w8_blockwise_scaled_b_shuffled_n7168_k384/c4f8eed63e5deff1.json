@@ -99,12 +99,18 @@
     {
       "axes": {
         "m": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.054,
+      "microseconds": 4.29
     },
     {
       "axes": {
         "m": 128
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.132,
+      "microseconds": 4.31
     }
   ],
   "layout_variants": {

@@ -196,7 +196,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.515,
+      "microseconds": 7.34
     },
     {
       "axes": {
@@ -209,7 +212,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.462,
+      "microseconds": 7.54
     },
     {
       "axes": {
@@ -222,7 +228,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.369,
+      "microseconds": 8.12
     },
     {
       "axes": {
@@ -235,7 +244,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.293,
+      "microseconds": 8.71
     },
     {
       "axes": {
@@ -248,7 +260,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.325,
+      "microseconds": 8.64
     },
     {
       "axes": {
@@ -261,7 +276,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.313,
+      "microseconds": 9.11
     },
     {
       "axes": {
@@ -274,7 +292,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.369,
+      "microseconds": 10.4
     },
     {
       "axes": {
@@ -287,7 +308,10 @@
         "post_multiplier": 2.0,
         "sinkhorn_iters": 20,
         "norm_eps": 9.999999974752427e-07
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.483,
+      "microseconds": 12.1
     }
   ],
   "layout_variants": {
