@@ -1,4 +1,4 @@
-# `aklr/plugins/aiter/` — one directory per op family
+# `aklr/plugins/aiter/provider/` — one directory per op family
 
 The entry point for agents writing kernels. Each section summarises rules that are written out once,
 in the file it names; when the two disagree, the named file wins.
@@ -6,7 +6,7 @@ in the file it names; when the two disagree, the named file wins.
 ## What an op is
 
 An op is one computation an engine hands to AKLR, such as a 16-bit gemm (`gemm@1.0`). It has five
-parts: four in Python under `aklr/plugins/aiter/<op>/`, and its kernels as JSON files.
+parts: four in Python under `aklr/plugins/aiter/provider/<op>/`, and its kernels as JSON files.
 
 | Part | Where | What it is | Used by |
 |---|---|---|---|
@@ -50,7 +50,7 @@ python -m aklr validate <schema>
   threshold (`DEFAULT_MIN_SPEEDUP`, 1.05 by default) or more; dispatch serves only the workloads at
   `AKLR_MIN_SPEEDUP` (1.05 by default) or more.
 
-`gemm@1.0`, shortened (`aklr/plugins/aiter/gemm/`):
+`gemm@1.0`, shortened (`aklr/plugins/aiter/provider/gemm/`):
 
 ```python
 # contract.py
@@ -98,15 +98,16 @@ A kernel of a schema is `run(*, a, b, trans_b, bias, out_dtype, out)`, writing `
 
 ```
 aklr/plugins/aiter/
-  __init__.py                  re-exports op apis
   README.md                    this file
-  <op>/                        attention, gemm, fused_moe, mhc, mla, rms_norm, topk
-    __init__.py                re-exports api.py's apis
-    contract.py                OpContract constants, each with its reference and baseline; CONTRACTS
-    reference.py               one OpReference class per contract
-    api.py                     one @api function per contract
-    baseline.py                one OpBaseline class per contract
-    impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
+  provider/                    AKLR as a provider of aiter's kernel plugin interface
+    <op>/                      attention, gemm, fused_moe, mhc, mla, rms_norm, topk
+      __init__.py              re-exports api.py's apis
+      contract.py              OpContract constants, each with its reference and baseline; CONTRACTS
+      reference.py             one OpReference class per contract
+      api.py                   one @api function per contract
+      baseline.py              one OpBaseline class per contract
+      selector.py              the selectors of the aiter ops the family serves, where aiter routes one
+      impls/<language>/<name>/<uuid>.json      one kernel and the workloads it serves
 ```
 
 - A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
@@ -145,7 +146,7 @@ aklr/plugins/aiter/
    kernel stores its code objects in `.py` files ([hsaco kernels](#hsaco-kernels)). To give a
    scenario a second kernel, copy its committed file, delete `accuracy`, `speedup` and `microseconds` from every workload (only CI
    writes them: `PERF_EDITED`), and fill the copy with the second kernel.
-4. Copy the file to the same relative path under `aklr/plugins/aiter/` and rename it to the `<uuid>.json` that
+4. Copy the file to the same relative path under `aklr/plugins/aiter/provider/` and rename it to the `<uuid>.json` that
    `python -m aklr export check` names (the uuid hashes the kernel). To change a committed kernel, edit its
    `content` or `requires`, delete `accuracy`, `speedup` and `microseconds` from every workload (only CI writes them:
    `PERF_EDITED`), and rename the file the same way. Audit checks every committed kernel's sources, changed or not.
@@ -166,7 +167,7 @@ characters unescaped, a final newline. Anything else is rejected;
 | `name` | export | the scenario name, equal to the parent directory (see Names) |
 | `contract_id` | export | `<contract>@<major>.<minor>` |
 | `description` | export | what the op computes |
-| `op_type` | export | the op family, the `<op>` of `aklr/plugins/aiter/<op>/`; the api function is `aklr.plugins.aiter.<op>.api.<contract>`. A plugin op's is its package's last name (`aklr/plugins/README.md`) |
+| `op_type` | export | the op family, the `<op>` of `aklr/plugins/aiter/provider/<op>/`; the api function is `aklr.plugins.aiter.provider.<op>.api.<contract>`. A plugin op's is its package's last name (`aklr/plugins/README.md`) |
 | `axes` | export | the contract's axes, every one but the var ones pinned to this scenario's value; a derived axis's `expr` becomes its int value |
 | `attrs` | export | every attr, keeping this scenario's value alone |
 | `inputs` | export | every input of the contract, narrowed to this scenario |
@@ -295,7 +296,7 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
   | tensors and scalars | the contract inputs; an optional one absent here is still a key | stored tensor or scalar; `None` when absent |
   | attr arguments (`trans_b`, `activation`) | attrs with a parameter name | the value in `attrs` |
   | layout arguments (`operand_format`, `"<a>:<b>"`) | `detect_facts` with `location` `arg` | that fact's `expected_value` |
-  | `out_dtype` | only when the one output is `out` | its dtype, or `None` when the caller passes none (`out` holds the dtype) |
+  | an output's dtype param (`out_dtype`) | an output whose `DTypeSpec` has a `param_name` | its dtype, or `None` when the caller passes none (the output holds the dtype) |
   | outputs | every name in `outputs` | the preallocated output tensor |
 
 - `run` writes each output into the output argument and returns nothing; it never allocates or keeps an output. A
@@ -310,8 +311,8 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
   `torch.manual_seed`, `torch.use_deterministic_algorithms` or `torch.cuda.stream` (SA3).
 - Submit work only on the current torch stream: no synchronization, `.item()`, `.cpu()`, `.tolist()`, I/O,
   `print`, clock or environment reads. The names `input`, `open`, `print`, `breakpoint`, `exit` and `quit` are
-  rejected wherever they are read or assigned, device functions included, so a parameter of that name is rejected
-  at its first use (SA3): call a pointer `inp` or `x`, not `input`.
+  rejected wherever they are read or assigned, device functions included, except inside a function that takes
+  the name as a parameter (SA3): aiter's ops take an `input`.
 - Scratch space is allocated inside the call (`torch.empty`, `torch.zeros`, `torch.*_like`, `.new_*`, ...) on an
   argument's device, or once per shape in a compile function and rewritten whole by every call before it is read.
   `torch.rand*`, `torch.tensor` and `torch.as_tensor` are rejected in launch code (SA3).
@@ -455,7 +456,7 @@ its declaration's default). Captured scalars other than the defaults add one mor
 
 `<contract>`, then the name part of each variant symbol whose value is not its first declared one, then
 `<axis><value>` for each const int axis, joined by `_`; var, derived and absent axes are not part of it.
-A name is unique per variant, across every contract (`tests/plugins/aiter/test_contracts.py`, as flashinfer-bench requires).
+A name is unique per variant, across every contract (`tests/plugins/aiter/provider/test_contracts.py`, as flashinfer-bench requires).
 
 | symbol: attrs (in declaration order, whatever their type), then dtypes, then the layout variant | first declared value (no part) | name part otherwise |
 |---|---|---|

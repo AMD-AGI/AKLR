@@ -5,6 +5,6 @@
 
 aiter routes its ops to the providers enabled for it; sglang and vLLM reach AKLR through it once they
 enable that interface, with no route of their own on an aiter function. The ops it serves are the
-op packages beside it, one per op family (``README.md``)."""
+op packages inside it, one per op family (``README.md``)."""
 
 __all__: list[str] = []

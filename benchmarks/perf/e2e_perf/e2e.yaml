@@ -41,6 +41,20 @@ models:
           gpu_count: 8
         runner_label: conductor-mi355x
         frameworks: [sglang]
+  musespark-fp4:
+    display_name: Muse Spark Open MXFP4
+    family: Muse
+    weights:
+      repo: amd/Muse-Spark-Open-816B-A42B-Quark-MXFP4
+      revision: 17159bf7d2e7d6c79961efe1530ff40aea608ae2
+    targets:
+      mi355x:
+        hardware:
+          gpu_name_pattern: '\bMI355X\b'
+          gpu_arch: gfx950
+          gpu_count: 8
+        runner_label: conductor-mi355x
+        frameworks: [vllm]
   dsv41flash-fp4:
     display_name: DeepSeek-V4.1-Flash
     family: DeepSeek

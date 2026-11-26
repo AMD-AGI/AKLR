@@ -138,7 +138,7 @@ PointSpec(
 同一文件里的 `GFX950_CONTRACT_IDS` 列的是 baseline 只能在 gfx950 上运行的 contract；vLLM 的这个 Triton kernel 不属于这种情况，所以不用加。然后更新 `tests/plugins/vllm/names.txt`：
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/provider/test_contracts.py
 ```
 
 `tests/plugins/vllm/test_hook.py` 会检查每个 route，确认它替换的函数在当前安装的 vLLM 中存在、参数一致，且没有其他 route 替换同一个函数。route 怎样把 vLLM 的参数对到算子上，`test_hook.py` 检查不到，所以要在 `tests/plugins/vllm/test_kimi_k3_attn_res.py` 中单独测试：要求 fp8 输出、或者在最后一行之前写 bank 的调用，不经过算子就交回 vLLM；受支持的调用，每个操作数都按名字交给算子；baseline 所用的 Triton kernel 副本，输出、更新后的 prefix 和 bank 都与 vLLM 逐位一致。

@@ -1,6 +1,6 @@
 name: AKLR-e2e-perf-ci
 
-# Daily end-to-end performance: AKLR on / off at random 8K/1K input, per model × target ×
+# Daily end-to-end performance: AKLR on / off at random 8K/1K input, c1, c2, c8, c16, c48, per model × target ×
 # framework group (benchmarks/perf/e2e_perf). A scheduled run measures only the groups whose
 # run key changed since site-data's e2e/latest.json; a manual run measures every selected group unless
 # force is off; a PR run (the ci:e2e-perf-mi355x label) measures the models an allowlisted reviewer's

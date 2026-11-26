@@ -43,6 +43,7 @@ NOTABLE = 0.03
 # computed and written to report.json; set this back to True to restore them.
 SHOW_BASELINE_SECTIONS = False
 LANGS = ("en", "zh")
+COMPARED_BASELINE = "compared-baseline.json"
 ZH_MESSAGES = [
     (r"no valid successful measurement points to compare", "没有可用于比较的有效成功测量点"),
     (r"source is dirty or its state is unknown", "源码包含未提交改动或状态未知，不计算周环比"),
@@ -107,6 +108,7 @@ def status_label(lang: str, status: str) -> str:
         "ok": ("OK", "成功"),
         "partial": ("Partial success", "部分成功"),
         "failed": ("Failed", "失败"),
+        "not-measured": ("No result (run stopped early)", "无结果（运行提前中止）"),
         "resolve-failed": ("Resolve failed", "解析失败"),
         "not-run": ("Not selected", "本轮未选择"),
     }
@@ -120,6 +122,45 @@ def localize(lang: str, message: str) -> str:
             if match:
                 return match.expand(zh)
     return message
+
+
+def missing_points(results: dict) -> list[dict]:
+    """Selected points with no recorded result, e.g. when the run was killed mid-sweep."""
+    selection = results["run"].get("selection") or {}
+    recorded = {(p["arm"], p["conc"]) for p in results["points"]}
+    missing = []
+    for planned in selection.get("points") or []:
+        arm, _, conc = str(planned).rpartition(":")
+        if arm and conc.isdigit() and (arm, int(conc)) not in recorded:
+            missing.append({"arm": arm, "conc": int(conc)})
+    return sorted(missing, key=lambda p: (p["arm"], p["conc"]))
+
+
+def missing_summary(results: dict, lang: str) -> str:
+    """One sentence per AKLR mode naming the selected points that have no result."""
+    modes = [(results, results["run"].get("aklr_mode"))]
+    if "control" in results:
+        modes.append((results["control"], "disabled"))
+    parts = []
+    for data, mode in modes:
+        missing = missing_points(data)
+        if not missing:
+            continue
+        names = ", ".join(f"{p['arm']} c{p['conc']}" for p in missing)
+        label = {
+            "enabled": tr(lang, "AKLR on", "开启 AKLR"),
+            "disabled": tr(lang, "AKLR off", "关闭 AKLR"),
+        }.get(mode, "")
+        prefix = label + tr(lang, ": ", "：") if label else ""
+        parts.append(
+            prefix
+            + tr(
+                lang,
+                f"{len(missing)} selected points have no result ({names}); the run stopped before they finished.",
+                f"{len(missing)} 个选中的点没有结果（{names}），运行在这些点完成前中止。",
+            )
+        )
+    return " ".join(parts)
 
 
 def text_width(text: str) -> float:
@@ -619,14 +660,28 @@ def history_section(history: dict | None, this: str, repo_url: str, lang: str) -
 
 
 def points_table(results: dict, lang: str) -> str:
-    rows = "".join(
-        f"<tr><td>{escape(p['arm'])}</td><td>c{p['conc']}</td><td><code>{escape(p['exp_name'])}</code></td>"
-        f"<td class='{'' if p['status'] == 'ok' else 'bad'}'>{escape(status_label(lang, p['status']))}</td>"
-        f"<td>{num(p.get(Y))}</td><td>{num(p.get(X))}</td>"
-        f"<td><code>{p['serve_spec_sha256'][:12]}</code></td>"
-        f"<td class='muted'>{escape(p.get('error') or '')}</td></tr>"
+    rows = [
+        (
+            f"<tr><td>{escape(p['arm'])}</td><td>c{p['conc']}</td><td><code>{escape(p['exp_name'])}</code></td>"
+            f"<td class='{'' if p['status'] == 'ok' else 'bad'}'>{escape(status_label(lang, p['status']))}</td>"
+            f"<td>{num(p.get(Y))}</td><td>{num(p.get(X))}</td>"
+            f"<td><code>{p['serve_spec_sha256'][:12]}</code></td>"
+            f"<td class='muted'>{escape(p.get('error') or '')}</td></tr>",
+            (p["arm"], p["conc"]),
+        )
         for p in sorted(results["points"], key=lambda p: (p["arm"], p["conc"]))
-    )
+    ]
+    rows += [
+        (
+            f"<tr><td>{escape(p['arm'])}</td><td>c{p['conc']}</td><td>—</td>"
+            f"<td class='bad'>{escape(status_label(lang, 'not-measured'))}</td>"
+            f"<td>{num(None)}</td><td>{num(None)}</td><td>—</td>"
+            f"<td class='muted'>{tr(lang, 'no result recorded', '没有记录到结果')}</td></tr>",
+            (p["arm"], p["conc"]),
+        )
+        for p in missing_points(results)
+    ]
+    rows = "".join(row for row, _ in sorted(rows, key=lambda row: row[1]))
     return (
         f"<table><thead><tr><th>{tr(lang, 'arm', '实验组')}</th><th>{tr(lang, 'conc', '并发')}</th>"
         f"<th>{tr(lang, 'point', '数据点')}</th><th>{tr(lang, 'status', '状态')}</th>"
@@ -1049,7 +1104,7 @@ def write_report(
     notice: str | dict[str, str] | None = None,
 ) -> dict:
     """Archive the supplied records unchanged; normalize a separate report view."""
-    archive = results
+    archive, baseline_archive = results, baseline
     results = validated_results(results)
     if baseline is not None:
         baseline = validated_results(baseline)
@@ -1071,6 +1126,8 @@ def write_report(
                 messages.append(
                     tr(lang, "Incomplete measurement or failed points.", "测量未完成或有失败点。")
                 )
+            if summary := missing_summary(results, lang):
+                messages.append(summary)
         if results["run"].get("source_dirty") is not False:
             messages.append(
                 tr(
@@ -1092,6 +1149,10 @@ def write_report(
     out.mkdir(parents=True, exist_ok=True)
     (out / "index.html").write_text(render(results, baseline, comparison, history, repo_url, notices))
     write_json(out / "results.json", archive)
+    if baseline is not None:
+        write_json(out / COMPARED_BASELINE, baseline_archive)
+    else:
+        (out / COMPARED_BASELINE).unlink(missing_ok=True)
     write_json(
         out / "report.json",
         {

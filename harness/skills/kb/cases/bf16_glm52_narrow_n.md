@@ -17,9 +17,9 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "0.711–1.907; 4 of 13 Points ≥ 1.03 (m 4, 8, 128, 2048)", gpu: MI355X, workload: "gemm_n32_k6144, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "6d7cfec (#102, CI run 42549655045, measurement profile 19)", date: "2026-11-09"}
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.046–1.330 at m 4–128; m 1, 2 (1.014, 1.019) not listed", gpu: MI355X, workload: "gemm_n64_k4096 kernel of file a59a85330c6da038, measured on a file with the same kernel, apart from taking the current stream without naming the device, and m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
 sources:
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n128_k6144/56d3c490873219d9.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n128_k6144/56d3c490873219d9.json
   - AMD-AGI/AKLR@1fa2eed1:aklr/ops/gemm/impls/flydsl/gemm_n256_k6144/5b35f66b4ee6eeae.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json
   - AMD-AGI/AKLR@3b27df44:aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json
 ---
 
@@ -33,7 +33,7 @@ the Point's M.
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`;
-  `GEMM` in `aklr/plugins/aiter/gemm/contract.py`). Every reduction these kernels run at a served Point adds in a fixed order.
+  `GEMM` in `aklr/plugins/aiter/provider/gemm/contract.py`). Every reduction these kernels run at a served Point adds in a fixed order.
 - K = 6144 with N = 32, 128 or 256: a weight of 384 KiB, 1.5 MiB or 3 MiB, a narrow-N row bound by launch,
   reduction and memory latency rather than by reading `b` (`../gemm/small_m.md` §2).
 - Served Points on main as of #102 (6d7cfec, CI run 42549655045, measurement profile 19): n128 m 2, 4; n256 m 2, 4,
@@ -156,7 +156,7 @@ thin at m 4 *(field, E4)*. The kernel read 4.08–4.20 µs per round at every m 
 4.19–5.95 *(field, E5)*: the gain is aiter's time growing with m, and whether profile 19 has a floor near 4.1 µs was
 not measured (`../pitfalls/aklr_dispatch_floor.md`). Under stress every listed Point gave the output of the call
 alone *(field, E6)*. Reproduce with
-`python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json` at `3b27df44` (§ Reproduce).
+`python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n64_k4096/a59a85330c6da038.json` at `3b27df44` (§ Reproduce).
 Removed since: its Points are served by no file, and the caller runs its own path.
 
 ## Reproduce
@@ -164,9 +164,9 @@ Removed since: its Points are served by no file, and the caller runs its own pat
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root:
 
 ```
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n128_k6144/56d3c490873219d9.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n256_k6144/5b35f66b4ee6eeae.json  # at 1fa2eed1
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n128_k6144/56d3c490873219d9.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n256_k6144/5b35f66b4ee6eeae.json  # at 1fa2eed1
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n32_k6144/84013ab6b47b45a9.json
 ```
 
 The report goes to `aklr_validation/report.md`; a run outside CI checks the file, the served numbers are CI's

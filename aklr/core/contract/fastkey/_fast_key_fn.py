@@ -203,23 +203,24 @@ class FastKeyFnGenerator(ClosureGenerator):
         for i, (name, spec) in enumerate(self.contract.outputs.items()):
             dtype_spec, dt = spec.dtype, f"_dt_{name}"
             is_required = name in self.contract.required_outputs
-            fallback = None  # without one, ``out``'s dtype must be passed
+            has_param = dtype_spec.param_name is not None
+            fallback = None  # without one, the output's dtype param must be passed
             if dtype_spec.same_as_tensor is not None:
                 fallback = name_node(f"_dt_{dtype_spec.same_as_tensor}")
-            elif not is_required and (dtype_spec.default is not None or name != "out"):
+            elif not is_required and (dtype_spec.default is not None or not has_param):
                 constant = dtype_spec.default or dtype_spec.any_of[0]
                 self.scope[f"_DTYPE_{name}"] = torch_dtypes(constant)[0]
                 fallback = name_node(f"_DTYPE_{name}")
-            if name == "out":
-                self.scope["_D_out"] = self.codec.primary_storage_dtypes["out"]
-                p = ast.Constant("out_dtype")
-                read = fill_expr("_D_out[call[P]]", P=p)
+            if has_param:
+                self.scope[f"_D_{name}"] = self.codec.primary_storage_dtypes[name]
+                p = ast.Constant(dtype_spec.param_name)
+                read = fill_expr("M[call[P]]", M=f"_D_{name}", P=p)
                 if fallback is not None:
                     read = fill_expr("F if call[P] is None else X", F=fallback, P=p, X=read)
-                self.body += fill_statements("_dt_out = X", X=read)
+                self.body += fill_statements("D = X", D=dt, X=read)
             elif not is_required:
                 self.body += fill_statements("D = F", D=dt, F=fallback)
-            if dtype_spec.any_of is None and (name == "out" or is_required):
+            if dtype_spec.any_of is None and (has_param or is_required):
                 self.body += self._decline_unless(fill_expr("D == F", D=dt, F=fallback))
             check = self._overlap_checks(name, [*self.inputs, *list(self.contract.outputs)[:i]])
             if not is_required:
