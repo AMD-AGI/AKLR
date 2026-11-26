@@ -25,8 +25,8 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
-from aklr.plugins.aiter.muse_spark_layer.baseline import MuseSparkLayerBaseline
-from aklr.plugins.aiter.muse_spark_layer.reference import MuseSparkLayerReference
+from aklr.plugins.sglang.models.muse_spark_layer.baseline import MuseSparkLayerBaseline
+from aklr.plugins.sglang.models.muse_spark_layer.reference import MuseSparkLayerReference
 
 __all__ = ["CONTRACTS", "MUSE_SPARK_LAYER"]
 

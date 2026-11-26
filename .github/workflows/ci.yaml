@@ -228,7 +228,6 @@ jobs:
       TESTS: tests/core tests/plugins/aiter tests/benchmarks
       AKLR_REFERENCE_CONTRACTS: ${{ needs.code-lint.outputs.reference_contracts }}
       AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
-      AKLR_BASELINE_SGL_AMD_MONO: ${{ needs.code-lint.outputs.sgl_amd_mono }}
     steps:
       - &checkout_source
         name: Checkout source
@@ -268,9 +267,6 @@ jobs:
             # Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins.
             image_triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
             AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
-            if [[ -n ${AKLR_BASELINE_SGL_AMD_MONO:-} ]]; then
-              python3 -m pip install --no-deps "sgl-amd-mono @ git+https://github.com/sgl-project/sgl-amd-mono.git@$AKLR_BASELINE_SGL_AMD_MONO"
-            fi
             python3 -m pip install -e .
             triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
             [[ $triton == "$image_triton" ]] || { echo "::error::The image's Triton $image_triton became $triton"; exit 1; }
@@ -292,6 +288,10 @@ jobs:
           else
             echo '::group::Install AKLR'
             python3 -m pip install -e .
+          fi
+          if [[ -n ${AKLR_BASELINE_SGL_AMD_MONO:-} ]]; then
+            # The commit sgl-amd-mono's ops are timed against, over the image's own copy
+            python3 -m pip install --no-deps "sgl-amd-mono @ git+https://github.com/sgl-project/sgl-amd-mono.git@$AKLR_BASELINE_SGL_AMD_MONO"
           fi
           echo '::endgroup::'
 
@@ -387,6 +387,7 @@ jobs:
       IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
       TESTS: tests/plugins/aiter/provider tests/plugins/sglang
       PLUGINS: --under aklr/plugins/sglang
+      AKLR_BASELINE_SGL_AMD_MONO: ${{ needs.code-lint.outputs.sgl_amd_mono }}
     steps:
       - *checkout_source
       - *gpu_tests

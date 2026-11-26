@@ -16,8 +16,8 @@ _DEADLINE_S = 20.0  # every in-kernel wait's deadline
 
 @functools.cache
 def _aiter_kernel_signature() -> None:
-    """sgl-amd-mono names its kernels with AITER's kernel_signature, newer than the AITER the
-    bench pins: install AITER's two lines where it is missing, before sgl-amd-mono imports it."""
+    """sgl-amd-mono names its kernels with AITER's kernel_signature, newer than the image's
+    AITER: install AITER's two lines where it is missing, before sgl-amd-mono imports it."""
     from aiter.ops.flydsl.kernels import kernels_common
 
     if hasattr(kernels_common, "kernel_signature"):
@@ -149,8 +149,10 @@ def muse_spark_layer_baseline(
     next_k=None,
     next_v=None,
 ):
-    """sgl-amd-mono's Muse Spark whole-layer launch (the commit SGLang pins), on every rank
-    of the group: its attention, K2, K3 and the next layer's K1 in one launch."""
+    """sgl-amd-mono's Muse Spark whole-layer launch, which SGLang's ROCm images install as
+    their monokernel plugin (CI installs the commit `sgl_amd_mono` in stack.json over the
+    image's), on every rank of the group: its attention, K2, K3 and the next layer's K1 in
+    one launch."""
     import torch
 
     _aiter_kernel_signature()

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import api
-from aklr.plugins.aiter.muse_spark_layer.contract import MUSE_SPARK_LAYER
+from aklr.plugins.sglang.models.muse_spark_layer.contract import MUSE_SPARK_LAYER
 
 __all__ = ["muse_spark_layer"]
 
