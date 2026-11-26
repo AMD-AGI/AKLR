@@ -711,14 +711,14 @@ def test_an_unpadded_hidden_dim_reaches_the_dispatcher(vllm_tp, op, trunc):
 
 def test_the_contract_states_the_ops_rows():
     """The tail has no row limit of its own: vLLM runs it on every step, a prefill chunk's thousands of tokens too.
-    128 rows is the committed kernel's limit, in its workloads and the route's guard (below)."""
+    The committed schema's rows end at 14, which is the route's guard (below); the kernel's own limit is 128."""
     rows = KIMI_K3_LATENT_MOE_TAIL.axes["n_tokens"]
     assert rows.lo == 1 and rows.hi >= 8192
 
 
-@pytest.mark.parametrize("n", [129, 1000])
+@pytest.mark.parametrize("n", [15, 129, 1000])
 def test_rows_past_the_kernels_go_back_to_vllm_before_the_dispatcher(vllm_tp, op, n):
-    """Rows the contract states that the kernel, 128 rows at most, has no workload for."""
+    """Rows the contract states that the committed schema, 14 rows at most, has no workload for."""
     assert api._shard_up_proj_tail(runner(), *outputs(n), None) is FallbackReason.NO_WORKLOAD
     assert op.asked == [] and op.calls == [] and vllm_tp.setups == []
 
@@ -807,7 +807,7 @@ def test_a_group_the_ranks_could_not_set_up_keeps_every_call_with_vllm(vllm_tp, 
         lambda *args: vllm_tp.setups.append(args)
     )  # None: the ranks agreed it cannot be set up
     monkeypatch.setitem(sys.modules, f"{KERNEL_PACKAGE}.runtime", failing)
-    for n in (10, 40):
+    for n in (10, 14):
         assert api._shard_up_proj_tail(runner(), *outputs(n), None) is FallbackReason.OUT_OF_CONTRACT
     assert op.calls == [] and len(vllm_tp.setups) == 1 and plugin.AFTER_STEP == []
 
@@ -829,11 +829,11 @@ def vllms_tail(monkeypatch):
 def test_the_first_eager_call_of_a_bucket_is_checked_against_vllms_tail(vllm_tp, op, vllms_tail, monkeypatch):
     agreements = []
     monkeypatch.setattr(api, "_all_ranks", lambda ok, group: agreements.append(ok) or ok)
-    for n in (10, 15, 16, 31):
+    for n in (6, 7, 8, 14):
         out = api._shard_up_proj_tail(runner(), *outputs(n), None)
         assert torch.equal(out, torch.ones(n, HIDDEN))  # the op's
-    # the check's buckets, rows of one bit length: 8 .. 15, 16 .. 31
-    assert vllms_tail.calls == [10, 16] and agreements == [True, True] and len(op.calls) == 4
+    # the check's buckets, rows of one bit length: 4 .. 7, 8 .. 15
+    assert vllms_tail.calls == [6, 8] and agreements == [True, True] and len(op.calls) == 4
 
 
 def test_a_bucket_any_rank_finds_different_stays_with_vllm(vllm_tp, op, vllms_tail, monkeypatch):
@@ -846,8 +846,8 @@ def test_a_bucket_any_rank_finds_different_stays_with_vllm(vllm_tp, op, vllms_ta
     assert len(op.calls) == 1
     vllms_tail.scale = 1.0
     monkeypatch.setattr(api, "_all_ranks", lambda ok, group: False)  # another rank differs
-    out = api._shard_up_proj_tail(runner(), *outputs(40), None)
-    assert torch.equal(out, torch.ones(40, HIDDEN)) and api._CHECKED[(out.device, 6)] is False
+    out = api._shard_up_proj_tail(runner(), *outputs(6), None)
+    assert torch.equal(out, torch.ones(6, HIDDEN)) and api._CHECKED[(out.device, 3)] is False
 
 
 def test_the_first_call_check_gives_vllms_tail_the_given_shared_partial(vllm_tp, vllms_tail, monkeypatch):
@@ -1193,7 +1193,7 @@ def route_on_rank(rank, world, misaligned, aliased, declining):
     op = api.kimi_k3_latent_moe_tail = KeyedOp(FallbackReason.NO_SCHEMA if rank in declining else None)
     api._CHECK = False
     run, decisions, given = runner(rank=rank), [], []
-    for n in (10, 10, 40):
+    for n in (10, 10, 14):
         fused, shared = outputs(n, seed=rank)
         if rank in aliased:
             fused, shared = sharing_bytes(fused, shared)
@@ -1239,11 +1239,11 @@ def test_the_committed_schema_is_its_canonical_text_at_its_path():
     assert path == op_dir(schema.op_package) / schema_relative_path(schema.name, "flydsl", uuid)
 
 
-def test_the_committed_schema_serves_every_row_bucket_up_to_128():
+def test_the_committed_schema_holds_the_rows_the_kernel_wins_at_in_serving():
+    """6 to 14 rows: in a served decode step (CUDA graphs replayed on eight ranks) the kernel is ahead of vLLM's own
+    tail there alone; its time alone, which validate measures, is ahead at every row count up to its 128."""
     schema = json.loads(committed_schema().read_text())
-    rows = sorted(w["axes"]["n_tokens"] for w in schema["workloads"])
-    assert {n.bit_length() for n in rows} == set(range(1, 9)) and max(rows) == 128
-    assert {10, 40, 120} <= set(rows)
+    assert [w["axes"]["n_tokens"] for w in schema["workloads"]] == [6, 8, 10, 12, 14]
     kernel = schema["kernel"]
     assert kernel["requires"] == {"flydsl": ">=0.4.2"} and kernel["entry_point"] == "kernel.py::run"
     assert [s["path"] for s in kernel["sources"]] == [

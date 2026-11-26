@@ -92,31 +92,7 @@
   "workloads": [
     {
       "axes": {
-        "n_tokens": 1
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 2
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 4
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 5
+        "n_tokens": 6
       },
       "scalars": {
         "eps": 9.999999747378752e-06
@@ -140,7 +116,7 @@
     },
     {
       "axes": {
-        "n_tokens": 16
+        "n_tokens": 12
       },
       "scalars": {
         "eps": 9.999999747378752e-06
@@ -148,63 +124,7 @@
     },
     {
       "axes": {
-        "n_tokens": 20
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 32
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 40
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 60
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 64
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 80
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 120
-      },
-      "scalars": {
-        "eps": 9.999999747378752e-06
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 128
+        "n_tokens": 14
       },
       "scalars": {
         "eps": 9.999999747378752e-06
