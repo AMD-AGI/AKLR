@@ -4,6 +4,6 @@
 """Kimi-K3 on ROCm (vLLM's ``models/kimi_k3/amd``), whose forward vLLM runs uncompiled under
 full CUDA graphs."""
 
-from aklr.plugins.vllm.models.kimi_k3 import attn_res
+from aklr.plugins.vllm.models.kimi_k3 import attn_res, fp4_indexer, kda_decode, kda_prefill, latent_moe
 
-__all__ = ["attn_res"]
+__all__ = ["attn_res", "fp4_indexer", "kda_decode", "kda_prefill", "latent_moe"]

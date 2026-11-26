@@ -14,6 +14,7 @@ from types import ModuleType
 
 import pytest
 import torch
+from packaging.version import Version
 
 import aklr.plugins.vllm as plugin
 from aklr.core.platform.env import ENV_DISABLE, ENV_TRACE, ENV_VLLM_PLUGIN
@@ -30,6 +31,8 @@ DECLARED = [
     for callee, declaration in targets.items()
 ]
 INSTALLED = "0.33.0rc1.dev910"
+# the installed release as the routes match it, before ``fake`` stands INSTALLED in for it
+VLLM_VERSION = hook._vllm_version
 
 
 @pytest.fixture(autouse=True)
@@ -61,10 +64,16 @@ def installed_vllm():
         pytest.skip("vllm is not installed")
 
 
+def fork_only(declaration):
+    """Whether a route is declared on fork builds alone (Kimi-K3.1-Pro's 0.0.0+mum.14d1ec2336): what it replaces is
+    in that fork's image only, in no vLLM release."""
+    return all(Version(v).release == (0, 0, 0) for v in declaration.versions)
+
+
 def test_every_route_was_tested_on_the_installed_vllm():
-    """A new vLLM image needs the routes adapted."""
+    """A new vLLM image needs the routes adapted; a fork's own routes stay on the fork."""
     installed = installed_vllm()
-    assert [d.caller for _, _, d in DECLARED if installed not in d.versions] == []
+    assert [d.caller for _, _, d in DECLARED if installed not in d.versions and not fork_only(d)] == []
 
 
 def parameters(fn):
@@ -73,12 +82,14 @@ def parameters(fn):
 
 
 @pytest.mark.parametrize(
-    ("callee", "route"),
-    [(callee, route) for callee, route, _ in DECLARED],
+    ("callee", "route", "declaration"),
+    DECLARED,
     ids=[callee for callee, _, _ in DECLARED],
 )
-def test_every_route_takes_its_callees_parameters(callee, route):
-    installed_vllm()
+def test_every_route_takes_its_callees_parameters(callee, route, declaration):
+    installed = installed_vllm()
+    if fork_only(declaration) and installed not in declaration.versions:
+        pytest.skip(f"{callee} is in the image of {', '.join(declaration.versions)} only")
     assert parameters(route) == parameters(pkgutil.resolve_name(callee))
 
 
@@ -306,6 +317,25 @@ def test_a_route_untested_on_the_installed_vllm_is_not_hooked(fake):
     declare(lambda x: f"aklr({x})", versions=("0.32.0",))
     hook._install()
     assert caller(1) == "aiter(1)"
+
+
+@pytest.mark.parametrize(
+    ("installed", "declared", "hooked"),
+    [
+        ("0.0.0+mum.14d1ec2336", "0.0.0+mum.14d1ec2336", True),
+        ("0.0.0+mum.0a1b2c3d4e", "0.0.0+mum.14d1ec2336", False),
+        ("0.0.0+mum.14d1ec2336", "0.0.0", False),
+    ],
+    ids=["its_build", "another_build", "every_unreleased_build"],
+)
+def test_a_build_of_no_release_is_told_apart_by_its_label(fake, monkeypatch, installed, declared, hooked):
+    """A fork built under no release (Kimi-K3.1-Pro's vLLM reports 0.0.0+mum.14d1ec2336): its label
+    names the commit, so a route tested on one such build is not hooked on another."""
+    monkeypatch.setattr(hook, "_vllm_version", VLLM_VERSION)
+    monkeypatch.setattr(hook, "version", lambda dist: installed)
+    declare(lambda x: f"aklr({x})", versions=(declared,))
+    hook._install()
+    assert caller(1) == ("aklr(1)" if hooked else "aiter(1)")
 
 
 def test_a_caller_that_does_not_call_the_callee_raises(fake):

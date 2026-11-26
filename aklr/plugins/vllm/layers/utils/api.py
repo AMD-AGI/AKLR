@@ -11,7 +11,7 @@ __all__: list[str] = []
 @vllm_route(
     "vllm.model_executor.layers.utils.rocm_unquantized_gemm_impl",
     "vllm._custom_ops.wvSplitKrc",
-    versions=("0.32.1rc1.dev276", "0.33.0rc1.dev910", "0.33.0", "0.34.0"),
+    versions=("0.32.1rc1.dev276", "0.33.0rc1.dev910", "0.33.0", "0.34.0", "0.0.0+mum.14d1ec2336"),
 )
 def _wv_split_krc(a, b, cu_count, bias=None):
     """vLLM's skinny GEMM on gfx950 for 10 to 128 tokens as aiter's GEMM, which AKLR's aiter provider answers."""

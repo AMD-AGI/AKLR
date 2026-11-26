@@ -17,7 +17,7 @@ Kimi-K3 的 attention residual 在 vLLM 里是一个 Triton kernel，即 `attn_r
 | 5 | 对 mix 做该层的 RMSNorm：attention 前用 `input_layernorm`，MLP 前用 `post_attention_layernorm`，最后的 norm 之前不做 | ✓ | ✓ |
 | 6 | 下一个 linear 吃 fp8 输入时，把输出按 token 量化为 fp8 | ✓ | — |
 
-这几步在 vLLM 里本来就是一个 kernel，但这是模型自己的 kernel，放在 Kimi-K3 的模型目录里，不在 aiter 里。aiter 没有对应的算子，AKLR 的 aiter provider 也就碰不到这次调用；`aklr/plugins/aiter` 里也没有做这个计算的算子。想换上更快的 kernel，只能由插件替换模型自己的这个函数，也就是 `_apply_attn_res` 调用的 `attn_res`。算子接管第 1–5 步；第 6 步的 fp8 输出没有 contract 描述，遇到时 route 把调用交回 vLLM 的 kernel。
+这几步在 vLLM 里本来就是一个 kernel，但这是模型自己的 kernel，放在 Kimi-K3 的模型目录里，不在 aiter 里。aiter 没有对应的算子，AKLR 的 aiter provider 也就碰不到这次调用；`aklr/plugins/aiter` 里也没有做这个计算的算子。想换上更快的 kernel，只能由插件替换模型自己的这个函数，也就是 `_apply_attn_res` 调用的 `attn_res`。算子接管第 1–5 步；要第 6 步 fp8 输出的调用交给另一个算子 `kimi_k3_attn_res_fp8`，它的 contract 多了按 token 的量化。
 
 插件能替换什么：route 不替换 aiter 的函数，也不替换只是给一次 aiter 调用包了层壳的框架函数，比如 vLLM `_aiter_ops.py` 里的 `_rocm_aiter_fused_moe_impl`，它只是调用 aiter 的 `fused_moe`。aiter 算子的调用，走 aiter 自己的插件接口进入 AKLR，AKLR 在那边的 provider 是 `aklr/plugins/aiter/provider`（见 [aiter 的 kernel 插件接口](../aklr/plugins/README.md#aiters-kernel-plugin-interface)）。route 只做两种事：要么替换模型自己的函数，本例就是这种；要么把框架里连同 aiter 调用在内的一整段计算融成一个算子。
 
@@ -47,7 +47,7 @@ def attn_res(prefix, delta, blocks, norm_weight, qk_weight, output_norm_weight, 
 
 ### 2. 建包
 
-新建 `aklr/plugins/vllm/models/kimi_k3/attn_res/`：`kimi_k3/` 对应 vLLM 的源目录 `models/kimi_k3/`，`attn_res/` 对应 kernel 所在的文件 `ops/attn_res.py`。包内的文件与 `aklr/plugins/aiter` 中的算子相同：`__init__.py`、`contract.py`、`reference.py`、`baseline.py`、`api.py` 和 `impls/`；另有 `_triton.py`，是 vLLM 这个 Triton kernel 及其启动函数的副本（去掉了 fp8 输出），让 baseline 不依赖 vLLM 也能运行。包名即算子的 `op_type`（`attn_res`），在 `aklr/plugins/aiter` 和 `aklr/plugins` 中都不能重名。
+新建 `aklr/plugins/vllm/models/kimi_k3/attn_res/`：`kimi_k3/` 对应 vLLM 的源目录 `models/kimi_k3/`，`attn_res/` 对应 kernel 所在的文件 `ops/attn_res.py`。包内的文件与 `aklr/plugins/aiter` 中的算子相同：`__init__.py`、`contract.py`、`reference.py`、`baseline.py`、`api.py` 和 `impls/`；另有 `_triton.py`，是 vLLM 这个 Triton kernel 及其启动函数的副本，让 baseline 不依赖 vLLM 也能运行。包名即算子的 `op_type`（`attn_res`），在 `aklr/plugins/aiter` 和 `aklr/plugins` 中都不能重名。
 
 ### 3. 编写算子
 
@@ -164,13 +164,21 @@ schema 会写到这个场景已提交的 kernel 旁边，即 `aklr/plugins/vllm/
 
 ### 7. 在 vLLM 中运行
 
-validation 检查的是 kernel 与 reference 是否一致，不检查 route；route 要靠运行整个模型来检查。用 Kimi-K3 的 MXFP4 checkpoint 在 TP8 下启动 vLLM，带上部署本身的参数，并打开插件。这个 checkpoint 的 attention 和 dense MLP 都是 BF16，不会有调用要求 fp8 输出（那种调用 route 会交回 vLLM）：
+validation 检查的是 kernel 与 reference 是否一致，不检查 route；route 要靠运行整个模型来检查。用 Kimi-K3 的 MXFP4 checkpoint 在 TP8 下启动 vLLM，带上部署本身的参数，并打开插件。这个 checkpoint 的 attention 和 dense MLP 都是 BF16，不会有调用要求 fp8 输出：
 
 ```bash
 AKLR_VLLM_PLUGIN=1 vllm serve <Kimi-K3 MXFP4 checkpoint> --tensor-parallel-size 8
 ```
 
 日志会报告挂载了哪些调用（`aklr hooks N calls of vLLM 0.34.0`），模型的回答必须保持正确。设置 `AKLR_TRACE=plugin` 后，每种不同的调用，route 都会记一次日志：接没接管，没接管的原因是什么（见 [aklr/plugins/README.md](../aklr/plugins/README.md#enabling-the-plugin-and-upgrading-sglang)）。
+
+## 多张卡一起调用的算子
+
+Kimi-K3 的 latent-MoE 尾段（`aklr/plugins/vllm/models/kimi_k3/latent_moe/`）把两次 all-reduce、一次 norm 和一次 addmm 换成一个 kernel，各 rank 在 kernel 里直接读写彼此的显存。它的 contract 设了 `ranks`（`tp_size`），reference 和 baseline 用 `DistOpReference`、`DistOpBaseline`（见 [aklr/plugins/aiter/README.md](../aklr/plugins/aiter/README.md)）；route 和 kernel 守三条规矩：
+
+- 每个 rank 走同一条路：route 只根据各 rank 都一样的信息做决定，dispatcher 的结论先在 vLLM 的 TP 组上对齐，再由各 rank 一起 launch。只有一个 rank launch 的话，它会在 kernel 里一直等别的 rank。
+- kernel 跨调用保留的状态（peer 显存、launch 计数器、health 字）放在 kernel 自己的源码里，即 `kernel.py` 旁边的 `runtime.py`。route 在 kernel 第一次调用前，通过 dispatcher 用来接管这次调用的那个 kernel（`api.serving` 返回的元数据里有它的模块名），在 vLLM 的 TP 组上把状态建好；没有调用方建的时候（比如 validation），由 kernel 的第一次调用在 torch.distributed 的默认组上自己建。
+- kernel 内的等待 10 s 就放弃，整个组随之失败；某个 rank 在主机侧卡住这么久，也是同样的结果。这时 vLLM 插件会让这一步停下：每一步 launch 之后，插件依次运行 `AFTER_STEP` 里的 step watch（`aklr/plugins/vllm/__init__.py`），尾段的那个（`latent_moe/failstop.py`）会在这一步的输出离开 worker 之前抛出异常。设 `AKLR_DISABLE=kimi_k3_latent_moe_tail@1.0`，所有调用都交回 vLLM 自己的尾段。
 
 ## 下一步
 
