@@ -6,13 +6,13 @@
   "zh": "Kernel"
  },
  "path": "index.html",
- "updated_at": "2026-11-26T06:28:14Z",
+ "updated_at": "2026-11-26T07:55:53Z",
  "last_run": {
-  "run_id": "45768304367",
-  "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45768304367",
+  "run_id": "45761223233",
+  "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45761223233",
   "commit": "0bb83c18becf686fd7993c5dd011e50b8a0e8460",
   "ref": "refs/heads/main",
-  "event": "workflow_dispatch"
+  "event": "push"
  },
  "status_counts": {
   "ok": 34,
