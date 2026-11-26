@@ -70,79 +70,118 @@
       "axes": {
         "batch": 12,
         "m": 8
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.151,
+      "microseconds": 4.19
     },
     {
       "axes": {
         "batch": 12,
         "m": 12
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.157,
+      "microseconds": 4.19
     },
     {
       "axes": {
         "batch": 12,
         "m": 16
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.164,
+      "microseconds": 4.19
     },
     {
       "axes": {
         "batch": 12,
         "m": 24
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.204,
+      "microseconds": 4.19
     },
     {
       "axes": {
         "batch": 12,
         "m": 32
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.211,
+      "microseconds": 4.2
     },
     {
       "axes": {
         "batch": 12,
         "m": 40
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.227,
+      "microseconds": 4.2
     },
     {
       "axes": {
         "batch": 12,
         "m": 48
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.235,
+      "microseconds": 4.21
     },
     {
       "axes": {
         "batch": 12,
         "m": 56
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.252,
+      "microseconds": 4.2
     },
     {
       "axes": {
         "batch": 12,
         "m": 60
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.251,
+      "microseconds": 4.2
     },
     {
       "axes": {
         "batch": 12,
         "m": 64
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.274,
+      "microseconds": 4.2
     },
     {
       "axes": {
         "batch": 12,
         "m": 80
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.298,
+      "microseconds": 4.2
     },
     {
       "axes": {
         "batch": 12,
         "m": 96
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.304,
+      "microseconds": 4.22
     },
     {
       "axes": {
         "batch": 12,
         "m": 112
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.317,
+      "microseconds": 4.21
     }
   ],
   "layout_variants": {

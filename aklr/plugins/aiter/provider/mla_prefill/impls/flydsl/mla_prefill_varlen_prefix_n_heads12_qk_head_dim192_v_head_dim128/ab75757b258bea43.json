@@ -124,7 +124,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 5.624,
+      "microseconds": 122.0
     },
     {
       "axes": {
@@ -134,7 +137,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 4.251,
+      "microseconds": 194.0
     },
     {
       "axes": {
@@ -144,7 +150,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.444,
+      "microseconds": 281.0
     },
     {
       "axes": {
@@ -154,7 +163,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.859,
+      "microseconds": 405.0
     },
     {
       "axes": {
@@ -164,7 +176,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.051,
+      "microseconds": 1190.0
     },
     {
       "axes": {
@@ -174,7 +189,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.619,
+      "microseconds": 501.0
     },
     {
       "axes": {
@@ -184,7 +202,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.017,
+      "microseconds": 1740.0
     },
     {
       "axes": {
@@ -194,7 +215,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.152,
+      "microseconds": 3470.0
     },
     {
       "axes": {
@@ -204,7 +228,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.781,
+      "microseconds": 3330.0
     },
     {
       "axes": {
@@ -214,7 +241,10 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.709,
+      "microseconds": 7040.0
     }
   ],
   "layout_variants": {
