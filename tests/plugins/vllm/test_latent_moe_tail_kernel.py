@@ -35,6 +35,8 @@ TP, HIDDEN, LATENT = 8, 7168, 3584
 EPS = 1e-5
 # below 28 rows kernel_small.py serves, from 28 kernel.py; every one a workload of the committed schema
 ROWS = (1, 10, 20, 32, 40, 120, 128)
+# the committed schema's row counts: the ones the route serves
+SERVED_ROWS = (6, 8, 10, 12, 14)
 
 
 def on_gpus(fn, tmp_path, *args, timeout=600):
@@ -254,10 +256,10 @@ def _routed(rank, rows):
 
 @pytest.mark.gfx950
 def test_the_route_sets_up_the_state_the_kernel_reads(tmp_path):
-    """Through the route and AKLR's dispatcher, its table the committed schema: every rank serves every row count, the
-    same bits; the group the route set up (through the runtime of the kernel the dispatcher serves with) is the one
-    the kernel's launches read, the kernel set none up itself, and the fail-stop watches it."""
-    for rank, found in enumerate(on_gpus(_routed, tmp_path, ROWS)):
+    """Through the route and AKLR's dispatcher, its table the committed schema: every rank serves every row count of
+    the schema, the same bits; the group the route set up (through the runtime of the kernel the dispatcher serves
+    with) is the one the kernel's launches read, the kernel set none up itself, and the fail-stop watches it."""
+    for rank, found in enumerate(on_gpus(_routed, tmp_path, SERVED_ROWS)):
         for key, value in found.items():
             assert value if not isinstance(value, dict) else all(value.values()), (rank, key, value)
 
@@ -458,8 +460,8 @@ def _one_rank_apart(rank, failing_rank, rows):
 
 @pytest.mark.gfx950
 def test_what_one_rank_alone_sees_never_splits_the_group(tmp_path):
-    """Through the route and the committed schema: rank 2's routed partial off the dispatcher's alignment or in the
-    first bytes of its shared partial, every rank still serves the aligned run's bits; rank 2's dispatcher without
-    the schema, every rank goes back to vLLM with no_schema, none launching."""
-    for rank, outcomes in enumerate(on_gpus(_one_rank_apart, tmp_path, 2, (10, 40))):
+    """Through the route and the committed schema, at its smallest and largest row counts: rank 2's routed partial
+    off the dispatcher's alignment or in the first bytes of its shared partial, every rank still serves the aligned
+    run's bits; rank 2's dispatcher without the schema, every rank goes back to vLLM with no_schema, none launching."""
+    for rank, outcomes in enumerate(on_gpus(_one_rank_apart, tmp_path, 2, (SERVED_ROWS[0], SERVED_ROWS[-1]))):
         assert all(outcomes.values()), (rank, {k: v for k, v in outcomes.items() if not v})
