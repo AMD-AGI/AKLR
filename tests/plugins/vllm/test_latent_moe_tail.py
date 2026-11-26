@@ -730,6 +730,45 @@ def test_rows_past_the_kernels_go_back_to_vllm_before_the_dispatcher(vllm_tp, op
     assert op.asked == [] and op.calls == [] and vllm_tp.setups == []
 
 
+def deferring(run, min_rows=8192, quantized=True, token_group=True):
+    """The runner as Kimi-K3.1-Pro's vLLM (0.0.0+mum.14d1ec2336) sets it up at TP8 DCP8: a quantized routed input
+    resolved (``enable_quantized_routed_input``) and the routed down-projection (``KimiRoutedInputLinear``) sharding
+    the tokens of at least ``min_sharded_tokens`` rows over the DCP group."""
+    run._quantized_routed_input = quantized
+    run.routed_input_transform = SimpleNamespace(
+        _token_group=SimpleNamespace() if token_group else None, min_sharded_tokens=min_rows
+    )
+    return run
+
+
+@pytest.mark.parametrize("n", [8, 12])
+def test_a_call_that_may_have_deferred_the_projection_goes_back_to_vllm(vllm_tp, op, n):
+    """latent_moe_runner.py:147: from min_sharded_tokens rows, _fused_forward projects the routed input inside the
+    experts' MXFP4 prepare and cuts their output to moe_config.hidden_dim columns (defer_projection); the route leaves
+    every call that branch may have made to vLLM, before the dispatcher is asked (here the threshold lowered to 8 rows
+    to stay under the kernel's 128; vLLM's is 8192)."""
+    run = deferring(runner(), min_rows=8)
+    assert api._shard_up_proj_tail(run, *outputs(n), HIDDEN) is FallbackReason.OUT_OF_CONTRACT
+    assert op.asked == [] and op.calls == [] and vllm_tp.setups == []
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        lambda run: deferring(run, min_rows=8),  # fewer rows than the threshold
+        lambda run: deferring(run, min_rows=4, quantized=False),  # the routed input left in bf16
+        lambda run: deferring(run, min_rows=4, quantized=None),  # not yet resolved
+        lambda run: deferring(run, min_rows=4, token_group=False),  # no DCP token group (TP != DCP)
+        lambda run: run,  # vLLM 0.34.0: none of these attributes
+    ],
+    ids=["below_threshold", "bf16_routed_input", "unresolved", "no_token_group", "vllm_0_34"],
+)
+def test_a_call_that_cannot_have_deferred_the_projection_reaches_the_dispatcher(vllm_tp, op, setup):
+    op.reason = FallbackReason.NOT_QUALIFIED
+    assert api._shard_up_proj_tail(setup(runner()), *outputs(5), HIDDEN) is FallbackReason.NOT_QUALIFIED
+    assert len(op.asked) == 1 and op.calls == []
+
+
 def test_pipeline_stages_go_back_to_vllm(vllm_tp, op):
     """Only the last stage's step output leaves its workers, so a wait that gave up in an earlier stage would reach
     the scheduler unchecked (``runtime.after_step``): under pipeline parallelism vLLM keeps its tail."""

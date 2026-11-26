@@ -105,6 +105,23 @@ def _up_shard(runner, rank: int) -> torch.Tensor:
     return weight.narrow(0, rank * shard, shard)
 
 
+def _deferred_projection(runner, n: int) -> bool:
+    """Whether ``_fused_forward`` may have taken Kimi-K3.1's ``defer_projection`` branch for this call (vLLM
+    0.0.0+mum.14d1ec2336, latent_moe_runner.py:147): the routed input's down-projection, sharded over the DCP ranks'
+    tokens, runs inside the experts' MXFP4 prepare (``KimiLatentPrepare``) and the tail gets the experts' output cut to
+    ``moe_config.hidden_dim`` columns, with the model's hidden width as its trunc_size. That branch takes a
+    resolved quantized routed input, a token group on the down-projection and at least its ``min_sharded_tokens``
+    (8192) rows; the route reads those three, the same on every rank (not the caller's ``shared_experts_input`` and
+    dtype, which it cannot see), and leaves every call that may come from it to vLLM: 8192 rows are past the kernel's
+    MAX_ROWS anyway. Earlier releases set no ``_quantized_routed_input``."""
+    if not getattr(runner, "_quantized_routed_input", None):
+        return False
+    transform = getattr(runner, "routed_input_transform", None)
+    if getattr(transform, "_token_group", None) is None:
+        return False
+    return n >= getattr(transform, "min_sharded_tokens", 0)
+
+
 def _out_of_contract(runner, fused_output, shared_output, trunc_size) -> list[str]:
     """What keeps vLLM's call from being the op's, if anything; shapes, dtypes and layouts are the op's to judge."""
     transform = getattr(runner, "routed_output_transform", None)
@@ -115,10 +132,12 @@ def _out_of_contract(runner, fused_output, shared_output, trunc_size) -> list[st
     ):
         return ["no latent norm or up-projection"]
     config = getattr(runner, "moe_config", None)
+    n = fused_output.shape[0] if fused_output.dim() == 2 else 0
     checks = (
         # vLLM 0.34.0 hands a latent MoE with shared experts the shared experts' width whether or not it padded, and
         # its tail keeps states[..., :trunc_size]: only a smaller size strips padded columns
         ("a padded hidden dim", trunc_size not in (None, shared_output.shape[-1])),
+        ("the routed input projected in the experts' prepare", _deferred_projection(runner, n)),
         ("the routed output comes reduced", bool(getattr(runner, "_fused_output_is_reduced", False))),
         # vLLM's tail then leaves the output unreduced; the op always reduces it
         ("the final all-reduce is skipped", bool(getattr(config, "skip_final_all_reduce", False))),
@@ -167,7 +186,7 @@ def _agrees(ours: torch.Tensor, theirs: torch.Tensor) -> bool:
 @vllm_route(
     "vllm.models.kimi_k3.amd.latent_moe_runner.ROCmLatentMoERunner._fused_forward",
     "vllm.models.kimi_k3.amd.latent_moe_runner.ROCmLatentMoERunner._shard_up_proj_tail",
-    versions=("0.34.0",),
+    versions=("0.34.0", "0.0.0+mum.14d1ec2336"),
 )
 def _shard_up_proj_tail(self, fused_output, shared_output, trunc_size):
     """Kimi-K3's latent-MoE tail under TP: the routed partial [n, latent] and the shared partial [n, hidden] of a

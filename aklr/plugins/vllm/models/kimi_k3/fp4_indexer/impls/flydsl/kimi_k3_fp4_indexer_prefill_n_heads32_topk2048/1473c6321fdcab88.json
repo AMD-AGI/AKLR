@@ -1,0 +1,325 @@
+{
+  "schema_version": 5,
+  "name": "kimi_k3_fp4_indexer_prefill_n_heads32_topk2048",
+  "contract_id": "kimi_k3_fp4_indexer_prefill@1.0",
+  "description": "vLLM's Kimi-K3.1 DSA indexer prefill on one rank with an MXFP4 index cache (prefill_indexer, one query tile): each row's score of key t is weight_scale * sum over heads h of relu(q_h . k_t) * weights[h], q_h the row's MXFP4 head, k_t the MXFP4 key, both decoded exactly, the dot product and the sum in float32; the row's keys are t in [row_starts, row_ends); indices holds the row's topk highest-scoring keys, as t - row_starts, in any order (vLLM's top-k writes them unsorted); a row of at most topk keys holds every key, in any order, and -1 in its other slots. Each query head is quantized as vLLM's _quantize does, per group of 32 values: the scale is 2^ceil(log2(max(amax / 6, 0.0001))) (amax / 6 in float32, the exponent at most 127), each value divided by it and rounded to the nearest E2M1 value (0, 0.5, 1, 1.5, 2, 3, 4, 6), a tie to the even code. Key t of the chunk is slot s = t % 64 of page t // 64, aiter's row-group layout: its values 32g..32g + 31 are key_values[page, g, s] (two E2M1 values a byte, the lower nibble first), their E8M0 scale key_scales[page, g, (s % 16) * 4 + s // 16].",
+  "op_type": "fp4_indexer",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Query rows in this call."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Index heads: 16, 32 or 64 (aiter's MFMA tiles)."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of 64 staged keys: every key the chunk's requests hold, from every DCP rank, in order."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Keys selected per row."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        128
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each row's index query heads, wq_index's output."
+    },
+    "weights": {
+      "shape": [
+        "n_tokens",
+        "n_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each row's head weights, wv_index's output."
+    },
+    "key_values": {
+      "shape": [
+        "n_pages",
+        4,
+        64,
+        32
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The staged keys' E2M1 values, 16 bytes of a key's group a row (aiter's pages, [n_pages, 1, 4, 64, 16] bytes in vLLM)."
+    },
+    "key_scales": {
+      "shape": [
+        "n_pages",
+        4,
+        64
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 1
+      },
+      "description": "The staged keys' E8M0 group scales, a page's 64 per group in aiter's transposed 16 x 4 order ([n_pages, 1, 4, 64] in vLLM)."
+    },
+    "row_starts": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_pages - 1",
+        "distinct": false
+      },
+      "description": "Each row's first key: its request's first key in the chunk."
+    },
+    "row_ends": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": "max(n_pages, 64 * n_pages - 8 * n_tokens)",
+        "hi": "64 * n_pages",
+        "distinct": false
+      },
+      "description": "Each row's end, past its last key (causal: its position + 1)."
+    },
+    "weight_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "The head and softmax scales folded into every weight."
+    }
+  },
+  "outputs": {
+    "indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Each row's selected keys, relative to its first, -1 past a short row's keys."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 15,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 61,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 512,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 964,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1024,
+        "n_pages": 2176
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2048,
+        "n_pages": 512
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2048,
+        "n_pages": 1024
+      },
+      "scalars": {
+        "weight_scale": 0.015625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bounded"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2",
+      "aiter": ">=0.1.0"
+    },
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Kimi-K3.1's DSA indexer prefill (kimi_k3_fp4_indexer_prefill@1.0) on MI355X, one query tile in one call. The\nqueries are quantized to MXFP4 by vLLM's rule (a FlyDSL kernel, quant.py) and scored by the FP4 MQA scorer (scorer.py,\naiter's FlyDSL ragged-prefill kernel on the staged pages), each row's 256-key chunks split across workgroups on the\ndevice. aiter's top-k (top_k_per_row_prefill, unstable) picks each row's keys and their scores; a torch argsort puts a\nfull row's keys in descending score order, and one FlyDSL launch (quant.py's select_tail) writes them made relative to\nthe row's first key, or a short row's keys ascending, then -1.\n\nThe token count is a runtime argument everywhere (the scorer's split count and grid are launch arguments, the\nquantizer's and the tail's grids too): every build made by warm_up.\"\"\"\n\nfrom __future__ import annotations\n\nimport torch\n\nfrom . import quant\nfrom .quant import quantize_queries, select_tail\nfrom .scorer import score\n\n\n# the scorer's keys a step; the (row, split) workgroups aimed at, and the least chunks a split\n_BLOCK_K = 256\n_TARGET_CTAS = 4096\n_MIN_CHUNKS = 4\n_HEADS = (16, 32, 64)\n\n\ndef _splits(rows: int, pages: int) -> int:\n    \"\"\"How many ways each row's chunks are split: a launch argument, from the shapes only.\"\"\"\n    chunks = (pages * 64 + _BLOCK_K - 1) // _BLOCK_K\n    cap = max(1, chunks // _MIN_CHUNKS)\n    s = max(1, min((_TARGET_CTAS + rows - 1) // rows, cap))\n    # XCD-compatible: a power of two up to 8 (each XCD keeps a fixed key segment), else a multiple of 8\n    if s <= 8:\n        return 1 << (s - 1).bit_length()\n    return s & ~7\n\n\ndef _score(q, weights, key_values, key_scales, row_starts, row_ends, weight_scale, logits):\n    rows, pages = q.shape[0], key_values.shape[0]\n    if rows == 0:\n        return\n    qp, qs = quantize_queries(q)\n    score(\n        qp,\n        qs,\n        key_values.view(torch.uint8).view(pages, 1, 4, 64, 16),\n        key_scales.view(torch.uint8).view(pages, 1, 4, 64),\n        weights,\n        row_starts,\n        row_ends,\n        _splits(rows, pages),\n        weight_scale,\n        logits,\n    )\n\n\ndef _select(logits, row_starts, row_ends, indices):\n    from aiter.ops.topk import top_k_per_row_prefill\n\n    rows, width = logits.shape\n    k = indices.shape[1]\n    values = torch.empty((rows, k), device=logits.device, dtype=torch.float32)\n    chosen = torch.empty((rows, k), device=logits.device, dtype=torch.int32)\n    top_k_per_row_prefill(\n        logits=logits,\n        rowStarts=row_starts,\n        rowEnds=row_ends,\n        indices=chosen,\n        values=values,\n        numRows=rows,\n        stride0=logits.stride(0),\n        stride1=logits.stride(1),\n        stable=False,\n        k=k,\n    )\n    # a full row (more than k keys): the chosen keys by descending score (aiter's values, no gather), made relative;\n    # a short row: every key ascending, then -1, which does not depend on what the top-k wrote (one FlyDSL launch)\n    order = values.argsort(dim=1, descending=True)\n    select_tail(order, chosen, row_starts, row_ends, indices)\n\n\ndef warm_up(device):\n    \"\"\"Build what any call takes, before serving: the quantizer and the scorer per head count and aiter's top-k paths (one-block short and wide rows, multi-block, few\n    and many rows). Each on a small call; returns how many calls it made.\"\"\"\n    dev = torch.device(device)\n    quant.warm_up(dev)\n    calls = 0\n    for heads in _HEADS:\n        for rows, pages in ((1, 4), (4100, 4)):\n            q = torch.zeros((rows, heads, 128), device=dev, dtype=torch.bfloat16)\n            w = torch.zeros((rows, heads), device=dev, dtype=torch.bfloat16)\n            kv = torch.zeros((pages, 4, 64, 16), device=dev, dtype=torch.uint8)\n            ks = torch.full((pages, 4, 64), 127, device=dev, dtype=torch.uint8)\n            starts = torch.zeros(rows, device=dev, dtype=torch.int32)\n            ends = torch.full((rows,), pages * 64, device=dev, dtype=torch.int32)\n            logits = torch.empty((rows, pages * 64), device=dev, dtype=torch.float32)\n            _score(q, w, kv, ks, starts, ends, 1.0, logits)\n            calls += 1\n    for rows, width in (\n        (1, 1024),\n        (512, 1024),\n        (1, 4096),\n        (64, 4096),\n        (2048, 4096),\n        (8, 131072),\n        (512, 131072),\n    ):\n        logits = torch.zeros((rows, width), device=dev, dtype=torch.float32)\n        starts = torch.zeros(rows, device=dev, dtype=torch.int32)\n        ends = torch.full((rows,), width, device=dev, dtype=torch.int32)\n        _select(logits, starts, ends, torch.empty((rows, 2048), device=dev, dtype=torch.int32))\n        calls += 1\n    torch.cuda.synchronize(dev)\n    return calls\n\n\ndef run(*, q, weights, key_values, key_scales, row_starts, row_ends, indices, weight_scale):\n    \"\"\"indices, written in place.\"\"\"\n    if q.shape[1] not in _HEADS:\n        raise NotImplementedError(f\"{q.shape[1]} index heads: the scorer takes 16, 32 or 64\")\n    if q.shape[0] == 0:\n        return\n    logits = torch.empty((q.shape[0], key_values.shape[0] * 64), device=q.device, dtype=torch.float32)\n    _score(q, weights, key_values, key_scales, row_starts, row_ends, weight_scale, logits)\n    _select(logits, row_starts, row_ends, indices)\n"
+      },
+      {
+        "path": "quant.py",
+        "content": "\"\"\"vLLM's MXFP4 query quantization for Kimi-K3.1's indexer (vllm/models/kimi_k3/amd/ops/fp4_indexer.py, _quantize),\nas a FlyDSL kernel: per group of 32 values the scale 2^ceil(log2(max(amax / 6, 1e-4))) (an E8M0 byte, the exponent at\nmost 127), each value divided by it and rounded to the nearest E2M1 value, ties to the even code.\n\nOne lane per (row, group of 32 dims, head % 16): it quantizes the heads h, h + 16, ... of that slot and writes the\none 32-bit scale word that holds their four E8M0 bytes (row * 256 + group * 64 + (head % 16) * 4 + head // 16, the\nslots past heads / 16 zero), so every scale byte is written once, no byte stores. A wave is one row; the grid is\nceil(rows / 4), a launch argument (the build depends on the head count only).\"\"\"\n\nfrom __future__ import annotations\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.expr import gpu\nfrom flydsl.expr.primitive import range_constexpr\nfrom flydsl.expr.typing import Int32, T\n\n_THREADS = 256\n_ROWS_PER_BLOCK = _THREADS // 64\n\n\ndef _i32_rows(ptr, width):\n    \"\"\"A buffer tensor over ``ptr`` as (N, width) i32 rows (max-size V#).\"\"\"\n    src = fx.get_iter(ptr)\n    it = fx.recast_iter(fx.PointerType.get(T.i32, src.memspace, 4), src)\n    lay = fx.make_layout((1 << 28, width), (width, 1))\n    return fx.rocdl.make_buffer_tensor(fx.make_view(it, lay))\n\n\ndef _load4(bt, row):\n    rr = fx.slice(bt, (row, None))\n    rd = fx.logical_divide(rr, fx.make_layout(4, 1))\n    ty = fx.MemRefType.get(T.i32, fx.LayoutType.get(4, 1), fx.AddressSpace.Register)\n    r = fx.memref_alloca(ty, fx.make_layout(4, 1))\n    fx.copy(fx.make_copy_atom(fx.rocdl.BufferCopy128b(), 4), fx.slice(rd, (None, fx.Int32(0))), r)\n    return fx.Vector(fx.memref_load_vec(r).ir_value())\n\n\ndef _store4(bt, row, words):\n    rr = fx.slice(bt, (row, None))\n    rd = fx.logical_divide(rr, fx.make_layout(4, 1))\n    ty = fx.MemRefType.get(T.i32, fx.LayoutType.get(4, 1), fx.AddressSpace.Register)\n    r = fx.memref_alloca(ty, fx.make_layout(4, 1))\n    fx.memref_store_vec(fx.Vector.from_elements(words, dtype=fx.Int32), r)\n    fx.copy(fx.make_copy_atom(fx.rocdl.BufferCopy128b(), 4), r, fx.slice(rd, (None, fx.Int32(0))))\n\n\ndef _store1(bt, idx, word):\n    ty = fx.MemRefType.get(T.i32, fx.LayoutType.get(1, 1), fx.AddressSpace.Register)\n    r = fx.memref_alloca(ty, fx.make_layout(1, 1))\n    fx.memref_store_vec(fx.Vector.from_elements([word], dtype=fx.Int32), r)\n    fx.copy(fx.make_copy_atom(fx.rocdl.BufferCopy32b(), 1), r, fx.slice(bt, (idx, None)))\n\n\ndef e8m0_from_amax(amax):\n    \"\"\"amax (f32, >= 0) -> (E8M0 exponent byte as i32, 2^-(exponent - 127) as f32): vLLM's rule, a true divide.\"\"\"\n    s = amax / fx.Float32(6.0)\n    s = (s > fx.Float32(1.0e-4)).select(s, fx.Float32(1.0e-4))\n    bits = s.bitcast(fx.Int32)\n    e = ((bits >> fx.Int32(23)) & fx.Int32(255)) + ((bits & fx.Int32(0x7FFFFF)) != fx.Int32(0)).select(\n        fx.Int32(1), fx.Int32(0)\n    )\n    e = (e < fx.Int32(254)).select(e, fx.Int32(254))\n    # finite bf16 keeps e <= 253, where 2^(127 - e) is a normal power of two (the multiply is exact)\n    inv = ((fx.Int32(254) - e) << fx.Int32(23)).bitcast(fx.Float32)\n    return e, inv\n\n\ndef e2m1_code(v, inv):\n    \"\"\"One value (f32) times inv, rounded to the nearest E2M1 code, ties to even; sign bit unless the code is 0.\"\"\"\n    x = v * inv\n    a = (x.bitcast(fx.Int32) & fx.Int32(0x7FFFFFFF)).bitcast(fx.Float32)\n    one, zero = fx.Int32(1), fx.Int32(0)\n    code = (a > fx.Float32(0.25)).select(one, zero)\n    code = code + (a >= fx.Float32(0.75)).select(one, zero)\n    code = code + (a > fx.Float32(1.25)).select(one, zero)\n    code = code + (a >= fx.Float32(1.75)).select(one, zero)\n    code = code + (a > fx.Float32(2.5)).select(one, zero)\n    code = code + (a >= fx.Float32(3.5)).select(one, zero)\n    code = code + (a > fx.Float32(5.0)).select(one, zero)\n    neg = (x < fx.Float32(0.0)) & (code != zero)\n    return code | neg.select(fx.Int32(8), zero)\n\n\n@functools.cache\ndef _launcher(heads: int):\n    slots = heads // 16\n\n    @flyc.kernel\n    def quantize_query_kernel(q_ptr: fx.Tensor, payload_ptr: fx.Tensor, scales_ptr: fx.Tensor,\n                              rows: Int32, qs4: Int32, qh4: Int32):\n        tid = gpu.thread_idx.x\n        pid = gpu.block_idx.x\n        row = pid * fx.Int32(_ROWS_PER_BLOCK) + (tid >> fx.Int32(6))\n        lane = tid & fx.Int32(63)\n        hl = lane >> fx.Int32(2)\n        grp = lane & fx.Int32(3)\n        if row < rows:\n            q_bt = _i32_rows(q_ptr, 4)\n            p_bt = _i32_rows(payload_ptr, 4)\n            s_bt = _i32_rows(scales_ptr, 1)\n            scale_word = fx.Int32(0)\n            for j in range_constexpr(slots):\n                head = hl + fx.Int32(16 * j)\n                # q in 16-byte units: row * qs4 + head * qh4 + grp * 4\n                base = row * qs4 + head * qh4 + grp * fx.Int32(4)\n                vals = []\n                for c in range_constexpr(4):\n                    w = _load4(q_bt, base + fx.Int32(c))\n                    for i in range_constexpr(4):\n                        wi = w[i]\n                        vals.append((wi << fx.Int32(16)).bitcast(fx.Float32))\n                        vals.append((wi & fx.Int32(-65536)).bitcast(fx.Float32))\n                amax_bits = fx.Int32(0)\n                for v in vals:\n                    ab = v.bitcast(fx.Int32) & fx.Int32(0x7FFFFFFF)\n                    amax_bits = (ab > amax_bits).select(ab, amax_bits)\n                e, inv = e8m0_from_amax(amax_bits.bitcast(fx.Float32))\n                words = []\n                for wd in range_constexpr(4):\n                    word = fx.Int32(0)\n                    for k in range_constexpr(8):\n                        word = word | (e2m1_code(vals[8 * wd + k], inv) << fx.Int32(4 * k))\n                    words.append(word)\n                # payload in 16-byte units: (row * heads + head) * 4 + grp\n                _store4(p_bt, (row * fx.Int32(heads) + head) * fx.Int32(4) + grp, words)\n                scale_word = scale_word | (e << fx.Int32(8 * j))\n            _store1(s_bt, row * fx.Int32(64) + grp * fx.Int32(16) + hl, scale_word)\n\n    @flyc.jit\n    def launch_quantize_query(q, payload, scales, rows: fx.Int32, qs4: fx.Int32, qh4: fx.Int32,\n                              gx: fx.Int32, stream: fx.Stream):\n        quantize_query_kernel(q, payload, scales, rows, qs4, qh4).launch(\n            grid=(fx.Int64(gx),), block=(_THREADS, 1, 1), stream=stream\n        )\n\n    return launch_quantize_query\n\n\n_COMPILED: dict = {}\n\n\ndef quantize_queries(q: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:\n    \"\"\"Quantize [rows, heads, 128] without folding scales into head weights.\"\"\"\n    if q.ndim != 3 or q.shape[2] != 128 or q.stride(2) != 1:\n        raise ValueError(\"FP4 index queries require contiguous 128-element heads\")\n    if q.dtype != torch.bfloat16:\n        raise ValueError(\"FP4 index queries are bf16\")\n    if q.stride(0) % 8 or q.stride(1) % 8:\n        raise ValueError(\"FP4 index queries require 16-byte aligned row and head strides\")\n    rows, heads, _ = q.shape\n    if heads not in (16, 32, 64):\n        raise ValueError(\"FP4 row-group queries support 16, 32 or 64 heads\")\n    payload = torch.empty((rows, heads, 64), device=q.device, dtype=torch.uint8)\n    scales = torch.empty((rows, 1, 4, 16, 4), device=q.device, dtype=torch.uint8)\n    if rows:\n        launcher = _launcher(heads)\n        args = (\n            q,\n            payload,\n            scales,\n            rows,\n            q.stride(0) // 8,\n            q.stride(1) // 8,\n            (rows + _ROWS_PER_BLOCK - 1) // _ROWS_PER_BLOCK,\n            torch.cuda.current_stream(q.device),\n        )\n        compiled = _COMPILED.get(launcher)\n        if compiled is None:\n            _COMPILED[launcher] = flyc.compile(launcher, *args)\n        else:\n            compiled(*args)\n    return payload, scales\n\n\ndef warm_up(device) -> None:\n    \"\"\"Build the quantizer per head count on scratch queries (a full row and a partial last workgroup).\"\"\"\n    dev = torch.device(device)\n    for heads in (16, 32, 64):\n        for rows in (1, 5):\n            quantize_queries(torch.zeros((rows, heads, 128), device=dev, dtype=torch.bfloat16))\n\n\n# ---- the selection's tail: chosen keys reordered by descending score, made relative, short rows filled ----\n\n_TAIL_THREADS = 256\n_TAIL_K = 2048\n\n\ndef _load1(bt, idx):\n    ty = fx.MemRefType.get(T.i32, fx.LayoutType.get(1, 1), fx.AddressSpace.Register)\n    r = fx.memref_alloca(ty, fx.make_layout(1, 1))\n    fx.copy(fx.make_copy_atom(fx.rocdl.BufferCopy32b(), 1), fx.slice(bt, (idx, None)), r)\n    return fx.Vector(fx.memref_load_vec(r).ir_value())[0]\n\n\n@functools.cache\ndef _tail_launcher():\n    per = _TAIL_K // _TAIL_THREADS\n\n    @flyc.kernel\n    def select_tail_kernel(order_ptr: fx.Tensor, chosen_ptr: fx.Tensor, starts_ptr: fx.Tensor,\n                           ends_ptr: fx.Tensor, out_ptr: fx.Tensor):\n        tid = gpu.thread_idx.x\n        row = gpu.block_idx.x\n        o_bt = _i32_rows(order_ptr, 1)\n        c_bt = _i32_rows(chosen_ptr, 1)\n        s_bt = _i32_rows(starts_ptr, 1)\n        e_bt = _i32_rows(ends_ptr, 1)\n        w_bt = _i32_rows(out_ptr, 1)\n        start = _load1(s_bt, row)\n        n = _load1(e_bt, row) - start\n        full = n > fx.Int32(_TAIL_K)\n        rbase = row * fx.Int32(_TAIL_K)\n        for i in range_constexpr(per):\n            j = tid + fx.Int32(i * _TAIL_THREADS)\n            # order is int64 (argsort): its low word, < k\n            o = _load1(o_bt, (rbase + j) * fx.Int32(2))\n            o = full.select(o, fx.Int32(0))\n            c = _load1(c_bt, rbase + o)\n            short = (j < n).select(j, fx.Int32(-1))\n            _store1(w_bt, rbase + j, full.select(c - start, short))\n\n    @flyc.jit\n    def launch_select_tail(order, chosen, starts, ends, out, gx: fx.Int32, stream: fx.Stream):\n        select_tail_kernel(order, chosen, starts, ends, out).launch(\n            grid=(fx.Int64(gx),), block=(_TAIL_THREADS, 1, 1), stream=stream\n        )\n\n    return launch_select_tail\n\n\ndef select_tail(order, chosen, starts, ends, out) -> None:\n    \"\"\"out[r, j] = chosen[r, order[r, j]] - starts[r] for a row of more than k keys, else j (j < n) or -1.\"\"\"\n    rows = out.shape[0]\n    if rows == 0:\n        return\n    launcher = _tail_launcher()\n    args = (order, chosen, starts, ends, out, rows, torch.cuda.current_stream(out.device))\n    compiled = _COMPILED.get(launcher)\n    if compiled is None:\n        compiled = _COMPILED[launcher] = flyc.compile(launcher, *args)\n    compiled(*args)\n"
+      },
+      {
+        "path": "scorer.py",
+        "content": "\"\"\"The FP4 MQA scorer of Kimi-K3.1's indexer prefill: aiter's FlyDSL ragged-prefill kernel\n(aiter/ops/flydsl/kernels/mqa_logits/pa_mqa_logits_fp4_prefill.py and pa_mqa_logits_fp4_common.py at v0.1.28.post1;\nMIT, Advanced Micro Devices, Inc.) adapted to the contract's staged pages, and its launch, built once per head count\nand page stride (the CompiledFunction flyc.compile returns, called after its first launch: FlyDSL 0.5 traces a\n@flyc.jit function on every direct call).\n\nWorkgroup pid scores row pid // n_splits over split pid % n_splits: the row's 256-key chunks that fall in that split's\nfixed share of all the staged chunks (n_splits a launch argument). All heads of the row are the MFMA's M (heads // 16\ntiles), four waves of 64 keys, each wave's page read straight from its index, the keys' FP4 bytes and E8M0 scales read\nfrom the pages, relu, the head weights and the sum over heads in registers, the window's scores stored.\"\"\"\n\nfrom __future__ import annotations\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.expr import gpu, rocdl\nfrom flydsl.expr.primitive import range_constexpr\nfrom flydsl.expr.typing import Float4E2M1FN, Int32, T\n\nDEFAULT_HEADS = 64\nDEFAULT_HEAD_DIM = 128\nDEFAULT_NUM_WARPS = 4\nMFMA_M = 16\nMFMA_N = 16\nWARP_SIZE = 64\nDEFAULT_BLOCK_THREADS = DEFAULT_NUM_WARPS * WARP_SIZE  # 256\n\n# cta_info packed fields per CTA.\nCTA_INFO_WIDTH = 6\n\n\ndef _validate_packed_scale_config(block_k: int, kv_block_size: int, num_warps: int):\n    \"\"\"Each wave consumes four 16-row MFMA tiles within one physical page.\"\"\"\n    if kv_block_size not in (64, 128):\n        raise ValueError(\"FP4 packed-scale kernels require kv_block_size=64 or 128\")\n    if not 1 <= num_warps <= 16:\n        raise ValueError(\"FP4 packed-scale kernels require 1 <= num_warps <= 16\")\n    if block_k != 64 * num_warps:\n        raise ValueError(\n            \"FP4 packed-scale kernels require block_k=64 * num_warps; \"\n            f\"got block_k={block_k}, num_warps={num_warps}\"\n        )\n    if block_k % kv_block_size != 0:\n        raise ValueError(f\"block_k={block_k} must be a multiple of kv_block_size={kv_block_size}\")\n\n\ndef _i32_buffer(ptr, width=1, byte_offset=None):\n    \"\"\"OOB-checked global i32 buffer-tensor over ``ptr`` (mirrors a max_size V#).\n\n    ``width`` shapes it ``(N, width)`` so a per-``width`` row can be sliced and\n    vector-copied; ``width=1`` gives a flat tensor for scalar ``[idx]`` loads.\n    ``byte_offset`` rebases the global pointer before constructing the resource;\n    buffer instruction offsets alone cannot address beyond 4 GiB.\n    \"\"\"\n    src = fx.get_iter(ptr)\n    it = fx.recast_iter(fx.PointerType.get(T.i32, src.memspace, 4), src)\n    if byte_offset is not None:\n        it = fx.add_offset(it, byte_offset // fx.Int64(4))\n    if width == 1:\n        lay = fx.make_layout((1 << 30,), (1,))\n    else:\n        lay = fx.make_layout((1 << 28, width), (width, 1))\n    return fx.rocdl.make_buffer_tensor(fx.make_view(it, lay))\n\n\ndef _load_vec4_i32(bt2d, elem_off):\n    \"\"\"Load 4 contiguous i32 at ``elem_off`` (multiple of 4) from a width-4\n    buffer-tensor, returning a raw v4i32 (OOB lanes read 0).\"\"\"\n    row = fx.slice(bt2d, (elem_off // fx.Int32(4), None))\n    row_div = fx.logical_divide(row, fx.make_layout(4, 1))\n    reg_ty = fx.MemRefType.get(T.i32, fx.LayoutType.get(4, 1), fx.AddressSpace.Register)\n    r = fx.memref_alloca(reg_ty, fx.make_layout(4, 1))\n    fx.copy(\n        fx.make_copy_atom(fx.rocdl.BufferCopy128b(), 4),\n        fx.slice(row_div, (None, fx.Int32(0))),\n        r,\n    )\n    return fx.memref_load_vec(r).ir_value()\n\n\ndef build_pa_mqa_logits_fp4_prefill_module(\n    block_k=256,\n    kv_block_size=64,\n    max_blocks_per_seq=256,\n    max_chunks_per_cta=16,\n    num_warps=DEFAULT_NUM_WARPS,\n    heads=DEFAULT_HEADS,\n    head_dim=DEFAULT_HEAD_DIM,\n    kv_page_stride: int | None = None,\n    kv_scale_page_stride: int | None = None,\n    block_table_stride: int | None = None,\n):\n    \"\"\"Build the ragged-prefill FP4 MQA logits kernel.\"\"\"\n    _validate_packed_scale_config(block_k, kv_block_size, num_warps)\n    block_threads_k = num_warps * WARP_SIZE\n    m_tiles = heads // MFMA_M\n    k_tiles = head_dim // 128  # outer K-loop iters (MFMA K=128)\n    assert head_dim % 128 == 0, f\"head_dim must be a multiple of 128 (MFMA K), got {head_dim}\"\n    assert heads % MFMA_M == 0, f\"heads must be a multiple of {MFMA_M}, got {heads}\"\n\n    N_TILES = block_k // MFMA_N\n    assert N_TILES % num_warps == 0, (\n        f\"block_k={block_k} -> N_TILES={N_TILES} must be multiple of num_warps={num_warps}\"\n    )\n    N_TILES_PER_WARP = N_TILES // num_warps\n\n    assert kv_block_size % MFMA_N == 0, f\"kv_block_size={kv_block_size} must be a multiple of MFMA_N={MFMA_N}\"\n    assert block_k % kv_block_size == 0, (\n        f\"block_k={block_k} must be a multiple of kv_block_size={kv_block_size}\"\n    )\n    TILES_PER_BLOCK = kv_block_size // MFMA_N\n    N_PHYS = (N_TILES_PER_WARP + TILES_PER_BLOCK - 1) // TILES_PER_BLOCK\n\n    # block_tables row stride (i32 elements).\n    _stride_bt = max_blocks_per_seq if block_table_stride is None else block_table_stride\n\n    # KV preshuffle layout: [block_id, K_TILES, K_chunk=4, kv_block_size, 16] uint8.\n    _kv_chunk_bytes = 16\n    _stride_kv_ktile = 4 * kv_block_size * _kv_chunk_bytes\n    _stride_kv_block = k_tiles * _stride_kv_ktile if kv_page_stride is None else kv_page_stride\n    # byte stride between consecutive nt tiles inside one kv block (one MFMA_N\n    # row of tokens); used as the per-nt constant `soffset` immediate delta.\n    _stride_kv_ntile = MFMA_N * _kv_chunk_bytes\n    # KV_scale: [block_id, K_TILES, K_chunks=4, kv_block_size]\n    _stride_kvs_ktile = 4 * kv_block_size\n    _stride_kvs_block = k_tiles * _stride_kvs_ktile if kv_scale_page_stride is None else kv_scale_page_stride\n\n    _kb_is_pow2 = kv_block_size & (kv_block_size - 1) == 0\n    _kb_log2 = kv_block_size.bit_length() - 1\n    _kb_mask = kv_block_size - 1\n\n    def _floordiv_kb(x):\n        return (x >> fx.Int32(_kb_log2)) if _kb_is_pow2 else (x // kv_block_size)\n\n    def _mod_kb(x):\n        return (x & fx.Int32(_kb_mask)) if _kb_is_pow2 else (x % kv_block_size)\n\n    QS_DW = (m_tiles + 3) // 4\n    qs_pad = QS_DW * 4\n    qs_pad_bits = qs_pad * 8\n\n    def _make_qs_buf_copy():\n        if qs_pad_bits == 32:\n            return fx.rocdl.BufferCopy32b()\n        elif qs_pad_bits == 64:\n            return fx.rocdl.BufferCopy64b()\n        elif qs_pad_bits == 128:\n            return fx.rocdl.BufferCopy128b()\n        else:\n            raise ValueError(f\"unsupported QS_DW={QS_DW} (qs_pad_bits={qs_pad_bits})\")\n\n    if N_PHYS == 1:\n\n        def _phys_to_list(phys_v):\n            return [phys_v] * N_TILES_PER_WARP\n\n    else:\n\n        def _phys_to_list(phys_v):\n            return [fx.Vector(phys_v)[nt // TILES_PER_BLOCK] for nt in range(N_TILES_PER_WARP)]\n\n    @flyc.kernel\n    def pa_mqa_logits_fp4_prefill_kernel(\n        out_logits_ptr: fx.Tensor,\n        q_ptr: fx.Tensor,\n        q_scale_ptr: fx.Tensor,\n        kv_cache_ptr: fx.Tensor,\n        kv_scale_ptr: fx.Tensor,\n        weights_ptr: fx.Tensor,\n        row_starts_ptr: fx.Tensor,\n        row_ends_ptr: fx.Tensor,\n        stride_out_row: Int32,\n        weight_scale: fx.Float32,\n        n_splits: Int32,\n        n_pages: Int32,\n    ):\n        tid = gpu.thread_idx.x\n        pid = gpu.block_idx.x\n\n        warp_id = tid >> 6\n        lane_id = tid % WARP_SIZE\n        lane_mod_16 = lane_id & 15\n        lane_div_16 = (lane_id >> 4) & 3\n\n        # Per-CTA assignment, on the device: row = pid // n_splits, split sp = pid % n_splits of the row's\n        # 256-key chunks [s >> 8, (e + 255) >> 8).\n        def _uniform(v):\n            return fx.Int32(fx.rocdl.readfirstlane(T.i32, v.ir_value()))\n\n        pid_i = fx.Int32(pid)\n        row_id = pid_i // n_splits\n        sp = pid_i - row_id * n_splits\n        rs_bt = _i32_buffer(row_starts_ptr, width=1)\n        re_bt = _i32_buffer(row_ends_ptr, width=1)\n        s_row = _uniform(fx.Int32(rs_bt[row_id]))\n        e_row = _uniform(fx.Int32(re_bt[row_id]))\n        # absolute key segments: split sp covers chunks [sp*C/S, (sp+1)*C/S) of the whole staged range, the same\n        # for every row (so a split stays on one XCD when S is a multiple or divisor of 8), clipped to the row.\n        c_lo = s_row >> fx.Int32(8)\n        c_hi = (e_row + fx.Int32(block_k - 1)) >> fx.Int32(8)\n        n_tot = (n_pages * fx.Int32(kv_block_size) + fx.Int32(block_k - 1)) >> fx.Int32(8)\n        seg_lo = (sp * n_tot) // n_splits\n        seg_hi = ((sp + fx.Int32(1)) * n_tot) // n_splits\n        c_a = (seg_lo > c_lo).select(seg_lo, c_lo)\n        c_b = (seg_hi < c_hi).select(seg_hi, c_hi)\n        a_tok = c_a * fx.Int32(block_k)\n        b_tok = c_b * fx.Int32(block_k)\n        local_start = (s_row > a_tok).select(s_row, a_tok)\n        local_end = (e_row < b_tok).select(e_row, b_tok)\n        if local_end > local_start:\n            ZERO_F = fx.Float32(0.0)\n            c0_i32 = fx.Int32(0)\n\n            chunk_start = c_a\n            chunk_count = c_b - c_a\n\n            win_len = local_end - local_start\n            _row_elems = fx.Int64(row_id) * fx.Int64(stride_out_row) + fx.Int64(local_start)\n            out_win = fx.rocdl.make_buffer_tensor(\n                fx.make_view(\n                    fx.recast_iter(\n                        fx.PointerType.get(T.f32, out_logits_ptr.memspace, 4),\n                        fx.add_offset(fx.get_iter(out_logits_ptr), _row_elems),\n                    ),\n                    fx.make_layout((win_len, 1), (1, 1)),\n                ),\n                max_size=False,\n                num_records_bytes=win_len * fx.Int32(4),\n            )\n            out_atom = fx.make_copy_atom(fx.rocdl.BufferCopy32b(), 1)\n            out_reg_ty = fx.MemRefType.get(T.f32, fx.LayoutType.get(1, 1), fx.AddressSpace.Register)\n            out_reg_lay = fx.make_layout(1, 1)\n\n            # Q load (hoisted): per (k_tile, mi_idx) a thread loads its 16-byte FP4\n            # chunk for head row mi_idx*16+lane_mod_16. Q: [total_tokens, H, D/2] uint8.\n            # Scaled FP4 16x16x128 MMA; opsel_b selects the per-nt scale byte, so one\n            # atom per nt (opsel_a stays 0 — Q scale is one byte per (k_tile, mi)).\n            mfma_atoms = [\n                fx.make_mma_atom(\n                    fx.rocdl.cdna4.MFMA_Scale(16, 16, 128, Float4E2M1FN, Float4E2M1FN, opsel_a=0, opsel_b=nt)\n                )\n                for nt in range(N_TILES_PER_WARP)\n            ]\n\n            Q_buf = fx.rocdl.make_buffer_tensor(q_ptr)\n            q_atom = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), 8)\n            q_reg_ty = fx.MemRefType.get(T.i8, fx.LayoutType.get(16, 1), fx.AddressSpace.Register)\n            q_reg_lay = fx.make_layout(16, 1)\n            q_a_ops = []\n            for k_tile in range_constexpr(k_tiles):\n                q_a_ops_kt = []\n                for mi_idx in range_constexpr(m_tiles):\n                    q_row = fx.Int32(mi_idx * MFMA_M) + lane_mod_16\n                    q_row_bytes = fx.slice(Q_buf, (row_id, q_row, None))\n                    q_row_div = fx.logical_divide(q_row_bytes, fx.make_layout(16, 1))\n                    col_idx = fx.Int32(k_tile * 4) + lane_div_16\n                    r = fx.memref_alloca(q_reg_ty, q_reg_lay)\n                    fx.copy(q_atom, fx.slice(q_row_div, (None, col_idx)), r)\n                    q_4xi32 = fx.Vector(fx.memref_load_vec(r)).bitcast(fx.Int32)\n                    a_frag = fx.make_rmem_tensor(4, fx.Int32)\n                    a_frag.store(q_4xi32)\n                    q_a_ops_kt.append(a_frag)\n                q_a_ops.append(q_a_ops_kt)\n\n            # Q scale: host-preshuffled [total_tokens, K_TILES, 4, 16, QS_PAD].\n            assert m_tiles <= 8, f\"m_tiles={m_tiles} > 8 not supported. Use heads <= 128.\"\n            QS_buf = fx.rocdl.make_buffer_tensor(q_scale_ptr)\n            qs_atom = fx.make_copy_atom(_make_qs_buf_copy(), 8)\n            qs_reg_ty = fx.MemRefType.get(T.i8, fx.LayoutType.get(qs_pad, 1), fx.AddressSpace.Register)\n            qs_reg_lay = fx.make_layout(qs_pad, 1)\n            q_scale_ops = []\n            for k_tile in range_constexpr(k_tiles):\n                row = fx.slice(QS_buf, (row_id, fx.Int32(k_tile), lane_div_16, lane_mod_16, None))\n                r = fx.memref_alloca(qs_reg_ty, qs_reg_lay)\n                fx.copy(qs_atom, row, r)\n                qs_dws_vec = fx.Vector(fx.memref_load_vec(r)).bitcast(fx.Int32)\n                qs_dws = [qs_dws_vec[i] for i in range(QS_DW)]\n                q_scale_ops.append([qs_dws[mi // 4] >> fx.Int32(8 * (mi % 4)) for mi in range(m_tiles)])\n\n            # Weights (hoisted): [total_tokens, H] bf16, addressed by row_id.\n            # Loaded as bf16 then widened to f32 for the per-head weighting below.\n            W_buf = fx.rocdl.make_buffer_tensor(weights_ptr)\n            w_row = fx.slice(W_buf, (row_id, None))\n            w_tiled_mi = fx.logical_divide(w_row, fx.make_layout(MFMA_M, 1))\n            w_atom = fx.make_copy_atom(fx.rocdl.BufferCopy64b(), 16)\n            w_reg_ty = fx.MemRefType.get(T.bf16, fx.LayoutType.get(4, 1), fx.AddressSpace.Register)\n            w_reg_lay = fx.make_layout(4, 1)\n            ws_vec = fx.Vector.from_elements([weight_scale] * 4, dtype=fx.Float32)\n            w_per_lane = []\n            for mi_idx in range_constexpr(m_tiles):\n                tile = fx.slice(w_tiled_mi, (None, fx.Int32(mi_idx)))\n                tile_div = fx.logical_divide(tile, fx.make_layout(4, 1))\n                r = fx.memref_alloca(w_reg_ty, w_reg_lay)\n                fx.copy(w_atom, fx.slice(tile_div, (None, lane_div_16)), r)\n                w_f32 = fx.Vector(fx.memref_load_vec(r).to(fx.Float32))\n                w_per_lane.append(w_f32 * ws_vec)\n\n            # ── prologue + N-1 prefetch loop + epilogue ──\n\n            assert N_TILES_PER_WARP == 4 and N_PHYS == 1 and kv_block_size == 64, \"scalar paging assumes 64-key pages\"\n            # wave-uniform: this warp's 64 keys of a 256-key chunk are page (chunk*4 + warp), slot = lane_mod_16 + 16*nt\n            warp_u = _uniform(fx.Int32(warp_id))\n            # loop-invariant per-lane offsets: the 4-nt scale dword (byte nt = nt's scale) and the KV 16-byte chunk\n            kvs_lane_off = [\n                (fx.Int32(k_tile * _stride_kvs_ktile) + lane_div_16 * kv_block_size + lane_mod_16 * fx.Int32(4))\n                >> fx.Int32(2)\n                for k_tile in range(k_tiles)\n            ]\n            kv_lane_off = (lane_div_16 * kv_block_size * _kv_chunk_bytes + lane_mod_16 * _kv_chunk_bytes) >> fx.Int32(2)\n\n            def _prefetch_chunk(c_i32_arg, phys_list_unused):\n                kv_list = []\n                kvs_packed_list = []\n                page = (chunk_start + c_i32_arg) * fx.Int32(4) + warp_u\n                valid = ((page * fx.Int32(64)) < local_end) & (page < n_pages)\n                phys_shared = fx.Int64(_uniform(valid.select(page, fx.Int32(0))))\n                kv_bt = _i32_buffer(\n                    kv_cache_ptr,\n                    width=4,\n                    byte_offset=phys_shared * fx.Int64(_stride_kv_block),\n                )\n                kvs_bt = _i32_buffer(\n                    kv_scale_ptr,\n                    width=1,\n                    byte_offset=phys_shared * fx.Int64(_stride_kvs_block),\n                )\n                for k_tile in range_constexpr(k_tiles):\n                    kvs_packed_list.append(fx.Int32(kvs_bt[kvs_lane_off[k_tile]]))\n                for nt in range_constexpr(N_TILES_PER_WARP):\n                    for k_tile in range_constexpr(k_tiles):\n                        kv_soffset = k_tile * _stride_kv_ktile + nt * _stride_kv_ntile\n                        kv_c = _load_vec4_i32(kv_bt, kv_lane_off + fx.Int32(kv_soffset // 4))\n                        kv_list.append(kv_c)\n\n                return kv_list, kvs_packed_list\n\n            def _issue_nt_mfmas(kv_list_in, kvs_packed_per_kt, nt):\n                zero = fx.full(4, 0.0, fx.Float32)\n                accs = [zero] * m_tiles\n                # opsel_b=nt is baked into the atom; scale_b is the packed 4-nt word.\n                atom = mfma_atoms[nt]\n                for k_tile in range_constexpr(k_tiles):\n                    b_frag = fx.make_rmem_tensor(4, fx.Int32)\n                    b_frag.store(fx.Vector(kv_list_in[nt * k_tiles + k_tile]))\n                    kv_scale_packed = kvs_packed_per_kt[k_tile]\n                    for mi_idx in range_constexpr(m_tiles):\n                        c_frag = fx.make_rmem_tensor(4, fx.Float32)\n                        c_frag.store(fx.Vector(accs[mi_idx]))\n                        fx.gemm(\n                            atom,\n                            c_frag,\n                            q_a_ops[k_tile][mi_idx],\n                            b_frag,\n                            c_frag,\n                            scale_a=q_scale_ops[k_tile][mi_idx],\n                            scale_b=kv_scale_packed,\n                        )\n                        accs[mi_idx] = c_frag.load()\n                return accs\n\n            def _post_process_nt(accs, nt, c_i32_arg):\n                \"\"\"relu + per-head weight + per-thread sum over this lane's heads (the cross-lane sum is deferred).\"\"\"\n                zero = fx.full(4, 0.0, fx.Float32)\n                thread_sum = ZERO_F\n                for mi_idx in range_constexpr(m_tiles):\n                    relu_v = fx.Vector(accs[mi_idx]).maximumf(zero)\n                    w_v = fx.Vector(w_per_lane[mi_idx])\n                    for elem in [0, 1, 2, 3]:\n                        thread_sum = fx.fma(relu_v[elem], w_v[elem], thread_sum)\n                return thread_sum\n\n            lane_i32_c = fx.Int32(lane_id)\n            g_bit0 = (lane_div_16 & fx.Int32(1)) == fx.Int32(1)\n            g_bit1 = (lane_div_16 & fx.Int32(2)) == fx.Int32(2)\n            peer16 = (lane_i32_c ^ fx.Int32(16)) * fx.Int32(4)\n            peer32 = (lane_i32_c ^ fx.Int32(32)) * fx.Int32(4)\n\n            def _bperm(val, peer_byte):\n                return fx.Int32(rocdl.ds_bpermute(T.i32, peer_byte, val.bitcast(fx.Int32))).bitcast(fx.Float32)\n\n            def _reduce_store(sums, c_i32_arg):\n                \"\"\"Transposed cross-group sum: lane 16g+m ends with key nt=g, slot m, as (s0+s1)+(s2+s3) up to\n                commutation (bitwise the per-nt butterfly's result); one coalesced store per wave.\"\"\"\n                a0, a1, a2, a3 = sums\n                # xor-16: a lane with g&1 = b keeps nt b and 2+b, sends nt 1-b and 3-b\n                send0 = g_bit0.select(a0, a1)\n                send1 = g_bit0.select(a2, a3)\n                keep0 = g_bit0.select(a1, a0)\n                keep1 = g_bit0.select(a3, a2)\n                p0 = keep0 + _bperm(send0, peer16)\n                p1 = keep1 + _bperm(send1, peer16)\n                # xor-32: a lane with g&2 = 2c keeps P_c, sends P_{1-c}\n                send2 = g_bit1.select(p0, p1)\n                keep2 = g_bit1.select(p1, p0)\n                total = keep2 + _bperm(send2, peer32)\n\n                token_base = (chunk_start + c_i32_arg) * fx.Int32(block_k) + warp_u * fx.Int32(64)\n                r_out = fx.memref_alloca(out_reg_ty, out_reg_lay)\n                fx.memref_store_vec(fx.Vector.from_elements([total], dtype=fx.Float32), r_out)\n                out_offset = token_base - local_start + lane_i32_c\n                out_offset = (out_offset >= fx.Int32(0)).select(out_offset, fx.Int32((1 << 30) - 1))\n                fx.copy(out_atom, r_out, fx.slice(out_win, (out_offset, None)))\n\n            def _compute_chunk(kv_list_in, kvs_packed_list_in, c_i32_arg, nt0_accs_in=None):\n                assert N_TILES_PER_WARP == 4, \"pipelined-nt structure currently hardcoded for NTPW=4\"\n\n                accs_nt0 = (\n                    _issue_nt_mfmas(kv_list_in, kvs_packed_list_in, 0)\n                    if nt0_accs_in is None\n                    else list(nt0_accs_in)\n                )\n\n                accs_nt1 = _issue_nt_mfmas(kv_list_in, kvs_packed_list_in, 1)\n                s0 = _post_process_nt(accs_nt0, 0, c_i32_arg)\n\n                accs_nt2 = _issue_nt_mfmas(kv_list_in, kvs_packed_list_in, 2)\n                s1 = _post_process_nt(accs_nt1, 1, c_i32_arg)\n\n                accs_nt3 = _issue_nt_mfmas(kv_list_in, kvs_packed_list_in, 3)\n                s2 = _post_process_nt(accs_nt2, 2, c_i32_arg)\n\n                s3 = _post_process_nt(accs_nt3, 3, c_i32_arg)\n                _reduce_store((s0, s1, s2, s3), c_i32_arg)\n\n            # === Prologue ===\n            N_KV = k_tiles * N_TILES_PER_WARP\n            last_c_i32 = chunk_count - fx.Int32(1)\n\n            kv_pre, kvs_pre = _prefetch_chunk(c0_i32, None)\n\n            nt0_accs_init = _issue_nt_mfmas(list(kv_pre), list(kvs_pre), 0)\n            nt0_init_scalars = []\n            for v in nt0_accs_init:\n                vv = fx.Vector(v)\n                for i in range(4):\n                    nt0_init_scalars.append(vv[i])\n\n            # === Main loop: chunk_count - 1 iterations ===\n            N_KVS = k_tiles\n            chunk_count_minus_1_i32 = chunk_count - fx.Int32(1)\n            chunk_count_minus_1_idx = fx.Int64(chunk_count_minus_1_i32)\n            init_args = list(kv_pre) + list(kvs_pre) + nt0_init_scalars\n            for c_idx, state in range(0, chunk_count_minus_1_idx, 1, init=init_args):\n                kv_cur_list = [state[i] for i in range(N_KV)]\n                kvs_cur_list = [state[N_KV + i] for i in range(N_KVS)]\n                nt0_acc_base = N_KV + N_KVS\n                nt0_accs_cur = [\n                    fx.Vector.from_elements(\n                        [state[nt0_acc_base + mi * 4 + i] for i in range(4)],\n                        dtype=fx.Float32,\n                    )\n                    for mi in range(m_tiles)\n                ]\n                c_idx_i32 = fx.Int32(c_idx)\n                c_next_i32 = c_idx_i32 + fx.Int32(1)\n\n                _compute_chunk(kv_cur_list, kvs_cur_list, c_idx_i32, nt0_accs_in=nt0_accs_cur)\n\n                kv_next, kvs_next = _prefetch_chunk(c_next_i32, None)\n\n                nt0_accs_next = _issue_nt_mfmas(list(kv_next), list(kvs_next), 0)\n                nt0_next_scalars = []\n                for v in nt0_accs_next:\n                    vv = fx.Vector(v)\n                    for i in range(4):\n                        nt0_next_scalars.append(vv[i])\n\n                results = yield (\n                    list(kv_next) + list(kvs_next) + nt0_next_scalars\n                )\n\n            # === Epilogue: process last chunk (chunk_count - 1) ===\n            kv_last_list = [results[i] for i in range(N_KV)]\n            kvs_last_list = [results[N_KV + i] for i in range(N_KVS)]\n            nt0_acc_base = N_KV + N_KVS\n            nt0_accs_last = [\n                fx.Vector.from_elements(\n                    [results[nt0_acc_base + mi * 4 + i] for i in range(4)],\n                    dtype=fx.Float32,\n                )\n                for mi in range(m_tiles)\n            ]\n            _compute_chunk(kv_last_list, kvs_last_list, last_c_i32, nt0_accs_in=nt0_accs_last)\n\n    return pa_mqa_logits_fp4_prefill_kernel, block_threads_k\n\n\n@functools.cache\ndef _launcher(heads: int, kv_page_stride: int, kv_scale_page_stride: int):\n    kfn, block_threads = build_pa_mqa_logits_fp4_prefill_module(\n        block_k=256,\n        kv_block_size=64,\n        num_warps=DEFAULT_NUM_WARPS,\n        heads=heads,\n        head_dim=DEFAULT_HEAD_DIM,\n        kv_page_stride=kv_page_stride,\n        kv_scale_page_stride=kv_scale_page_stride,\n    )\n\n    @flyc.jit\n    def launch_pa_mqa_logits_fp4_prefill(\n        out,\n        q,\n        qs,\n        kv,\n        kvs,\n        w,\n        starts,\n        ends,\n        stride_out: fx.Int32,\n        weight_scale: fx.Float32,\n        n_splits: fx.Int32,\n        n_pages: fx.Int32,\n        gx: fx.Int32,\n        stream: fx.Stream,\n    ):\n        gxi = fx.Int64(gx)\n        kfn(out, q, qs, kv, kvs, w, starts, ends, stride_out, weight_scale, n_splits, n_pages).launch(\n            grid=(gxi,), block=(block_threads, 1, 1), stream=stream\n        )\n\n    return launch_pa_mqa_logits_fp4_prefill\n\n\n# per launcher: its CompiledFunction, from the first call on\n_COMPILED: dict = {}\n\n\ndef score(q_fp4, q_scale, kv_cache, kv_scale, weights, row_starts, row_ends, n_splits, weight_scale, out):\n    \"\"\"out[row, start:end] = the row's scores of its window's keys, the rest of out untouched; each row's 256-key\n    chunks split n_splits ways, one workgroup a (row, split).\"\"\"\n    heads = q_fp4.shape[1]\n    rows, pages = q_fp4.shape[0], kv_cache.shape[0]\n    launcher = _launcher(heads, kv_cache.stride(0), kv_scale.stride(0))\n    args = (\n        out,\n        q_fp4,\n        q_scale,\n        kv_cache.as_strided((1,), (1,)),\n        kv_scale.as_strided((1,), (1,)),\n        weights,\n        row_starts,\n        row_ends,\n        out.stride(0),\n        float(weight_scale),\n        n_splits,\n        pages,\n        rows * n_splits,\n        torch.cuda.current_stream(q_fp4.device),\n    )\n    compiled = _COMPILED.get(launcher)\n    if compiled is None:\n        # flyc.compile compiles (or loads) and launches it\n        _COMPILED[launcher] = flyc.compile(launcher, *args)\n    else:\n        compiled(*args)\n"
+      }
+    ]
+  }
+}

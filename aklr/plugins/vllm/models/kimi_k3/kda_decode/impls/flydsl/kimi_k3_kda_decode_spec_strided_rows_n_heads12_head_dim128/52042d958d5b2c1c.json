@@ -1,0 +1,511 @@
+{
+  "schema_version": 5,
+  "name": "kimi_k3_kda_decode_spec_strided_rows_n_heads12_head_dim128",
+  "contract_id": "kimi_k3_kda_decode_spec@1.0",
+  "description": "Kimi-K3's KDA speculative decode, a window of w = n_tokens / n_seqs tokens a sequence: sequence s's window is tokens s * w .. s * w + w - 1 (the token after its accepted one, then its drafts); token t's q, k and v are heads h, n_heads + h and 2 * n_heads + h of qkv[t], and its slot is state_indices[t], whose head h holds the state S[v, k] = state_cache[slot, h * head_dim + v, k]. Per head, q and k are L2-normalized (x / sqrt(sum(x**2) + 1e-6)) and q multiplied by scale; the gate g = lower_bound * sigmoid(exp(a_log[h]) * (raw_g + g_bias[h])) per channel; beta = sigmoid(raw_beta). The window starts from the state of the start slot state_indices[s * w + num_accepted_tokens[s] - 1]; where that is positive, token by token S = S * exp(g)[None, :], S = S + beta * (v - S @ k)[:, None] * k[None, :], out = S @ q, and S is written to the token's slot where that is positive. Where the start slot is <= 0 (vLLM's padding) the window's outputs are zero and no slot is written. Slots no token writes are left unchanged.",
+  "op_type": "kda_decode",
+  "axes": {
+    "n_seqs": {
+      "type": "var",
+      "description": "Sequences of the batch."
+    },
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens of every window, back to back: n_tokens / n_seqs a window."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Slots of the state cache."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 12,
+      "description": "KDA heads on this rank."
+    },
+    "head_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Width of every q, k, v and gate head, and the side of a head's square state."
+    },
+    "qkv_heads": {
+      "type": "const",
+      "value": 36,
+      "description": "Heads of a packed q|k|v row: q's, then k's, then v's."
+    },
+    "state_rows": {
+      "type": "const",
+      "value": 1536,
+      "description": "Rows of one slot: every head's state, v by v."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "qkv": {
+      "shape": [
+        "n_tokens",
+        "qkv_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's packed q|k|v row after the short convolution (q and k before the L2 norm): heads 0 .. n_heads - 1 are q's, then k's, then v's."
+    },
+    "raw_g": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 128
+      },
+      "description": "The full-rank gate projection (f_b_proj's output), before g_bias and the activation."
+    },
+    "raw_beta": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        1
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The beta projection, one per token and head, before the sigmoid; a unit last dim, so that its rows may be apart by more than a row (a column slice of vLLM's fused projection)."
+    },
+    "a_log": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -2,
+        "log2_hi": 1.47
+      },
+      "description": "Log of each head's gate scale (vLLM's A_log)."
+    },
+    "g_bias": {
+      "shape": [
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The gate's per-channel bias (vLLM's dt_bias, flat (n_heads * head_dim))."
+    },
+    "state_cache": {
+      "shape": [
+        "n_slots",
+        "state_rows",
+        "head_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The paged recurrent states: slot by slot, each head's (v, k) state, the head's head_dim rows of head_dim keys."
+    },
+    "state_indices": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each token's slot, window by window (vLLM's [n_seqs, window] rows of its block table); the positive ones distinct."
+    },
+    "num_accepted_tokens": {
+      "shape": [
+        "n_seqs"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 1,
+        "hi": "n_tokens // n_seqs",
+        "distinct": false
+      },
+      "description": "Each sequence's tokens accepted at its last step, 1 .. its window: the window starts from the state in the slot of its token num_accepted_tokens - 1."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies the normalized queries; vLLM passes head_dim ** -0.5."
+    },
+    "lower_bound": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "The gate's floor per token (Kimi-K3's gate_lower_bound); vLLM asserts it in [-5, 0)."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's S @ q after its update, zero in a window whose start slot is <= 0."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_seqs": 1,
+        "n_tokens": 5,
+        "n_slots": 6
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 1,
+        "n_tokens": 8,
+        "n_slots": 9
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 2,
+        "n_tokens": 10,
+        "n_slots": 11
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 2,
+        "n_tokens": 16,
+        "n_slots": 17
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 3,
+        "n_tokens": 15,
+        "n_slots": 16
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 3,
+        "n_tokens": 24,
+        "n_slots": 25
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 4,
+        "n_tokens": 20,
+        "n_slots": 21
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 4,
+        "n_tokens": 32,
+        "n_slots": 33
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 5,
+        "n_tokens": 25,
+        "n_slots": 26
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 6,
+        "n_tokens": 30,
+        "n_slots": 31
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 6,
+        "n_tokens": 48,
+        "n_slots": 49
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 7,
+        "n_tokens": 35,
+        "n_slots": 36
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 8,
+        "n_tokens": 40,
+        "n_slots": 41
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 8,
+        "n_tokens": 64,
+        "n_slots": 65
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 9,
+        "n_tokens": 45,
+        "n_slots": 46
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 10,
+        "n_tokens": 50,
+        "n_slots": 51
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 12,
+        "n_tokens": 60,
+        "n_slots": 61
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 12,
+        "n_tokens": 96,
+        "n_slots": 97
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 14,
+        "n_tokens": 112,
+        "n_slots": 113
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 16,
+        "n_tokens": 80,
+        "n_slots": 81
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 20,
+        "n_tokens": 100,
+        "n_slots": 101
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 24,
+        "n_tokens": 120,
+        "n_slots": 121
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 32,
+        "n_tokens": 160,
+        "n_slots": 161
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 48,
+        "n_tokens": 240,
+        "n_slots": 241
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 64,
+        "n_tokens": 320,
+        "n_slots": 321
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 96,
+        "n_tokens": 480,
+        "n_slots": 481
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    },
+    {
+      "axes": {
+        "n_seqs": 120,
+        "n_tokens": 600,
+        "n_slots": 601
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "lower_bound": -5.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "strided_rows": {
+        "layouts": {
+          "qkv": {
+            "kind": "strided_rows"
+          },
+          "raw_g": {
+            "kind": "strided_rows"
+          },
+          "raw_beta": {
+            "kind": "strided_rows"
+          },
+          "state_cache": {
+            "kind": "strided_rows"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "storage",
+            "expected_value": "strided_rows"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.4"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# SPDX-License-Identifier: MIT\n# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.\n\n\"\"\"KDA speculative decode in FlyDSL for gfx950: each sequence's window of tokens (the one after its accepted token,\nthen its drafts), stepped through the gated delta rule from the state its accepted token left, every token's state\nwritten to its own slot, in one launch.\n\nA workgroup takes one (sequence, head) and a band of its state's value rows (8 rows a wave and lane row, rows_per_lane\nlane rows, waves waves): the band is read once, from the start slot state_indices[s * w + num_accepted[s] - 1] (w the\nwindow), kept in registers through the window and written after each token to that token's slot (where positive). 8\nlanes share a row, lane j holding keys 32 i + 4 j .. + 3 (i < 4), so each 16-byte access of a wave covers 8 whole\n128-byte lines. What does not depend on the state is done first, side by side: each 8-lane group takes a token of the\nwindow, normalizes its q and k, activates its gate and beta (sums over the group's lanes by DPP) and leaves them in LDS\nwith the token's slot and the band's v entries; the walk, a loop over the window carrying the band, reads its token\nfrom LDS, reduces the decayed rows' two dot products (with k, with q) over each row's 8 lanes, and gives the output\nS_d q + u (k q) and the row S_d + u k. The start slot's chain (the accepted count, then its slot) is issued first, the\ntoken operands in flight behind it. A window whose start slot is <= 0 (vLLM's padding) reads slot 0, writes no slot\nand gives zero outputs.\n\nOne build per head count and band shape serves every window length up to MAX_WINDOW and every sequence count.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl.compiler.kernel_function import CompilationContext\nfrom flydsl.expr import range_constexpr, rocdl\nfrom flydsl.expr.typing import BFloat16, Float32, Int32, Int64, T\nfrom flydsl.expr.typing import Vector as Vec\n\nMAX_WINDOW = 16  # tokens of a window the LDS holds: DSPARK's 8 (7 drafts) and more\n_K = 128  # head_dim: keys and values of a head, the side of its state\n_WAVE = 64\n_KL = 8  # lanes of one state row, and of one token in the prologue\n_KV = 4  # keys of one lane's 16-byte piece of a row\n_KP = _K // (_KL * _KV)  # pieces of a row one lane holds\n_LK = _K // _KL  # keys of a row one lane holds\n_LOG2E = 1.4426950408889634\n_EPS = 1e-6  # x / sqrt(sum(x**2) + eps): vLLM's\n_DPP_ROW8 = (0xB1, 0x4E, 0x141)  # quad_perm [1,0,3,2], quad_perm [2,3,0,1], row_half_mirror\n# (rows a lane, waves a workgroup): the walk is serial in the window, so the narrow band (the most workgroups) runs\n# up to many sequences\n_NARROW = (1, 1)\n_WIDE = (2, 2)\n_NARROW_MAX_GROUPS = 4096  # narrow-band workgroups beyond which the wide band runs\n_LLVM_OPTS = {\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 16}}\n\n\ndef _ld(p, off, ty=None):\n    if ty is None:\n        return fx.ptr_load(fx.add_offset(p, off))\n    return fx.ptr_load(fx.add_offset(p, off), ty)\n\n\ndef _st(val, p, off):\n    fx.ptr_store(val, fx.add_offset(p, off))\n\n\ndef _exp2f(x):\n    \"\"\"2^x by the bare v_exp_f32.\"\"\"\n    return Float32(rocdl.exp2(T.f32, fx.as_ir_value(Float32(x))))\n\n\ndef _rsqf(x):\n    \"\"\"1 / sqrt(x) by the bare v_rsq_f32.\"\"\"\n    return Float32(rocdl.rsq(T.f32, fx.as_ir_value(Float32(x))))\n\n\ndef _rcpf(x):\n    return Float32(rocdl.rcp(T.f32, fx.as_ir_value(Float32(x))))\n\n\ndef _sigmoidf(x):\n    \"\"\"sigmoid by v_exp_f32 and v_rcp_f32: x << 0 gives rcp(inf) = 0, x >> 0 gives 1, never NaN.\"\"\"\n    return _rcpf(Float32(1.0) + _exp2f(x * Float32(-_LOG2E)))\n\n\ndef _row_sum(x):\n    \"\"\"x summed over the 8 lanes 8 r .. 8 r + 7, in every one of them: DPP xor 1 and xor 2 in each quad, then the\n    row half's mirror (lane i with 7 - i: the other quad, its sum uniform by then).\"\"\"\n    for ctrl in _DPP_ROW8:\n        x = x + Float32(rocdl.update_dpp(T.f32, fx.as_ir_value(x), fx.as_ir_value(x), ctrl, 0xF, 0xF, True))\n    return x\n\n\ndef _floats(vecs):\n    return [Float32(Vec(v)[e]) for v in vecs for e in range(_KV)]\n\n\ndef _min(a, b):\n    return (a < b).select(a, b)\n\n\n@functools.cache\ndef _build(n_heads, rows_per_lane, waves):\n    H, R, W, L = n_heads, rows_per_lane, waves, MAX_WINDOW\n    BAND = (_WAVE // _KL) * R * W  # value rows of a workgroup\n    SPLIT = _K // BAND  # workgroups of a (sequence, head)\n    THREADS = _WAVE * W\n    GROUPS = THREADS // _KL  # tokens the prologue takes at once\n    PASSES = -(-L // GROUPS)\n    VPASSES = -(-(L * BAND) // THREADS)  # (token, row) v entries a thread stages\n    attrs = {\"llvm.passthrough\": [[\"amdgpu-flat-work-group-size\", f\"{THREADS},{THREADS}\"]]}\n\n    @fx.struct\n    class WindowShared:\n        qn: fx.Array[Float32, L * _K, 16]  # each token's normalized, scaled q\n        kn: fx.Array[Float32, L * _K, 16]  # normalized k\n        dec: fx.Array[Float32, L * _K, 16]  # exp(gate)\n        v: fx.Array[Float32, L * BAND, 16]  # the band's v entries\n        kq: fx.Array[Float32, L, 16]  # kn . qn\n        beta: fx.Array[Float32, L, 16]\n        slot: fx.Array[Int32, L, 16]  # the token's slot\n\n    @flyc.kernel\n    def kda_decode_spec(\n        sidx,\n        acc,\n        qkv,\n        s_qkv: fx.Int32,\n        graw,\n        s_g: fx.Int32,\n        gbias,\n        braw,\n        s_b: fx.Int32,\n        alog,\n        cache,\n        s_slot: fx.Int32,\n        out,\n        scale: fx.Float32,\n        lower_bound: fx.Float32,\n        window: fx.Int32,\n    ):\n        bid = Int32(fx.block_idx.x)\n        tid = Int32(fx.thread_idx.x)\n        band = bid % SPLIT\n        nh = bid // SPLIT\n        h = nh % H\n        n = nh // H\n        lane = tid % _WAVE\n        j = lane % _KL\n        grp = tid // _KL\n        rloc = (tid // _WAVE) * (_WAVE // _KL * R) + lane // _KL  # this lane's first row in the band (+ 8 rho)\n        row0 = band * BAND + rloc\n        tok0 = n * window\n        last = window - 1\n\n        # the start slot's chain first (the accepted count, then its token's slot), the token operands behind it\n        n_acc = Int32(_ld(acc, n))\n        lds = fx.SharedAllocator().allocate(WindowShared).peek()\n        lq, lk, ldec, lv = lds.qn.ptr, lds.kn.ptr, lds.dec.ptr, lds.v.ptr\n        lkq, lbeta, lslot = lds.kq.ptr, lds.beta.ptr, lds.slot.ptr\n\n        # the prologue's loads: group grp takes token grp (+ GROUPS a pass); a pass past the window does nothing, a\n        # group past it in a pass redoes the window's last token (the same values to the same places)\n        alg = Float32(_ld(alog, h))\n        bias4 = [Vec(_ld(gbias, h * _K + _KV * j + (_KL * _KV) * i, T.f32x4)) for i in range(_KP)]\n\n        def token_loads(p):\n            t = _min(Int32(p * GROUPS) + grp, last)\n            row = tok0 + t\n            qb = row * s_qkv + h * _K + _KV * j\n            kb = qb + H * _K\n            gb = row * s_g + h * _K + _KV * j\n            return (\n                t,\n                [Vec(_ld(qkv, qb + (_KL * _KV) * i, T.vec(_KV, T.bf16))) for i in range(_KP)],\n                [Vec(_ld(qkv, kb + (_KL * _KV) * i, T.vec(_KV, T.bf16))) for i in range(_KP)],\n                [Vec(_ld(graw, gb + (_KL * _KV) * i, T.vec(_KV, T.bf16))) for i in range(_KP)],\n                Vec(_ld(braw, row * s_b + h, T.vec(1, T.bf16))),\n                Int32(_ld(sidx, row)),\n            )\n\n        def token_prologue(loads):\n            t, qr, kr, gr, br, slot_t = loads\n            qf = _floats([v.to(Float32) for v in qr])\n            kf = _floats([v.to(Float32) for v in kr])\n            gf = _floats([v.to(Float32) for v in gr])\n            bf = _floats(bias4)\n            ssq = qf[0] * qf[0]\n            ssk = kf[0] * kf[0]\n            sqk = qf[0] * kf[0]\n            for e in range_constexpr(1, _LK):\n                ssq = fx.fma(qf[e], qf[e], ssq)\n                ssk = fx.fma(kf[e], kf[e], ssk)\n                sqk = fx.fma(qf[e], kf[e], sqk)\n            ssq = _row_sum(ssq)\n            ssk = _row_sum(ssk)\n            sqk = _row_sum(sqk)\n            rq = _rsqf(ssq + Float32(_EPS)) * scale\n            rk = _rsqf(ssk + Float32(_EPS))\n            ea = _exp2f(alg * Float32(_LOG2E))\n            lb2 = lower_bound * Float32(_LOG2E)\n            dec = [_exp2f(lb2 * _sigmoidf(ea * (gf[e] + bf[e]))) for e in range(_LK)]\n            base = t * _K + _KV * j\n            for i in range_constexpr(_KP):\n                piece = range(_KV * i, _KV * i + _KV)\n                _st(Vec.from_elements([qf[e] * rq for e in piece], Float32), lq, base + (_KL * _KV) * i)\n                _st(Vec.from_elements([kf[e] * rk for e in piece], Float32), lk, base + (_KL * _KV) * i)\n                _st(Vec.from_elements([dec[e] for e in piece], Float32), ldec, base + (_KL * _KV) * i)\n            if j == Int32(0):\n                _st(sqk * rk * rq, lkq, t)\n                _st(_sigmoidf(Vec(br).to(Float32)[0]), lbeta, t)\n                _st(slot_t, lslot, t)\n\n        first = token_loads(0)\n        # the band's v entries of the window, (token, row) pair q of the thread's VPASSES\n        vents = []\n        for q in range_constexpr(VPASSES):\n            pair = Int32(q * THREADS) + tid\n            t = _min(pair // BAND, last)\n            vents.append(\n                Vec(_ld(qkv, (tok0 + t) * s_qkv + (2 * H + h) * _K + band * BAND + pair % BAND, T.vec(1, T.bf16)))\n            )\n        slot = Int32(_ld(sidx, tok0 + n_acc - 1))\n        # a start slot <= 0 is read as slot 0 (always there); nothing is written for its window\n        valid = slot > Int32(0)\n        slot = valid.select(slot, Int32(0))\n        within = Int64((h * _K + row0) * _K + _KV * j)  # this lane's first piece in a slot\n        offs = [Int64((8 * rho) * _K + (_KL * _KV) * i) for rho in range(R) for i in range(_KP)]\n        sbase = Int64(slot) * Int64(s_slot) + within\n        st0 = [Vec(_ld(cache, sbase + off, T.f32x4)) for off in offs]\n        rocdl.sched_barrier(0)\n\n        token_prologue(first)\n        for p in range_constexpr(1, PASSES):\n            if Int32(p * GROUPS) < window:\n                token_prologue(token_loads(p))\n        for q in range_constexpr(VPASSES):\n            pair = Int32(q * THREADS) + tid\n            if pair < Int32(L * BAND):\n                _st(Vec(vents[q]).to(Float32)[0], lv, pair)\n        fx.gpu.barrier()\n\n        # the walk: the band through the window, token by token, out and the token's slot written as it goes\n        wbase = tok0 * (H * _K) + h * _K + row0  # out of the window's first token, this lane's first row\n        for it, state in range(Int32(0), window, Int32(1), init=st0):\n            t = Int32(it)\n            kb = t * _K + _KV * j\n            qn = _floats([_ld(lq, kb + (_KL * _KV) * i, T.f32x4) for i in range(_KP)])\n            kn = _floats([_ld(lk, kb + (_KL * _KV) * i, T.f32x4) for i in range(_KP)])\n            dec = _floats([_ld(ldec, kb + (_KL * _KV) * i, T.f32x4) for i in range(_KP)])\n            kq = Float32(_ld(lkq, t))\n            beta = Float32(_ld(lbeta, t))\n            slot_t = Int32(_ld(lslot, t))\n            news, outs = [], []\n            for rho in range_constexpr(R):\n                sd = [s * d for s, d in zip(_floats(state[rho * _KP : (rho + 1) * _KP]), dec)]\n                skv = sd[0] * kn[0]\n                sqv = sd[0] * qn[0]\n                for e in range_constexpr(1, _LK):\n                    skv = fx.fma(sd[e], kn[e], skv)\n                    sqv = fx.fma(sd[e], qn[e], sqv)\n                skv = _row_sum(skv)\n                sqv = _row_sum(sqv)\n                u = beta * (Float32(_ld(lv, t * BAND + rloc + 8 * rho)) - skv)\n                outs.append(valid.select(fx.fma(u, kq, sqv), Float32(0.0)))\n                for i in range_constexpr(_KP):\n                    piece = [fx.fma(u, kn[_KV * i + e], sd[_KV * i + e]) for e in range(_KV)]\n                    news.append(Vec.from_elements(piece, Float32))\n            if j == Int32(0):\n                for rho in range_constexpr(R):\n                    _st(Vec.from_elements([outs[rho]], Float32).to(BFloat16), out, wbase + t * (H * _K) + 8 * rho)\n            if valid & (slot_t > Int32(0)):\n                tbase = Int64(slot_t) * Int64(s_slot) + within\n                for p in range_constexpr(R * _KP):\n                    _st(news[p], cache, tbase + offs[p])\n            _ = yield news\n\n    @flyc.jit\n    def launch(\n        sidx,\n        acc,\n        qkv,\n        s_qkv: fx.Int32,\n        graw,\n        s_g: fx.Int32,\n        gbias,\n        braw,\n        s_b: fx.Int32,\n        alog,\n        cache,\n        s_slot: fx.Int32,\n        out,\n        scale: fx.Float32,\n        lower_bound: fx.Float32,\n        window: fx.Int32,\n        n_seqs: fx.Int32,\n        stream: fx.Stream,\n    ):\n        kda_decode_spec(\n            sidx, acc, qkv, s_qkv, graw, s_g, gbias, braw, s_b, alog, cache, s_slot, out, scale, lower_bound, window,\n            value_attrs=attrs,\n        ).launch(grid=(n_seqs * (H * SPLIT), 1, 1), block=(THREADS, 1, 1), stream=stream)  # fmt: skip\n\n    return launch, SPLIT\n\n\ndef _band(n_seqs, n_heads):\n    \"\"\"(rows a lane, waves a workgroup) of the launch for n_seqs sequences of n_heads heads.\"\"\"\n    narrow = n_seqs * n_heads * (_K // ((_WAVE // _KL) * _NARROW[0] * _NARROW[1]))\n    return _NARROW if narrow <= _NARROW_MAX_GROUPS else _WIDE\n\n\ndef _p(dtype, t):\n    return from_c_void_p(dtype, t.data_ptr(), assumed_align=16)\n\n\ndef _args(qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indices, num_accepted_tokens, scale, lower_bound,\n          out, stream):  # fmt: skip\n    \"\"\"The launch's arguments: pointers, row strides in elements, the scalars, the window, the sequence count and the\n    stream.\"\"\"\n    n_seqs = num_accepted_tokens.shape[0]\n    return (\n        _p(Int32, state_indices),\n        _p(Int32, num_accepted_tokens),\n        _p(BFloat16, qkv),\n        int(qkv.stride(0)),\n        _p(BFloat16, raw_g),\n        int(raw_g.stride(0)),\n        _p(Float32, g_bias),\n        _p(BFloat16, raw_beta),\n        int(raw_beta.stride(0)),\n        _p(Float32, a_log),\n        _p(Float32, state_cache),\n        int(state_cache.stride(0)),\n        _p(BFloat16, out),\n        float(scale),\n        float(lower_bound),\n        int(qkv.shape[0] // n_seqs),\n        int(n_seqs),\n        stream,\n    )\n\n\ndef run(*, qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indices, num_accepted_tokens, storage, scale,\n        lower_bound, out_dtype, out):  # fmt: skip\n    \"\"\"The windows' steps: into out, and every token's state into its slot of the state cache.\"\"\"\n    n_tokens, _, dim = qkv.shape\n    n_heads = raw_g.shape[1]\n    n_seqs = num_accepted_tokens.shape[0]\n    assert dim == _K and qkv.shape[1] == 3 * n_heads\n    assert n_tokens % n_seqs == 0 and n_tokens <= MAX_WINDOW * n_seqs\n    # dense heads in rows any distance apart; each slot's rows dense\n    assert qkv.stride()[1:] == (_K, 1) and raw_g.stride()[1:] == (_K, 1) and raw_beta.stride(1) == 1\n    assert state_cache.stride()[1:] == (_K, 1) and out.is_contiguous()\n    launch, _ = _build(n_heads, *_band(n_seqs, n_heads))\n    stream = fx.Stream(torch.cuda.current_stream(qkv.device))\n    with CompilationContext.compile_hints(_LLVM_OPTS):\n        launch(*_args(qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indices, num_accepted_tokens, scale,\n                      lower_bound, out, stream))  # fmt: skip\n"
+      }
+    ]
+  }
+}
