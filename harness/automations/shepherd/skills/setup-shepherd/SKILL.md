@@ -31,7 +31,8 @@ Rounds read the shared skills by path from the checkout, never from an installed
 - `read-validation`
 - `open-pr`
 - `report-progress`
-- `kb`
+- `kernel-optimization-book`
+- `aklr-kernel-rules`
 
 If any is missing, stop and explain the failure. Do not add `harness/automations/shepherd/skills/` to a plugin manifest.
 

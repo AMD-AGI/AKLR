@@ -86,7 +86,7 @@ step removes the job's container. This does not change the separate AgentX workf
 There is no automatic fallback between backends when the selected runners are busy or offline.
 
 For PRs changing only kernel schemas under `aklr/plugins/aiter` (optionally with Markdown case
-notes under `harness/skills/kb/cases/`), AITER's GPU baseline/reference comparison
+notes under `harness/skills/kernel-optimization-book/cases/`), AITER's GPU baseline/reference comparison
 runs every small point for the affected contract IDs. A replacement includes the IDs
 from both versions. Unrecognized changes or a contract without a small point use the
 full comparison. The other unit tests and per-image kernel validation keep their usual

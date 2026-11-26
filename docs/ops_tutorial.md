@@ -209,7 +209,7 @@ There are three outcomes:
 | some workloads marked `(demoted)` | those workloads are wrong (such as `numeric_mismatch`) or too slow (`not_faster`). Inference does not use the kernel for them; validation does not fail on them | improve the kernel, or remove those values of `m` from the script and generate the file again |
 | `no_qualifying_workload` | no workload is both correct and fast; validation fails | improve the kernel |
 
-How to read an accuracy failure, and whether a slow result is the machine's noise: `harness/skills/read-validation/SKILL.md`. How to make a kernel fast: `harness/skills/kb/SKILL.md`.
+How to read an accuracy failure, and whether a slow result is the machine's noise: `harness/skills/read-validation/SKILL.md`. How to make a kernel fast: `harness/skills/kernel-optimization-book/SKILL.md`.
 
 ## 5. Open a PR, and when it takes effect
 

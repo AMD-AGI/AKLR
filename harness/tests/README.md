@@ -5,6 +5,9 @@ This directory is reserved for tests of the AKLR skills, the scripts in
 
 - `forge_task/`: the forge_task tool against a AKLR stand-in, CPU only:
   `python -m pytest harness/tests/forge_task`.
+- `kernel_optimization_book/`: the book's lint refuses citations of this repository, and the book lints clean,
+  CPU only: `python -m pytest harness/tests/kernel_optimization_book`. Pre-commit runs the lint itself when a page
+  of the book changes.
 - `remote_gpu/`: the remote-gpu CLI against a fake two-node cluster on this machine, no scheduler,
   ssh or GPU: `python -m pytest harness/tests/remote_gpu`.
 

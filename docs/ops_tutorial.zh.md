@@ -209,7 +209,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/ait
 | 部分 workload 标了 `(demoted)`（降级） | 这些 workload 不对（如 `numeric_mismatch`）或不够快（`not_faster`）。推理时它们不用这个 kernel；验证本身不算失败 | 改 kernel，或者从脚本里删掉这些 `m`，重新生成 |
 | `no_qualifying_workload` | 没有一个 workload 又对又快，验证失败 | 改 kernel |
 
-精度错误怎么读、慢是不是机器波动造成的，见 `harness/skills/read-validation/SKILL.md`。怎么把 kernel 写快，见 `harness/skills/kb/SKILL.md`。
+精度错误怎么读、慢是不是机器波动造成的，见 `harness/skills/read-validation/SKILL.md`。怎么把 kernel 写快，见 `harness/skills/kernel-optimization-book/SKILL.md`。
 
 ## 5. 提 PR，合入后什么时候生效
 
