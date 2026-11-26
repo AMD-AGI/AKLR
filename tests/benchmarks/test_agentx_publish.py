@@ -86,7 +86,7 @@ def test_a_run_replaces_only_its_targets(tmp_path, published):
     assert (summary["id"], summary["path"], summary["last_run"]) == ("agentx", "index.html", source("2"))
     assert (summary["targets"], summary["status_counts"]) == (3, {"ok": 3})
     index = (section / "index.html").read_text()
-    assert 'href="https://github.com/o/r/actions/runs/2"><code>22222222</code>' in index
+    assert 'href="https://github.com/o/r/commit/22222222"><code>22222222</code>' in index
     assert index.count('href="../index.html"') == 2
 
 
@@ -180,13 +180,14 @@ def test_the_site_workflow_deploys_only_after_main_runs():
     site = workflow("site.yaml")
     run = site[True]["workflow_run"]
     assert (run["workflows"], run["types"], run["branches"]) == (
-        ["AKLR-agentx-ci", "AKLR-CI", "AKLR-e2e-perf-ci"],
+        ["AKLR-agentx-ci", "AKLR-CI", "AKLR-e2e-perf-ci", "AKLR-site-rerender"],
         ["completed"],
         ["main"],
     )
     assert workflow("agentx-ci.yaml")["name"] == "AKLR-agentx-ci"
     assert workflow("e2e-perf-ci.yaml")["name"] == "AKLR-e2e-perf-ci"
     assert workflow("ci.yaml")["name"] == "AKLR-CI"
+    assert workflow("site-rerender.yaml")["name"] == "AKLR-site-rerender"
     build, deploy = site["jobs"]["build"], site["jobs"]["deploy"]
     assert "github.event.workflow_run.event" in build["if"]
     assert build["permissions"] == {"contents": "read"}

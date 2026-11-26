@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from html import escape
@@ -13,7 +14,15 @@ from perf_utils.gh import repo_url
 
 from agentx.model_config import validate_framework_id, validate_model_id, validate_target_id
 from agentx.performance_analysis import aklr_pairing_error
-from agentx.report import LANGS, language_switch, render_document, status_label, tr, write_report
+from agentx.report import (
+    LANGS,
+    language_switch,
+    missing_summary,
+    render_document,
+    status_label,
+    tr,
+    write_report,
+)
 from agentx.serving_config import POLICY, SelectionError, point_id, validate_manifest
 from agentx.utils import (
     LEGACY_METRIC_AXES,
@@ -105,6 +114,54 @@ def eligible(
         return False
 
 
+def measured_fields(view: dict, repo_url: str) -> dict:
+    """Index fields for the measurement a target page shows."""
+    run_id = str(view["run"].get("id", ""))
+    return {
+        "report": True,
+        "measured_at": view["run"]["finished_at"],
+        "measured_run": run_id or None,
+        "measured_url": view["run"].get("job_url")
+        or (f"{repo_url}/actions/runs/{run_id}" if run_id.isdigit() else None),
+        "points_ok": sum(
+            p["status"] == "ok" for p in view["points"] + view.get("control", {}).get("points", [])
+        ),
+        "points_total": view["run"]["points_expected"]
+        + view.get("control", {}).get("run", {}).get("points_expected", 0),
+    }
+
+
+def page_notice(item: dict, shown: dict, historical: bool) -> dict[str, str] | None:
+    """The banner of a target page: a historical measurement, or an unusable historical baseline."""
+    if historical:
+        return {
+            lang: tr(
+                lang,
+                f"Historical measurement: this run is {status_label(lang, item['status'])}; "
+                f"measured at {shown['run']['finished_at']}.",
+                f"历史测量：本轮状态为{status_label(lang, item['status'])}；"
+                f"测量时间 {shown['run']['finished_at']}。",
+            )
+            + (
+                tr(lang, " Current failure: ", " 本轮失败原因：") + str(item["error"])
+                if item.get("error")
+                else ""
+            )
+            for lang in LANGS
+        }
+    if baseline_kind(shown) in item.get("baseline_unavailable", {}):
+        return {
+            lang: tr(
+                lang,
+                "The historical baseline is preserved, but lacks full-response P90 ITL; "
+                "its E2E interactivity cannot be compared on this axis.",
+                "历史基线已保留，但缺少完整响应 P90 ITL；不能用其 E2E 交互速度比较当前横轴。",
+            )
+            for lang in LANGS
+        }
+    return None
+
+
 class PreviousSite:
     def __init__(self, directory: Path | None, url: str | None):
         self.directory, self.url = directory, url.rstrip("/") if url else None
@@ -140,8 +197,6 @@ def source_commits(manifest: dict) -> list[str]:
 
 
 def index_page(manifest: dict, lang: str, title: str, home: str | None = None) -> str:
-    modes = {"live / pareto": tr(lang, "Live · Pareto-selected", "实测 · Pareto 选点")}
-    baseline_labels = {"pareto": tr(lang, "Pareto-selected", "前沿选点")}
     rows = []
     for item in manifest["targets"]:
         model_id, target_id, framework_id = target_key(item)
@@ -149,46 +204,38 @@ def index_page(manifest: dict, lang: str, title: str, home: str | None = None) -
         if item.get("report"):
             relative = target_path(model_id, target_id, framework_id).as_posix()
             label = f'<a href="{relative}/index.html?lang={lang}">{label}</a>'
-        baseline_lines = [
-            f"{escape(baseline_labels.get(mode, mode))}: {escape(date)}"
-            for mode, date in item.get("baselines", {}).items()
-        ]
-        baseline_lines += [
-            f"{escape(baseline_labels.get(mode, mode))}: "
-            + tr(lang, "full-response P90 unavailable", "缺少完整响应 P90，暂不可比")
-            for mode in item.get("baseline_unavailable", {})
-        ]
-        baselines = "<br>".join(baseline_lines) or "—"
-        mode = item.get("mode", "—")
-        error = str(item.get("error") or "")
-        detail = (
-            f'<br><span class="muted">{escape(error[:300])}{"…" if len(error) > 300 else ""}</span>'
-            if error
-            else ""
-        )
+        measured_at = str(item.get("measured_at") or "—")
+        measured = escape(measured_at)
+        if measured_at != "—":
+            stamp = re.match(r"(\d{4}-\d\d-\d\d)T(\d\d:\d\d)", measured_at)
+            full = f"{stamp[1]} {stamp[2]} UTC" if stamp else measured_at
+            measured = f'<span title="{escape(full)}">{escape(measured_at[:10])}</span>'
+            if item.get("measured_url") and item.get("measured_run"):
+                measured += (
+                    f'<br><a href="{escape(item["measured_url"])}">run {escape(item["measured_run"])}</a>'
+                )
         source = item.get("source") or {}
-        origin = (
-            f'<a href="{escape(source["run_url"])}"><code>{escape(source["commit"][:8])}</code></a>'
-            if source.get("run_url") and source.get("commit")
-            else "—"
-        )
+        commit = "—"
+        if source.get("commit"):
+            commit = f"<code>{escape(source['commit'][:8])}</code>"
+            repo, _, _ = str(source.get("run_url") or "").partition("/actions/runs/")
+            if repo:
+                commit = f'<a href="{escape(repo)}/commit/{escape(source["commit"])}">{commit}</a>'
         rows.append(
             f"<tr><td>{label}<br><code>{model_id}</code></td><td><code>{target_id}</code></td>"
             f"<td><code>{framework_id}</code></td>"
-            f"<td>{escape(status_label(lang, item['status']))}{detail}</td><td>{escape(modes.get(mode, mode))}</td>"
+            f"<td>{escape(status_label(lang, item['status']))}</td>"
             f"<td>{item.get('points_ok', 0)}/{item.get('points_total', 0)}</td>"
-            f"<td>{escape(item.get('measured_at', '—'))}</td><td>{origin}</td><td>{baselines}</td></tr>"
+            f"<td>{measured}</td><td>{commit}</td></tr>"
         )
     headers = (
         tr(lang, "Model", "模型"),
         tr(lang, "Target", "测试目标"),
         tr(lang, "Framework", "框架"),
         tr(lang, "Status", "本轮状态"),
-        tr(lang, "Mode", "模式"),
         tr(lang, "Points OK", "成功点"),
         tr(lang, "Measured", "测量时间"),
-        tr(lang, "Source (main)", "来源（main）"),
-        tr(lang, "Baselines", "有效基线"),
+        tr(lang, "main", "main"),
     )
     back = f'<a href="{escape(home)}">← {tr(lang, "AKLR Dashboard", "AKLR 看板")}</a> · ' if home else ""
     return f"""<div class="page" data-page="{lang}" lang="{tr(lang, "en", "zh-CN")}">
@@ -250,7 +297,6 @@ def collect(
             points_total=0,
             error=None,
             failure_stage=None,
-            mode="—",
             measured_at="—",
         )
         current, current_archive = None, None
@@ -316,8 +362,17 @@ def collect(
                         "ok" if complete and ok == total and total else "partial" if ok else "failed"
                     )
                     if item["status"] != "ok":
+                        run_error = (current["run"].get("error") or "").strip().splitlines()
                         item["error"] = (
-                            current["run"].get("error")
+                            " ".join(
+                                part
+                                for part in (
+                                    missing_summary(current, "zh"),
+                                    missing_summary(current, "en"),
+                                    run_error[0] if run_error else "",
+                                )
+                                if part
+                            )
                             or "测量未全部完成或有失败点 / Measurement incomplete or points failed"
                         )
                 except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
@@ -365,45 +420,8 @@ def collect(
         if shown is not None and shown["run"].get("mode") != "live":
             shown = baselines.get(POLICY)
         if shown is not None:
-            mode = shown["run"]["mode"]
-            notice = None
-            if current is None:
-                notice = {
-                    lang: tr(
-                        lang,
-                        f"Historical measurement: this run is {status_label(lang, item['status'])}; "
-                        f"measured at {shown['run']['finished_at']}.",
-                        f"历史测量：本轮状态为{status_label(lang, item['status'])}；"
-                        f"测量时间 {shown['run']['finished_at']}。",
-                    )
-                    + (
-                        tr(lang, " Current failure: ", " 本轮失败原因：") + str(item["error"])
-                        if item["error"]
-                        else ""
-                    )
-                    for lang in LANGS
-                }
-            elif baseline_kind(current) in item["baseline_unavailable"]:
-                notice = {
-                    lang: tr(
-                        lang,
-                        "The historical baseline is preserved, but lacks full-response P90 ITL; "
-                        "its E2E interactivity cannot be compared on this axis.",
-                        "历史基线已保留，但缺少完整响应 P90 ITL；不能用其 E2E 交互速度比较当前横轴。",
-                    )
-                    for lang in LANGS
-                }
-            view = validated_results(shown)
-            item.update(
-                report=True,
-                mode=f"{mode} / {baseline_kind(view)}",
-                measured_at=view["run"]["finished_at"],
-                points_ok=sum(
-                    p["status"] == "ok" for p in view["points"] + view.get("control", {}).get("points", [])
-                ),
-                points_total=view["run"]["points_expected"]
-                + view.get("control", {}).get("run", {}).get("points_expected", 0),
-            )
+            notice = page_notice(item, current if current is not None else shown, current is None)
+            item.update(measured_fields(validated_results(shown), repo_url))
             write_report(
                 shown,
                 baseline if current is not None else None,

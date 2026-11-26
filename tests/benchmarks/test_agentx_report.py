@@ -162,8 +162,9 @@ def test_resolution_failure_fails_after_saving_the_report(case):
     assert target["status"] == "resolve-failed"
     assert target["failure_stage"] == "plan"
     assert not target["report"]
+    assert target["error"] == error
     html = (site / "index.html").read_text()
-    assert escape(error) in html
+    assert escape(error) not in html
     assert error not in html
     assert "../index.html" not in html
     assert case.check(site, download_outcome="skipped") == 1

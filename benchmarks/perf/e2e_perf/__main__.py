@@ -11,6 +11,7 @@ COMMANDS = {
     "sweep": ("e2e_perf.sweep", "main"),
     "report": ("e2e_perf.report", "main"),
     "publish": ("e2e_perf.publish", "main"),
+    "rerender": ("e2e_perf.publish", "rerender_main"),
 }
 
 

@@ -1,0 +1,129 @@
+name: AKLR-site-rerender
+
+# Re-renders site-data's sections with main's code after a front-end change, without measuring anything:
+# agentx/ and e2e/ from the results they already hold, kernels/ from main's committed measurements as
+# publish-kernels does. Each section is rewritten by the bot that publishes it, through
+# commit_site_data.sh; AKLR-site then deploys the new site-data tip.
+on:
+  workflow_dispatch:
+    inputs:
+      sections:
+        description: Sections to re-render
+        type: choice
+        options: [all, agentx, e2e, kernels]
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  agentx:
+    if: github.ref == 'refs/heads/main' && contains(fromJSON('["all", "agentx"]'), inputs.sections)
+    runs-on: ubuntu-latest
+    environment: agentx-bot
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: benchmarks/perf
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: target pages list the AKLR changes between a run and its baseline.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_AGENTX_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_AGENTX_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Re-render site-data/agentx
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_AGENTX_BOT_LOGIN }}
+        run: |
+          bash ../../.github/scripts/commit_site_data.sh agentx \
+            "agentx: re-render with main ${GITHUB_SHA::12} (run $GITHUB_RUN_ID)" \
+            python3 -m agentx rerender
+
+  e2e:
+    if: github.ref == 'refs/heads/main' && contains(fromJSON('["all", "e2e"]'), inputs.sections)
+    runs-on: ubuntu-latest
+    environment: e2e-perf-bot
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: benchmarks/perf
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_E2E_PERF_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_E2E_PERF_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Re-render site-data/e2e
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_E2E_PERF_BOT_LOGIN }}
+        run: |
+          bash ../../.github/scripts/commit_site_data.sh e2e \
+            "e2e: re-render with main ${GITHUB_SHA::12} (run $GITHUB_RUN_ID)" \
+            python3 -m e2e_perf rerender
+
+  kernels:
+    if: >-
+      github.ref == 'refs/heads/main' && contains(fromJSON('["all", "kernels"]'), inputs.sections) &&
+      vars.AKLR_BOT_LOGIN != ''
+    runs-on: ubuntu-latest
+    environment: bot
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The history holds the bot's measurement commits.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pydantic and CPU torch
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Rebuild site-data/kernels
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          PYTHONPATH=benchmarks/kernels bash .github/scripts/commit_site_data.sh kernels \
+            "kernels: re-render with main ${GITHUB_SHA::12} (run $GITHUB_RUN_ID)" \
+            python3 -m kernels_report --run-id "$GITHUB_RUN_ID" --run-url "$RUN_URL"
