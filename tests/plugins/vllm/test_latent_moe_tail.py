@@ -185,7 +185,14 @@ def test_the_timings_graphs_are_captured_in_vllms_graph_capture(monkeypatch, ini
     at a null address on every rank, CI's vllm-test). So the baseline's clock, the candidate's too, captures each graph
     inside it, on the timing's own stream, and replays it after the context ended; the eager calls stay outside it; with
     no vLLM TP group yet nothing changes; the capture helper is put back."""
-    testing = pytest.importorskip("aklr.core.utils.testing")
+    # the timing module, stood in for by the two names of it the baseline reads: importing the real one registers
+    # AKLR's profiler with rocprofiler-sdk, which a process whose GPU is already up refuses (a GPU run reaches this
+    # test after others have used the GPU)
+    import aklr.core.utils
+
+    testing = types.ModuleType("aklr.core.utils.testing")
+    monkeypatch.setitem(sys.modules, testing.__name__, testing)
+    monkeypatch.setattr(aklr.core.utils, "testing", testing, raising=False)
     _fake_vllm_tp(monkeypatch)
     state = sys.modules["vllm.distributed.parallel_state"]
     events = []
@@ -216,8 +223,8 @@ def test_the_timings_graphs_are_captured_in_vllms_graph_capture(monkeypatch, ini
         events.append("replays")
         return 1.5
 
-    monkeypatch.setattr(testing, "cuda_graph_without_gc", capture)
-    monkeypatch.setattr(testing, "bench_cudagraph", bench_cudagraph)
+    testing.cuda_graph_without_gc = capture
+    testing.bench_cudagraph = bench_cudagraph
     assert baseline.KimiK3LatentMoeTailBaseline().profile(lambda: None) == 1.5
     captured = [("captures", "timing stream"), "captured"]
     if initialized:
