@@ -3,12 +3,11 @@
 client: # Only InferenceX's infx.bench_serving, at a pinned commit.
   repo: SemiAnalysisAI/InferenceX
   sha: 8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4
-workloads: # Each mode's server runs every workload in order, each at every one of its concurrencies.
+workloads: # Each mode's server runs every workload in order, each at every concurrency of its model.
   - id: 8k1k
     isl: 8192
     osl: 1024
     random_range_ratio: 1.0
-    concurrency: [1, 2, 8, 16, 48]
     num_prompts_per_conc: 10 # 10 × conc prompts per point, as InferenceX fixed-seq runs
     warmups_per_conc: 2
     seed: 0
@@ -19,6 +18,7 @@ models:
     weights:
       repo: amd/GLM-5.2-MXFP4
       revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
+    concurrency: [1, 2, 8, 16, 48]
     targets:
       mi355x:
         hardware:
@@ -33,6 +33,7 @@ models:
     weights:
       repo: zai-org/GLM-5.2-FP8
       revision: f33c6dc501ee5a2c7e35155653b1b1abbc320951
+    concurrency: [1, 2, 8, 16, 48]
     targets:
       mi355x:
         hardware:
@@ -47,6 +48,7 @@ models:
     weights:
       repo: amd/Muse-Spark-Open-816B-A42B-Quark-MXFP4
       revision: 17159bf7d2e7d6c79961efe1530ff40aea608ae2
+    concurrency: [1, 2, 8, 16, 48]
     targets:
       mi355x:
         hardware:
@@ -61,7 +63,7 @@ models:
     weights:
       repo: deepseek-ai/DeepSeek-V4.1-Flash
       revision: dba1be0a40aa45a94ad051997016db3960a90277
-    concurrency: [1, 32] # optional; overrides the workloads' concurrency
+    concurrency: [1, 32]
     targets:
       mi355x:
         hardware:

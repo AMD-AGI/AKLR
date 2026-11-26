@@ -42,10 +42,6 @@ def check_workloads(workloads, path) -> None:
         ids.append(validate_id(workload.get("id"), "workload"))
         if not all(positive_int(workload.get(key)) for key in WORKLOAD_INTS):
             raise ConfigError(f"{path}: workload {ids[-1]} needs positive ints {', '.join(WORKLOAD_INTS)}")
-        if not valid_concurrency(workload.get("concurrency")):
-            raise ConfigError(
-                f"{path}: workload {ids[-1]} needs concurrency as a non-empty list of distinct positive ints"
-            )
     if len(set(ids)) != len(ids):
         raise ConfigError(f"{path}: workload ids must be distinct")
 
@@ -58,7 +54,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG) -> dict:
         raise ConfigError(f"{path} needs a client mapping")
     check_workloads(config.get("workloads"), path)
     for model_id, model in config["models"].items():
-        if "concurrency" in model and not valid_concurrency(model["concurrency"]):
+        if not valid_concurrency(model.get("concurrency")):
             raise ConfigError(
                 f"{path}: model {model_id} needs concurrency as a non-empty list of distinct positive ints"
             )
@@ -98,8 +94,6 @@ def selection(value: str, known: list[str], kind: str) -> set[str]:
 
 
 def model_workloads(config: dict, model: dict) -> list[dict]:
-    if "concurrency" not in model:
-        return config["workloads"]
     return [{**workload, "concurrency": model["concurrency"]} for workload in config["workloads"]]
 
 
