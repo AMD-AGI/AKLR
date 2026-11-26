@@ -23,13 +23,10 @@ import torch
 from aklr.core.contract import semantics
 from aklr.core.contract.fastkey import FastKeyCodec
 from aklr.core.runtime.dispatch import DispatcherRegistry
-from aklr.plugins.vllm.hook import aiter_asks_aklr
 
 __all__ = ["warm_up"]
 
 _LOGGER = logging.getLogger(__name__)
-# vLLM reaches AKLR's GEMM kernels through aiter's GEMM, so only where AKLR's aiter provider answers it
-_IS_PROVIDER_ON = aiter_asks_aklr()
 
 
 def _gemm_dispatcher() -> Any:
@@ -60,7 +57,7 @@ def _weight_shapes(worker: Any) -> set[tuple[int, int]]:
 
 def _call_once(point: Any, device: torch.device) -> bool:
     """One call of aiter's GEMM at ``point``, on zeros; whether AKLR's kernel served it."""
-    from aiter import plugin
+    import aiter
     from aiter.tuned_gemm import gemm_a16w16
 
     def zeros(shape, name):
@@ -73,7 +70,9 @@ def _call_once(point: Any, device: torch.device) -> bool:
         zeros((n,), "bias") if point.attrs["has_bias"] else None,
         semantics.torch_dtypes(point.dtypes["out"])[0],
     )
-    return plugin.last_decision().provider == "aklr"
+    # no interface in this aiter, or no provider enabled: aiter ran its own kernel
+    decision = aiter.plugin.last_decision() if hasattr(aiter, "plugin") else None
+    return getattr(decision, "provider", None) == "aklr"
 
 
 def warm_up(worker: Any) -> None:
@@ -86,7 +85,7 @@ def warm_up(worker: Any) -> None:
     max_tokens = worker.scheduler_config.max_num_batched_tokens
     device = torch.device("cuda", torch.cuda.current_device())
     dispatcher = _gemm_dispatcher()
-    if dispatcher is None or not _IS_PROVIDER_ON:
+    if dispatcher is None:
         return
     shapes = _weight_shapes(worker)
     start = time.monotonic()

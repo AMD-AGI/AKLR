@@ -29,7 +29,6 @@ def aiter_calls(monkeypatch):
     tuned_gemm.gemm_a16w16 = gemm_a16w16
     monkeypatch.setitem(sys.modules, "aiter", aiter)
     monkeypatch.setitem(sys.modules, "aiter.tuned_gemm", tuned_gemm)
-    monkeypatch.setattr(route, "_IS_PROVIDER_ON", True)
     monkeypatch.setattr(route, "_native_can_use", lambda x, w: False)
     return calls
 
@@ -53,14 +52,6 @@ def test_a_call_vllms_own_kernel_takes_stays_with_it(monkeypatch, aiter_calls):
     x, w = tensors(4)
     assert route._can_use_rocm_fp32_router_gemm(x, w) is FallbackReason.NOT_QUALIFIED
     assert route._rocm_fp32_router_gemm(x, w) is FallbackReason.NOT_QUALIFIED
-    assert aiter_calls == []
-
-
-def test_without_aklrs_aiter_provider_vllm_keeps_its_own(monkeypatch, aiter_calls):
-    monkeypatch.setattr(route, "_IS_PROVIDER_ON", False)
-    x, w = tensors()
-    assert route._can_use_rocm_fp32_router_gemm(x, w) is FallbackReason.DISABLED
-    assert route._rocm_fp32_router_gemm(x, w) is FallbackReason.DISABLED
     assert aiter_calls == []
 
 

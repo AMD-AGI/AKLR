@@ -50,7 +50,6 @@ def served(monkeypatch):
         return True
 
     monkeypatch.setattr(warmup, "_call_once", call_once)
-    monkeypatch.setattr(warmup, "_IS_PROVIDER_ON", True)
     monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
     return state
@@ -73,13 +72,6 @@ def test_only_the_rank_models_weight_shapes_past_the_graphs_are_warmed(served):
 def test_a_kernel_aiter_cannot_ask_for_is_not_warmed(served):
     """aiter's GEMM takes the weight as [n, k] alone."""
     served.points = [point(16, 32, 48, trans_b=False)]
-    warmup.warm_up(worker(Model((32, 48))))
-    assert served.calls == []
-
-
-def test_nothing_is_warmed_without_aklrs_aiter_provider(served, monkeypatch):
-    monkeypatch.setattr(warmup, "_IS_PROVIDER_ON", False)
-    served.points = [point(16, 32, 48)]
     warmup.warm_up(worker(Model((32, 48))))
     assert served.calls == []
 

@@ -32,7 +32,7 @@ from aklr.core.runtime import _vllm_hook_registry as _hooks
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.core.runtime.dispatch._trace import trace
 
-__all__ = ["aiter_asks_aklr", "vllm_route"]
+__all__ = ["vllm_route"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,16 +76,6 @@ def _vllm_version() -> str:
     """The installed vLLM's release, without a local label (0.33.0rc1.dev910+g4fab5a074 is
     0.33.0rc1.dev910)."""
     return Version(version("vllm")).public
-
-
-def aiter_asks_aklr() -> bool:
-    """Whether aiter asks AKLR's provider about the ops it routes: only then does a route that calls an aiter
-    function reach AKLR. The plugin enables the provider before it imports its routes."""
-    try:
-        from aiter import plugin
-    except ImportError:
-        return False
-    return "aklr" in plugin.status()["enabled"]
 
 
 def _install() -> list[str]:

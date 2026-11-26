@@ -10,7 +10,6 @@ from types import ModuleType, SimpleNamespace
 import pytest
 import torch
 
-from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.vllm.layers.utils import api as utils
 from aklr.plugins.vllm.models.muse_spark import api as muse_spark
 
@@ -36,37 +35,8 @@ def aiter_calls(monkeypatch):
 
 
 @pytest.mark.parametrize("name", ROUTES)
-def test_the_route_calls_aiters_gemm(monkeypatch, aiter_calls, name):
+def test_the_route_calls_aiters_gemm(aiter_calls, name):
     module, call = ROUTES[name]
-    monkeypatch.setattr(module, "_IS_PROVIDER_ON", True)
     assert call() == "aiter"
     ((a, b, bias),) = aiter_calls
     assert a is A and b is B and bias is BIAS
-
-
-@pytest.mark.parametrize("name", ROUTES)
-def test_without_aklrs_aiter_provider_vllm_keeps_its_own(monkeypatch, aiter_calls, name):
-    module, call = ROUTES[name]
-    monkeypatch.setattr(module, "_IS_PROVIDER_ON", False)
-    assert call() is FallbackReason.DISABLED
-    assert aiter_calls == []
-
-
-@pytest.mark.parametrize(
-    "enabled, asks",
-    [(["aklr", "other"], True), (["other"], False), (None, False)],
-    ids=["on", "off", "no_interface"],
-)
-def test_a_route_to_aiter_is_aklrs_only_where_aiter_asks_aklr(monkeypatch, enabled, asks):
-    """AKLR_AITER_PLUGIN=1 on an aiter without the plugin interface enables nothing."""
-    from aklr.plugins.vllm import hook
-
-    aiter = ModuleType("aiter")
-    aiter.__path__ = []
-    monkeypatch.setitem(sys.modules, "aiter", aiter)
-    monkeypatch.setitem(sys.modules, "aiter.plugin", None)
-    if enabled is not None:
-        plugin = ModuleType("aiter.plugin")
-        plugin.status = lambda: {"enabled": enabled}
-        monkeypatch.setitem(sys.modules, "aiter.plugin", plugin)
-    assert hook.aiter_asks_aklr() is asks

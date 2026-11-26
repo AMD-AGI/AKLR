@@ -4,14 +4,12 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
-from aklr.plugins.vllm.hook import _original, aiter_asks_aklr, vllm_route
+from aklr.plugins.vllm.hook import _original, vllm_route
 from aklr.plugins.vllm.models.muse_spark.contract import MUSE_SPARK_MOE
 
 __all__ = ["muse_spark_moe"]
 
 _VERSIONS = ("0.34.0",)
-# aiter's GEMM is AKLR's only through AKLR's aiter provider: without it vLLM keeps its own
-_IS_PROVIDER_ON = aiter_asks_aklr()
 _NORM_EXPERTS_GROUP = "muse_spark.norm_experts"
 # set on the pooled rows whose pre-expert norm the experts apply: (weight, eps, gain_center)
 _DEFERRED_NORM = "_aklr_muse_deferred_norm"
@@ -54,8 +52,6 @@ def _torch_linear(self, layer, x, bias=None):
     """The MoE pooler and unpooler, which vLLM runs through F.linear, as aiter's GEMM, which AKLR's aiter
     provider answers; a call it declines runs aiter's tuned GEMM (its split-K kernels for these shapes
     accumulate in bf16)."""
-    if not _IS_PROVIDER_ON:
-        return FallbackReason.DISABLED
     from aiter.tuned_gemm import gemm_a16w16
 
     return gemm_a16w16(x, layer.weight, bias)

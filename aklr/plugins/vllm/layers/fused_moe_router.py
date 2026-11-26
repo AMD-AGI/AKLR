@@ -9,12 +9,10 @@ from __future__ import annotations
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.vllm.hook import _original, aiter_asks_aklr, vllm_route
+from aklr.plugins.vllm.hook import _original, vllm_route
 
 __all__: list[str] = []
 
-# aiter's GEMM is AKLR's only through AKLR's aiter provider: without it vLLM keeps its own
-_IS_PROVIDER_ON = aiter_asks_aklr()
 _VERSIONS = ("0.34.0", "0.32.1rc1.dev276")
 _CALLER = "vllm.model_executor.layers.fused_moe.router.gate_linear.fp32_router_gemm_dispatch_impl"
 _ROUTER = "vllm.model_executor.layers.fused_moe.router.rocm_fp32_router_gemm"
@@ -43,8 +41,6 @@ def _can_use_rocm_fp32_router_gemm(hidden_states, router_weight):
 
 def _keeps_vllms(hidden_states, router_weight) -> FallbackReason | None:
     """Why vLLM keeps its own answer and kernel for the call; ``None`` where the call is aiter's GEMM's."""
-    if not _IS_PROVIDER_ON:
-        return FallbackReason.DISABLED
     if _native_can_use(hidden_states, router_weight):
         return FallbackReason.NOT_QUALIFIED  # vLLM's own answer: yes
     # vLLM runs an fp32 router weight through F.linear on fp32 rows, which is no 16-bit GEMM

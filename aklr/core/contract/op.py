@@ -74,12 +74,10 @@ class OpContract(FrozenModel):
     name: Annotated[str, Field(min_length=1)] | None = None
     contract_id: ContractId
     description: str
-    op_type: str  # the op family: "gemm" for aklr/plugins/aiter/provider/gemm/
+    op_type: str
     workloads: tuple[WorkloadSpec, ...] = ()
     axes: dict[str, AxisSpec]
     attrs: dict[str, AttrSpec] = {}  # noqa: RUF012 -- pydantic copies defaults
-    # api params the result does not depend on (a host's scheduling hint): taken at any value,
-    # no part of a Point, never passed to a kernel
     ignored_params: tuple[str, ...] = ()
     constraints: tuple[str, ...] = ()
     inputs: dict[str, ArgSpec]
