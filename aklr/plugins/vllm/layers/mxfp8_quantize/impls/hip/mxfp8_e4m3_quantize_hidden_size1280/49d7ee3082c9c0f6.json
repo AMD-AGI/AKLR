@@ -1,0 +1,768 @@
+{
+  "schema_version": 5,
+  "name": "mxfp8_e4m3_quantize_hidden_size1280",
+  "contract_id": "mxfp8_e4m3_quantize@1.0",
+  "description": "vLLM's MXFP8 quantization of BF16 activations: per row and group of 32 values, the scale byte is ceil(log2(max(amax, FLT_MIN) / 448)) + 127 clamped to [0, 254], and the values are x * 2**(127 - byte) rounded to E4M3FN. Scales are row-major [row, group].",
+  "op_type": "mxfp8_quantize",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Rows quantized independently."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 1280,
+      "description": "Elements per row, divisible by 32."
+    },
+    "n_groups": {
+      "type": "const",
+      "value": 40,
+      "description": "Groups of 32 elements per row."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Finite BF16 activations, rows contiguous."
+    }
+  },
+  "outputs": {
+    "quantized": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "E4M3FN quantized activations."
+    },
+    "scales": {
+      "shape": [
+        "n_tokens",
+        "n_groups"
+      ],
+      "dtype": "uint8",
+      "description": "E8M0 exponent bytes at [row, group]; the dequantization scale is 2**(byte - 127)."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 12
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.41
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "accuracy": "passed",
+      "speedup": 1.01,
+      "microseconds": 4.35
+    },
+    {
+      "axes": {
+        "n_tokens": 18
+      },
+      "accuracy": "passed",
+      "speedup": 1.01,
+      "microseconds": 4.34
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      },
+      "accuracy": "passed",
+      "speedup": 1.006,
+      "microseconds": 4.36
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "accuracy": "passed",
+      "speedup": 1.005,
+      "microseconds": 4.37
+    },
+    {
+      "axes": {
+        "n_tokens": 36
+      },
+      "accuracy": "passed",
+      "speedup": 1.006,
+      "microseconds": 4.38
+    },
+    {
+      "axes": {
+        "n_tokens": 40
+      },
+      "accuracy": "passed",
+      "speedup": 1.013,
+      "microseconds": 4.31
+    },
+    {
+      "axes": {
+        "n_tokens": 42
+      },
+      "accuracy": "passed",
+      "speedup": 1.004,
+      "microseconds": 4.4
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      },
+      "accuracy": "passed",
+      "speedup": 1.003,
+      "microseconds": 4.41
+    },
+    {
+      "axes": {
+        "n_tokens": 56
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.43
+    },
+    {
+      "axes": {
+        "n_tokens": 60
+      },
+      "accuracy": "passed",
+      "speedup": 1.004,
+      "microseconds": 4.58
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 66
+      },
+      "accuracy": "passed",
+      "speedup": 1.014,
+      "microseconds": 4.5
+    },
+    {
+      "axes": {
+        "n_tokens": 72
+      },
+      "accuracy": "passed",
+      "speedup": 1.011,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 80
+      },
+      "accuracy": "passed",
+      "speedup": 1.027,
+      "microseconds": 4.47
+    },
+    {
+      "axes": {
+        "n_tokens": 84
+      },
+      "accuracy": "passed",
+      "speedup": 1.008,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 88
+      },
+      "accuracy": "passed",
+      "speedup": 1.013,
+      "microseconds": 4.54
+    },
+    {
+      "axes": {
+        "n_tokens": 90
+      },
+      "accuracy": "passed",
+      "speedup": 1.027,
+      "microseconds": 4.45
+    },
+    {
+      "axes": {
+        "n_tokens": 96
+      },
+      "accuracy": "passed",
+      "speedup": 1.008,
+      "microseconds": 4.54
+    },
+    {
+      "axes": {
+        "n_tokens": 104
+      },
+      "accuracy": "passed",
+      "speedup": 1.024,
+      "microseconds": 4.44
+    },
+    {
+      "axes": {
+        "n_tokens": 108
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 112
+      },
+      "accuracy": "passed",
+      "speedup": 1.009,
+      "microseconds": 4.54
+    },
+    {
+      "axes": {
+        "n_tokens": 114
+      },
+      "accuracy": "passed",
+      "speedup": 1.013,
+      "microseconds": 4.51
+    },
+    {
+      "axes": {
+        "n_tokens": 120
+      },
+      "accuracy": "passed",
+      "speedup": 1.012,
+      "microseconds": 4.51
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "accuracy": "passed",
+      "speedup": 1.025,
+      "microseconds": 4.44
+    },
+    {
+      "axes": {
+        "n_tokens": 132
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.51
+    },
+    {
+      "axes": {
+        "n_tokens": 136
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.52
+    },
+    {
+      "axes": {
+        "n_tokens": 138
+      },
+      "accuracy": "passed",
+      "speedup": 1.005,
+      "microseconds": 4.52
+    },
+    {
+      "axes": {
+        "n_tokens": 144
+      },
+      "accuracy": "passed",
+      "speedup": 1.008,
+      "microseconds": 4.52
+    },
+    {
+      "axes": {
+        "n_tokens": 152
+      },
+      "accuracy": "passed",
+      "speedup": 1.005,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 156
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 160
+      },
+      "accuracy": "passed",
+      "speedup": 1.001,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 162
+      },
+      "accuracy": "passed",
+      "speedup": 1.003,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 168
+      },
+      "accuracy": "passed",
+      "speedup": 1.008,
+      "microseconds": 4.53
+    },
+    {
+      "axes": {
+        "n_tokens": 176
+      },
+      "accuracy": "passed",
+      "speedup": 1.004,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 180
+      },
+      "accuracy": "passed",
+      "speedup": 1.004,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 184
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 186
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 192
+      },
+      "accuracy": "passed",
+      "speedup": 0.999,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 200
+      },
+      "accuracy": "passed",
+      "speedup": 1.009,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 204
+      },
+      "accuracy": "passed",
+      "speedup": 1.004,
+      "microseconds": 4.59
+    },
+    {
+      "axes": {
+        "n_tokens": 208
+      },
+      "accuracy": "passed",
+      "speedup": 1.002,
+      "microseconds": 4.61
+    },
+    {
+      "axes": {
+        "n_tokens": 210
+      },
+      "accuracy": "passed",
+      "speedup": 1.003,
+      "microseconds": 4.61
+    },
+    {
+      "axes": {
+        "n_tokens": 216
+      },
+      "accuracy": "passed",
+      "speedup": 1.006,
+      "microseconds": 4.53
+    },
+    {
+      "axes": {
+        "n_tokens": 224
+      },
+      "accuracy": "passed",
+      "speedup": 0.999,
+      "microseconds": 4.58
+    },
+    {
+      "axes": {
+        "n_tokens": 228
+      },
+      "accuracy": "passed",
+      "speedup": 1.011,
+      "microseconds": 4.53
+    },
+    {
+      "axes": {
+        "n_tokens": 232
+      },
+      "accuracy": "passed",
+      "speedup": 1.006,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 234
+      },
+      "accuracy": "passed",
+      "speedup": 1.008,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 240
+      },
+      "accuracy": "passed",
+      "speedup": 1.009,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 248
+      },
+      "accuracy": "passed",
+      "speedup": 1.01,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 252
+      },
+      "accuracy": "passed",
+      "speedup": 1.007,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "accuracy": "passed",
+      "speedup": 1.01,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 258
+      },
+      "accuracy": "passed",
+      "speedup": 1.013,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 272
+      },
+      "accuracy": "passed",
+      "speedup": 1.013,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 276
+      },
+      "accuracy": "passed",
+      "speedup": 1.004,
+      "microseconds": 4.63
+    },
+    {
+      "axes": {
+        "n_tokens": 288
+      },
+      "accuracy": "passed",
+      "speedup": 1.01,
+      "microseconds": 4.59
+    },
+    {
+      "axes": {
+        "n_tokens": 304
+      },
+      "accuracy": "passed",
+      "speedup": 1.012,
+      "microseconds": 4.59
+    },
+    {
+      "axes": {
+        "n_tokens": 306
+      },
+      "accuracy": "passed",
+      "speedup": 1.011,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 320
+      },
+      "accuracy": "passed",
+      "speedup": 1.008,
+      "microseconds": 4.53
+    },
+    {
+      "axes": {
+        "n_tokens": 324
+      },
+      "accuracy": "passed",
+      "speedup": 1.014,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 336
+      },
+      "accuracy": "passed",
+      "speedup": 1.015,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 352
+      },
+      "accuracy": "passed",
+      "speedup": 1.014,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 354
+      },
+      "accuracy": "passed",
+      "speedup": 1.015,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 368
+      },
+      "accuracy": "passed",
+      "speedup": 1.017,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 372
+      },
+      "accuracy": "passed",
+      "speedup": 1.012,
+      "microseconds": 4.57
+    },
+    {
+      "axes": {
+        "n_tokens": 384
+      },
+      "accuracy": "passed",
+      "speedup": 1.016,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_tokens": 400
+      },
+      "accuracy": "passed",
+      "speedup": 1.014,
+      "microseconds": 4.54
+    },
+    {
+      "axes": {
+        "n_tokens": 402
+      },
+      "accuracy": "passed",
+      "speedup": 1.015,
+      "microseconds": 4.52
+    },
+    {
+      "axes": {
+        "n_tokens": 416
+      },
+      "accuracy": "passed",
+      "speedup": 1.019,
+      "microseconds": 4.53
+    },
+    {
+      "axes": {
+        "n_tokens": 420
+      },
+      "accuracy": "passed",
+      "speedup": 1.017,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 432
+      },
+      "accuracy": "passed",
+      "speedup": 1.02,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_tokens": 448
+      },
+      "accuracy": "passed",
+      "speedup": 1.012,
+      "microseconds": 4.68
+    },
+    {
+      "axes": {
+        "n_tokens": 450
+      },
+      "accuracy": "passed",
+      "speedup": 0.996,
+      "microseconds": 4.64
+    },
+    {
+      "axes": {
+        "n_tokens": 464
+      },
+      "accuracy": "passed",
+      "speedup": 1.003,
+      "microseconds": 4.61
+    },
+    {
+      "axes": {
+        "n_tokens": 468
+      },
+      "accuracy": "passed",
+      "speedup": 1.004,
+      "microseconds": 4.61
+    },
+    {
+      "axes": {
+        "n_tokens": 480
+      },
+      "accuracy": "passed",
+      "speedup": 1.003,
+      "microseconds": 4.6
+    },
+    {
+      "axes": {
+        "n_tokens": 496
+      },
+      "accuracy": "passed",
+      "speedup": 1.001,
+      "microseconds": 4.6
+    },
+    {
+      "axes": {
+        "n_tokens": 498
+      },
+      "accuracy": "passed",
+      "speedup": 0.999,
+      "microseconds": 4.59
+    },
+    {
+      "axes": {
+        "n_tokens": 512
+      },
+      "accuracy": "passed",
+      "speedup": 1.0,
+      "microseconds": 4.6
+    },
+    {
+      "axes": {
+        "n_tokens": 768
+      },
+      "accuracy": "passed",
+      "speedup": 1.028,
+      "microseconds": 4.59
+    },
+    {
+      "axes": {
+        "n_tokens": 1024
+      },
+      "accuracy": "passed",
+      "speedup": 1.0,
+      "microseconds": 4.6
+    },
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "accuracy": "passed",
+      "speedup": 0.991,
+      "microseconds": 4.85
+    },
+    {
+      "axes": {
+        "n_tokens": 4096
+      },
+      "accuracy": "passed",
+      "speedup": 1.035,
+      "microseconds": 5.13
+    },
+    {
+      "axes": {
+        "n_tokens": 8192
+      },
+      "accuracy": "passed",
+      "speedup": 1.253,
+      "microseconds": 7.01
+    },
+    {
+      "axes": {
+        "n_tokens": 16384
+      },
+      "accuracy": "passed",
+      "speedup": 1.385,
+      "microseconds": 11.5
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "hip": ">=7.15"
+    },
+    "author": "GEAK; vLLM semantics by Cursor agent (DSv4.1 TP2 tuning)",
+    "entry_point": "kernel.hip::run",
+    "sources": [
+      {
+        "path": "kernel.hip",
+        "content": "// vLLM's group-32 BF16 to MXFP8 quantization (scale byte clamped to [0, 254]), two lanes per group.\n// SPDX-License-Identifier: MIT\n// Copyright (C) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.\n#include <ATen/hip/HIPContext.h>\n#include <hip/hip_runtime.h>\n#include <torch/library.h>\n#include <cstdint>\n\nnamespace {\nusing u32x4 = uint32_t __attribute__((ext_vector_type(4)));\nusing u32x8 = uint32_t __attribute__((ext_vector_type(8)));\nusing u16x2 = unsigned short __attribute__((ext_vector_type(2)));\n\ntemplate<int Threads>\n__global__ __launch_bounds__(Threads)\nvoid quantize(const uint16_t* __restrict__ x, uint8_t* __restrict__ y,\n              uint8_t* __restrict__ scales, int64_t elements) {\n    const int64_t slot = int64_t(blockIdx.x) * Threads + threadIdx.x;\n    if (slot >= elements / 16) return;\n    const u32x8 data = *reinterpret_cast<const u32x8*>(x + slot * 16);\n    u16x2 maximum = __builtin_bit_cast(u16x2, data[0] & 0x7FFF7FFFu);\n#pragma unroll\n    for (int i = 1; i < 8; ++i)\n        maximum = __builtin_elementwise_max(maximum, __builtin_bit_cast(u16x2, data[i] & 0x7FFF7FFFu));\n    uint32_t max_bits = maximum[0] > maximum[1] ? maximum[0] : maximum[1];\n    const uint32_t other = __builtin_amdgcn_mov_dpp(max_bits, 0xB1, 0xF, 0xF, true);\n    max_bits = max_bits > other ? max_bits : other;\n    // float32 bits of the amax, floored at FLT_MIN\n    uint32_t amax = max_bits << 16;\n    amax = amax < 0x00800000u ? 0x00800000u : amax;\n    // ceil(log2(amax / 448)) + 127: 448 is 1.75 * 2**8, and a BF16 mantissa above 1.75 rounds up\n    int byte = int(amax >> 23) - 8 + ((amax & 0x7FFFFFu) > 0x600000u);\n    byte = byte < 0 ? 0 : (byte > 254 ? 254 : byte);\n    const float rescale = __builtin_bit_cast(float, uint32_t(254 - byte) << 23);\n    u32x4 packed;\n#pragma unroll\n    for (int i = 0; i < 4; ++i) {\n        const uint32_t lo = data[2 * i], hi = data[2 * i + 1];\n        const float a = __builtin_bit_cast(float, lo << 16) * rescale;\n        const float b = __builtin_bit_cast(float, lo & 0xffff0000u) * rescale;\n        const float c = __builtin_bit_cast(float, hi << 16) * rescale;\n        const float d = __builtin_bit_cast(float, hi & 0xffff0000u) * rescale;\n        int result = __builtin_amdgcn_cvt_pk_fp8_f32(a, b, 0, false);\n        result = __builtin_amdgcn_cvt_pk_fp8_f32(c, d, result, true);\n        packed[i] = result;\n    }\n    *reinterpret_cast<u32x4*>(y + slot * 16) = packed;\n    if ((threadIdx.x & 1) == 0) scales[slot / 2] = uint8_t(byte);\n}\n\nvoid run(const at::Tensor& x, at::Tensor& quantized, at::Tensor& scales) {\n    const int64_t elements = x.numel();\n    auto xp = static_cast<const uint16_t*>(x.data_ptr());\n    auto yp = static_cast<uint8_t*>(quantized.data_ptr());\n    auto sp = static_cast<uint8_t*>(scales.data_ptr());\n    const auto stream = at::hip::getCurrentHIPStream();\n    if (elements >= (int64_t{32} << 20))\n        quantize<128><<<(elements / 16 + 127) / 128, 128, 0, stream>>>(xp, yp, sp, elements);\n    else\n        quantize<256><<<(elements / 16 + 256 - 1) / 256, 256, 0, stream>>>(xp, yp, sp, elements);\n}\n} // namespace\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor x, Tensor(a!) quantized, Tensor(b!) scales) -> ()\", &run);\n}\n"
+      }
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+mxfp8_e4m3_quantize_hidden_size#
 deepseek_v4_topk_n_experts#_n_slots#
 deepseek_v4_topk_correction_bias_bfloat16_n_experts#_n_slots#
 deepseek_v4_topk_router_logits_bfloat16_n_experts#_n_slots#

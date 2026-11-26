@@ -7,6 +7,14 @@ from aklr.core.contract.spec import PointSpec
 
 # full PointSpec literals; each contract's base Point first
 SMALL_POINTS: tuple[PointSpec, ...] = (
+    # vLLM's MXFP8 activation quant of a 256-wide row
+    PointSpec(
+        contract_id="mxfp8_e4m3_quantize@1.0",
+        axes={"n_tokens": 6, "hidden_size": 256},
+        dtypes={"x": "bfloat16", "quantized": "float8_e4m3fn", "scales": "uint8"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # vLLM's DeepSeek-V4 router top-k shrunk to 64 experts, with its padded rows marked, then with
     # DeepSeek-V4.1's image sentinel rows too
     *(
@@ -22,7 +30,12 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
                 "topk_weights": "float32",
                 "topk_ids": "int32",
             },
-            attrs={"renormalize": True, "has_padding_mask": True, "has_bias_vl": vision, "has_input_tokens": vision},
+            attrs={
+                "renormalize": True,
+                "has_padding_mask": True,
+                "has_bias_vl": vision,
+                "has_input_tokens": vision,
+            },
             layout_variant_name="row_major",
         )
         for vision in (False, True)
