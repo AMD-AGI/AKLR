@@ -1,7 +1,7 @@
 {
  "schema": 1,
- "commit": "f3e8a139c65af7d798dca2ac2cf011730b42e1b6",
- "generated_at": "2026-11-25T18:25:01Z",
+ "commit": "31586d7c87ad783ca477427a70326cbc4b20acad",
+ "generated_at": "2026-11-26T04:36:36Z",
  "contracts": [
   {
    "contract_id": "add_attn_res@1.0",
@@ -39574,7 +39574,7 @@
    "op_package": "aklr.plugins.aiter.gemm",
    "baseline": "aiter's tuned 16-bit gemm, b as (n, k) only",
    "min_speedup": 1.05,
-   "kernels": 140,
+   "kernels": 142,
    "fixed": {
     "a.dtype": "bfloat16",
     "b.dtype": "bfloat16",
@@ -39582,15 +39582,15 @@
     "has_bias": "false"
    },
    "measured": {
-    "run_id": "45607684601",
-    "measured_at": "2026-11-25T18:23:52Z",
-    "commit": "5924c1d758c7d3c3eda533fd5e4f5d64fc2a2a66",
+    "run_id": "45744697001",
+    "measured_at": "2026-11-26T04:35:33Z",
+    "commit": "9b276e9f2162dab5d55e376dc93612508e444888",
     "hardware": "MI355X"
    },
    "group": "aiter.gemm",
    "status": "partial",
-   "served": 1245,
-   "geomean": 1.248354033658777,
+   "served": 1280,
+   "geomean": 1.2478532241549671,
    "points": [
     {
      "dims": {
@@ -42595,6 +42595,618 @@
       "flydsl": ">=0.3.2"
      },
      "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "1",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.158,
+     "microseconds": 36.9,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "2",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.16,
+     "microseconds": 36.5,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "3",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.172,
+     "microseconds": 36.8,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "4",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.17,
+     "microseconds": 36.9,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "5",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.313,
+     "microseconds": 36.8,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "6",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.224,
+     "microseconds": 36.7,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "7",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.313,
+     "microseconds": 36.6,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "8",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.319,
+     "microseconds": 36.9,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "10",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.136,
+     "microseconds": 36.2,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "12",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.189,
+     "microseconds": 36.7,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "14",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.216,
+     "microseconds": 36.3,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "16",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.205,
+     "microseconds": 36.7,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "18",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.216,
+     "microseconds": 36.6,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "20",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.227,
+     "microseconds": 36.3,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "22",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.23,
+     "microseconds": 36.5,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "24",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.098,
+     "microseconds": 36.5,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "26",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.232,
+     "microseconds": 36.8,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "28",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.251,
+     "microseconds": 37.0,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "30",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.241,
+     "microseconds": 37.4,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "32",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.237,
+     "microseconds": 37.7,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "36",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.259,
+     "microseconds": 38.4,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "42",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.256,
+     "microseconds": 39.1,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "48",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.248,
+     "microseconds": 39.7,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "60",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.329,
+     "microseconds": 42.3,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "72",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.453,
+     "microseconds": 42.7,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 2
+    },
+    {
+     "dims": {
+      "m": "84",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.284,
+     "microseconds": 44.6,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "96",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "hip",
+     "path": "aklr/plugins/aiter/gemm/impls/hip/gemm_n19360_k6144/b3dd92ed2331cfde.json",
+     "speedup": 1.408,
+     "microseconds": 46.0,
+     "requires": {
+      "hip": ">=7.15"
+     },
+     "candidates": 2
+    },
+    {
+     "dims": {
+      "m": "108",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "hip",
+     "path": "aklr/plugins/aiter/gemm/impls/hip/gemm_n19360_k6144/b3dd92ed2331cfde.json",
+     "speedup": 1.251,
+     "microseconds": 46.6,
+     "requires": {
+      "hip": ">=7.15"
+     },
+     "candidates": 2
+    },
+    {
+     "dims": {
+      "m": "120",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "hip",
+     "path": "aklr/plugins/aiter/gemm/impls/hip/gemm_n19360_k6144/b3dd92ed2331cfde.json",
+     "speedup": 1.214,
+     "microseconds": 48.3,
+     "requires": {
+      "hip": ">=7.15"
+     },
+     "candidates": 2
+    },
+    {
+     "dims": {
+      "m": "132",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.18,
+     "microseconds": 53.8,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "144",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.11,
+     "microseconds": 57.4,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "156",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.115,
+     "microseconds": 57.1,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "168",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "flydsl",
+     "path": "aklr/plugins/aiter/gemm/impls/flydsl/gemm_n19360_k6144/a3e1152f89ca8d26.json",
+     "speedup": 1.166,
+     "microseconds": 60.4,
+     "requires": {
+      "flydsl": ">=0.4.0"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "180",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "hip",
+     "path": "aklr/plugins/aiter/gemm/impls/hip/gemm_n19360_k6144/b3dd92ed2331cfde.json",
+     "speedup": 1.297,
+     "microseconds": 55.5,
+     "requires": {
+      "hip": ">=7.15"
+     },
+     "candidates": 2
     },
     {
      "dims": {
@@ -67015,6 +67627,24 @@
      "path": "aklr/plugins/aiter/gemm/impls/hip/gemm_n124160_k4096/8960372ae54256a1.json",
      "speedup": 1.673,
      "microseconds": 169.0,
+     "requires": {
+      "hip": ">=7.15"
+     },
+     "candidates": 1
+    },
+    {
+     "dims": {
+      "m": "192",
+      "n": "19360",
+      "k": "6144",
+      "out.dtype": "bfloat16"
+     },
+     "reason": "served",
+     "kernel": "gemm_n19360_k6144",
+     "language": "hip",
+     "path": "aklr/plugins/aiter/gemm/impls/hip/gemm_n19360_k6144/b3dd92ed2331cfde.json",
+     "speedup": 1.26,
+     "microseconds": 56.0,
      "requires": {
       "hip": ">=7.15"
      },
