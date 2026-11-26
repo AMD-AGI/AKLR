@@ -106,7 +106,7 @@ KIMI_K3_LATENT_MOE_TAIL = OpContract(
         "out": TensorSpec(
             description="The layer's MoE output, bitwise the same on every rank.",
             shape=("n_tokens", "hidden_size"),
-            dtype=_SAME_AS_ROUTED,
+            dtype=_SAME_AS_ROUTED.model_copy(update={"param_name": "out_dtype"}),
             # vLLM rounds a rank's own columns twice (its addmm, then the all-reduce), a kernel may round them once:
             # half a bf16 unit of shared_r + n_r @ up_weight_r.T apart, which an element can carry in full where the
             # sum over ranks cancels; the GEMM's common SQNR bound (bf16) holds that whatever the partials' size
