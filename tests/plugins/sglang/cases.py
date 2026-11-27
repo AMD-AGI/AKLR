@@ -963,6 +963,47 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # DeepSeek-V4's mHC boundary with no pending post and the norm after it, at a 256-wide hidden size
+    PointSpec(
+        contract_id="deepseek_v4_hc_pre_norm@1.0",
+        axes={"n_tokens": 6, "hc_mult": 4, "hidden_size": 256, "n_mix": 24},
+        dtypes={
+            "residual": "bfloat16",
+            "pre_prev": "float32",
+            "hc_fn": "float32",
+            "hc_scale": "float32",
+            "hc_base": "float32",
+            "norm_weight": "bfloat16",
+            "y": "bfloat16",
+            "out_norm": "bfloat16",
+            "pre": "float32",
+            "post": "float32",
+            "comb": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="deepseek_v4_hc_pre_norm_mxfp8@1.0",
+        axes={"n_tokens": 6, "hc_mult": 4, "hidden_size": 256, "n_mix": 24},
+        dtypes={
+            "residual": "bfloat16",
+            "pre_prev": "float32",
+            "hc_fn": "float32",
+            "hc_scale": "float32",
+            "hc_base": "float32",
+            "norm_weight": "bfloat16",
+            "y": "bfloat16",
+            "out_norm": "bfloat16",
+            "pre": "float32",
+            "post": "float32",
+            "comb": "float32",
+            "quantized": "float8_e4m3fn",
+            "scales": "uint8",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
 # tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
