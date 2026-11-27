@@ -219,7 +219,7 @@ How to read an accuracy failure, and whether a slow result is the machine's nois
 
 Once the PR merges, CI measures again on main, and a bot opens (or updates) a PR on the `aklr-perf/main` branch that writes the measurements into the file. **Once that PR merges**, inference uses your kernel.
 
-At inference a call runs your kernel when all of these hold: the engine has the AKLR plugin on, so the call reaches the api (`aklr/plugins/README.md`); the machine matches `targets` and `requires`; the call's shape is one of the file's workloads; that workload's `accuracy` is not `failed`; and its `speedup` is at least `AKLR_MIN_SPEEDUP` (1.05 by default). Otherwise the api returns a `FallbackReason` and the engine runs its own code:
+At inference a call runs your kernel when all of these hold: the engine has the AKLR plugin on, so the call reaches the api (`aklr/plugins/README.md`); the machine matches `targets` and `requires`; the call matches a workload key within the contract; at least one workload of that schema and key passes accuracy and reaches `AKLR_MIN_SPEEDUP` (1.05 by default); and no workload in the shared key has failed accuracy. Exact keys apply this test per workload. Workloads differing only in `any_size` axes share a key, so one qualifying workload admits all covered axis values, even when another measured sibling is below the speedup bar. Otherwise the api returns a `FallbackReason` and the engine runs its own code:
 
 | `FallbackReason` | Why |
 |---|---|
@@ -228,8 +228,8 @@ At inference a call runs your kernel when all of these hold: the engine has the 
 | `out_of_contract` | the call is outside what the contract defines |
 | `no_workload` | the shape is not a workload of any schema |
 | `not_measured` | no measurement yet |
-| `inaccurate` | the measurement is `failed` |
-| `not_qualified` | measured and correct, but its `speedup` falls short of `AKLR_MIN_SPEEDUP` |
+| `inaccurate` | a workload of the matching key records failed accuracy |
+| `not_qualified` | no workload of the matching key reaches `AKLR_MIN_SPEEDUP` |
 | `not_warmed` | a CUDA graph is being recorded, and this shape never ran outside a recording before |
 
 ## 6. Create an op
