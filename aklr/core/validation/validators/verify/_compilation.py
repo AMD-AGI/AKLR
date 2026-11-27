@@ -19,6 +19,8 @@ import aklr
 from aklr.core.contract.spec import FrozenModel, axes_text
 from aklr.core.platform.toolchain import unmet_requirement
 from aklr.core.validation.validators.verify._flydsl import FlyDSLCompiler
+from aklr.core.validation.validators.verify._recording import RecordingCompiler
+from aklr.core.validation.validators.verify._triton import TritonCompiler
 
 if TYPE_CHECKING:
     from aklr.core.contract.op import OpContract
@@ -31,7 +33,10 @@ __all__ = [
     "Compilation",
 ]
 
-COMPILERS: Final[dict[str, type[FlyDSLCompiler]]] = {"flydsl": FlyDSLCompiler}
+COMPILERS: Final[dict[str, type[FlyDSLCompiler] | type[RecordingCompiler]]] = {
+    "flydsl": FlyDSLCompiler,
+    "triton": TritonCompiler,
+}
 MANIFEST: Final = "compilations.jsonl"
 PR_SET_PDEATHSIG: Final = 1
 STARTUP_TIMEOUT_SECONDS: Final = 300.0
