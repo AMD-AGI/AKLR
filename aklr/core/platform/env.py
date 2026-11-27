@@ -65,7 +65,7 @@ class RuntimeEnv:
         if export not in ("0", "1"):
             raise ValueError(f"{ENV_EXPORT}={export!r}: expected '1' or '0'")
         self.is_export_enabled = export == "1"
-        # AKLR_SGLANG_PLUGIN: "1" hooks sglang's layers to the plugin's ops and registers its monokernel specs
+        # AKLR_SGLANG_PLUGIN: "1" hooks sglang's layers to the plugin's ops
         plugin = os.environ.get(ENV_SGLANG_PLUGIN) or "0"
         if plugin not in ("0", "1"):
             raise ValueError(f"{ENV_SGLANG_PLUGIN}={plugin!r}: expected '1' or '0'")
