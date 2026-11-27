@@ -222,10 +222,10 @@ On an MI355X, from the repository root, one schema file at a time:
 python -m aklr validate aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384/15ab9c1502094957.json
 ```
 
-and the same for the other two paths under `sources`. Each runs the audit and bench stages and writes
+and the same for the other two paths under `sources`. Each runs the audit and bench validators and writes
 `aklr_validation/report.md` with the per-Point speedup, and `report.json` beside it with every round
 (`aklr/plugins/aiter/README.md` § Commands). Add `--base origin/main` only on a branch that edits the file: with the base set,
-bench measures only schemas that are not at the base (`aklr/core/validation/stages/validation_scope.py`,
+bench measures only schemas that are not at the base (`aklr/core/validation/validators/validation_scope.py`,
 `of_working_tree`). The local result does not count; CI's measurement is the one dispatch reads (`aklr/plugins/aiter/README.md`
 § Workflow).
 

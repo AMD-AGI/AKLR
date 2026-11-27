@@ -20,7 +20,7 @@
    `bitwise` contract rejects accumulation in arrival order (atomics, atomic
    split-K), so reduce in a fixed order; `bounded` allows it.
 5. **Verify per Point.** Run `python -m aklr export check`, then
-   `python -m aklr validate --base origin/main --stages audit,bench <new schema>` on
+   `python -m aklr validate --base origin/main --validators audit,bench <new schema>` on
    the target GPU, naming only the new file. Keep a Point when its lower bound is
    at least 1.05 against the baseline and 1.0 against a served kernel; read
    failures with `read-validation`. Confirm that the ported fast path, not a

@@ -16,7 +16,8 @@ import torch
 
 def _assert_milliseconds(value):
     assert isinstance(value, float)
-    assert math.isfinite(value) and value > 0
+    assert math.isfinite(value)
+    assert value > 0
 
 
 def _per_stream_state(bench_cudagraph):

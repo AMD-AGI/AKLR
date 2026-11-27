@@ -123,7 +123,7 @@ python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144
 
 The report goes to `aklr_validation/report.md` (`aklr/plugins/aiter/README.md` § Commands). Add `--base origin/main` only on a
 branch that adds the file: with the base set, bench measures only schemas that are not at the base
-(`aklr/core/validation/stages/validation_scope.py`). The local result does not count; CI's is the one dispatch reads.
+(`aklr/core/validation/validators/validation_scope.py`). The local result does not count; CI's is the one dispatch reads.
 
 ## Rollback
 

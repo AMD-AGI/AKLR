@@ -174,16 +174,16 @@ The file name `<uuid>` comes from the file's content: after a change to the kern
 
 ## 4. Validate locally
 
-Validation has two stages: audit checks the file's format, its agreement with the contract and the rules of step 3, without a GPU; bench checks on a GPU that the kernel is correct and fast. First the audit alone:
+Validation has two validators, each run on its own, whatever the other reports: audit checks the file's format, its agreement with the contract and the rules of step 3, without a GPU; bench checks on a GPU that the kernel is correct and fast. First the audit alone:
 
 ```bash
-python -m aklr validate --stages audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+python -m aklr validate --validators audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
 Then audit and bench on an MI355X. Bench draws inputs for each workload, compares the kernel's outputs with the reference's, then runs the kernel and the baseline (aiter's `gemm_a16w16` here) in turns, timing both:
 
 ```bash
-python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+python -m aklr validate --base origin/main --validators audit,bench aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
 `--base origin/main` judges the file as a new kernel: it has to reach the bar over the baseline (1.05 by default), and not be slower than the kernel already in the same directory on main. Without it the bar is lower, and a file passing locally can still fail CI.

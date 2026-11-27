@@ -303,7 +303,7 @@ class TestMutableInput:
         }
 
         def compare() -> dict[str, str]:
-            return case.contract.reference.check(actual, reference, case.request.schema)
+            return case.contract.reference.check(actual, reference, case.contract_workload.schema)
 
         assert compare() == {}
         flat = actual["delta_state"].view(-1)

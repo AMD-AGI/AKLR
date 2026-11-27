@@ -39,8 +39,9 @@ and both were reverted *(field, E4)*.
 
 The two numbers come from different rulers, and the description's number is a mean over shapes.
 
-- **AKLR CI's `speedup` for a Point** is the one-sided 95% Student-t lower bound of the mean log ratio of baseline
-  to candidate time over 32 rounds (S2). Each round's reading is the median of 10 graph replays of the per-call
+- **AKLR CI's `speedup` for a Point** was, in these runs, the one-sided 95% Student-t lower bound of the mean log ratio of baseline
+  to candidate time over 32 rounds (S2); today it is the geometric mean of 3 trials' ratios
+  (`harness/skills/read-validation/references/ruler.md`). Each round's reading is the median of 10 graph replays of the per-call
   GPU kernel time recorded by Kineto, every call preceded by a 1 GiB read that flushes L2 and MALL (S3); the arms
   run in a seeded random order each round (S4).
 - **The baseline is the contract's baseline class**, here `GemmA8w8BlockwiseScaledBaseline`, which calls

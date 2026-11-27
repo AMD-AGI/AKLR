@@ -313,10 +313,10 @@ python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_
 python -m aklr validate --base 0e02a81 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536/6f9768d6659b1d4f.json
 ```
 
-and the same for the other paths under `sources`. Each runs the audit and bench stages and writes
+and the same for the other paths under `sources`. Each runs the audit and bench validators and writes
 `aklr_validation/report.md` with the per-Point speedup (`aklr/plugins/aiter/README.md` § Commands). Give `--base` a commit
 that lacks the file, such as 0e02a81 for the three newer ones: with the base set, bench measures only schemas that
-are not at the base, so with a base that has the file it skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`).
+are not at the base, so with a base that has the file it skips the bench (`aklr/core/validation/validators/validation_scope.py`, `of_working_tree`).
 The local result does not count; CI's measurement is the one dispatch reads. The baseline is aiter's tuned path:
 with an aiter other than dbd8bf5, compare the kernel times above before comparing speedups.
 

@@ -215,6 +215,15 @@ public:
     for (const auto &[name, value] : inherited) {
       value ? setenv(name, value->c_str(), 1) : unsetenv(name);
     }
+    if (status == ROCPROFILER_STATUS_ERROR_CONFIGURATION_LOCKED) {
+      throw std::runtime_error(
+          "aklr kernel tracer: rocprofiler-sdk configured before the tracer "
+          "registered, and below 1.4.0 it takes no tool after that (import "
+          "aklr.core.utils.testing before the process's first kernel and, "
+          "with torch >= 2.12, before it initializes the GPU; start the "
+          "process without ROCPROFILER_REGISTER_FORCE_LOAD and "
+          "ROCPROFILER_REGISTER_LIBRARY)");
+    }
     check(status, "register");
     if (dispatches_.handle == 0) {
       throw std::runtime_error(

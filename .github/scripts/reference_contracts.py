@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from aklr.core.contract.spec import CONTRACT_ID_PATTERN
-from aklr.core.validation.stages.validation_scope import ValidationScope
+from aklr.core.validation.validators.validation_scope import ValidationScope
 
 
 def reference_contracts(base: str, head: str) -> set[str]:

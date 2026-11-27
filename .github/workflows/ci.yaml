@@ -27,7 +27,7 @@ env:
   # Callers keep scratch files under $RUNNER_TEMP: an untracked file counts as a change.
   AKLR_MEASUREMENT_CURRENT: |
     import sys
-    from aklr.core.validation.stages.validation_scope import ValidationScope
+    from aklr.core.validation.validators.validation_scope import ValidationScope
     scope = ValidationScope.of_working_tree(sys.argv[1], None)
     sys.exit("core" in map(scope.path_kind, scope.changed_paths()))
 
@@ -186,7 +186,7 @@ jobs:
           report="$AUDIT_REPORT_DIR/report.json"
           flags=(${BASE:+--base "$BASE"})
           [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
-          if python -m aklr validate "${flags[@]}" --stages audit --out "$AUDIT_REPORT_DIR"; then
+          if python -m aklr validate "${flags[@]}" --validators audit --out "$AUDIT_REPORT_DIR"; then
             has_bench_paths=$(jq '.bench_paths | length > 0' "$report")
             echo "audit passed, $(jq '.schema_paths | length' "$report") schemas, $(jq '.bench_paths | length' "$report") to bench" >> "$GITHUB_STEP_SUMMARY"
             echo "has_bench_paths=$has_bench_paths" >> "$GITHUB_OUTPUT"

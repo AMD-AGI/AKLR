@@ -25,7 +25,7 @@ _UUID = "0123456789abcdef"
         ("aklr/plugins/sglang/models/qwen2_moe/api.py", "other"),
         ("aklr/plugins/aiter/provider/gemm/impls/triton/fp8/fp8_gfx950_m1.json", "other"),
         ("tests/plugins/sglang/test_qwen2_moe_contract.py", "other"),
-        ("aklr/core/validation/stages/validation_scope.py", "core"),
+        ("aklr/core/validation/validators/validation_scope.py", "core"),
         ("stack.json", "core"),
         ("aklr/core/README.md", "other"),
     ],
