@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "deepseek_v4_hc_boundary_hc_mult4_hidden_size5120_n_mix24_n_slices320",
+  "name": "deepseek_v4_hc_boundary_hc_mult4_hidden_size5120_n_mix24_n_slices80",
   "contract_id": "deepseek_v4_hc_boundary@1.0",
   "description": "With no pending post: y = sum_k pre_prev[k] * residual[:, k] in fp32 (copy order), rounded to bf16; per slice s of n_slices over the hidden columns, part_mix[s] = sum_k residual[:, k, slice] hc_fn[:, k * H + slice]^T and part_sq[s] = sum_k sum residual[:, k, slice]**2, fp32.",
   "op_type": "deepseek_v4_hc_boundary",
@@ -26,7 +26,7 @@
     },
     "n_slices": {
       "type": "const",
-      "value": 320,
+      "value": 80,
       "description": "Partials per row: hidden columns of every copy in slices of hidden_size // n_slices."
     },
     "flat_size": {
@@ -105,80 +105,144 @@
         "n_tokens": 1
       },
       "accuracy": "passed",
-      "speedup": 1.152,
-      "microseconds": 5.95
+      "speedup": 1.009,
+      "microseconds": 6.81
     },
     {
       "axes": {
         "n_tokens": 2
       },
       "accuracy": "passed",
-      "speedup": 1.16,
-      "microseconds": 6.05
+      "speedup": 1.01,
+      "microseconds": 6.92
     },
     {
       "axes": {
         "n_tokens": 4
       },
       "accuracy": "passed",
-      "speedup": 1.151,
-      "microseconds": 6.17
+      "speedup": 1.007,
+      "microseconds": 7.02
     },
     {
       "axes": {
         "n_tokens": 6
       },
       "accuracy": "passed",
-      "speedup": 1.152,
-      "microseconds": 6.23
+      "speedup": 1.004,
+      "microseconds": 7.08
     },
     {
       "axes": {
         "n_tokens": 8
       },
       "accuracy": "passed",
-      "speedup": 1.145,
-      "microseconds": 6.3
+      "speedup": 1.004,
+      "microseconds": 7.12
     },
     {
       "axes": {
         "n_tokens": 12
       },
       "accuracy": "passed",
-      "speedup": 1.134,
-      "microseconds": 6.41
+      "speedup": 1.003,
+      "microseconds": 7.19
     },
     {
       "axes": {
         "n_tokens": 16
       },
       "accuracy": "passed",
-      "speedup": 1.129,
-      "microseconds": 6.47
+      "speedup": 1.006,
+      "microseconds": 7.22
     },
     {
       "axes": {
         "n_tokens": 24
       },
       "accuracy": "passed",
-      "speedup": 1.105,
-      "microseconds": 6.49
+      "speedup": 1.007,
+      "microseconds": 7.1
     },
     {
       "axes": {
         "n_tokens": 32
       },
       "accuracy": "passed",
-      "speedup": 1.075,
-      "microseconds": 6.63
+      "speedup": 1.002,
+      "microseconds": 7.08
     },
     {
       "axes": {
         "n_tokens": 48
       },
       "accuracy": "passed",
-      "speedup": 1.033,
-      "microseconds": 6.94
+      "speedup": 1.008,
+      "microseconds": 7.11
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "accuracy": "passed",
+      "speedup": 1.001,
+      "microseconds": 7.7
+    },
+    {
+      "axes": {
+        "n_tokens": 96
+      },
+      "accuracy": "passed",
+      "speedup": 1.152,
+      "microseconds": 7.98
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "accuracy": "passed",
+      "speedup": 1.136,
+      "microseconds": 9.06
+    },
+    {
+      "axes": {
+        "n_tokens": 192
+      },
+      "accuracy": "passed",
+      "speedup": 1.088,
+      "microseconds": 9.78
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "accuracy": "passed",
+      "speedup": 1.142,
+      "microseconds": 10.9
+    },
+    {
+      "axes": {
+        "n_tokens": 384
+      },
+      "accuracy": "passed",
+      "speedup": 1.038,
+      "microseconds": 14.4
+    },
+    {
+      "axes": {
+        "n_tokens": 512
+      },
+      "accuracy": "passed",
+      "speedup": 1.045,
+      "microseconds": 19.0
+    },
+    {
+      "axes": {
+        "n_tokens": 768
+      },
+      "accuracy": "passed",
+      "speedup": 1.061,
+      "microseconds": 24.5
     }
   ],
   "layout_variants": {
