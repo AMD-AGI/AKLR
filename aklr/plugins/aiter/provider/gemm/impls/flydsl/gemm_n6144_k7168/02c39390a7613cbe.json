@@ -1,0 +1,150 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n6144_k7168",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 6144,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 7168,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 144
+      }
+    },
+    {
+      "axes": {
+        "m": 160
+      }
+    },
+    {
+      "axes": {
+        "m": 176
+      }
+    },
+    {
+      "axes": {
+        "m": 208
+      }
+    },
+    {
+      "axes": {
+        "m": 224
+      }
+    },
+    {
+      "axes": {
+        "m": 240
+      }
+    },
+    {
+      "axes": {
+        "m": 256
+      }
+    },
+    {
+      "axes": {
+        "m": 320
+      }
+    },
+    {
+      "axes": {
+        "m": 352
+      }
+    },
+    {
+      "axes": {
+        "m": 384
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"bf16 GEMM out = a @ b.T at n x k = 6144 x 7168 (Kimi-K3's KDA in-projection) for M from 1 to 384, M a kernel\nargument.\n\nA FlyDSL split-K kernel in one launch: A and B tiles stream into XOR-swizzled LDS rings through buffer_load ... lds\nDMA, MFMA 16x16x32 accumulates in fp32, every split stores its fp32 partial plane, and the split that arrives last on a\nlaunch-tagged per-tile counter sums the planes in split order and rounds once to bf16 (no workgroup waits on\nanother). M picks one of four row classes (_N6144), each compiled once (warm_up builds them all); a class keeps the\nrow blocks of its largest M, A rows past M read zero past the descriptor and C rows past M are not stored. Each call\nzeroes its launch's fold counters (_scratch): a launch compares a counter word with its own tag, and a word an earlier\ntensor left there could hold it.\n\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as std_arith\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl.expr import arith, const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import T, Vector\n\n_SC01 = 17  # sc0 | sc1: device-coherent access past the non-coherent caches\n_CNT_LINE = 128  # bytes per tile counter: one cache line each\n_TAG_MUL = 0x9E3779B97F4A7C15  # odd: mixes the queue address into the dispatch id\n_TAG_MASK = (1 << 55) - 1\n\n\ndef _as_i32(v):\n    if isinstance(v, int):\n        return fx.arith.constant(v)\n    v = fx.arith.unwrap(v)\n    t = v.type\n    if isinstance(t, ir.IntegerType):\n        if t.width == 32:\n            return v\n        if t.width > 32:\n            return std_arith.TruncIOp(T.i32, v).result\n        return std_arith.ExtSIOp(T.i32, v).result\n    return std_arith.IndexCastOp(T.i32, v).result\n\n\ndef _rsrc(tensor, num_records_bytes):\n    buf = rocdl.make_buffer_tensor(tensor, max_size=False, num_records_bytes=num_records_bytes)\n    return fx.arith.unwrap(rocdl.get_buffer_rsrc(fx.get_iter(buf)))\n\n\ndef _aux(v):\n    return ir.IntegerAttr.get(T.i32, v)\n\n\ndef _bload(res_ty, rsrc, byte_off, aux=0):\n    return rocdl_d.RawPtrBufferLoadOp(res_ty, rsrc, _as_i32(byte_off), fx.arith.constant(0), aux=_aux(aux)).result\n\n\ndef _bstore(data, rsrc, byte_off, aux=0):\n    rocdl_d.RawPtrBufferStoreOp(fx.arith.unwrap(data), rsrc, _as_i32(byte_off), fx.arith.constant(0), aux=_aux(aux))\n\n\ndef _lds_ptr(addr_i64):\n    v = fx.arith.unwrap(addr_i64)\n    return llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr<3>\"), v).result\n\n\ndef _gep(base_ptr, byte_offset=None, static_byte_offset=0):\n    base_ptr = fx.arith.unwrap(base_ptr)\n    i8 = ir.IntegerType.get_signless(8)\n    if byte_offset is None:\n        return llvm.GEPOp(base_ptr.type, base_ptr, [], [int(static_byte_offset)], i8, None).result\n    off = fx.arith.unwrap(byte_offset)\n    return llvm.GEPOp(base_ptr.type, base_ptr, [off], [-(2**31)], i8, None).result\n\n\ndef _i64c(v):\n    return std_arith.ConstantOp(T.i64, ir.IntegerAttr.get(T.i64, v)).result\n\n\n@functools.cache\ndef _build(m, n, k, BM, BN, WM, WN, STAGES, SPLIT, BPOL, BK=64, RT=False):\n    # RT: m is the largest M of a row class; the kernel reads M at run time (rows past M masked, row blocks fixed).\n    WAVES = WM * WN\n    THREADS = WAVES * 64\n    WARP_M = BM // WM\n    WARP_N = BN // WN\n    MS = WARP_M // 16\n    NS = WARP_N // 16\n    assert MS * 16 * WM == BM and NS * 16 * WN == BN\n    NF = MS * NS\n    N_BLOCKS = n // BN\n    assert N_BLOCKS * BN == n\n    M_BLOCKS = (m + BM - 1) // BM\n    TILES = M_BLOCKS * N_BLOCKS\n    assert k % BK == 0\n    KBLK = k // BK\n    LOOPS = KBLK // SPLIT\n    REM = KBLK % SPLIT\n    assert LOOPS >= STAGES >= 2\n    K_STEPS = BK // 32\n    KV = BK // 8\n    A_CH = BM * KV\n    B_CH = BN * KV\n    C_CH = BM * BN // 8\n    A_DMA = (A_CH + THREADS - 1) // THREADS\n    B_DMA = (B_CH + THREADS - 1) // THREADS\n    C_VECS = (C_CH + THREADS - 1) // THREADS\n    for ch in (A_CH, B_CH, C_CH):\n        assert ch % 64 == 0 and ch >= THREADS\n    A_TAIL = (A_CH - (A_DMA - 1) * THREADS) // 64\n    B_TAIL = (B_CH - (B_DMA - 1) * THREADS) // 64\n    WAIT = A_DMA - (A_TAIL < WAVES) + B_DMA - (B_TAIL < WAVES)\n    assert (STAGES - 2) * (A_DMA + B_DMA) < 63\n    C_XV = BN // 8\n    PART = BM * BN\n    PROD = TILES * SPLIT\n    PB = 16  # bytes per lane per fragment in a partial plane: four fp32\n    plane_bytes = SPLIT * TILES * PART * PB // 4\n    ws_bytes = plane_bytes + TILES * _CNT_LINE\n    ws_numel = ws_bytes // 4\n    GRID = (TILES, SPLIT, 1)\n\n    AS_ELEMS = STAGES * BM * BK\n    BS_ELEMS = STAGES * BN * BK\n    CS_ELEMS = BM * BN\n    FLAG_ELEM = max(AS_ELEMS + BS_ELEMS, CS_ELEMS)\n    LDS_ELEMS = FLAG_ELEM + 64\n\n    @fx.struct\n    class SharedStorage:\n        buf: fx.Array[fx.BFloat16, LDS_ELEMS, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def gemm_family_splitk(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, W: fx.Tensor, M: fx.Int32):\n        bf16x8 = fx.Vector.make_type(8, fx.BFloat16)\n        if const_expr(RT):\n            m_rt = fx.Int32(M)\n            a_rsrc = _rsrc(A, fx.Int64(m_rt) * (k * 2))\n            c_rsrc = _rsrc(C, fx.Int64(m_rt) * (n * 2))\n        else:\n            m_rt = fx.Int32(m)\n            a_rsrc = _rsrc(A, m * k * 2)\n            c_rsrc = _rsrc(C, m * n * 2)\n        b_rsrc = _rsrc(B, n * k * 2)\n        w_rsrc = _rsrc(W, ws_bytes)\n        lds = fx.SharedAllocator().allocate(SharedStorage)\n        a_lds_ptr = lds.buf.peek().ptr\n        b_lds_ptr = a_lds_ptr + fx.Int64(AS_ELEMS)\n        c_lds_ptr = a_lds_ptr\n        a_lds_i64 = fx.Int64(fx.ptrtoint(a_lds_ptr))\n        b_lds_i64 = fx.Int64(fx.ptrtoint(b_lds_ptr))\n        flag_lds = _gep(_lds_ptr(a_lds_i64), static_byte_offset=FLAG_ELEM * 2)\n\n        tid = fx.thread_idx.x\n        wid = tid // 64\n        lane = tid % 64\n        bid = fx.block_idx.x\n        s_idx = fx.block_idx.y\n        # (tile, split) pairs dispatch round-robin over 8 XCDs: each XCD takes a contiguous tile-major run, so the\n        # splits of one tile start together on one XCD and reach the fold at about the same time\n        lin = bid + s_idx * TILES\n        x_q, x_r = PROD // 8, PROD % 8\n        xcd = lin % 8\n        logical = xcd * x_q + arith.select(xcd < x_r, xcd, x_r) + lin // 8\n        s_idx = logical % SPLIT\n        tile_id = logical // SPLIT\n        # tiles that share a B column strip are adjacent, so they land on one XCD\n        block_n = tile_id // M_BLOCKS\n        block_m = tile_id % M_BLOCKS\n        m_off = block_m * BM\n        n_off = block_n * BN\n        if const_expr(REM == 0):\n            ks_begin = _as_i32(s_idx * (LOOPS * BK))\n            n_iter = LOOPS - (STAGES - 1)\n        else:\n            # the first REM splits take one extra k-block\n            s_i = fx.Int32(s_idx)\n            ks_begin = _as_i32((s_i * LOOPS + arith.select(s_i < fx.Int32(REM), s_i, fx.Int32(REM))) * BK)\n            n_iter = arith.index_cast(\n                T.index,\n                _as_i32(arith.select(s_i < fx.Int32(REM), fx.Int32(LOOPS + 1), fx.Int32(LOOPS)) - fx.Int32(STAGES - 1)),\n            )\n\n        def kpos(j):\n            return ks_begin + _as_i32(fx.Int32(j) * BK)\n\n        warp_m = wid // WN * WARP_M\n        warp_n = wid % WN * WARP_N\n        frag_r = lane % 16\n        frag_k = lane // 16 * 8\n\n        warp_offset = rocdl.readfirstlane(T.i64, arith.index_cast(T.i64, fx.Index(wid) * fx.Index(64 * 16)))\n        wid_s = None\n        if const_expr(A_TAIL < WAVES or B_TAIL < WAVES):\n            wid_s = fx.Int32(rocdl.readfirstlane(T.i32, _as_i32(wid)))\n\n        def barrier(vmcnt):\n            llvm.InlineAsmOp(None, [], f\"s_waitcnt vmcnt({vmcnt})\\n\\ts_barrier\", \"\", has_side_effects=True)\n\n        def dma(rsrc, lds_ptr, goff, pol=\"sc0\"):\n            llvm.InlineAsmOp(\n                None,\n                [lds_ptr, goff, rsrc],\n                f\"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen {pol} lds\",\n                \"s,v,s\",\n                has_side_effects=True,\n            )\n\n        def dma_tile(rsrc, lds_i64, rows, row_off, row_lim, count, tail, k_off, stage, pol=\"sc0\"):\n            lds_p = None\n            for ii in range_constexpr(count):\n                gtid = THREADS * ii + tid\n                r = gtid // KV\n                col_bytes = (gtid % KV * 16) ^ (r % KV * 16)\n                row = row_off + r\n                if const_expr(row_lim is not None):\n                    row = arith.select(\n                        arith.cmpi(arith.CmpIPredicate.ult, fx.Index(row), fx.Index(row_lim)),\n                        fx.Index(row),\n                        fx.Index(0),\n                    )\n                goff = _as_i32(fx.Index(row) * fx.Index(k * 2)) + _as_i32(k_off * 2) + _as_i32(col_bytes)\n                if const_expr(lds_p is None):\n                    base = lds_i64 + fx.Int64(arith.index_cast(T.i64, fx.Index(stage) * fx.Index(rows * BK * 2)))\n                    lds_p = _gep(_lds_ptr(base), warp_offset)\n                else:\n                    lds_p = _gep(lds_p, static_byte_offset=THREADS * 16)\n                if const_expr(ii == count - 1 and tail < WAVES):\n                    if wid_s < fx.Int32(tail):\n                        dma(rsrc, lds_p, goff, pol)\n                else:\n                    dma(rsrc, lds_p, goff, pol)\n\n        def dma_a(k_off, stage):\n            # rows past M read past the buffer's num_records (M rows under RT), where the hardware returns zeros\n            # without a memory access\n            dma_tile(a_rsrc, a_lds_i64, BM, m_off, None, A_DMA, A_TAIL, k_off, stage)\n\n        def dma_b(k_off, stage):\n            dma_tile(b_rsrc, b_lds_i64, BN, n_off, None, B_DMA, B_TAIL, k_off, stage, BPOL)\n\n        def lds_frag(base_ptr, rows, stage, row, kcol):\n            col_bytes = (kcol * 2) ^ (row % KV * 16)\n            off = fx.Int64(stage) * (rows * BK) + fx.Int64(row) * BK + fx.Int64(col_bytes // 2)\n            return fx.ptr_load(base_ptr + off, result_type=bf16x8)\n\n        def compute(stage, frags):\n            s = fx.Index(stage)\n            out = [x for x in frags]\n            for kk in range_constexpr(K_STEPS):\n                kcol = kk * 32 + frag_k\n                b_fr = [lds_frag(b_lds_ptr, BN, s, warp_n + j * 16 + frag_r, kcol) for j in range_constexpr(NS)]\n                a_fr = [lds_frag(a_lds_ptr, BM, s, warp_m + i * 16 + frag_r, kcol) for i in range_constexpr(MS)]\n                rocdl.sched_barrier(0)\n                for i in range_constexpr(MS):\n                    for j in range_constexpr(NS):\n                        out[i * NS + j] = rocdl.mfma_f32_16x16x32_bf16(\n                            T.vec(4, T.f32), [a_fr[i], b_fr[j], out[i * NS + j], 0, 0, 0]\n                        )\n            return out\n\n        def hot_loop_scheduler():\n            for _ in range_constexpr(B_DMA + A_DMA):\n                rocdl.sched_vmem(1)\n            for _ in range_constexpr(K_STEPS):\n                for _ in range_constexpr(NS + MS):\n                    rocdl.sched_dsrd(1)\n                for _ in range_constexpr(MS):\n                    rocdl.sched_mfma(NS)\n            rocdl.sched_barrier(0)\n\n        acc0 = [arith.constant_vector(0.0, T.vec(4, T.f32))] * NF\n\n        def mainloop():\n            for st in range_constexpr(STAGES - 1):\n                dma_b(kpos(st), st)\n                dma_a(kpos(st), st)\n            rocdl.sched_barrier(0)\n            init_state = [fx.Int32(0), arith.constant(0, index=True)] + acc0\n            for bki, state in range(0, n_iter, 1, init=init_state):\n                k_offset = state[0]\n                cur = fx.Index(state[1])\n                frags = state[2:]\n                nxt = (cur + 1) % STAGES\n                wst = (cur + STAGES - 1) % STAGES\n                barrier((STAGES - 2) * WAIT)\n                dma_b(kpos(k_offset + (STAGES - 1)), wst)\n                dma_a(kpos(k_offset + (STAGES - 1)), wst)\n                new = compute(cur, frags)\n                hot_loop_scheduler()\n                results = yield [k_offset + fx.Int32(1), nxt] + new\n            cur = fx.Index(results[1])\n            m_frags = results[2:]\n            for st in range_constexpr(STAGES - 1):\n                barrier((STAGES - 2 - st) * WAIT)\n                m_frags = compute(cur, m_frags)\n                cur = (cur + 1) % STAGES\n            return m_frags\n\n        c_frags = mainloop()\n\n        # fragment-major planes: (split, tile, wave, frag, lane) x f32x4\n        frag_base = (tile_id * WAVES + wid) * NF\n\n        def plane_off(sp, f):\n            off = ((sp * (TILES * WAVES * NF) + frag_base + f) * 64 + lane) * PB\n            if const_expr(RT and m in (128, 256)):\n                # a fragment whose 16 rows all lie past M is padding: its plane store and peer loads go past the\n                # workspace descriptor (stores dropped, loads read zero) and its C rows are never stored\n                live = (m_off + warp_m + (f // NS) * 16) < m_rt\n                off = arith.select(live, fx.Int32(off), fx.Int32(ws_bytes))\n            return off\n\n        for f in range_constexpr(NF):\n            _bstore(Vector(c_frags[f]), w_rsrc, plane_off(s_idx, f), _SC01)\n        rocdl.s_waitcnt(vmcnt=0)\n        gpu.barrier()\n\n        if tid == fx.Int32(0):\n            # launch tag: dispatch id plus queue address bits (ids restart on another queue)\n            did = llvm.call_intrinsic(T.i64, \"llvm.amdgcn.dispatch.id\", [], [], [])\n            qp = llvm.call_intrinsic(ir.Type.parse(\"!llvm.ptr<4>\"), \"llvm.amdgcn.queue.ptr\", [], [], [])\n            qpi = llvm.PtrToIntOp(T.i64, qp).result\n            tag = std_arith.AndIOp(\n                std_arith.AddIOp(did, std_arith.MulIOp(qpi, _i64c(_TAG_MUL - (1 << 64))).result).result,\n                _i64c(_TAG_MASK),\n            ).result\n            tag_base = std_arith.ShLIOp(tag, _i64c(8)).result\n            wptr = fx.to_llvm_ptr(fx.get_iter(W))\n            cnt_off = std_arith.ExtSIOp(T.i64, _as_i32(tile_id * _CNT_LINE + plane_bytes)).result\n            cptr = _gep(wptr, cnt_off)\n            cur = llvm.LoadOp(\n                T.i64, cptr, alignment=8, ordering=llvm.AtomicOrdering.monotonic, syncscope=\"agent\"\n            ).result\n            stale = std_arith.CmpIOp(std_arith.CmpIPredicate.ne, std_arith.ShRUIOp(cur, _i64c(8)).result, tag).result\n            # a word from another launch is reset to this launch's tag with count 0; a word that already holds the\n            # tag is left alone (its expected value is one no tagged word can hold)\n            expect = std_arith.SelectOp(stale, cur, _i64c(-1)).result\n            llvm.cmpxchg(\n                cptr,\n                expect,\n                tag_base,\n                llvm.AtomicOrdering.monotonic,\n                llvm.AtomicOrdering.monotonic,\n                syncscope=\"agent\",\n                alignment=8,\n            )\n            old = llvm.atomicrmw(\n                llvm.AtomicBinOp.add,\n                cptr,\n                _i64c(1),\n                llvm.AtomicOrdering.monotonic,\n                syncscope=\"agent\",\n                alignment=8,\n            )\n            last = std_arith.CmpIOp(\n                std_arith.CmpIPredicate.eq, old, std_arith.OrIOp(tag_base, _i64c(SPLIT - 1)).result\n            ).result\n            llvm.StoreOp(std_arith.ExtUIOp(T.i32, last).result, flag_lds, alignment=4)\n        gpu.barrier()\n        is_last = fx.Int32(llvm.LoadOp(T.i32, flag_lds, alignment=4).result)\n\n        def fold_sums(own_sp):\n            sums = []\n            for f in range_constexpr(NF):\n                tot = None\n                for sp in range_constexpr(SPLIT):\n                    if const_expr(sp == own_sp):\n                        v = Vector(c_frags[f])\n                    else:\n                        v = Vector(_bload(T.f32x4, w_rsrc, plane_off(fx.Int32(sp), f), _SC01))\n                    tot = v if tot is None else tot + v\n                sums.append(tot)\n            return sums\n\n        def write_c(sums):\n            gpu.barrier()\n            c_m = lane // 16 * 4\n            c_n = lane % 16\n            for i in range_constexpr(MS):\n                for j in range_constexpr(NS):\n                    cast = sums[i * NS + j].to(fx.BFloat16)\n                    for e in range_constexpr(4):\n                        row = warp_m + i * 16 + c_m + e\n                        col = warp_n + j * 16 + c_n\n                        fx.ptr_store(cast[e], c_lds_ptr + fx.Int64(row * BN + col))\n            gpu.barrier()\n            for i in range_constexpr(C_VECS):\n                g = THREADS * i + tid\n                r = g // C_XV\n                cc = g % C_XV * 8\n                row = m_off + r\n                if const_expr(i == C_VECS - 1 and C_CH % THREADS != 0):\n                    row = arith.select(g < fx.Int32(C_CH), fx.Int32(row), m_rt)\n                if row < m_rt:\n                    v = fx.ptr_load(c_lds_ptr + fx.Int64(r * BN + cc), result_type=bf16x8)\n                    _bstore(v, c_rsrc, (row * n + n_off + cc) * 2)\n\n        # one uniform branch per split index: the folder keeps its own partial in registers, reads the other\n        # planes, and still adds in split order, so every folder produces the same bits\n        sel = is_last * (fx.Int32(s_idx) + fx.Int32(1))\n        for so in range_constexpr(SPLIT):\n            if sel == fx.Int32(so + 1):\n                write_c(fold_sums(so))\n\n    @flyc.jit\n    def launch(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, W: fx.Tensor, M: fx.Int32, stream: fx.Stream):\n        gemm_family_splitk(A, B, C, W, M).launch(grid=GRID, block=(THREADS, 1, 1), stream=stream)\n\n    return launch, ws_numel, plane_bytes // 4\n\n\n# M from 1 to 384 at n x k = 6144 x 7168: (largest M of the class, the split-K kernel's _build configuration: BM, BN,\n# m_waves, n_waves, stages, split_k, B policy, BK)\n_N6144_NK = (6144, 7168)\n_N6144 = (\n    (128, (128, 96, 4, 2, 4, 4, \"sc0 nt\", 64)),\n    (160, (160, 96, 2, 3, 4, 4, \"sc0 nt\", 64)),\n    (256, (256, 96, 4, 2, 3, 4, \"sc0 nt\", 64)),\n    (384, (192, 192, 3, 4, 3, 4, \"sc0\", 64)),\n)\n\n_PRELOAD = {\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 16}}\n\n\n@functools.cache\ndef _splitk_rt(m_hi, n, k, cfg):\n    \"\"\"The split-K kernel for every M up to m_hi (M read at run time), compiled once: (launcher, workspace fp32\n    elements, the word its fold counters start at).\"\"\"\n    launch, ws_numel, counters = _build(m_hi, n, k, *cfg, RT=True)\n    dev = torch.cuda.current_device()\n    a = torch.empty((m_hi, k), dtype=torch.bfloat16, device=dev)\n    b = torch.empty((n, k), dtype=torch.bfloat16, device=dev)\n    c = torch.empty((m_hi, n), dtype=torch.bfloat16, device=dev)\n    w = torch.empty((ws_numel,), dtype=torch.float32, device=dev)\n    fn = flyc.compile[_PRELOAD](launch, a, b, c, w, m_hi, fx.Stream(torch.cuda.current_stream(dev)))\n    return fn, ws_numel, counters\n\n\ndef _n6144_class(m):\n    \"\"\"The compiled class of M (see _splitk_rt), or None past the last class.\"\"\"\n    for m_hi, cfg in _N6144:\n        if m <= m_hi:\n            return _splitk_rt(m_hi, *_N6144_NK, cfg)\n    return None\n\n\ndef warm_up(device):\n    \"\"\"Build every class: any M up to 384 then compiles nothing.\"\"\"\n    with torch.cuda.device(device):\n        for m_hi, _cfg in _N6144:\n            _n6144_class(m_hi)\n\n\ndef _scratch(numel, counters, device):\n    \"\"\"A launch's fp32 scratch: the splits' partial planes, which every launch writes before it reads them, then from\n    word ``counters`` on the tiles' fold counters, zeroed: a launch compares a counter with its own tag, and a word an\n    earlier tensor left there could hold it.\"\"\"\n    ws = torch.empty((numel,), dtype=torch.float32, device=device)\n    ws[counters:].zero_()\n    return ws\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    m, n, k = a.shape[0], b.shape[0], a.shape[1]\n    cls = _n6144_class(m) if (n, k) == _N6144_NK else None\n    if not (\n        trans_b\n        and bias is None\n        and a.dtype == b.dtype == out.dtype == torch.bfloat16\n        and a.is_contiguous()\n        and b.is_contiguous()\n        and out.is_contiguous()\n        and cls is not None\n    ):\n        # inputs outside the workloads this kernel serves (bf16, b as (n, k), contiguous, no bias, M up to 384)\n        raise NotImplementedError(\n            \"FlyDSL bf16 GEMM 6144 x 7168: needs bf16 contiguous a, b as (n, k), no bias, M <= 384\"\n        )\n    fn, ws_numel, counters = cls\n    fn(a, b, out, _scratch(ws_numel, counters, a.device), m, fx.Stream(torch.cuda.current_stream(a.device)))\n"
+      }
+    ]
+  }
+}
