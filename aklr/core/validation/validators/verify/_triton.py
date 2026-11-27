@@ -14,13 +14,15 @@ class TritonCompiler(RecordingCompiler):
     @staticmethod
     def environment(arch: str, directory: Path) -> dict[str, str]:
         return RecordingCompiler.environment(arch, directory) | {
-            "TRITON_CACHE_DIR": str(directory / "triton")
+            "TRITON_CACHE_DIR": str(directory / "triton"),
+            "TRITON_OVERRIDE_ARCH": arch,
         }
 
     def install(self, schema: Any) -> None:
         import torch
         from triton.backends.compiler import GPUTarget
         from triton.runtime import driver
+        from triton.runtime.autotuner import Autotuner
         from triton.runtime.jit import JITFunction
 
         if not torch.cuda.is_available():
@@ -31,6 +33,12 @@ class TritonCompiler(RecordingCompiler):
 
                 def get_current_stream(self, device):
                     return 0
+
+                def get_benchmarker(self):
+                    def unavailable(*args, **kwargs):
+                        raise RuntimeError("compile-only verification cannot benchmark")
+
+                    return unavailable
 
                 def get_current_target(inner):
                     return GPUTarget("hip", self.arch, 64)
@@ -46,6 +54,8 @@ class TritonCompiler(RecordingCompiler):
             bound = signature.bind(*args, **{k: v for k, v in kwargs.items() if k in signature.parameters})
             bound.apply_defaults()
             dimensions = grid(bound.arguments) if callable(grid) else grid
+            if any(dimension == 0 for dimension in dimensions):
+                return compiled
             values = []
             for name, kind in compiled.src.signature.items():
                 if kind == "constexpr":
@@ -76,3 +86,19 @@ class TritonCompiler(RecordingCompiler):
             return compiled
 
         JITFunction.run = recording
+
+        def autotuned(function, *args, **kwargs):
+            function.nargs = dict(zip(function.arg_names, args))
+            try:
+                result = None
+                for config in function.prune_configs(kwargs):
+                    function.best_config = config
+                    options = kwargs | config.all_kwargs()
+                    if config.pre_hook is not None:
+                        config.pre_hook(function.nargs | options)
+                    result = function.fn.run(*args, **options)
+                return result
+            finally:
+                function.nargs = None
+
+        Autotuner.run = autotuned

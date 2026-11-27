@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import shutil
 from pathlib import Path
+
+import pytest
 
 from aklr.core.validation.validators.verify import Compilation
 from tests.op_case import OpCase
@@ -124,3 +127,71 @@ def test_triton_launch_packs_runtime_scalars_at_isa_offsets(tmp_path):
         {"int": 7},
         {"int": 1048576000},
     ]
+
+
+def test_autotuned_triton_compiles_each_candidate_without_benchmarking(tmp_path):
+    source = TRITON_GEMM.replace(
+        "@triton.jit",
+        """@triton.autotune(configs=[triton.Config({}, num_warps=4), triton.Config({}, num_warps=8)], key=["K"])
+@triton.jit""",
+    )
+    schema = OpCase.of("gemm@1.0").schema(source, language="triton")
+    compilations = compile_schema(tmp_path, schema)
+    assert all(c.failure == "" for c in compilations)
+    assert sorted(c.launch["block"] for c in compilations) == [[256, 1, 1], [512, 1, 1]]
+
+
+def test_empty_triton_grid_does_not_report_a_launch(tmp_path):
+    source = TRITON_GEMM.replace("(a.shape[0], b.shape[0])", "(0, b.shape[0])")
+    schema = OpCase.of("gemm@1.0").schema(source, language="triton")
+    (compilation,) = compile_schema(tmp_path, schema)
+    assert "launched no triton kernel" in compilation.failure
+    assert compilation.launch is None
+
+
+@pytest.mark.parametrize("source", [TRITON_GEMM, GLUON_GEMM], ids=["triton", "gluon"])
+@pytest.mark.parametrize("offset", [0, 64], ids=["valid", "out-of-bounds"])
+def test_volta_checks_compiled_triton_and_gluon_workgroups(tmp_path, source, offset):
+    from aklr.core.validation import ValidationScope, VerifyValidator
+    from aklr.core.validation.report import PlatformRecord
+
+    if shutil.which("volta") is None:
+        pytest.skip("requires the Volta verifier binary")
+    source = source.replace(
+        "triton.next_power_of_2(a.shape[1]))", "triton.next_power_of_2(a.shape[1]), num_warps=1)"
+    )
+    source = source.replace("BlockedLayout([1], [64], [4], [0])", "BlockedLayout([1], [64], [1], [0])")
+    source = source.replace("Out + m * N + n,", f"Out + m * N + n + {offset},")
+    schema = OpCase.of("gemm@1.0").schema(source, language="triton")
+    path = tmp_path / "schema.json"
+    path.write_text(schema.schema_text())
+    scope = ValidationScope(tmp_path, "1" * 40, None, (path,), (path,))
+    report = VerifyValidator(n_workers=1).run(
+        scope, PlatformRecord("gfx950", "MI355X", 1, "7", "2", "3", "0.5")
+    )
+    (record,) = report.path_records
+    verdicts = {v.rule: v.status for v in record.verdicts}
+    if offset:
+        assert report.status == "failed"
+        assert verdicts["global_bounds"] == "rejected"
+    else:
+        assert report.status == "passed"
+        assert set(verdicts.values()) == {"proved"}
+
+
+@pytest.mark.gfx950
+@pytest.mark.parametrize("source", [TRITON_GEMM, GLUON_GEMM], ids=["triton", "gluon"])
+def test_compiled_triton_and_gluon_remain_correct_at_runtime(tmp_path, builder_registry, source):
+    import torch
+
+    case = OpCase.of("gemm@1.0")
+    schema = case.schema(source, language="triton")
+    (compilation,) = compile_schema(tmp_path, schema)
+    assert compilation.failure == ""
+    inputs = case.inputs()
+    call = case.call(inputs, "cuda")
+    call["out"] = torch.empty(
+        case.contract.storage_shape_of("out", case.point), dtype=call["out_dtype"], device="cuda"
+    )
+    builder_registry.build(schema)(**call)
+    assert case.compare({"out": call["out"]}, inputs) == {}
