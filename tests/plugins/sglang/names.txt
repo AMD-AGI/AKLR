@@ -1,3 +1,5 @@
+deepseek_v4_wo_a_mxfp8_n_groups#_o_lora_rank#_group_dim#
+deepseek_v4_wo_a_mxfp8_strided_rows_n_groups#_o_lora_rank#_group_dim#
 add_attn_res_hidden_size#_n_bank_rows#
 add_attn_res_write_hidden_size#_n_bank_rows#
 add_attn_res_rows1_hidden_size#_n_bank_rows#

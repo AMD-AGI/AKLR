@@ -900,6 +900,14 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="strided_beta",
     ),
+    # DeepSeek-V4.1's wo_a with its MXFP8 epilogue shrunk to two groups, o rows of a wider buffer
+    PointSpec(
+        contract_id="deepseek_v4_wo_a_mxfp8@1.0",
+        axes={"n_tokens": 6, "n_groups": 2, "o_lora_rank": 64, "group_dim": 512},
+        dtypes={"o": "bfloat16", "wo_a": "bfloat16", "quantized": "float8_e4m3fn", "scales": "uint8"},
+        attrs={},
+        layout_variant_name="strided_rows",
+    ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
 # tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
@@ -946,5 +954,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "mla_qkv_a_norm@1.0",
         "kda_chain_verify_ring@1.0",
         "deepseek_v4_router@1.0",
+        "deepseek_v4_wo_a_mxfp8@1.0",
     }
 )
