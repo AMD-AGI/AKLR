@@ -1,0 +1,565 @@
+{
+  "schema_version": 5,
+  "name": "dsv4_compression_metadata_max_pages4098_c128_width8196",
+  "contract_id": "dsv4_compression_metadata@1.0",
+  "description": "sglang's DeepSeek-V4 compressed-cache metadata on HIP. Per row b and ratio r in (4, 128): out_loc_r = raw_out_loc // r when seq_lens % r == 0, else 0 (rows below n_write only); positions_r = positions with its low log2(r) bits cleared; seq_lens_raw_r = seq_lens // r; seq_lens_clamp1_r = max(seq_lens_raw_r, 1). c128_page_indices[b, j] = page_table[b, j // c128_page_size] * c128_page_size + j % c128_page_size for j < seq_lens_raw_128, else -1. Integer division truncates toward zero.",
+  "op_type": "dsv4_compression_metadata",
+  "axes": {
+    "n_rows": {
+      "type": "var",
+      "description": "Metadata rows, one per query token of the step."
+    },
+    "n_write": {
+      "type": "var",
+      "description": "Rows that write a cache slot: the first n_write rows."
+    },
+    "max_pages": {
+      "type": "const",
+      "value": 4098,
+      "description": "Page table columns."
+    },
+    "c128_width": {
+      "type": "const",
+      "value": 8196,
+      "description": "Ratio-128 page index columns: c128_page_size * max_pages."
+    },
+    "c128_page_size": {
+      "type": "const",
+      "value": 2,
+      "description": "Ratio-128 slots per KV page: page_size // 128."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "seq_lens": {
+      "shape": [
+        "n_rows"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 1,
+        "hi": 1049088,
+        "distinct": false
+      },
+      "description": "Each row's sequence length."
+    },
+    "positions": {
+      "shape": [
+        "n_rows"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 1073741824,
+        "distinct": false
+      },
+      "description": "Each row's position."
+    },
+    "raw_out_loc": {
+      "shape": [
+        "n_write"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 1073741824,
+        "distinct": false
+      },
+      "description": "The KV slot each writing row stores into."
+    },
+    "page_table": {
+      "shape": [
+        "n_rows",
+        "max_pages"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 16777216,
+        "distinct": false
+      },
+      "description": "Each row's KV pages."
+    }
+  },
+  "outputs": {
+    "c4_out_loc": {
+      "shape": [
+        "n_write"
+      ],
+      "dtype": "int64",
+      "description": "Ratio-4 slot of each writing row."
+    },
+    "c4_positions": {
+      "shape": [
+        "n_rows"
+      ],
+      "dtype": "int32",
+      "description": "Ratio-4 positions."
+    },
+    "c4_seq_lens_raw": {
+      "shape": [
+        "n_rows"
+      ],
+      "dtype": "int32",
+      "description": "Ratio-4 lengths."
+    },
+    "c4_seq_lens_clamp1": {
+      "shape": [
+        "n_rows"
+      ],
+      "dtype": "int32",
+      "description": "Ratio-4 lengths, at least 1."
+    },
+    "c128_out_loc": {
+      "shape": [
+        "n_write"
+      ],
+      "dtype": "int64",
+      "description": "Ratio-128 slot of each writing row."
+    },
+    "c128_positions": {
+      "shape": [
+        "n_rows"
+      ],
+      "dtype": "int32",
+      "description": "Ratio-128 positions."
+    },
+    "c128_seq_lens_raw": {
+      "shape": [
+        "n_rows"
+      ],
+      "dtype": "int32",
+      "description": "Ratio-128 lengths."
+    },
+    "c128_seq_lens_clamp1": {
+      "shape": [
+        "n_rows"
+      ],
+      "dtype": "int32",
+      "description": "Ratio-128 lengths, at least 1."
+    },
+    "c128_page_indices": {
+      "shape": [
+        "n_rows",
+        "c128_width"
+      ],
+      "dtype": "int32",
+      "description": "Ratio-128 slot of each compressed position, -1 past the row's length."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_rows": 1,
+        "n_write": 1
+      },
+      "accuracy": "passed",
+      "speedup": 13.03,
+      "microseconds": 4.45
+    },
+    {
+      "axes": {
+        "n_rows": 2,
+        "n_write": 2
+      },
+      "accuracy": "passed",
+      "speedup": 13.098,
+      "microseconds": 4.52
+    },
+    {
+      "axes": {
+        "n_rows": 3,
+        "n_write": 3
+      },
+      "accuracy": "passed",
+      "speedup": 12.775,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_rows": 4,
+        "n_write": 4
+      },
+      "accuracy": "passed",
+      "speedup": 12.982,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_rows": 5,
+        "n_write": 5
+      },
+      "accuracy": "passed",
+      "speedup": 12.763,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_rows": 6,
+        "n_write": 6
+      },
+      "accuracy": "passed",
+      "speedup": 12.978,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_rows": 12,
+        "n_write": 12
+      },
+      "accuracy": "passed",
+      "speedup": 12.864,
+      "microseconds": 4.55
+    },
+    {
+      "axes": {
+        "n_rows": 18,
+        "n_write": 18
+      },
+      "accuracy": "passed",
+      "speedup": 12.385,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_rows": 24,
+        "n_write": 24
+      },
+      "accuracy": "passed",
+      "speedup": 12.343,
+      "microseconds": 4.56
+    },
+    {
+      "axes": {
+        "n_rows": 30,
+        "n_write": 30
+      },
+      "accuracy": "passed",
+      "speedup": 12.247,
+      "microseconds": 4.59
+    },
+    {
+      "axes": {
+        "n_rows": 36,
+        "n_write": 36
+      },
+      "accuracy": "passed",
+      "speedup": 12.205,
+      "microseconds": 4.6
+    },
+    {
+      "axes": {
+        "n_rows": 42,
+        "n_write": 42
+      },
+      "accuracy": "passed",
+      "speedup": 12.154,
+      "microseconds": 4.6
+    },
+    {
+      "axes": {
+        "n_rows": 48,
+        "n_write": 48
+      },
+      "accuracy": "passed",
+      "speedup": 12.132,
+      "microseconds": 4.62
+    },
+    {
+      "axes": {
+        "n_rows": 60,
+        "n_write": 60
+      },
+      "accuracy": "passed",
+      "speedup": 11.988,
+      "microseconds": 4.67
+    },
+    {
+      "axes": {
+        "n_rows": 72,
+        "n_write": 72
+      },
+      "accuracy": "passed",
+      "speedup": 12.21,
+      "microseconds": 4.6
+    },
+    {
+      "axes": {
+        "n_rows": 84,
+        "n_write": 84
+      },
+      "accuracy": "passed",
+      "speedup": 12.085,
+      "microseconds": 4.64
+    },
+    {
+      "axes": {
+        "n_rows": 96,
+        "n_write": 96
+      },
+      "accuracy": "passed",
+      "speedup": 11.991,
+      "microseconds": 4.67
+    },
+    {
+      "axes": {
+        "n_rows": 108,
+        "n_write": 108
+      },
+      "accuracy": "passed",
+      "speedup": 11.956,
+      "microseconds": 4.72
+    },
+    {
+      "axes": {
+        "n_rows": 120,
+        "n_write": 120
+      },
+      "accuracy": "passed",
+      "speedup": 11.852,
+      "microseconds": 4.75
+    },
+    {
+      "axes": {
+        "n_rows": 132,
+        "n_write": 132
+      },
+      "accuracy": "passed",
+      "speedup": 11.793,
+      "microseconds": 4.81
+    },
+    {
+      "axes": {
+        "n_rows": 144,
+        "n_write": 144
+      },
+      "accuracy": "passed",
+      "speedup": 11.822,
+      "microseconds": 4.81
+    },
+    {
+      "axes": {
+        "n_rows": 156,
+        "n_write": 156
+      },
+      "accuracy": "passed",
+      "speedup": 11.684,
+      "microseconds": 4.87
+    },
+    {
+      "axes": {
+        "n_rows": 168,
+        "n_write": 168
+      },
+      "accuracy": "passed",
+      "speedup": 11.642,
+      "microseconds": 4.9
+    },
+    {
+      "axes": {
+        "n_rows": 180,
+        "n_write": 180
+      },
+      "accuracy": "passed",
+      "speedup": 11.512,
+      "microseconds": 4.96
+    },
+    {
+      "axes": {
+        "n_rows": 192,
+        "n_write": 192
+      },
+      "accuracy": "passed",
+      "speedup": 11.388,
+      "microseconds": 5.0
+    },
+    {
+      "axes": {
+        "n_rows": 204,
+        "n_write": 204
+      },
+      "accuracy": "passed",
+      "speedup": 11.264,
+      "microseconds": 5.07
+    },
+    {
+      "axes": {
+        "n_rows": 216,
+        "n_write": 216
+      },
+      "accuracy": "passed",
+      "speedup": 11.185,
+      "microseconds": 5.11
+    },
+    {
+      "axes": {
+        "n_rows": 240,
+        "n_write": 240
+      },
+      "accuracy": "passed",
+      "speedup": 10.15,
+      "microseconds": 5.64
+    },
+    {
+      "axes": {
+        "n_rows": 264,
+        "n_write": 264
+      },
+      "accuracy": "passed",
+      "speedup": 10.029,
+      "microseconds": 5.83
+    },
+    {
+      "axes": {
+        "n_rows": 288,
+        "n_write": 288
+      },
+      "accuracy": "passed",
+      "speedup": 9.636,
+      "microseconds": 6.02
+    },
+    {
+      "axes": {
+        "n_rows": 312,
+        "n_write": 312
+      },
+      "accuracy": "passed",
+      "speedup": 9.482,
+      "microseconds": 6.2
+    },
+    {
+      "axes": {
+        "n_rows": 336,
+        "n_write": 336
+      },
+      "accuracy": "passed",
+      "speedup": 9.276,
+      "microseconds": 6.37
+    },
+    {
+      "axes": {
+        "n_rows": 360,
+        "n_write": 360
+      },
+      "accuracy": "passed",
+      "speedup": 9.336,
+      "microseconds": 6.35
+    },
+    {
+      "axes": {
+        "n_rows": 384,
+        "n_write": 384
+      },
+      "accuracy": "passed",
+      "speedup": 9.413,
+      "microseconds": 6.29
+    },
+    {
+      "axes": {
+        "n_rows": 432,
+        "n_write": 432
+      },
+      "accuracy": "passed",
+      "speedup": 9.295,
+      "microseconds": 6.42
+    },
+    {
+      "axes": {
+        "n_rows": 480,
+        "n_write": 480
+      },
+      "accuracy": "passed",
+      "speedup": 8.571,
+      "microseconds": 6.98
+    },
+    {
+      "axes": {
+        "n_rows": 528,
+        "n_write": 528
+      },
+      "accuracy": "passed",
+      "speedup": 8.172,
+      "microseconds": 7.5
+    },
+    {
+      "axes": {
+        "n_rows": 576,
+        "n_write": 576
+      },
+      "accuracy": "passed",
+      "speedup": 7.831,
+      "microseconds": 7.88
+    },
+    {
+      "axes": {
+        "n_rows": 624,
+        "n_write": 624
+      },
+      "accuracy": "passed",
+      "speedup": 7.522,
+      "microseconds": 8.25
+    },
+    {
+      "axes": {
+        "n_rows": 672,
+        "n_write": 672
+      },
+      "accuracy": "passed",
+      "speedup": 7.136,
+      "microseconds": 8.74
+    },
+    {
+      "axes": {
+        "n_rows": 720,
+        "n_write": 720
+      },
+      "accuracy": "passed",
+      "speedup": 6.821,
+      "microseconds": 9.15
+    },
+    {
+      "axes": {
+        "n_rows": 768,
+        "n_write": 768
+      },
+      "accuracy": "passed",
+      "speedup": 6.432,
+      "microseconds": 9.74
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "Cursor agent (DSv4.1 TP2 tuning)",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"DeepSeek-V4 compressed-cache metadata: program (b, c) writes columns [c * BLOCK, (c + 1) * BLOCK) of row b's\nratio-128 page indices, and the c == 0 program also the row's per-ratio slot, position and lengths, so a long page\ntable spreads over the grid instead of one program per row.\"\"\"\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit(do_not_specialize=[\"n_write\"])\ndef _metadata_kernel(\n    seq_lens_ptr, positions_ptr, raw_out_loc_ptr, page_table_ptr,\n    c4_out_loc_ptr, c4_positions_ptr, c4_raw_ptr, c4_clamp_ptr,\n    c128_out_loc_ptr, c128_positions_ptr, c128_raw_ptr, c128_clamp_ptr, c128_pages_ptr,\n    n_write, MAX_PAGES: tl.constexpr, PAGE: tl.constexpr, BLOCK: tl.constexpr,\n):\n    b = tl.program_id(0)\n    c = tl.program_id(1)\n    seq_len = tl.load(seq_lens_ptr + b)\n    raw128 = seq_len // 128\n    if c == 0:\n        position = tl.load(positions_ptr + b)\n        writes = b < n_write\n        loc = tl.load(raw_out_loc_ptr + b, mask=writes, other=0)\n        tl.store(c4_out_loc_ptr + b, tl.where((seq_len % 4) == 0, loc // 4, 0), mask=writes)\n        tl.store(c4_positions_ptr + b, position & (~3))\n        raw4 = seq_len // 4\n        tl.store(c4_raw_ptr + b, raw4)\n        tl.store(c4_clamp_ptr + b, tl.maximum(raw4, 1))\n        tl.store(c128_out_loc_ptr + b, tl.where((seq_len % 128) == 0, loc // 128, 0), mask=writes)\n        tl.store(c128_positions_ptr + b, position & (~127))\n        tl.store(c128_raw_ptr + b, raw128)\n        tl.store(c128_clamp_ptr + b, tl.maximum(raw128, 1))\n    width: tl.constexpr = MAX_PAGES * PAGE\n    cols = c * BLOCK + tl.arange(0, BLOCK)\n    inside = cols < width\n    valid = cols < raw128\n    pages = tl.load(page_table_ptr + b * MAX_PAGES + cols // PAGE, mask=valid, other=0)\n    slots = tl.where(valid, pages * PAGE + cols % PAGE, -1)\n    tl.store(c128_pages_ptr + b * width + cols, slots, mask=inside)\n\n\ndef run(*, seq_lens, positions, raw_out_loc, page_table, c4_out_loc, c4_positions, c4_seq_lens_raw,\n        c4_seq_lens_clamp1, c128_out_loc, c128_positions, c128_seq_lens_raw, c128_seq_lens_clamp1,\n        c128_page_indices):\n    rows, max_pages = page_table.shape\n    width = c128_page_indices.shape[1]\n    block = min(1024, triton.next_power_of_2(width))\n    _metadata_kernel[(rows, triton.cdiv(width, block))](\n        seq_lens, positions, raw_out_loc, page_table,\n        c4_out_loc, c4_positions, c4_seq_lens_raw, c4_seq_lens_clamp1,\n        c128_out_loc, c128_positions, c128_seq_lens_raw, c128_seq_lens_clamp1, c128_page_indices,\n        raw_out_loc.shape[0], MAX_PAGES=max_pages, PAGE=width // max_pages, BLOCK=block, num_warps=4,\n    )\n"
+      }
+    ]
+  }
+}
