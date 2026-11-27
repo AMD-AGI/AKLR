@@ -11,6 +11,9 @@ from perf_utils.gh import ConfigError
 RECIPE_SOURCE_KINDS = ("inferencex", "cookbook")
 # AKLR's plugin switch for each supported serving framework; framework ids are its keys.
 PLUGIN_SWITCHES = {"sglang": "AKLR_SGLANG_PLUGIN", "vllm": "AKLR_VLLM_PLUGIN"}
+# The AITER a framework entry's two modes serve on: the image's own (the default), or stack.json's, installed over
+# it, which has the aiter.plugin through which AKLR serves AITER's ops (as a daily e2e recipe's "aiter").
+AITER_SOURCES = ("image", "stack")
 
 
 def validate_env(values: dict) -> dict:
@@ -198,6 +201,9 @@ def model_config(
         for field in ("repo", "revision"):
             if not entry["weights"].get(field):
                 raise ConfigError(f"models.{model_id}.weights.{field} is required")
+        aiter = serving.get("aiter", "image")
+        if aiter not in AITER_SOURCES:
+            raise ConfigError(f"{location}.aiter must be one of {', '.join(AITER_SOURCES)}")
         runner = target.get("runner_label")
         if not isinstance(runner, str) or not runner.strip() or any(c in runner for c in "\0\n\r"):
             raise ConfigError(
@@ -211,7 +217,8 @@ def model_config(
                     "precision": precision.strip(),
                 },
                 "target": {"id": target_id, "runner_label": runner.strip()},
-                "framework": {"id": framework_id},
+                # the default is left out, so that a run on the image's AITER keeps the identity it had
+                "framework": {"id": framework_id, **({"aiter": aiter} if aiter != "image" else {})},
                 "family": family,
                 "recipe_source": source,
                 "weights": entry["weights"],

@@ -29,7 +29,7 @@ mkdir /aklr
 tar -C /src --exclude='./.git' -cf - . | tar -C /aklr -xf -
 printf 'gitdir: %s\n' "$SOURCE_GIT_DIR" > /aklr/.git
 cd /aklr
-scripts/install_aklr.sh /agentx/cache "$AGENTX_FRAMEWORK" 2>&1 | tee /agentx/out/install.log
+scripts/install_aklr.sh /agentx/cache "$AGENTX_FRAMEWORK" "$AGENTX_AITER" 2>&1 | tee /agentx/out/install.log
 set -a; . /agentx/cache/aklr.env; set +a
 cd benchmarks/perf
 python3 -m agentx sweep --in-container --serving /agentx/serving.json \
@@ -301,6 +301,7 @@ def run(args, runtime_options: list[str]) -> int:
                 "SOURCE_GIT_DIR": git_dir.strip(),
                 "AKLR_EXECUTION_FILE": "/agentx/execution.json",
                 "AGENTX_FRAMEWORK": serving["framework"]["id"],
+                "AGENTX_AITER": serving["framework"].get("aiter", "image"),
                 "AGENTX_JOB_URL": os.environ.get("AGENTX_JOB_URL", ""),
             }.items():
                 command.extend(["-e", f"{key}={value}"])

@@ -60,3 +60,37 @@ models:
                 model-prefix: glm5.2
                 framework: sglang
                 runner_pattern: mi355x
+  kimik3-fp4:
+    enabled: true
+    display_name: Kimi-K3 MXFP4
+    family: Kimi
+    precision: mxfp4
+    weights:
+      repo: moonshotai/Kimi-K3
+      revision: f831ab66814297da540d832a5235f8e904f29d06
+    targets:
+      mi355x:
+        hardware:
+          gpu_name_pattern: '\bMI355X\b'
+          gpu_arch: gfx950
+          gpu_count: 8
+        runner_label: conductor-mi355x
+        frameworks:
+          vllm:
+            # Both modes on stack.json's AITER: AKLR serves Kimi-K3's GEMMs, MoE and MLA through its aiter.plugin.
+            aiter: stack
+            recipe_source:
+              kind: inferencex
+              repo: SemiAnalysisAI/InferenceX
+              # InferenceX has retired its Kimi-K3 lanes; this is the last commit that carries the entry.
+              # The recipe differs from it in one launch variable: VLLM_ROCM_QUICK_REDUCE_QUANTIZATION is NONE,
+              # not INT4, which the AITER in stack.json's vLLM image does not have.
+              ref: 57116fff418d7bb651567e722907253a12b75a67
+              config_key: kimik3-fp4-mi355x-vllm-agentic-mtp
+              expect:
+                config_file: inferencex-e2e/configs/amd-master.yaml
+                recipe: inferencex-e2e/benchmarks/single_node/srt-slurm-recipes/kimik3/vllm/mi355x-fp4-mtp/agentic.yaml
+                model: moonshotai/Kimi-K3
+                model-prefix: kimik3
+                framework: vllm
+                runner_pattern: mi355x

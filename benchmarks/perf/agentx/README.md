@@ -244,6 +244,7 @@ models:
 | `models.<id>.advisory_env` | Model-level environment overriding global values. Conflicts with keys already set in the recipe's `launch.env` are rejected; `plan` sets device variables itself |
 | `models.<id>.targets.<target-id>.advisory_env` | Target-level environment overriding model and global values; conflicts with the recipe's `launch.env` keys are also rejected |
 | `...frameworks.<framework>.advisory_env` | Framework-level environment overriding the levels above. Do not set the AKLR plugin switch here; the executor sets it per mode. The same conflict rule applies |
+| `...frameworks.<framework>.aiter` | The AITER both modes serve on: `image` (default), the serving image's own, or `stack`, the commit `stack.json` pins, installed over it. `stack` has the `aiter.plugin` interface, and the executor then also sets `AKLR_AITER_PLUGIN` per mode, so that the enabled mode serves AITER's ops from AKLR's kernels |
 
 Targets and frameworks within a model share its `weights` and `precision`. Plan takes the server image from the framework's CI image in [`stack.json`](../../../stack.json); see section 3.2.
 
