@@ -23,6 +23,8 @@ from aklr.core.contract.semantics import (
     LecunNormalDistribution,
     LogUniformDistribution,
     SqnrBound,
+    StridedRows,
+    ToleranceBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -41,11 +43,13 @@ from aklr.plugins.sglang.models.kimi_k3.baseline import (
     KimiK3LatentMoeBaseline,
     KimiK3MlaPrefillGateBaseline,
     KimiK3MlaVcOutputGateBaseline,
+    KimiK3MlaVerifyQBaseline,
 )
 from aklr.plugins.sglang.models.kimi_k3.reference import (
     KimiK3LatentMoeReference,
     KimiK3MlaPrefillGateReference,
     KimiK3MlaVcOutputGateReference,
+    KimiK3MlaVerifyQReference,
 )
 
 __all__ = [
@@ -53,6 +57,7 @@ __all__ = [
     "KIMI_K3_LATENT_MOE",
     "KIMI_K3_MLA_PREFILL_GATE",
     "KIMI_K3_MLA_VC_OUTPUT_GATE",
+    "KIMI_K3_MLA_VERIFY_Q",
 ]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
@@ -350,4 +355,73 @@ KIMI_K3_MLA_PREFILL_GATE = OpContract(
     baseline=KimiK3MlaPrefillGateBaseline(),
 )
 
-CONTRACTS = (KIMI_K3_LATENT_MOE, KIMI_K3_MLA_VC_OUTPUT_GATE, KIMI_K3_MLA_PREFILL_GATE)
+KIMI_K3_MLA_VERIFY_Q = OpContract(
+    contract_id="kimi_k3_mla_verify_q@1.0",
+    description=(
+        "The query of Kimi-K3's absorbed MLA target verify under DCP on the aiter backend, as "
+        "sglang hands it to aiter's fp8 kernel: per token and head the 512 absorbed latent "
+        "values, then the 64 rotated ones, each cast to float8_e4m3fn as torch casts it (to "
+        "nearest, ties to even; past the type's range its NaN code), as "
+        "forward_absorb_rocm_core's cat and the backend's cast leave them. With n_heads = "
+        "n_rows / n_tokens heads a token, row t * n_heads + h of the operands is token t's head "
+        "h, and head h of q from n_heads to the kernel's count repeats head h mod n_heads, as "
+        "the backend's pad_heads tiles them"
+    ),
+    op_type="kimi_k3",
+    axes={
+        "n_tokens": axis("Tokens verified.", 1, 65536, is_var=True),
+        "n_kernel_heads": axis("Heads of the fp8 kernel's query: a token's rows or more.", 1, 1024),
+        "n_rows": axis(
+            "Rows of the operands: a token's heads (every rank's under DCP), token after token.",
+            1,
+            1 << 24,
+            is_var=True,
+        ),
+    },
+    constraints=("n_rows % n_tokens == 0", "n_rows <= n_tokens * n_kernel_heads"),
+    inputs={
+        "q_nope": TensorSpec(
+            description=(
+                "Each head's query after the key absorption: 512 latent values; a unit middle dim, "
+                "so that its rows may be apart by more than a row."
+            ),
+            shape=("n_rows", 1, 512),
+            dtype=_BF16,
+            distribution=FiniteDistribution(),
+        ),
+        "q_pe": TensorSpec(
+            description=(
+                "Each head's rotated query values; in sglang a column slice of the query "
+                "projection, its rows 192 values apart."
+            ),
+            shape=("n_rows", 1, 64),
+            dtype=_BF16,
+            distribution=FiniteDistribution(),
+        ),
+    },
+    outputs={
+        "q": TensorSpec(
+            description="The latent values, then the rotated ones, in float8_e4m3fn, of head h mod n_heads.",
+            shape=("n_tokens", "n_kernel_heads", 576),
+            dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
+            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
+        )
+    },
+    layout_variants=LayoutVariantsSpec(
+        by_name={
+            "row_major": LayoutVariant(
+                detect_facts=(LayoutFact(location="arg", name="storage", expected_value="row_major"),)
+            ),
+            # sglang's: the rotated values a column slice of the query projection
+            "strided_rows": LayoutVariant(
+                layouts={"q_nope": StridedRows(), "q_pe": StridedRows()},
+                detect_facts=(LayoutFact(location="arg", name="storage", expected_value="strided_rows"),),
+            ),
+        }
+    ),
+    compare=CompareSpec(determinism=DeterminismLevel.BITWISE),
+    reference=KimiK3MlaVerifyQReference(),
+    baseline=KimiK3MlaVerifyQBaseline(),
+)
+
+CONTRACTS = (KIMI_K3_LATENT_MOE, KIMI_K3_MLA_VC_OUTPUT_GATE, KIMI_K3_MLA_PREFILL_GATE, KIMI_K3_MLA_VERIFY_Q)

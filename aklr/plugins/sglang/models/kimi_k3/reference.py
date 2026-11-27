@@ -14,6 +14,7 @@ __all__ = [
     "KimiK3LatentMoeReference",
     "KimiK3MlaPrefillGateReference",
     "KimiK3MlaVcOutputGateReference",
+    "KimiK3MlaVerifyQReference",
 ]
 
 
@@ -86,3 +87,12 @@ class KimiK3MlaPrefillGateReference(OpReference):
             attention[start:end] = torch.einsum("hqk,khd->qhd", weights, v[start:end])
         output = rounded_to_bfloat16(attention).flatten(1) * rounded_to_bfloat16(torch.sigmoid(gate.float()))
         return {"output": output.to(dtype)}
+
+
+class KimiK3MlaVerifyQReference(OpReference):
+    def reference(self, *, q_nope, q_pe, q, **_):  # storage among the rest: the operands arrive dense
+        """torch's cast: each value to the nearest float8_e4m3fn, ties to even; the heads past
+        the operands' repeat them."""
+        tokens, kernel_heads = q.shape[0], q.shape[1]
+        rows = torch.cat([q_nope, q_pe], dim=-1).to(torch.float8_e4m3fn).view(tokens, -1, q.shape[2])
+        return {"q": rows[:, torch.arange(kernel_heads, device=rows.device) % rows.shape[1]]}
