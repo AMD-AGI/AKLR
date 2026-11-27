@@ -1,0 +1,260 @@
+{
+  "schema_version": 5,
+  "name": "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts385_topk7_inter_dim384",
+  "contract_id": "fused_moe@1.0",
+  "description": "Route each token to its top-k experts, run both projections, combine.",
+  "op_type": "fused_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 7168,
+      "description": "Hidden size."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 385,
+      "description": "Local experts on this rank."
+    },
+    "topk": {
+      "type": "const",
+      "value": 7,
+      "description": "Experts per token."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 384,
+      "description": "Expert intermediate size."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 768,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 224,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 12,
+      "description": "w2 scale columns."
+    }
+  },
+  "attrs": {
+    "activation": "silu",
+    "quant_type": "per_1x32",
+    "doweight_stage1": false,
+    "gate_mode": "interleave",
+    "has_expert_mask": false,
+    "has_swiglu_limit": true,
+    "act_quant": 4
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per expert."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 384,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -9,
+        "log2_hi": -3
+      },
+      "description": "Per 1 x 32 block of w2."
+    },
+    "swiglu_limit": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Clamped SwiGLU bound: gate at most this, up within +/- this."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4096
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8192
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16384
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "gate_up_interleaved": {
+        "layouts": {
+          "w1": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": true
+          },
+          "w2": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w1_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": true
+          },
+          "w2_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 2
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bounded"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2",
+      "aiter": ">=0.1.21.dev66"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"MXFP4 fused MoE with XCD-swizzled stage 1 and fixed-order per-slot stage-2 reduction.\"\"\"\n\nimport functools\n\nimport torch\n\n_S1 = \"flydsl_moe1_afp8_wfp4_bf16_\"\n_S2 = \"flydsl_moe2_afp8_wfp4_bf16_\"\n\n# n_tokens -> (block_m, stage-1 kernel, stage-2 kernel); only named kernels are covered.\n_TABLE = {\n    2048: (64, _S1 + \"t64x128x256_w3_bnt0_gui\", _S2 + \"t64x256x128_reduce\"),\n    4096: (128, _S1 + \"t128x128x256_w2_bnt0_gui\", _S2 + \"t128x256x128_reduce\"),\n    8192: (64, _S1 + \"t64x128x256_w4_bnt0_gui_xcd4\", _S2 + \"t64x256x128_reduce_persist\"),\n    16384: (64, _S1 + \"t64x128x256_w4_bnt0_gui_xcd4\", _S2 + \"t64x256x128_reduce_persist\"),\n}\n\n\ndef _metadata(choice):\n    from aiter.fused_moe import MOEMetadata, _flydsl_stage1_wrapper, _flydsl_stage2_wrapper\n\n    block_m, kn1, kn2 = choice\n    # These named kernels consume conventional sorted routes and a BF16 intermediate.\n    # Construct their complete format instead of inheriting AITER's tuned MXMOE format.\n    return MOEMetadata(\n        stage1=functools.partial(_flydsl_stage1_wrapper, kernelName=kn1),\n        stage2=functools.partial(_flydsl_stage2_wrapper, kernelName=kn2),\n        block_m=block_m,\n        ksplit=0,\n        run_1stage=False,\n        output_aux=False,\n        fuse_quant=\"\",\n        skip_inter_quant=False,\n        prequant=True,\n    )\n\n\n@functools.cache\ndef _plan(n_tokens, n_experts, model_dim, inter_dim, topk, activation, quant_type, out_dtype):\n    from aiter import ActivationType, QuantType, dtypes\n    from aiter.fused_moe import stage2_uses_route_reduce\n    from aiter.ops.flydsl.moe_kernels import get_flydsl_kernel_params\n\n    act = {m.name.lower(): m for m in ActivationType.__members__.values()}[activation]\n    qt = {m.name.lower(): m for m in QuantType.__members__.values()}[quant_type]\n    choice = _TABLE[n_tokens]\n    assert get_flydsl_kernel_params(choice[1]) is not None\n    assert get_flydsl_kernel_params(choice[2]) is not None\n\n    def transform(metadata):\n        return _metadata(choice)\n\n    md = _metadata(choice)\n    atomic = not stage2_uses_route_reduce(md.stage2)\n    return int(md.block_m), atomic, act, qt, transform, dtypes.fp8, dtypes.fp4x2\n\n\n@functools.cache\ndef _ws_size(n_tokens, n_experts, topk):\n    import aiter\n\n    return aiter.moe_sorting_opus_get_workspace_size(n_tokens, n_experts, topk, 0)\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    activation,\n    quant_type,\n    doweight_stage1,\n    gate_mode,\n    act_quant,\n    expert_mask,\n    beta,\n    linear_beta,\n    swiglu_limit,\n    out_dtype,\n    out,\n):\n    import aiter\n    from aiter.fused_moe import fused_moe_2stages, get_inter_dim\n\n    M, topk = topk_ids.shape\n    E, model_dim, inter_dim = get_inter_dim(w1.shape, w2.shape)\n    block_m, atomic, act, qt, transform, q_dtype_a, q_dtype_w = _plan(\n        M, E, model_dim, inter_dim, topk, activation, quant_type, out_dtype\n    )\n    device = topk_ids.device\n    max_pad = int(topk_ids.numel() + E * block_m - topk)\n    max_blocks = (max_pad + block_m - 1) // block_m\n    sorted_ids = torch.empty(max_pad, dtype=torch.int32, device=device)\n    sorted_weights = torch.empty(max_pad, dtype=torch.float32, device=device)\n    sorted_expert_ids = torch.empty(max_blocks, dtype=torch.int32, device=device)\n    num_valid_ids = torch.empty(2, dtype=torch.int32, device=device)\n    sort_buf = out if atomic else torch.empty((0, 0), dtype=out.dtype, device=device)\n    ws = _ws_size(M, E, topk)\n    workspace = torch.empty(ws, dtype=torch.uint8, device=device) if ws > 0 else None\n    aiter.moe_sorting_opus_fwd(\n        topk_ids,\n        topk_weights,\n        sorted_ids,\n        sorted_weights,\n        sorted_expert_ids,\n        num_valid_ids,\n        sort_buf,\n        E,\n        block_m,\n        expert_mask,\n        None,\n        workspace,\n        0,\n        None,\n        None,\n        None,\n    )\n    fused_moe_2stages(\n        hidden_states,\n        w1,\n        w2,\n        topk,\n        sorted_ids,\n        sorted_weights,\n        sorted_expert_ids,\n        num_valid_ids,\n        out,\n        True,\n        block_m,\n        activation=act,\n        quant_type=qt,\n        doweight_stage1=doweight_stage1,\n        q_dtype_a=q_dtype_a,\n        q_dtype_w=q_dtype_w,\n        w1_scale=w1_scale,\n        w2_scale=w2_scale,\n        topk_ids=topk_ids,\n        topk_weights=topk_weights,\n        swiglu_limit=swiglu_limit,\n        beta=beta,\n        linear_beta=linear_beta,\n        gate_mode=gate_mode,\n        expert_mask=expert_mask,\n        _metadata_transform=transform,\n    )\n"
+      }
+    ]
+  }
+}

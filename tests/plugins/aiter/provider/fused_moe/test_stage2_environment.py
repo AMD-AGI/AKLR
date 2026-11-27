@@ -12,6 +12,7 @@ import pytest
 import torch
 
 from aklr.core.contract.registry import ContractRegistry
+from tests.op_case import OpCase
 
 pytest.importorskip("flydsl.expr")
 
@@ -61,6 +62,10 @@ def test_concurrent_kernel_calls_preserve_stage2_environment(builder_registry, m
     @dataclass
     class Metadata:
         block_m: int = 128
+        ksplit: int = 0
+        fuse_quant: str = ""
+        skip_inter_quant: bool = False
+        prequant: bool = True
         stage1: object = None
         stage2: object = None
         run_1stage: bool = False
@@ -70,6 +75,7 @@ def test_concurrent_kernel_calls_preserve_stage2_environment(builder_registry, m
     def config(*args, **kwargs):
         return Metadata(stage1=functools.partial(fm._flydsl_stage1_wrapper), stage2=functools.partial(stage2))
 
+    fm.MOEMetadata = Metadata
     fm.get_2stage_cfgs = config
     aiter.moe_sorting_opus_get_workspace_size = lambda *args: 0
     aiter.moe_sorting_opus_fwd = lambda *args: None
@@ -79,7 +85,7 @@ def test_concurrent_kernel_calls_preserve_stage2_environment(builder_registry, m
 
     fm.fused_moe_2stages = pipeline
     path = Path(
-        "aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts385_topk7_inter_dim384/0b5720c82bbf38f3.json"
+        "aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts385_topk7_inter_dim384/7a25ae8712913f1c.json"
     )
     schema = ContractRegistry.default().parse_schema(path.read_bytes(), str(path))
     runnable = builder_registry.build(schema)
@@ -113,3 +119,19 @@ def test_concurrent_kernel_calls_preserve_stage2_environment(builder_registry, m
         second.result(timeout=20)
     actual = os.environ.get(key)
     assert actual is initial
+
+
+@pytest.mark.gfx950
+def test_selected_pipeline_runs_on_real_aiter(builder_registry):
+    path = Path(
+        "aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts385_topk7_inter_dim384/7a25ae8712913f1c.json"
+    )
+    schema = ContractRegistry.default().parse_schema(path.read_bytes(), str(path))
+    case = OpCase(schema.point({"n_tokens": 4096}))
+    inputs = case.inputs()
+    inputs["hidden_states"].zero_()
+    call = case.call(inputs, "cuda:0")
+    call["out"] = torch.full_like(call["hidden_states"], float("nan"))
+    builder_registry.build(schema)(**call)
+    torch.cuda.synchronize(0)
+    torch.testing.assert_close(call["out"], torch.zeros_like(call["out"]), atol=0, rtol=0)
