@@ -13,9 +13,9 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "0.966–2.400; 12 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
   - {metric: "speedup over aiter, CI, per Point", value: "1.323–4.461; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096/b74d90fec78ced01.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096/b74d90fec78ced01.json
 ---
 
 # fp8 block-scaled GEMM at N 512–1536, K 4096: split K inside the workgroup
@@ -33,7 +33,7 @@ sources:
   inside each workgroup and adds waves to those CUs, not work to the others: confined to exactly that many CUs, the
   kernels take the same time *(field, E5)*.
 - Compare: each schema's `compare` block is `determinism: bounded`, against the
-  contract's tolerance (atol = rtol = 1e-2 for bf16 out; `aklr/plugins/aiter/gemm/contract.py`). Every reduction in these
+  contract's tolerance (atol = rtol = 1e-2 for bf16 out; `aklr/plugins/aiter/provider/gemm/contract.py`). Every reduction in these
   three kernels runs in a fixed order with no atomics on data; run-to-run bit equality is not measured.
 
 ## Counter-signals
@@ -127,7 +127,7 @@ Per file (functions are in the `kernel.py` each schema embeds):
 
 ## Result
 
-Each file is the only schema at its Points (no other file under `aklr/plugins/aiter/gemm/impls/` carries these names), so the
+Each file is the only schema at its Points (no other file under `aklr/plugins/aiter/provider/gemm/impls/` carries these names), so the
 faster of AKLR's served kernel and aiter is aiter, and the `speedup` CI wrote is the yardstick. Each value is a
 one-sided lower bound (α = 0.05) of the aiter / kernel time ratio over 32 rounds of CUDA-graph replays with L2
 flushed before each call (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.05.
@@ -149,9 +149,9 @@ these runs used FlyDSL 0.3.2, not the CI image's 0.3.4.1 (not checked in the run
 On an MI355X, in a checkout of main (its files carry later CI numbers than the table):
 
 ```
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096/b74d90fec78ced01.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096/b74d90fec78ced01.json
 ```
 
 Each runs the audit and bench stages and writes `aklr_validation/report.md` with the per-Point speedup
@@ -176,11 +176,11 @@ wrong result, a crash, or a regression above the threshold that CI has not yet m
 - E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter 1.323–4.461 per Point, 13 of 13 Points ≥ 1.03; m 1–64 3.233–4.461, m 128–512 1.600–2.448, m 1024–4096 1.323–1.449 (gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096, m 1–4096)
 - E4 [2026-10, gfx950, FlyDSL 0.3.2, N=5, the predecessor repository's CI; FlyDSL of the runs: the pin each run's `setup.py` installs, not read from the runs' logs] n1024_k4096 at m = 4096: 0.968, 0.968, 0.958, 0.966, 0.966 in the five committed measurements (gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096, m 4096)
 - E5 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=6, torch profiler kernel time, median of 30 calls with L2 flushed, per round] at m 1, 8 and 16 each kernel on a stream masked to exactly as many CUs as it has workgroups (32, 64, 96) takes 0.981–1.000 of its time on all 256 CUs (gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096, _n1024_k4096, _n1536_k4096)
-- S1 aklr/plugins/aiter/gemm/contract.py:281 the contract's compare is `CompareSpec(determinism=DeterminismLevel.BOUNDED)`; tolerance `_MAIN_GEMM_TOLERANCE` at :205
-- S2 aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json#kernel.py:203 `_compile` passes `kw=KW` whenever `_pick_intra` (:166) returns a configuration, which it does for every m; the fused split-K at :674 needs `kw == 0`
-- S3 aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json#kernel.py:786 LDS reduction in wave order, fixed pairwise tree at m 1024 and 2048
-- S4 aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json#kernel.py:353 MFMA issued as mfma(B, A), lane holds 4 adjacent columns
-- S5 aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json#kernel.py:881 `_SMALL_TABLE` sets split_k = 1 for every m it lists; wave 0 sums the wave partials at :829
-- S6 aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json#kernel.py:57 `_select_tiles(4096)` returns (64, 128, 1)
-- S7 aklr/plugins/aiter/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096/b74d90fec78ced01.json#kernel.py:513 wave wk walks K blocks wk + i·WK; padded A row stride at :194
+- S1 aklr/plugins/aiter/provider/gemm/contract.py:281 the contract's compare is `CompareSpec(determinism=DeterminismLevel.BOUNDED)`; tolerance `_MAIN_GEMM_TOLERANCE` at :205
+- S2 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json#kernel.py:203 `_compile` passes `kw=KW` whenever `_pick_intra` (:166) returns a configuration, which it does for every m; the fused split-K at :674 needs `kw == 0`
+- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json#kernel.py:786 LDS reduction in wave order, fixed pairwise tree at m 1024 and 2048
+- S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096/d38d45d96c0eac1e.json#kernel.py:353 MFMA issued as mfma(B, A), lane holds 4 adjacent columns
+- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json#kernel.py:881 `_SMALL_TABLE` sets split_k = 1 for every m it lists; wave 0 sums the wave partials at :829
+- S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json#kernel.py:57 `_select_tiles(4096)` returns (64, 128, 1)
+- S7 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096/b74d90fec78ced01.json#kernel.py:513 wave wk walks K blocks wk + i·WK; padded A row stride at :194
 - S8 aklr/core/validation/stages/validation_scope.py:69 with `--base`, bench drops the schemas present at the base

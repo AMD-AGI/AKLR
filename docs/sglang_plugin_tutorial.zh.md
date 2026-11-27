@@ -108,7 +108,7 @@ PointSpec(
 它的 baseline 只能在 gfx950 上运行，所以还要把它的 contract id 加入同一文件的 `GFX950_CONTRACT_IDS`。然后更新 `tests/plugins/sglang/names.txt`：
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/provider/test_contracts.py
 ```
 
 route 不需要单独写测试：`tests/plugins/sglang/test_hook.py` 会检查每个 route，确认它替换的函数在当前安装的 SGLang 中存在、参数一致，且没有其他 route 替换同一个函数。

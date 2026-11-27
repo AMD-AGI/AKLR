@@ -29,10 +29,13 @@ from aklr.core.contract.spec import (
     attr,
     axis,
 )
-from aklr.plugins.vllm.models.kimi_k3.attn_res.baseline import KimiK3AttnResBaseline
-from aklr.plugins.vllm.models.kimi_k3.attn_res.reference import KimiK3AttnResReference
+from aklr.plugins.vllm.models.kimi_k3.attn_res.baseline import KimiK3AttnResBaseline, KimiK3AttnResFp8Baseline
+from aklr.plugins.vllm.models.kimi_k3.attn_res.reference import (
+    KimiK3AttnResFp8Reference,
+    KimiK3AttnResReference,
+)
 
-__all__ = ["CONTRACTS", "KIMI_K3_ATTN_RES"]
+__all__ = ["CONTRACTS", "FP8_MAX", "KIMI_K3_ATTN_RES", "KIMI_K3_ATTN_RES_FP8"]
 
 _FLOAT32_LARGEST = DTYPE_TRAITS["float32"].largest_finite_value
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
@@ -159,7 +162,7 @@ KIMI_K3_ATTN_RES = OpContract(
         "out": TensorSpec(
             description="The normalized mix scaled by norm_weight, or the mix without one.",
             shape=_ROWS,
-            dtype=_SAME_AS_PREFIX,
+            dtype=_SAME_AS_PREFIX.model_copy(update={"param_name": "out_dtype"}),
             # the mix cancels: an element near 0 carries the float32 rounding of its row's
             # terms, about 1e-6 at N(0, 1) rows, which a bound relative to the element alone
             # rejects
@@ -171,4 +174,42 @@ KIMI_K3_ATTN_RES = OpContract(
     baseline=KimiK3AttnResBaseline(),
 )
 
-CONTRACTS = (KIMI_K3_ATTN_RES,)
+FP8_MAX = 448.0  # float8_e4m3fn's largest finite value, vLLM's get_fp8_min_max() on gfx950
+
+
+def _with_fp8_out(contract: OpContract) -> OpContract:
+    """The contract whose out is vLLM's per-token fp8 one, for the linear after it (vLLM's quant_dtype)."""
+    fields = {name: getattr(contract, name) for name in type(contract).model_fields}
+    fields.update(
+        contract_id="kimi_k3_attn_res_fp8@1.0",
+        description=contract.description
+        + " out is then quantized per token for the fp8 linear after it: o = out rounded to bf16, "
+        "scale = max(max |o|, 1e-10) * (1 / 448) in float32, and quantized = float8_e4m3fn(clamp(o * (1 / scale), "
+        "-448, 448)), the reciprocal and the product each rounded to float32.",
+        outputs={
+            "quantized": TensorSpec(
+                description="The bf16 out of kimi_k3_attn_res@1.0 quantized per token to float8_e4m3fn.",
+                shape=_ROWS,
+                dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
+                # one fp8 code apart where its bf16 out (last bit free under kimi_k3_attn_res@1.0) or its row's scale
+                # moves the value across an fp8 rounding boundary: both sides are fp8 values, and the next code is
+                # at most 2**-3 of the value away for normals, 2**-9 below them
+                error_bounds=ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-3),
+            ),
+            "scale": TensorSpec(
+                description="Each token's dequantization scale.",
+                shape=("n_tokens", 1),
+                dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+                # its row's largest |o|, one bf16 rounding of a float32 mix: off by a bf16 step where that ties
+                error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=2**-7),
+            ),
+        },
+        reference=KimiK3AttnResFp8Reference(),
+        baseline=KimiK3AttnResFp8Baseline(),
+    )
+    return OpContract(**fields)
+
+
+KIMI_K3_ATTN_RES_FP8 = _with_fp8_out(KIMI_K3_ATTN_RES)
+
+CONTRACTS = (KIMI_K3_ATTN_RES, KIMI_K3_ATTN_RES_FP8)
