@@ -18,9 +18,12 @@ from aklr.core.validation.validators import (
     ValidationScope,
     Validator,
     ValidatorReport,
+    VerifyReport,
+    VerifyValidator,
 )
 
 __all__ = [
     "AuditReport", "AuditValidator", "BenchReport", "BenchValidator", "OpBench", "Fault", "Finding",
-    "FindingCode", "Outcome", "ValidationReport", "ValidationScope", "Validator", "ValidatorReport", "validate",
+    "FindingCode", "Outcome", "ValidationReport", "ValidationScope", "Validator", "ValidatorReport", "VerifyReport",
+    "VerifyValidator", "validate",
 ]  # fmt: skip

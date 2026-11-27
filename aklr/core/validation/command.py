@@ -18,6 +18,7 @@ from aklr.core.validation.validators import (
     Progress,
     ValidationScope,
     Validator,
+    VerifyValidator,
 )
 
 __all__ = ["DEFAULT_REPORT_DIR", "main"]
@@ -87,6 +88,9 @@ def main(argv: Sequence[str]) -> int:
                     for first, _, last in [part.partition("-")]
                     for index in range(int(first), int(last or first) + 1)
                 ]
+            if validator_type is VerifyValidator:
+                validators.append(VerifyValidator(indices))
+                continue
             if not indices:
                 raise ValueError("no visible device and no --devices")
             validators.append(

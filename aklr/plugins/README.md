@@ -68,12 +68,24 @@ In addition, a route is hooked only on the SGLang releases it declares, and insi
 
 ## Validation and tests
 
-Validation (`python -m aklr validate`) checks each kernel with two validators, each run on its own:
+Validation (`python -m aklr validate`) checks each kernel with three validators, each run on its own:
 
 - audit: checks the kernel code against the rules, for example that it keeps no state between calls and does not modify read-only inputs.
 - bench: draws several sets of inputs from the contract, and compares the kernel's results with the reference for correctness and with the baseline for performance. After a PR merges, CI writes these results into its JSON files; at runtime, only kernels that passed and are faster than SGLang are used.
+- verify: compiles each FlyDSL kernel for each workload it serves and has [Volta](https://github.com/francois141/ptx_verifier) run workgroup 0 of each launch symbolically on the compiled ISA. Six rules read that one run:
 
-In CI, audit always runs, and bench needs the PR to carry the `ci:gpu` label (a push to main always qualifies). Validation does not run the model, so it does not check routes: check a route by running the model with the plugin on (step 7 of the plugin tutorial).
+  | rule | rejects |
+  |---|---|
+  | VR1 `lds_race` | two LDS accesses with no order between them, or two lanes of one wave writing one LDS word with different values |
+  | VR2 `barrier_epoch` | an `s_barrier` generation not separated from the next one, or a deadlock |
+  | VR3 `pending_read` | a register read before the `s_waitcnt` that completes its load |
+  | VR4 `lds_bounds` | an LDS access outside the workgroup's allocation |
+  | VR5 `lds_uninitialized_read` | nothing: an LDS word read before any wave wrote it is listed as unchecked, `uninitialized-read` |
+  | VR6 `global_bounds` | a global read or write past the end of the array it indexes |
+
+  `proved` means Volta's run of workgroup 0 at that workload's arguments ended without the rule's defect; other workgroups, atomics and the values the kernel computes are not checked, and Volta's AMD frontend is experimental. A rejection fails validation. A path a rule cannot decide is listed as unchecked and fails nothing: Volta stops at the first instruction it cannot run, so when a run stops, the rule that names the stop rejects and the other five are unchecked, `aborted`. Three stops are unchecked under every rule. When every conflict Volta lists is one `buffer_load ... lds` instruction against itself (two waves loading the same bytes to one address), VR1 is unchecked, `duplicate-load`. A kernel serving fewer rows than its tile reads LDS rows it never loaded and discards what it computes from them, which Volta cannot tell from a read that misses its barrier, so VR5 never rejects. A global access at an address that is not just past an array (a pointer the launch passes as a plain integer, a read of an output) is one Volta does not model, not a VR6 rejection.
+
+In CI, audit always runs, and bench and verify need the PR to carry the `ci:gpu` label (a push to main always qualifies). Validation does not run the model, so it does not check routes: check a route by running the model with the plugin on (step 7 of the plugin tutorial).
 
 Unit tests:
 

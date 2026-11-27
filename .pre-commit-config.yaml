@@ -2,7 +2,7 @@
 # See https://pre-commit.com/hooks.html for more hooks
 
 # Install
-# 1. pip install -r requirements.txt
+# 1. pip install -r requirements/lint.txt
 # 2. pre-commit install
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

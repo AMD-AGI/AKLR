@@ -156,7 +156,7 @@ jobs:
       - &install_cpu_deps
         name: Install pydantic, CPU torch and ruff
         run: |
-          python -m pip install -r requirements.txt
+          python -m pip install -r requirements/lint.txt
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       # Covers main moving before this run only: GitHub does not re-run the bot PR's
       # checks when main moves later.
@@ -286,8 +286,7 @@ jobs:
 
           echo '::group::Enable coverage and test tools'
           # Install coverage over any copy the image ships, so pip never has to uninstall it.
-          python3 -m pip install --ignore-installed 'coverage[toml]==7.16.0'
-          python3 -m pip install 'pytest-timeout==2.4.0' 'expecttest==0.3.0'
+          python3 -m pip install --ignore-installed --no-deps -r requirements/test.txt
           site_packages=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
           echo 'import coverage; coverage.process_startup()' > "$site_packages/coverage_subprocess.pth"
           export COVERAGE_FILE=$state/.coverage COVERAGE_PROCESS_START=$PWD/pyproject.toml
@@ -308,6 +307,16 @@ jobs:
           [[ $tests == 0 ]] || { echo "::error::Unit tests failed (exit $tests)"; exit "$tests"; }
 
           [[ ${VALIDATE:-} == true ]] || exit 0
+          # The vllm image ships no Rust; the sglang image's own cargo builds the cargo tools.
+          if ! command -v cargo > /dev/null; then
+            export RUSTUP_HOME=$state/rustup CARGO_HOME=$state/cargo
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y -q --no-modify-path --profile minimal --default-toolchain 1.100.0
+            export PATH=$CARGO_HOME/bin:$PATH
+          fi
+          CARGO_FEATURE_C_NO_TESTS=1 cargo install -q --locked --root "$state/cargo-tools" --git https://github.com/francois141/ptx_verifier \
+            --rev 886c9fd117cc2969a8a0709fd2f860dbf8d32f19 volta_cli
+          export PATH=$state/cargo-tools/bin:$PATH
           # The exit code is the conclusion; report.md's first line says which failure.
           flags=(${BASE:+--base "$BASE"})
           [[ ${MEASURED_BY_BOT:-} != true ]] || flags+=(--allow-measured-edits)
@@ -445,8 +454,8 @@ jobs:
       - name: Install coverage
         if: needs.code-lint.outputs.gpu_enabled == 'true'
         run: |
-          echo "🧰 Install coverage 7.16.0, matching the test jobs'."
-          python -m pip install 'coverage[toml]==7.16.0'
+          echo "🧰 Install coverage, matching the test jobs'."
+          python -m pip install -r requirements/test.txt
       - name: Download raw data from coverage-* artifacts
         if: needs.code-lint.outputs.gpu_enabled == 'true'
         uses: actions/download-artifact@v4
