@@ -1,0 +1,61 @@
+{
+ "schema": 1,
+ "gpus": 2,
+ "served_model_name": "deepseek-ai/DeepSeek-V4.1-Flash",
+ "launch": {
+  "command": [
+   "vllm",
+   "serve",
+   "${E2E_MODEL_PATH}",
+   "--served-model-name",
+   "deepseek-ai/DeepSeek-V4.1-Flash",
+   "--host",
+   "127.0.0.1",
+   "--port",
+   "${E2E_PORT}",
+   "--tensor-parallel-size",
+   "2",
+   "--language-model-only",
+   "--tokenizer-mode",
+   "deepseek_v41",
+   "--moe-backend",
+   "aiter",
+   "--gpu-memory-utilization",
+   "0.9",
+   "--engram-config",
+   "{\"cpu_offload\":true}",
+   "--attention-config",
+   "{\"indexer_kv_dtype\":\"mxfp4\",\"indexer_sparse_logits\":true}",
+   "--block-size",
+   "128",
+   "--monokernel",
+   "--speculative-config",
+   "{\"method\":\"dspark\",\"num_speculative_tokens\":5,\"draft_sample_method\":\"probabilistic\",\"rejection_sample_method\":\"synthetic\",\"synthetic_acceptance_length\":4.07,\"enable_adaptive_verification\":false}",
+   "--no-enable-prefix-caching",
+   "--max-model-len",
+   "16384",
+   "--max-num-seqs",
+   "128",
+   "--max-num-batched-tokens",
+   "16384",
+   "--max-cudagraph-capture-size",
+   "1024"
+  ],
+  "env": {
+   "HF_HUB_OFFLINE": "1",
+   "VLLM_ENGINE_READY_TIMEOUT_S": "7200",
+   "VLLM_USE_RUST_FRONTEND": "1",
+   "VLLM_ROCM_USE_AITER": "1",
+   "VLLM_ROCM_USE_AITER_MOE": "1",
+   "AITER_TRITON_LOG_LEVEL": "ERROR",
+   "VLLM_USE_BREAKABLE_CUDAGRAPH": "1",
+   "VLLM_ROCM_USE_AITER_TRITON_SPARSE_MLA": "1"
+  }
+ },
+ "runtime": {
+  "ready_timeout_s": 7200,
+  "poll_s": 10,
+  "point_timeout_s": 3600
+ },
+ "notes": "vLLM recipe's MI355X single-node TP2 command with prefix caching off for random input; DSpark at InferenceX's golden AL 4.07. No INT4 quick all-reduce: it fails at startup with this image's FlyDSL."
+}

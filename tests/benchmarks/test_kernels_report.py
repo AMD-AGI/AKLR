@@ -32,7 +32,7 @@ MEASUREMENT = Measurement(
 def gemm_schemas():
     """Two committed gemm@1.0 kernels of one schema name: candidates for the same Points."""
     registry = ContractRegistry.default()
-    schemas, errors = registry.read_schemas("aklr.plugins.aiter.gemm")
+    schemas, errors = registry.read_schemas("aklr.plugins.aiter.provider.gemm")
     assert not errors
     by_name = {}
     for path, schema in schemas:
@@ -143,7 +143,7 @@ def test_baseline_summary_is_the_first_sentence_of_the_baseline_docstring(baseli
 
 
 def test_collect_reads_every_committed_kernel_with_any_size_axes_as_wildcards():
-    root = locate.op_dir("aklr.plugins.aiter.gemm").parents[2]
+    root = locate.op_dir("aklr.plugins.aiter.provider.gemm").parents[2]
     reports = collect(root, min_speedup=1.05, measurements={})
 
     registry = ContractRegistry.default()
@@ -159,15 +159,15 @@ def test_collect_reads_every_committed_kernel_with_any_size_axes_as_wildcards():
 def test_measurements_take_each_schema_file_from_its_newest_bot_commit():
     log = (
         f"{'1' * 40}\x1f2026-11-19T09:18:14+00:00\x1fperf: measurements on MI355X (run 44) [skip ci]\x1f"
-        f"perf: measurements on MI355X (run 44)\n\n{MEASURED} aklr/plugins/aiter/gemm/impls/triton/x/1.json\n\x00"
+        f"perf: measurements on MI355X (run 44)\n\n{MEASURED} aklr/plugins/aiter/provider/gemm/impls/triton/x/1.json\n\x00"
         f"{'2' * 40}\x1f2026-11-18T09:18:14+00:00\x1fperf: measurements on MI355X (run 43) [skip ci]\x1f"
-        f"{'c' * 40} aklr/plugins/aiter/gemm/impls/triton/x/1.json\n{'c' * 40} aklr/plugins/aiter/gemm/impls/triton/y/2.json\n\x00"
+        f"{'c' * 40} aklr/plugins/aiter/provider/gemm/impls/triton/x/1.json\n{'c' * 40} aklr/plugins/aiter/provider/gemm/impls/triton/y/2.json\n\x00"
     )
 
     found = parse_measurements(log)
 
-    assert found["aklr/plugins/aiter/gemm/impls/triton/x/1.json"] == MEASUREMENT
-    assert found["aklr/plugins/aiter/gemm/impls/triton/y/2.json"].run_id == "43"
+    assert found["aklr/plugins/aiter/provider/gemm/impls/triton/x/1.json"] == MEASUREMENT
+    assert found["aklr/plugins/aiter/provider/gemm/impls/triton/y/2.json"].run_id == "43"
 
 
 def test_section_pages_show_a_dash_for_points_not_served(tmp_path, gemm_schemas):

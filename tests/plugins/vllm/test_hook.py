@@ -19,7 +19,7 @@ import aklr.plugins.vllm as plugin
 from aklr.core.platform.env import ENV_DISABLE, ENV_TRACE, ENV_VLLM_PLUGIN
 from aklr.core.runtime._vllm_hook_registry import HookRegistry, HookSpec, HookType
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
-from aklr.plugins.vllm import hook, warmup
+from aklr.plugins.vllm import hook
 
 # at collection, as the plugin does in each worker: before any test empties hook._ROUTES
 importlib.import_module("aklr.plugins.vllm.layers")
@@ -399,7 +399,6 @@ def worker(monkeypatch, fake):
         if parent:
             monkeypatch.setattr(sys.modules[parent], child, module, raising=False)
     module.Worker = Worker
-    monkeypatch.setattr(warmup, "warm_up", lambda worker: calls.append("aklr warms up"))
     monkeypatch.setattr(DispatcherRegistry, "init_once", lambda self: calls.append("aklr starts"))
     return Worker, calls
 
@@ -415,7 +414,7 @@ def worker(monkeypatch, fake):
 )
 def test_only_1_turns_the_routes_on(monkeypatch, worker, fake, env, hooked):
     """The routes hook only with AKLR_VLLM_PLUGIN=1, not with AKLR_DISABLE=1, and only in a
-    worker, once its device is bound; AKLR warms up after vLLM does."""
+    worker, once its device is bound; vLLM's warmup runs alone."""
     Worker, calls = worker
     declare(lambda x: f"aklr({x})")
     for name, value in env.items():
@@ -431,8 +430,7 @@ def test_only_1_turns_the_routes_on(monkeypatch, worker, fake, env, hooked):
     assert Worker().init_device() == "bound"
     assert fake.callee is installed
     assert Worker().compile_or_warm_up_model() == 1.25
-    warmed = ["aklr warms up"] if hooked else []
-    assert calls == ["device bound", "aklr starts", "device bound", "aklr starts", "vllm warms up", *warmed]
+    assert calls == ["device bound", "aklr starts", "device bound", "aklr starts", "vllm warms up"]
     assert Worker().execute_model(step="step") == "step"
     assert calls[-1] == "step"
 

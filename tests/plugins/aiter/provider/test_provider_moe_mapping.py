@@ -15,7 +15,7 @@ import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
 
-moe = importlib.import_module("aklr.plugins.aiter.provider.moe")
+moe = importlib.import_module("aklr.plugins.aiter.provider.fused_moe.selector")
 
 
 class ActivationType(enum.Enum):

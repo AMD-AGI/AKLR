@@ -38,27 +38,36 @@ def published(manifest, complete=True):
     return {"schema": 1, "groups": groups}
 
 
+def test_muse_is_planned_on_vllm(tmp_path):
+    manifest = run_plan(tmp_path, "--models", "musespark-fp4", "--frameworks", "vllm")
+    (group,) = manifest["groups"]
+    assert group["status"] == "planned"
+    assert group["framework"]["id"] == "vllm" and group["gpus"] == 8
+
+
 def test_without_published_results_every_group_is_planned(tmp_path):
     manifest = run_plan(tmp_path)
-    assert [g["status"] for g in manifest["groups"]] == ["planned"] * 2
+    groups = {g["model"]["id"]: g for g in manifest["groups"]}
+    assert {"glm52-fp4", "glm52-fp8", "musespark-fp4"} <= groups.keys()
+    assert all(g["status"] == "planned" for g in manifest["groups"])
     spec = read_json(tmp_path / "plan/models/glm52-fp8/targets/mi355x/frameworks/sglang/plan.json")
     assert spec["model"]["id"] == "glm52-fp8" and spec["image"]["run"].split("@")[1].startswith("sha256:")
-    assert spec["aklr_sha"] == COMMIT and spec["run_key"] == manifest["groups"][1]["run_key"]
+    assert spec["aklr_sha"] == COMMIT and spec["run_key"] == groups["glm52-fp8"]["run_key"]
 
 
 def test_unchanged_complete_groups_are_skipped_and_force_runs_them(tmp_path):
     first = run_plan(tmp_path, out="first")
     again = run_plan(tmp_path, latest=published(first), out="again")
-    assert [g["status"] for g in again["groups"]] == ["skipped"] * 2
+    assert {g["status"] for g in again["groups"]} == {"skipped"}
     assert not (tmp_path / "again/models").exists()
     forced = run_plan(tmp_path, "--force", latest=published(first), out="forced")
-    assert [g["status"] for g in forced["groups"]] == ["planned"] * 2
+    assert {g["status"] for g in forced["groups"]} == {"planned"}
 
 
 def test_an_incomplete_published_result_runs_again(tmp_path):
     first = run_plan(tmp_path, out="first")
     again = run_plan(tmp_path, latest=published(first, complete=False), out="again")
-    assert [g["status"] for g in again["groups"]] == ["planned"] * 2
+    assert {g["status"] for g in again["groups"]} == {"planned"}
 
 
 def test_only_the_changed_group_runs(tmp_path):
@@ -66,7 +75,8 @@ def test_only_the_changed_group_runs(tmp_path):
     latest = published(first)
     latest["groups"]["glm52-fp8/mi355x/sglang"]["run_key"] = "stale"
     again = run_plan(tmp_path, latest=latest, out="again")
-    assert [g["status"] for g in again["groups"]] == ["skipped", "planned"]
+    for group in again["groups"]:
+        assert group["status"] == ("planned" if group["model"]["id"] == "glm52-fp8" else "skipped")
 
 
 @pytest.mark.parametrize(
@@ -103,8 +113,9 @@ def test_a_missing_recipe_fails_only_its_group(tmp_path, monkeypatch):
 
     monkeypatch.setattr(plan, "load_recipe", load)
     manifest = run_plan(tmp_path)
-    assert [g["status"] for g in manifest["groups"]] == ["planned", "resolve-failed"]
-    assert "no recipe" in manifest["groups"][1]["error"]
+    failed = [g for g in manifest["groups"] if g["status"] != "planned"]
+    assert [(g["model"]["id"], g["status"]) for g in failed] == [("glm52-fp8", "resolve-failed")]
+    assert "no recipe" in failed[0]["error"]
 
 
 def test_manual_runs_need_an_allowlisted_reviewer(tmp_path):
@@ -118,16 +129,15 @@ def test_manual_runs_need_an_allowlisted_reviewer(tmp_path):
 @pytest.mark.parametrize(
     "workloads",
     [
-        {"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1]},
+        {"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10},
         [],
-        [{"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1, 1]}],
-        [{"id": "8k1k", "isl": 0, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1]}],
+        [{"id": "8k1k", "isl": 0, "osl": 1024, "num_prompts_per_conc": 10}],
         [
-            {"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1]},
-            {"id": "8k1k", "isl": 102400, "osl": 1024, "num_prompts_per_conc": 10, "concurrency": [1]},
+            {"id": "8k1k", "isl": 8192, "osl": 1024, "num_prompts_per_conc": 10},
+            {"id": "8k1k", "isl": 102400, "osl": 1024, "num_prompts_per_conc": 10},
         ],
     ],
-    ids=["mapping", "empty", "repeated-conc", "zero-isl", "repeated-id"],
+    ids=["mapping", "empty", "zero-isl", "repeated-id"],
 )
 def test_workloads_must_be_a_list_of_valid_distinct_workloads(tmp_path, workloads):
     config = yaml.safe_load(DEFAULT_CONFIG.read_text())
@@ -135,6 +145,18 @@ def test_workloads_must_be_a_list_of_valid_distinct_workloads(tmp_path, workload
     path = tmp_path / "e2e.yaml"
     path.write_text(yaml.safe_dump(config))
     with pytest.raises(ConfigError):
+        load_config(path)
+
+
+@pytest.mark.parametrize("concurrency", [None, [1, 1]], ids=["missing", "repeated"])
+def test_every_model_needs_a_valid_concurrency(tmp_path, concurrency):
+    config = yaml.safe_load(DEFAULT_CONFIG.read_text())
+    config["models"]["glm52-fp8"]["concurrency"] = concurrency
+    if concurrency is None:
+        del config["models"]["glm52-fp8"]["concurrency"]
+    path = tmp_path / "e2e.yaml"
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ConfigError, match="model glm52-fp8 needs concurrency"):
         load_config(path)
 
 

@@ -185,6 +185,7 @@ def write_schema(aklr_root: Path, payload: dict, uuid: str = "0123456789abcdef")
         / "aklr"
         / "plugins"
         / "aiter"
+        / "provider"
         / payload["op_type"]
         / "impls"
         / "flydsl"

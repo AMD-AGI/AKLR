@@ -77,7 +77,7 @@ def build(args: argparse.Namespace) -> dict:
             recipe = load_recipe(group)
             image = ci_image.run_image(group["framework"]["id"])
             item["run_key"] = run_key(
-                args.commit, image, recipe, config["workloads"], config["client"], group["weights"]
+                args.commit, image, recipe, group["workloads"], config["client"], group["weights"]
             )
             item["gpus"] = recipe["gpus"]
             if not args.force and unchanged(previous.get(key), item["run_key"]):
@@ -91,7 +91,6 @@ def build(args: argparse.Namespace) -> dict:
                         "image": {"run": image},
                         "recipe": recipe,
                         "recipe_sha256": sha256_json(recipe),
-                        "workloads": config["workloads"],
                         "client": config["client"],
                         "aklr_sha": args.commit,
                         "run_key": item["run_key"],

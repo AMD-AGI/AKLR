@@ -301,6 +301,7 @@ def run(args, runtime_options: list[str]) -> int:
                 "SOURCE_GIT_DIR": git_dir.strip(),
                 "AKLR_EXECUTION_FILE": "/agentx/execution.json",
                 "AGENTX_FRAMEWORK": serving["framework"]["id"],
+                "AGENTX_JOB_URL": os.environ.get("AGENTX_JOB_URL", ""),
             }.items():
                 command.extend(["-e", f"{key}={value}"])
             command.extend([image_id, "-c", CONTAINER_COMMAND, "sweep"])
