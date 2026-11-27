@@ -234,3 +234,23 @@ def test_publish_replaces_a_group_with_its_latest_failed_attempt(tmp_path):
     latest = publish_run(tmp_path, tmp_path / "b", "2", commit="d" * 40)
     assert latest["groups"][GROUP_KEY]["status"] == "failed"
     assert not (tmp_path / "section" / GROUP).exists()
+
+
+def test_rerender_recomputes_rows_and_counts_and_names_the_measured_workloads(tmp_path):
+    measured = results()
+    measured["run"]["workloads"] = [{"id": WORKLOAD, "isl": 4096, "osl": 512, "concurrency": CONCS}]
+    site_from(tmp_path, {GROUP: measured}, run_id="1")
+    publish_run(tmp_path, tmp_path / "site", "1")
+    section = tmp_path / "section"
+    stale = read_json(section / "latest.json")
+    stale["groups"][GROUP_KEY].update(status="failed", matched=0)
+    write_json(section / "latest.json", stale)
+    summary = read_json(section / "section.json")
+    write_json(section / "section.json", {**summary, "status_counts": {"failed": 1}})
+    latest = publish.rerender(section)
+    assert latest["groups"][GROUP_KEY]["status"] == "ok"
+    assert latest["groups"][GROUP_KEY]["source"]["run_id"] == "1"
+    rerendered = read_json(section / "section.json")
+    assert rerendered["status_counts"] == {"ok": 1} and rerendered["last_run"] == summary["last_run"]
+    index = (section / "index.html").read_text()
+    assert "8k1k (ISL 4096 / OSL 512)" in index and "ISL 8192" not in index

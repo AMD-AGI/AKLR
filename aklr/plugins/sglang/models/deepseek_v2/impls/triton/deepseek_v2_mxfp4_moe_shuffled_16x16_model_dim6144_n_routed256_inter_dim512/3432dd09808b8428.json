@@ -165,7 +165,7 @@
         "routed_scaling_factor": 2.5
       },
       "accuracy": "passed",
-      "speedup": 1.154,
+      "speedup": 1.164,
       "microseconds": 293.0
     }
   ],

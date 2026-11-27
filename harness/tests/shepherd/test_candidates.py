@@ -14,17 +14,19 @@ CONFIG = """
 policy:
   strategies:
     - type: manual
-      schemas: [aklr/plugins/aiter/gemm/impls/flydsl/manual/a.json, aklr/plugins/aiter/gemm/impls/flydsl/gone/a.json]
+      schemas: [aklr/plugins/aiter/provider/gemm/impls/flydsl/manual/a.json, aklr/plugins/aiter/provider/gemm/impls/flydsl/gone/a.json]
     - type: kernel-less
   allowed_ops: [gemm, moe]
   backends: [flydsl, triton]
 """
 SCHEMAS = {
-    "aklr/plugins/aiter/gemm/impls/flydsl/manual/a.json": {"kernel": {"sources": ["k.py"]}},
-    "aklr/plugins/aiter/gemm/impls/triton/empty/a.json": {"kernel": {"language": "triton", "sources": []}},
-    "aklr/plugins/aiter/gemm/impls/hip/empty/a.json": {"kernel": None},
-    "aklr/plugins/aiter/gemm/impls/flydsl/served/a.json": {"kernel": {"sources": ["k.py"]}},
-    "aklr/plugins/aiter/norm/impls/flydsl/empty/a.json": {"kernel": None},
+    "aklr/plugins/aiter/provider/gemm/impls/flydsl/manual/a.json": {"kernel": {"sources": ["k.py"]}},
+    "aklr/plugins/aiter/provider/gemm/impls/triton/empty/a.json": {
+        "kernel": {"language": "triton", "sources": []}
+    },
+    "aklr/plugins/aiter/provider/gemm/impls/hip/empty/a.json": {"kernel": None},
+    "aklr/plugins/aiter/provider/gemm/impls/flydsl/served/a.json": {"kernel": {"sources": ["k.py"]}},
+    "aklr/plugins/aiter/provider/norm/impls/flydsl/empty/a.json": {"kernel": None},
 }
 
 
@@ -47,8 +49,8 @@ def test_candidates_follow_strategies_filters_and_the_ledger(tmp_path):
         (tmp_path / path).write_text(json.dumps(schema))
     # One unreadable file on main must not hide the other candidates.
     for name, text in (("broken", "{broken"), ("list", "[]"), ("text", '{"kernel": "x"}')):
-        (tmp_path / f"aklr/plugins/aiter/gemm/impls/flydsl/{name}").mkdir()
-        (tmp_path / f"aklr/plugins/aiter/gemm/impls/flydsl/{name}/a.json").write_text(text)
+        (tmp_path / f"aklr/plugins/aiter/provider/gemm/impls/flydsl/{name}").mkdir()
+        (tmp_path / f"aklr/plugins/aiter/provider/gemm/impls/flydsl/{name}/a.json").write_text(text)
     (tmp_path / "config.yaml").write_text(CONFIG)
     git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t"]
     subprocess.run([*git, "init", "-q"], check=True)
@@ -59,16 +61,16 @@ def test_candidates_follow_strategies_filters_and_the_ledger(tmp_path):
     ).stdout.strip()
     first = listed(tmp_path, head, [])
     assert [(c["path"], c["strategy"]) for c in first["candidates"]] == [
-        ("aklr/plugins/aiter/gemm/impls/flydsl/manual/a.json", "manual"),
-        ("aklr/plugins/aiter/gemm/impls/triton/empty/a.json", "kernel-less"),
+        ("aklr/plugins/aiter/provider/gemm/impls/flydsl/manual/a.json", "manual"),
+        ("aklr/plugins/aiter/provider/gemm/impls/triton/empty/a.json", "kernel-less"),
     ]
     assert {s["path"]: s["reason"] for s in first["skipped"]} == {
-        "aklr/plugins/aiter/gemm/impls/flydsl/broken/a.json": NOT_A_SCHEMA,
-        "aklr/plugins/aiter/gemm/impls/flydsl/gone/a.json": "missing at this commit",
-        "aklr/plugins/aiter/gemm/impls/flydsl/list/a.json": NOT_A_SCHEMA,
-        "aklr/plugins/aiter/gemm/impls/flydsl/text/a.json": NOT_A_SCHEMA,
-        "aklr/plugins/aiter/gemm/impls/hip/empty/a.json": "language not in policy.backends",
-        "aklr/plugins/aiter/norm/impls/flydsl/empty/a.json": "op not in policy.allowed_ops",
+        "aklr/plugins/aiter/provider/gemm/impls/flydsl/broken/a.json": NOT_A_SCHEMA,
+        "aklr/plugins/aiter/provider/gemm/impls/flydsl/gone/a.json": "missing at this commit",
+        "aklr/plugins/aiter/provider/gemm/impls/flydsl/list/a.json": NOT_A_SCHEMA,
+        "aklr/plugins/aiter/provider/gemm/impls/flydsl/text/a.json": NOT_A_SCHEMA,
+        "aklr/plugins/aiter/provider/gemm/impls/hip/empty/a.json": "language not in policy.backends",
+        "aklr/plugins/aiter/provider/norm/impls/flydsl/empty/a.json": "op not in policy.allowed_ops",
     }
 
     manual, empty = first["candidates"]
@@ -97,9 +99,12 @@ def test_candidates_follow_strategies_filters_and_the_ledger(tmp_path):
     block["lifts_when_changed"] = {**manual["contract_key"], "runtime_revision": "older"}
     assert len(listed(tmp_path, head, [], blocked_contracts=[block])["candidates"]) == 2
     # A measurement update under impls/ does not lift a block; a change of the op's code does.
-    (tmp_path / "aklr/plugins/aiter/gemm/impls/flydsl/served/a.json").write_text("{}")
-    (tmp_path / "aklr/plugins/aiter/gemm/op.py").write_text("x")
-    for added, same in (("aklr/plugins/aiter/gemm/impls", True), ("aklr/plugins/aiter/gemm/op.py", False)):
+    (tmp_path / "aklr/plugins/aiter/provider/gemm/impls/flydsl/served/a.json").write_text("{}")
+    (tmp_path / "aklr/plugins/aiter/provider/gemm/op.py").write_text("x")
+    for added, same in (
+        ("aklr/plugins/aiter/provider/gemm/impls", True),
+        ("aklr/plugins/aiter/provider/gemm/op.py", False),
+    ):
         subprocess.run([*git, "add", added], check=True)
         subprocess.run([*git, "commit", "-qm", added], check=True)
         key = listed(tmp_path, "HEAD", [])["candidates"][0]["contract_key"]
@@ -134,7 +139,7 @@ def test_a_schema_whose_workloads_all_have_a_sibling_kernel_is_not_kernel_less(t
         "served": {"kernel": None, "workloads": [one]},
         "partly": {"kernel": None, "workloads": [one, two]},
     }
-    directory = tmp_path / "aklr/plugins/aiter/gemm/impls/flydsl/name"
+    directory = tmp_path / "aklr/plugins/aiter/provider/gemm/impls/flydsl/name"
     directory.mkdir(parents=True)
     for name, schema in schemas.items():
         (directory / f"{name}.json").write_text(json.dumps(schema))
@@ -145,11 +150,11 @@ def test_a_schema_whose_workloads_all_have_a_sibling_kernel_is_not_kernel_less(t
     subprocess.run([*git, "commit", "-qm", "schemas"], check=True)
     result = listed(tmp_path, "HEAD", [])
     kernel_less = [c["path"] for c in result["candidates"] if c["strategy"] == "kernel-less"]
-    assert kernel_less == ["aklr/plugins/aiter/gemm/impls/flydsl/name/partly.json"]
+    assert kernel_less == ["aklr/plugins/aiter/provider/gemm/impls/flydsl/name/partly.json"]
 
 
 def test_a_manual_schema_is_kept_wherever_its_strategy_stands(tmp_path):
-    path = "aklr/plugins/aiter/gemm/impls/flydsl/name/a.json"
+    path = "aklr/plugins/aiter/provider/gemm/impls/flydsl/name/a.json"
     (tmp_path / path).parent.mkdir(parents=True)
     (tmp_path / path).write_text(json.dumps({"kernel": {"sources": ["k.py"]}}))
     (tmp_path / "config.yaml").write_text(

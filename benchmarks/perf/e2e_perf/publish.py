@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MIT
-"""Merge one run's report site into site-data's e2e/ section; groups the run skipped keep their results."""
+"""Merge one run's report site into site-data's e2e/ section; groups the run skipped keep their results.
+
+`rerender` rebuilds that section's pages from the results it already holds, with this checkout's code.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ from e2e_perf.model_config import (
     groups,
     load_config,
 )
-from e2e_perf.report import TITLE, render_index
+from e2e_perf.report import TITLE, entry, render_group, render_index
 from e2e_perf.utils import SCHEMA, read_json, utc_now, write_json
 
 
@@ -45,6 +48,39 @@ def remove_tree(path: Path, root: Path) -> None:
             break
         if parent.is_dir() and not any(parent.iterdir()):
             parent.rmdir()
+
+
+def index_workloads(section: Path, rows: list[dict], configured: list[dict]) -> list[dict]:
+    """The workloads the shown results measured, from their own records; the config's when none hold any."""
+    measured: dict[tuple, dict] = {}
+    for row in rows:
+        path = section / group_path(row["model"]["id"], row["target"]["id"], row["framework"]["id"])
+        if not row.get("report") or not (path / "results.json").is_file():
+            continue
+        for workload in read_json(path / "results.json")["run"].get("workloads") or []:
+            measured.setdefault((workload["id"], workload["isl"], workload["osl"]), workload)
+    return list(measured.values()) or configured
+
+
+def write_summary(section: Path, latest: dict, last_run: dict | None) -> None:
+    """The section's entry for the dashboard home page: its groups' status counts and last run."""
+    rows = list(latest["groups"].values())
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    write_json(
+        section / "section.json",
+        {
+            "schema": 1,
+            "id": "e2e",
+            "title": dict(TITLE),
+            "path": "index.html",
+            "updated_at": latest["updated_at"],
+            "last_run": last_run,
+            "targets": len(rows),
+            "status_counts": counts,
+        },
+    )
 
 
 def merge(
@@ -101,23 +137,35 @@ def merge(
     latest = {"schema": SCHEMA, "updated_at": utc_now(), "groups": entries}
     write_json(latest_path, latest)
     rows = list(entries.values())
-    (section / "index.html").write_text(render_index(rows, repo_url(), loaded["workloads"]))
-    counts: dict[str, int] = {}
-    for row in rows:
-        counts[row["status"]] = counts.get(row["status"], 0) + 1
-    write_json(
-        section / "section.json",
-        {
-            "schema": 1,
-            "id": "e2e",
-            "title": dict(TITLE),
-            "path": "index.html",
-            "updated_at": latest["updated_at"],
-            "last_run": source,
-            "targets": len(rows),
-            "status_counts": counts,
-        },
-    )
+    workloads = index_workloads(section, rows, loaded["workloads"])
+    (section / "index.html").write_text(render_index(rows, repo_url(), workloads))
+    write_summary(section, latest, source)
+    return latest
+
+
+def rerender(section: Path, *, config: Path | str = DEFAULT_CONFIG) -> dict:
+    """Re-render every group page and the index from the section's own results; no data changes."""
+    latest_path = section / "latest.json"
+    latest = read_json(latest_path)
+    if latest.get("schema") != SCHEMA:
+        raise ValueError(f"site-data/e2e latest.json schema {latest.get('schema')!r} is not {SCHEMA}")
+    repo = repo_url()
+    for key, row in latest["groups"].items():
+        path = section / group_path(*key.split("/")) / "results.json"
+        if not row.get("report") or not path.is_file():
+            continue
+        results = read_json(path)
+        if group_key(results["model"]["id"], results["target"]["id"], results["framework"]["id"]) != key:
+            raise ValueError(f"{key} holds results of another group")
+        fresh = {**entry(row, results, row.get("run_url")), "source": row.get("source")}
+        (path.parent / "index.html").write_text(render_group(results, fresh, repo))
+        latest["groups"][key] = fresh
+    write_json(latest_path, latest)
+    rows = list(latest["groups"].values())
+    workloads = index_workloads(section, rows, load_config(config)["workloads"])
+    (section / "index.html").write_text(render_index(rows, repo, workloads))
+    summary = section / "section.json"
+    write_summary(section, latest, read_json(summary).get("last_run") if summary.is_file() else None)
     return latest
 
 
@@ -146,4 +194,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for key, row in latest["groups"].items():
         print(f"{key}: {row['status']} from run {row['source']['run_id']}")
+    return 0
+
+
+def rerender_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python3 -m e2e_perf rerender",
+        description="Re-render site-data/e2e pages from the results it holds, with this checkout's code.",
+    )
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("section", type=Path, help="e2e/ in a site-data checkout; edited in place")
+    args = parser.parse_args(argv)
+    if not (args.section / "latest.json").is_file():
+        print(f"{args.section} has no latest.json; nothing to re-render")
+        return 0
+    try:
+        latest = rerender(args.section, config=args.config)
+    except (ConfigError, ValueError, OSError, KeyError, TypeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    for key, row in latest["groups"].items():
+        print(f"{key}: {row['status']}" + (" (re-rendered)" if row.get("report") else " (index only)"))
     return 0

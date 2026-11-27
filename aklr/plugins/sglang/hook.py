@@ -12,12 +12,13 @@ from collections.abc import Callable
 from importlib.metadata import version
 
 import torch
+from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.core.runtime.dispatch._trace import trace
 
-__all__ = ["install", "sglang_route", "sglang_version"]
+__all__ = ["install", "sglang_route", "sglang_version", "sglang_version_matches"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +31,8 @@ def sglang_route(
     target: str, *, versions: tuple[str, ...], eager: bool = False
 ) -> Callable[[Callable], Callable]:
     """Declare that sglang's ``target`` reaches AKLR ops through this function, on the sglang
-    releases ``versions`` it was tested on; on any other, sglang runs its own code. Where Dynamo
+    versions matching ``versions`` (exact releases or PEP 440 ranges). Outside that policy,
+    sglang runs its own code. A range admits future versions without claiming they were tested. Where Dynamo
     compiles the caller, a route hands the call to sglang, unless ``eager``: one whose target's own
     code cannot run what another route set up then runs outside the compiled graph."""
 
@@ -48,14 +50,24 @@ def sglang_version() -> str:
     return Version(version("sglang")).public
 
 
+def sglang_version_matches(installed: str, versions: tuple[str, ...]) -> bool:
+    """Match an exact release or any declared PEP 440 range, including daily builds."""
+    return any(
+        SpecifierSet(v if v.startswith(("<", ">", "=", "!", "~")) else f"=={v}").contains(
+            installed, prereleases=True
+        )
+        for v in versions
+    )
+
+
 def install() -> None:
-    """Wrap the targets of the routes tested on the installed sglang."""
+    """Wrap targets whose declared version policy admits the installed sglang."""
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     installed = sglang_version()
     untested, absent = [], []
     for target, versions, route in _ROUTES:
-        if installed not in versions:
+        if not sglang_version_matches(installed, versions):
             untested.append(target)
             continue
         try:
@@ -75,7 +87,7 @@ def install() -> None:
         "aklr hooks %d sglang functions on sglang %s%s%s",
         len(_ROUTES) - len(untested) - len(absent),
         installed,
-        f"; not {', '.join(untested)}, untested on it" if untested else "",
+        f"; not {', '.join(untested)}, outside their version policy" if untested else "",
         f"; not {', '.join(absent)}" if absent else "",
     )
 

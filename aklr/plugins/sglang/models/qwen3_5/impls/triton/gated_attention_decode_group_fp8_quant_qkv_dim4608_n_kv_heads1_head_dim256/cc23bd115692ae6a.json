@@ -232,7 +232,7 @@
       },
       "accuracy": "passed",
       "speedup": 1.302,
-      "microseconds": 537.0
+      "microseconds": 536.0
     }
   ],
   "layout_variants": {

@@ -232,7 +232,7 @@ KIMI_K3_SGL_KDA_PREFILL = OpContract(
         "out": TensorSpec(
             description="Each token's S @ q after its update.",
             shape=_HEADS,
-            dtype=_SAME_AS_QKV,
+            dtype=_SAME_AS_QKV.model_copy(update={"param_name": "out_dtype"}),
             # the outputs are small (|q| = 1 times scale: about 1e-2 at N(0, 1) inputs), and bf16 operands into the
             # fp32 state leave a correct kernel about 1e-3 off at most; plus the reference's own rounding to bf16
             error_bounds=ToleranceBound(absolute_tolerance=2e-3, relative_tolerance=2e-2 + 2**-7),
