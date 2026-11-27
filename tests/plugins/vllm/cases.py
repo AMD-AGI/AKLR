@@ -7,6 +7,31 @@ from aklr.core.contract.spec import PointSpec
 
 # full PointSpec literals; each contract's base Point first
 SMALL_POINTS: tuple[PointSpec, ...] = (
+    # vLLM's DeepSeek-V4 router top-k shrunk to 64 experts, with its padded rows marked, then with
+    # DeepSeek-V4.1's image sentinel rows too
+    *(
+        PointSpec(
+            contract_id="deepseek_v4_topk@1.0",
+            axes={"n_tokens": 6, "n_experts": 64, "n_slots": 3},
+            dtypes={
+                "router_logits": "float32",
+                "correction_bias": "float32",
+                "padding_mask": "bool",
+                "input_tokens": "int64" if vision else None,
+                "bias_vl": "float32" if vision else None,
+                "topk_weights": "float32",
+                "topk_ids": "int32",
+            },
+            attrs={
+                "renormalize": True,
+                "has_padding_mask": True,
+                "has_bias_vl": vision,
+                "has_input_tokens": vision,
+            },
+            layout_variant_name="row_major",
+        )
+        for vision in (False, True)
+    ),
     # Kimi-K3's attention residual shrunk: a layer folding the pending output into the prefix,
     # then the first layer of a block, which stores its prefix as the next bank row
     PointSpec(
