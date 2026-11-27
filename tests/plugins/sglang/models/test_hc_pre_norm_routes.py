@@ -144,9 +144,7 @@ def test_a_norm_with_no_fake_quant_asks_the_plain_op(sglang, monkeypatch):
         lambda *a, **k: asked.append(a) or (torch.zeros(ROWS, HIDDEN),) * 5,
     )
     _, y, coefficients = _boundary(sglang)
-    quant, out_norm = api._rmsnorm_with_sinkhorn(
-        y, torch.ones(HIDDEN), 1e-20, coefficients, fake_quant=False
-    )
+    quant, out_norm = api._rmsnorm_with_sinkhorn(y, torch.ones(HIDDEN), 1e-20, coefficients, fake_quant=False)
     assert quant is None
     assert out_norm.shape == (ROWS, HIDDEN)
     assert len(asked) == 1
@@ -172,9 +170,7 @@ def test_the_boundarys_own_norm_asks_the_op_once(sglang, monkeypatch):
 
     monkeypatch.setattr(api, "deepseek_v4_hc_pre_norm_mxfp8", op)
     _, y, coefficients = _boundary(sglang)
-    quant, out_norm = api._rmsnorm_with_sinkhorn(
-        y, torch.ones(HIDDEN), 1e-20, coefficients, emit_fp8=True
-    )
+    quant, out_norm = api._rmsnorm_with_sinkhorn(y, torch.ones(HIDDEN), 1e-20, coefficients, emit_fp8=True)
     assert len(asked) == 1
     assert out_norm.shape == (ROWS, HIDDEN)
     assert quant.q.shape == (ROWS, HIDDEN)
@@ -185,9 +181,7 @@ def test_the_boundarys_own_norm_asks_the_op_once(sglang, monkeypatch):
 
 def test_an_op_that_falls_back_leaves_the_pair_to_sglang(sglang, monkeypatch):
     """A shape with no kernel: the boundary is materialized and sglang's norm runs."""
-    monkeypatch.setattr(
-        api, "deepseek_v4_hc_pre_norm_mxfp8", lambda *a, **k: FallbackReason.NOT_MEASURED
-    )
+    monkeypatch.setattr(api, "deepseek_v4_hc_pre_norm_mxfp8", lambda *a, **k: FallbackReason.NOT_MEASURED)
     _, y, coefficients = _boundary(sglang)
     out = api._rmsnorm_with_sinkhorn(y, torch.ones(HIDDEN), 1e-20, coefficients, emit_fp8=True)
     assert out is FallbackReason.NOT_MEASURED

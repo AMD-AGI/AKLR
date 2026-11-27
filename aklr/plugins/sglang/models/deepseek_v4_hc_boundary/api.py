@@ -12,6 +12,11 @@ from aklr.plugins.sglang.models.deepseek_v4_hc_boundary.contract import (
 
 __all__ = ["deepseek_v4_hc_boundary", "deepseek_v4_hc_boundary_post"]
 
+# Columns of every copy one program owns. sglang slices 64 (_HC_BOUNDARY_BLOCK_K) and reads the count
+# back from part_sq.shape[0], so the slicing is AKLR's to choose: at decode rows 80 programs of 2 warps
+# leave the machine idle, and a narrower slice fills it. The op's schemas carry this count as n_slices.
+SLICE_WIDTH = 64
+
 
 @api(DEEPSEEK_V4_HC_BOUNDARY)
 def deepseek_v4_hc_boundary(residual, pre_prev, hc_fn, y=None, part_mix=None, part_sq=None): ...
@@ -41,12 +46,12 @@ def _hc_boundary_partials(
         or pre_prev is None
         or y is None
         or m == 0
-        or h % hip._HC_BOUNDARY_BLOCK_K
+        or h % SLICE_WIDTH
         or not residual.is_contiguous()
         or (has_post and not x.is_contiguous())
     ):
         return FallbackReason.OUT_OF_CONTRACT
-    slices, mix = h // hip._HC_BOUNDARY_BLOCK_K, hc_fn.shape[0]
+    slices, mix = h // SLICE_WIDTH, hc_fn.shape[0]
     part_mix = torch.empty((slices, m, mix), dtype=torch.float32, device=residual.device)
     part_sq = torch.empty((slices, m), dtype=torch.float32, device=residual.device)
     if has_post:
