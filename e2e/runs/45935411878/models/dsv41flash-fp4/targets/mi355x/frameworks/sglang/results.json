@@ -1,0 +1,540 @@
+{
+ "schema": 1,
+ "model": {
+  "id": "dsv41flash-fp4",
+  "display_name": "DeepSeek-V4.1-Flash"
+ },
+ "target": {
+  "id": "mi355x",
+  "runner_label": "conductor-mi355x"
+ },
+ "framework": {
+  "id": "sglang"
+ },
+ "run": {
+  "started_at": "2026-11-27T05:50:06Z",
+  "finished_at": "2026-11-27T06:15:32Z",
+  "completed": true,
+  "error": null,
+  "run_key": "7d529e2905272359ff239438b47d310d4822e4ae9ca3a1ac7ca1e0f9c59e25fd",
+  "image": {
+   "run": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5"
+  },
+  "expected_hardware": {
+   "gpu_name_pattern": "\\bMI355X\\b",
+   "gpu_arch": "gfx950",
+   "gpu_count": 8
+  },
+  "weights": {
+   "repo": "deepseek-ai/DeepSeek-V4.1-Flash",
+   "revision": "dba1be0a40aa45a94ad051997016db3960a90277"
+  },
+  "client": {
+   "repo": "SemiAnalysisAI/InferenceX",
+   "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4"
+  },
+  "workloads": [
+   {
+    "id": "8k1k",
+    "isl": 8192,
+    "osl": 1024,
+    "random_range_ratio": 1.0,
+    "num_prompts_per_conc": 10,
+    "warmups_per_conc": 2,
+    "seed": 0,
+    "concurrency": [
+     1,
+     32
+    ]
+   }
+  ],
+  "recipe_sha256": "6cd69715496914fdbb85e8cc3d0b6d7aa39f7a99556f4fccc8d0815656bc474f",
+  "gpus": 2,
+  "launch": {
+   "command": [
+    "sglang",
+    "serve",
+    "--trust-remote-code",
+    "--model-path",
+    "${E2E_MODEL_PATH}",
+    "--served-model-name",
+    "deepseek-ai/DeepSeek-V4.1-Flash",
+    "--tp",
+    "2",
+    "--ep-size",
+    "1",
+    "--mem-fraction-static",
+    "0.85",
+    "--speculative-algorithm",
+    "DSPARK",
+    "--speculative-dspark-block-size",
+    "5",
+    "--enforce-shared-experts-fusion",
+    "--fp8-gemm-backend",
+    "aiter",
+    "--enable-decoder-swa-bounded-replay",
+    "--cuda-graph-max-bs-decode",
+    "128",
+    "--max-running-requests",
+    "128",
+    "--cuda-graph-backend-prefill",
+    "disabled",
+    "--disable-radix-cache",
+    "--watchdog-timeout",
+    "3600",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "${E2E_PORT}"
+   ],
+   "env": {
+    "HF_HUB_OFFLINE": "1",
+    "SGLANG_ENABLE_DSV41_ENGRAM_HOST_TABLE": "1",
+    "SGLANG_DSV41_ENGRAM_HOST_TABLE_LAYOUT": "per_rank",
+    "SGLANG_USE_ROCM700A": "0",
+    "TORCH_BLAS_PREFER_HIPBLASLT": "1",
+    "SGLANG_OPT_HIP_OPUS_SPARSE_PREFILL": "true",
+    "SGLANG_OPT_HIP_FLYDSL_MXFP8": "1",
+    "SGLANG_HIP_FP4_INDEXER_ROWGROUP": "1",
+    "SGLANG_HIP_DSV41_INDEX_K_PAGE8": "1",
+    "SGLANG_SIMULATE_ACC_LEN": "4.07",
+    "SGLANG_SIMULATE_ACC_METHOD": "match-expected",
+    "SGLANG_SIMULATE_ACC_TOKEN_MODE": "real-draft-token"
+   }
+  },
+  "id": "45935411878",
+  "attempt_id": "aab3e30a914e4b2088137e07d152dda5",
+  "aklr_sha": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+  "source_dirty": false,
+  "host": "smci355-ccs-aus-m14-09",
+  "execution": {
+   "image_reference": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
+   "image_id": "sha256:11714c7927d09447d6ab32b2566f2a4ea71638ede255d06f97fb9435fee8e245",
+   "server_environment": {
+    "policy": "paired-aklr-image-env-v2",
+    "scope": "server",
+    "source": "docker-image-inspect.Config.Env",
+    "defaults_sha256": "d5edc51a590f30335712bf7c9af175f2941c328d0986b6489abfd24994bc0ec0",
+    "defaults": {
+     "AITER_COMMIT": "<redacted>",
+     "AITER_COMMIT_DEFAULT": "<redacted>",
+     "AITER_USE_SYSTEM_TRITON": "<redacted>",
+     "BUILD_AITER_ALL": "<redacted>",
+     "BUILD_LLVM": "<redacted>",
+     "BUILD_MOONCAKE": "<redacted>",
+     "BUILD_TRITON": "<redacted>",
+     "BUILD_VLLM": "<redacted>",
+     "CARGO_BUILD_JOBS": "<redacted>",
+     "CPATH": "<redacted>",
+     "DEBIAN_FRONTEND": "<redacted>",
+     "GPU_ARCH": "<redacted>",
+     "GPU_ARCH_LIST": "<redacted>",
+     "HIP_FORCE_DEV_KERNARG": "<redacted>",
+     "HSA_NO_SCRATCH_RECLAIM": "<redacted>",
+     "LD_LIBRARY_PATH": "<redacted>",
+     "LIBGL_ALWAYS_INDIRECT": "<redacted>",
+     "LIBRARY_PATH": "<redacted>",
+     "NCCL_MIN_NCHANNELS": "<redacted>",
+     "PATH": "<redacted>",
+     "PIP_CONSTRAINT": "<redacted>",
+     "PYTORCH_ROCM_ARCH": "<redacted>",
+     "ROCM_HOME": "<redacted>",
+     "ROCM_PATH": "<redacted>",
+     "ROCM_QUICK_REDUCE_QUANTIZATION": "<redacted>",
+     "SETUPTOOLS_SCM_PRETEND_VERSION": "<redacted>",
+     "SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN": "<redacted>",
+     "SGLANG_DISABLE_CUDNN_CHECK": "<redacted>",
+     "SGLANG_INT4_WEIGHT": "<redacted>",
+     "SGLANG_MOE_PADDING": "<redacted>",
+     "SGLANG_ROCM_DISABLE_LINEARQUANT": "<redacted>",
+     "SGLANG_ROCM_FUSED_DECODE_MLA": "<redacted>",
+     "SGLANG_SET_CPU_AFFINITY": "<redacted>",
+     "SGLANG_USE_AITER": "<redacted>",
+     "SGLANG_USE_ROCM700A": "<redacted>",
+     "TORCHINDUCTOR_MAX_AUTOTUNE": "<redacted>",
+     "TORCHINDUCTOR_MAX_AUTOTUNE_POINTWISE": "<redacted>",
+     "TRITON_COMMIT": "<redacted>",
+     "TRITON_REVERT_COMMITS": "<redacted>",
+     "VIRTUAL_ENV": "<redacted>"
+    }
+   }
+  },
+  "hardware": {
+   "devices": [
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    }
+   ],
+   "peer_access": [
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   ]
+  },
+  "server_packages": {
+   "sglang": "0.5.23",
+   "torch": "2.11.0+rocm10.0.0",
+   "triton": "3.8.0+git4cff872c.rocm10.0.0",
+   "amd-aiter": "0.1.26.dev144+g285579b62.d20261030",
+   "flydsl": "0.4.0"
+  }
+ },
+ "modes": {
+  "disabled": {
+   "switches": {
+    "AKLR_DISABLE": "1",
+    "AKLR_SGLANG_PLUGIN": "0"
+   },
+   "points": [
+    {
+     "workload": "8k1k",
+     "conc": 1,
+     "status": "ok",
+     "error": null,
+     "started_at": "2026-11-27T06:01:03Z",
+     "tput_per_gpu": 2163.497046640305,
+     "p90_full_response_intvty": 519.6263279591775,
+     "raw": {
+      "date": "20261127-060201",
+      "backend": "vllm",
+      "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tokenizer_id": "/data/huggingface-cache/hub/models--deepseek-ai--DeepSeek-V4.1-Flash/snapshots/dba1be0a40aa45a94ad051997016db3960a90277",
+      "best_of": 1,
+      "num_prompts": 10,
+      "request_rate": "inf",
+      "burstiness": 1.0,
+      "max_concurrency": 1,
+      "duration": 21.29885042901151,
+      "benchmark_start_time_unix": 1795759300.201022,
+      "benchmark_end_time_unix": 1795759321.4998732,
+      "completed": 10,
+      "total_input_tokens": 81920,
+      "total_output_tokens": 10240,
+      "request_throughput": 0.4695089076910385,
+      "request_goodput": null,
+      "output_throughput": 480.7771214756234,
+      "total_token_throughput": 4326.99409328061,
+      "mean_ttft_ms": 172.77787304483354,
+      "median_ttft_ms": 172.9986695572734,
+      "std_ttft_ms": 3.123631087171875,
+      "p90_ttft_ms": 176.19062075391412,
+      "p99_ttft_ms": 177.9057366773486,
+      "p99.9_ttft_ms": 178.07724826969206,
+      "mean_tpot_ms": 1.9123189435554404,
+      "median_tpot_ms": 1.9168568890448932,
+      "std_tpot_ms": 0.014234639030525154,
+      "p90_tpot_ms": 1.924459840069076,
+      "p99_tpot_ms": 1.9248482164742928,
+      "p99.9_tpot_ms": 1.9248870541148146,
+      "mean_itl_ms": 7.775447830992391,
+      "median_itl_ms": 7.794192060828209,
+      "std_itl_ms": 0.12573008667224395,
+      "p90_itl_ms": 7.889015949331224,
+      "p99_itl_ms": 8.039020898286251,
+      "p99.9_itl_ms": 8.38723314693198,
+      "mean_e2el_ms": 2129.080152302049,
+      "median_e2el_ms": 2131.800920004025,
+      "std_e2el_ms": 13.405642095021216,
+      "p90_e2el_ms": 2141.621499788016,
+      "p99_e2el_ms": 2141.922282706946,
+      "p99.9_e2el_ms": 2141.952360998839
+     },
+     "elapsed_s": 58.0
+    },
+    {
+     "workload": "8k1k",
+     "conc": 32,
+     "status": "ok",
+     "error": null,
+     "started_at": "2026-11-27T06:02:01Z",
+     "tput_per_gpu": 14420.447187515176,
+     "p90_full_response_intvty": 107.1706393222616,
+     "raw": {
+      "date": "20261127-060418",
+      "backend": "vllm",
+      "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tokenizer_id": "/data/huggingface-cache/hub/models--deepseek-ai--DeepSeek-V4.1-Flash/snapshots/dba1be0a40aa45a94ad051997016db3960a90277",
+      "best_of": 1,
+      "num_prompts": 320,
+      "request_rate": "inf",
+      "burstiness": 1.0,
+      "max_concurrency": 32,
+      "duration": 102.25480394787155,
+      "benchmark_start_time_unix": 1795759355.7740314,
+      "benchmark_end_time_unix": 1795759458.028836,
+      "completed": 320,
+      "total_input_tokens": 2621440,
+      "total_output_tokens": 327680,
+      "request_throughput": 3.1294373236795088,
+      "request_goodput": null,
+      "output_throughput": 3204.543819447817,
+      "total_token_throughput": 28840.89437503035,
+      "mean_ttft_ms": 2339.5175100544293,
+      "median_ttft_ms": 2357.892705476843,
+      "std_ttft_ms": 1181.5119586415194,
+      "p90_ttft_ms": 3984.8121610702965,
+      "p99_ttft_ms": 4337.720051263459,
+      "p99.9_ttft_ms": 4405.279809660045,
+      "mean_tpot_ms": 7.7011574070983695,
+      "median_tpot_ms": 7.667313210160006,
+      "std_tpot_ms": 1.1565451929676815,
+      "p90_tpot_ms": 9.330913824195868,
+      "p99_tpot_ms": 9.67934793478355,
+      "p99.9_tpot_ms": 9.79275103571337,
+      "mean_itl_ms": 31.271564477402215,
+      "median_itl_ms": 22.960950969718397,
+      "std_itl_ms": 109.26865066292874,
+      "p90_itl_ms": 23.74440988060087,
+      "p99_itl_ms": 44.10574284382258,
+      "p99.9_itl_ms": 1664.0732130731924,
+      "mean_e2el_ms": 10217.801537516061,
+      "median_e2el_ms": 10188.820369890891,
+      "std_e2el_ms": 112.25359967868609,
+      "p90_e2el_ms": 10348.787979618646,
+      "p99_e2el_ms": 10520.152745067608,
+      "p99.9_e2el_ms": 10522.616618669359
+     },
+     "elapsed_s": 136.5
+    }
+   ],
+   "error": null,
+   "started_at": "2026-11-27T05:50:08Z",
+   "finished_at": "2026-11-27T06:04:24Z"
+  },
+  "enabled": {
+   "switches": {
+    "AKLR_DISABLE": "0",
+    "AKLR_SGLANG_PLUGIN": "1"
+   },
+   "points": [
+    {
+     "workload": "8k1k",
+     "conc": 1,
+     "status": "ok",
+     "error": null,
+     "started_at": "2026-11-27T06:12:50Z",
+     "tput_per_gpu": 2158.0023712102384,
+     "p90_full_response_intvty": 517.983409888973,
+     "raw": {
+      "date": "20261127-061319",
+      "backend": "vllm",
+      "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tokenizer_id": "/data/huggingface-cache/hub/models--deepseek-ai--DeepSeek-V4.1-Flash/snapshots/dba1be0a40aa45a94ad051997016db3960a90277",
+      "best_of": 1,
+      "num_prompts": 10,
+      "request_rate": "inf",
+      "burstiness": 1.0,
+      "max_concurrency": 1,
+      "duration": 21.35308126383461,
+      "benchmark_start_time_unix": 1795759978.5420556,
+      "benchmark_end_time_unix": 1795759999.895138,
+      "completed": 10,
+      "total_input_tokens": 81920,
+      "total_output_tokens": 10240,
+      "request_throughput": 0.4683164868077774,
+      "request_goodput": null,
+      "output_throughput": 479.55608249116403,
+      "total_token_throughput": 4316.004742420477,
+      "mean_ttft_ms": 182.6947640394792,
+      "median_ttft_ms": 186.10849999822676,
+      "std_ttft_ms": 8.220223010403359,
+      "p90_ttft_ms": 191.1941126221791,
+      "p99_ttft_ms": 192.8147169505246,
+      "p99.9_ttft_ms": 192.97677738335915,
+      "mean_tpot_ms": 1.907975495659099,
+      "median_tpot_ms": 1.9097195527191297,
+      "std_tpot_ms": 0.021597903431826486,
+      "p90_tpot_ms": 1.9305637611334785,
+      "p99_tpot_ms": 1.938235598936302,
+      "p99.9_tpot_ms": 1.9390027827165843,
+      "mean_itl_ms": 7.770140561724532,
+      "median_itl_ms": 7.794752833433449,
+      "std_itl_ms": 0.13851635322722566,
+      "p90_itl_ms": 7.909827819094061,
+      "p99_itl_ms": 8.024452035315333,
+      "p99.9_itl_ms": 8.324275620048867,
+      "mean_e2el_ms": 2134.5536960987374,
+      "median_e2el_ms": 2137.7676154952496,
+      "std_e2el_ms": 26.578271401575414,
+      "p90_e2el_ms": 2167.092045932077,
+      "p99_e2el_ms": 2167.897662979085,
+      "p99.9_e2el_ms": 2167.978224683786
+     },
+     "elapsed_s": 29.6
+    },
+    {
+     "workload": "8k1k",
+     "conc": 32,
+     "status": "ok",
+     "error": null,
+     "started_at": "2026-11-27T06:13:20Z",
+     "tput_per_gpu": 14528.280337321796,
+     "p90_full_response_intvty": 108.15820395001073,
+     "raw": {
+      "date": "20261127-061527",
+      "backend": "vllm",
+      "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tokenizer_id": "/data/huggingface-cache/hub/models--deepseek-ai--DeepSeek-V4.1-Flash/snapshots/dba1be0a40aa45a94ad051997016db3960a90277",
+      "best_of": 1,
+      "num_prompts": 320,
+      "request_rate": "inf",
+      "burstiness": 1.0,
+      "max_concurrency": 32,
+      "duration": 101.49583885795437,
+      "benchmark_start_time_unix": 1795760025.8300943,
+      "benchmark_end_time_unix": 1795760127.325933,
+      "completed": 320,
+      "total_input_tokens": 2621440,
+      "total_output_tokens": 327680,
+      "request_throughput": 3.1528386148701815,
+      "request_goodput": null,
+      "output_throughput": 3228.506741627066,
+      "total_token_throughput": 29056.56067464359,
+      "mean_ttft_ms": 2355.2900984977896,
+      "median_ttft_ms": 2356.3749386230484,
+      "std_ttft_ms": 1201.234568690927,
+      "p90_ttft_ms": 4040.20576744806,
+      "p99_ttft_ms": 4348.117434931919,
+      "p99.9_ttft_ms": 4407.31922531547,
+      "mean_tpot_ms": 7.611339423050539,
+      "median_tpot_ms": 7.5897249818314325,
+      "std_tpot_ms": 1.1769268163462088,
+      "p90_tpot_ms": 9.245715659832763,
+      "p99_tpot_ms": 9.602596300427884,
+      "p99.9_tpot_ms": 9.750973994592396,
+      "mean_itl_ms": 30.902630137241513,
+      "median_itl_ms": 22.69208780489862,
+      "std_itl_ms": 109.15444431768567,
+      "p90_itl_ms": 23.419635044410825,
+      "p99_itl_ms": 36.94492303766316,
+      "p99.9_itl_ms": 1662.3447992457081,
+      "mean_e2el_ms": 10141.690328278492,
+      "median_e2el_ms": 10122.621908551082,
+      "std_e2el_ms": 101.41158972129509,
+      "p90_e2el_ms": 10292.710139462724,
+      "p99_e2el_ms": 10306.342110775877,
+      "p99.9_e2el_ms": 10309.396702614147
+     },
+     "elapsed_s": 127.4
+    }
+   ],
+   "error": null,
+   "started_at": "2026-11-27T06:04:24Z",
+   "finished_at": "2026-11-27T06:15:32Z"
+  }
+ }
+}

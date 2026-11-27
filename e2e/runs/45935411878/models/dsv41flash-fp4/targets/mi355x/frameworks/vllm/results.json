@@ -1,0 +1,531 @@
+{
+ "schema": 1,
+ "model": {
+  "id": "dsv41flash-fp4",
+  "display_name": "DeepSeek-V4.1-Flash"
+ },
+ "target": {
+  "id": "mi355x",
+  "runner_label": "conductor-mi355x"
+ },
+ "framework": {
+  "id": "vllm"
+ },
+ "run": {
+  "started_at": "2026-11-27T06:16:52Z",
+  "finished_at": "2026-11-27T07:21:00Z",
+  "completed": true,
+  "error": null,
+  "run_key": "3e87c144783be84e0b076320b4b38a2a4ba067746ab6ad876f214fc0346a5cbd",
+  "image": {
+   "run": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1"
+  },
+  "expected_hardware": {
+   "gpu_name_pattern": "\\bMI355X\\b",
+   "gpu_arch": "gfx950",
+   "gpu_count": 8
+  },
+  "weights": {
+   "repo": "deepseek-ai/DeepSeek-V4.1-Flash",
+   "revision": "dba1be0a40aa45a94ad051997016db3960a90277"
+  },
+  "client": {
+   "repo": "SemiAnalysisAI/InferenceX",
+   "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4"
+  },
+  "workloads": [
+   {
+    "id": "8k1k",
+    "isl": 8192,
+    "osl": 1024,
+    "random_range_ratio": 1.0,
+    "num_prompts_per_conc": 10,
+    "warmups_per_conc": 2,
+    "seed": 0,
+    "concurrency": [
+     1,
+     32
+    ]
+   }
+  ],
+  "recipe_sha256": "1edb868cf0ef03b49ea36600625f7c1a50e371ae869f0cdc300eed475df165ee",
+  "gpus": 2,
+  "launch": {
+   "command": [
+    "vllm",
+    "serve",
+    "${E2E_MODEL_PATH}",
+    "--served-model-name",
+    "deepseek-ai/DeepSeek-V4.1-Flash",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "${E2E_PORT}",
+    "--tensor-parallel-size",
+    "2",
+    "--language-model-only",
+    "--tokenizer-mode",
+    "deepseek_v41",
+    "--moe-backend",
+    "aiter",
+    "--gpu-memory-utilization",
+    "0.9",
+    "--engram-config",
+    "{\"cpu_offload\":true}",
+    "--attention-config",
+    "{\"indexer_kv_dtype\":\"mxfp4\",\"indexer_sparse_logits\":true}",
+    "--block-size",
+    "128",
+    "--monokernel",
+    "--speculative-config",
+    "{\"method\":\"dspark\",\"num_speculative_tokens\":5,\"draft_sample_method\":\"probabilistic\",\"rejection_sample_method\":\"synthetic\",\"synthetic_acceptance_length\":4.07,\"enable_adaptive_verification\":false}",
+    "--no-enable-prefix-caching",
+    "--max-model-len",
+    "16384",
+    "--max-num-seqs",
+    "128",
+    "--max-num-batched-tokens",
+    "16384",
+    "--max-cudagraph-capture-size",
+    "1024"
+   ],
+   "env": {
+    "HF_HUB_OFFLINE": "1",
+    "VLLM_ENGINE_READY_TIMEOUT_S": "7200",
+    "VLLM_USE_RUST_FRONTEND": "1",
+    "VLLM_ROCM_USE_AITER": "1",
+    "VLLM_ROCM_USE_AITER_MOE": "1",
+    "AITER_TRITON_LOG_LEVEL": "ERROR",
+    "VLLM_USE_BREAKABLE_CUDAGRAPH": "1",
+    "VLLM_ROCM_USE_AITER_TRITON_SPARSE_MLA": "1"
+   }
+  },
+  "id": "45935411878",
+  "attempt_id": "86c1e53fb4bd439ea8a03141d90730f3",
+  "aklr_sha": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+  "source_dirty": false,
+  "host": "smci355-ccs-aus-m14-09",
+  "execution": {
+   "image_reference": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1",
+   "image_id": "sha256:9a5f9af8f20f129a8f0ccbe6c78499a1d0db8ddb17caaa848bb09f04f139d2b1",
+   "server_environment": {
+    "policy": "paired-aklr-image-env-v2",
+    "scope": "server",
+    "source": "docker-image-inspect.Config.Env",
+    "defaults_sha256": "4f1bc4c24bbc635835532c3cd449e034238454780e54d70ac4592adb8ee9f459",
+    "defaults": {
+     "AITER_ROCM_ARCH": "<redacted>",
+     "CCACHE_COMPILERCHECK": "<redacted>",
+     "CCACHE_DIR": "<redacted>",
+     "DEBIAN_FRONTEND": "<redacted>",
+     "HIP_CLANG_PATH": "<redacted>",
+     "HIP_DEVICE_LIB_PATH": "<redacted>",
+     "HIP_FORCE_DEV_KERNARG": "<redacted>",
+     "HIP_PATH": "<redacted>",
+     "HSA_ENABLE_IPC_MODE_LEGACY": "<redacted>",
+     "HSA_NO_SCRATCH_RECLAIM": "<redacted>",
+     "KINETO_CONFIG": "<redacted>",
+     "LD_LIBRARY_PATH": "<redacted>",
+     "MIOPEN_DEBUG_CONV_DIRECT": "<redacted>",
+     "MIOPEN_DEBUG_CONV_GEMM": "<redacted>",
+     "PATH": "<redacted>",
+     "PYTHONPATH": "<redacted>",
+     "PYTHON_VERSION": "<redacted>",
+     "PYTORCH_NVML_BASED_CUDA_CHECK": "<redacted>",
+     "PYTORCH_ROCM_ARCH": "<redacted>",
+     "ROCM_HOME": "<redacted>",
+     "ROCM_PATH": "<redacted>",
+     "ROCPROFILER_QUEUE_INTERPOSITION": "<redacted>",
+     "ROCSHMEM_DIR": "<redacted>",
+     "SAFETENSORS_FAST_GPU": "<redacted>",
+     "SDK_CORE": "<redacted>",
+     "SDK_DEV": "<redacted>",
+     "SITE_PACKAGES": "<redacted>",
+     "TOKENIZERS_PARALLELISM": "<redacted>",
+     "UCX_ROCM_COPY_SIGPOOL_MAX_ELEMS": "<redacted>",
+     "UCX_ROCM_IPC_SIGPOOL_MAX_ELEMS": "<redacted>",
+     "UV_HTTP_TIMEOUT": "<redacted>",
+     "UV_INDEX_STRATEGY": "<redacted>",
+     "UV_LINK_MODE": "<redacted>"
+    }
+   }
+  },
+  "hardware": {
+   "devices": [
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    },
+    {
+     "name": "AMD Instinct MI355X",
+     "arch": "gfx950",
+     "total_memory": 309220868096
+    }
+   ],
+   "peer_access": [
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ],
+    [
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true,
+     true
+    ]
+   ]
+  },
+  "server_packages": {
+   "vllm": "0.34.0+rocm100",
+   "torch": "2.13.0+rocm10.0.0",
+   "triton": "3.8.0+git669b31ac",
+   "amd-aiter": "0.1.28.post1",
+   "flydsl": "0.4.2"
+  }
+ },
+ "modes": {
+  "disabled": {
+   "switches": {
+    "AKLR_DISABLE": "1",
+    "AKLR_VLLM_PLUGIN": "0"
+   },
+   "points": [
+    {
+     "workload": "8k1k",
+     "conc": 1,
+     "status": "ok",
+     "error": null,
+     "started_at": "2026-11-27T06:53:24Z",
+     "tput_per_gpu": 2949.886256980945,
+     "p90_full_response_intvty": 736.5011676343514,
+     "raw": {
+      "date": "20261127-065359",
+      "backend": "vllm",
+      "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tokenizer_id": "/data/huggingface-cache/hub/models--deepseek-ai--DeepSeek-V4.1-Flash/snapshots/dba1be0a40aa45a94ad051997016db3960a90277",
+      "best_of": 1,
+      "num_prompts": 10,
+      "request_rate": "inf",
+      "burstiness": 1.0,
+      "max_concurrency": 1,
+      "duration": 15.620941278990358,
+      "benchmark_start_time_unix": 1795762424.3009372,
+      "benchmark_end_time_unix": 1795762439.9218788,
+      "completed": 10,
+      "total_input_tokens": 81920,
+      "total_output_tokens": 10240,
+      "request_throughput": 0.640166288407323,
+      "request_goodput": null,
+      "output_throughput": 655.5302793290988,
+      "total_token_throughput": 5899.77251396189,
+      "mean_ttft_ms": 186.21201456990093,
+      "median_ttft_ms": 186.38677534181625,
+      "std_ttft_ms": 1.0322862974844285,
+      "p90_ttft_ms": 187.24875014740974,
+      "p99_ttft_ms": 187.8114830260165,
+      "p99.9_ttft_ms": 187.86775631387718,
+      "mean_tpot_ms": 1.3443809523377368,
+      "median_tpot_ms": 1.3467432659771201,
+      "std_tpot_ms": 0.020956528555500842,
+      "p90_tpot_ms": 1.35777109928014,
+      "p99_tpot_ms": 1.3777930213171237,
+      "p99.9_tpot_ms": 1.379795213520822,
+      "mean_itl_ms": 5.431682607423849,
+      "median_itl_ms": 5.4546965984627604,
+      "std_itl_ms": 0.37081629990198817,
+      "p90_itl_ms": 5.548216123133898,
+      "p99_itl_ms": 5.653286566957831,
+      "p99.9_itl_ms": 7.424923260463402,
+      "mean_e2el_ms": 1561.5137288114056,
+      "median_e2el_ms": 1564.1051364364102,
+      "std_e2el_ms": 21.280401207392305,
+      "p90_e2el_ms": 1573.852355638519,
+      "p99_e2el_ms": 1596.3358471449465,
+      "p99.9_e2el_ms": 1598.5841962955894
+     },
+     "elapsed_s": 35.1
+    },
+    {
+     "workload": "8k1k",
+     "conc": 32,
+     "status": "ok",
+     "error": null,
+     "started_at": "2026-11-27T06:54:00Z",
+     "tput_per_gpu": 12854.967901778084,
+     "p90_full_response_intvty": 93.14093601550213,
+     "raw": {
+      "date": "20261127-065630",
+      "backend": "vllm",
+      "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tokenizer_id": "/data/huggingface-cache/hub/models--deepseek-ai--DeepSeek-V4.1-Flash/snapshots/dba1be0a40aa45a94ad051997016db3960a90277",
+      "best_of": 1,
+      "num_prompts": 320,
+      "request_rate": "inf",
+      "burstiness": 1.0,
+      "max_concurrency": 32,
+      "duration": 114.707404271001,
+      "benchmark_start_time_unix": 1795762475.7201252,
+      "benchmark_end_time_unix": 1795762590.42753,
+      "completed": 320,
+      "total_input_tokens": 2621440,
+      "total_output_tokens": 327680,
+      "request_throughput": 2.789706575906702,
+      "request_goodput": null,
+      "output_throughput": 2856.659533728463,
+      "total_token_throughput": 25709.935803556167,
+      "mean_ttft_ms": 1248.7692409995361,
+      "median_ttft_ms": 1163.2218318991363,
+      "std_ttft_ms": 868.6027678539535,
+      "p90_ttft_ms": 1729.0650447132066,
+      "p99_ttft_ms": 5265.379296238535,
+      "p99.9_ttft_ms": 5552.673157287063,
+      "mean_tpot_ms": 9.973718797841252,
+      "median_tpot_ms": 10.137697074217275,
+      "std_tpot_ms": 0.8844689137995448,
+      "p90_tpot_ms": 10.736417764081335,
+      "p99_tpot_ms": 11.202868801627657,
+      "p99.9_tpot_ms": 11.366616693791006,
+      "mean_itl_ms": 40.37489541855284,
+      "median_itl_ms": 23.93889194354415,
+      "std_itl_ms": 66.9367312138377,
+      "p90_itl_ms": 24.980637943372134,
+      "p99_itl_ms": 346.6764849005267,
+      "p99.9_itl_ms": 347.7344933375716,
+      "mean_e2el_ms": 11451.883571191138,
+      "median_e2el_ms": 11483.007396571338,
+      "std_e2el_ms": 1116.359267260381,
+      "p90_e2el_ms": 12167.741454741918,
+      "p99_e2el_ms": 15291.191695106683,
+      "p99.9_e2el_ms": 15703.983989973785
+     },
+     "elapsed_s": 150.5
+    }
+   ],
+   "error": null,
+   "started_at": "2026-11-27T06:16:54Z",
+   "finished_at": "2026-11-27T06:56:47Z"
+  },
+  "enabled": {
+   "switches": {
+    "AKLR_DISABLE": "0",
+    "AKLR_VLLM_PLUGIN": "1"
+   },
+   "points": [
+    {
+     "workload": "8k1k",
+     "conc": 1,
+     "status": "ok",
+     "error": null,
+     "started_at": "2026-11-27T07:18:02Z",
+     "tput_per_gpu": 2920.9844787150905,
+     "p90_full_response_intvty": 720.6336962599115,
+     "raw": {
+      "date": "20261127-071824",
+      "backend": "vllm",
+      "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tokenizer_id": "/data/huggingface-cache/hub/models--deepseek-ai--DeepSeek-V4.1-Flash/snapshots/dba1be0a40aa45a94ad051997016db3960a90277",
+      "best_of": 1,
+      "num_prompts": 10,
+      "request_rate": "inf",
+      "burstiness": 1.0,
+      "max_concurrency": 1,
+      "duration": 15.775503203039989,
+      "benchmark_start_time_unix": 1795763888.219256,
+      "benchmark_end_time_unix": 1795763903.9947593,
+      "completed": 10,
+      "total_input_tokens": 81920,
+      "total_output_tokens": 10240,
+      "request_throughput": 0.6338942011100457,
+      "request_goodput": null,
+      "output_throughput": 649.1076619366868,
+      "total_token_throughput": 5841.968957430181,
+      "mean_ttft_ms": 185.38953925017267,
+      "median_ttft_ms": 185.44794444460422,
+      "std_ttft_ms": 1.0669487002094922,
+      "p90_ttft_ms": 186.74224303103983,
+      "p99_ttft_ms": 186.78863988257945,
+      "p99.9_ttft_ms": 186.7932795677334,
+      "mean_tpot_ms": 1.3602330696924736,
+      "median_tpot_ms": 1.3546876671686696,
+      "std_tpot_ms": 0.027043825466920787,
+      "p90_tpot_ms": 1.38766755591641,
+      "p99_tpot_ms": 1.4186400777245174,
+      "p99.9_tpot_ms": 1.4217373299053282,
+      "mean_itl_ms": 5.49572957094794,
+      "median_itl_ms": 5.498332437127829,
+      "std_itl_ms": 0.38328340473878986,
+      "p90_itl_ms": 5.683442926965654,
+      "p99_itl_ms": 5.87107609724626,
+      "p99.9_itl_ms": 7.448468431131919,
+      "mean_e2el_ms": 1576.907969545573,
+      "median_e2el_ms": 1572.02791958116,
+      "std_e2el_ms": 27.4829012988978,
+      "p90_e2el_ms": 1606.168278097175,
+      "p99_e2el_ms": 1636.156811688561,
+      "p99.9_e2el_ms": 1639.1556650476998
+     },
+     "elapsed_s": 21.9
+    },
+    {
+     "workload": "8k1k",
+     "conc": 32,
+     "status": "ok",
+     "error": null,
+     "started_at": "2026-11-27T07:18:24Z",
+     "tput_per_gpu": 12981.134399824312,
+     "p90_full_response_intvty": 94.15260005250586,
+     "raw": {
+      "date": "20261127-072043",
+      "backend": "vllm",
+      "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tokenizer_id": "/data/huggingface-cache/hub/models--deepseek-ai--DeepSeek-V4.1-Flash/snapshots/dba1be0a40aa45a94ad051997016db3960a90277",
+      "best_of": 1,
+      "num_prompts": 320,
+      "request_rate": "inf",
+      "burstiness": 1.0,
+      "max_concurrency": 32,
+      "duration": 113.59253780008294,
+      "benchmark_start_time_unix": 1795763929.471221,
+      "benchmark_end_time_unix": 1795764043.0637593,
+      "completed": 320,
+      "total_input_tokens": 2621440,
+      "total_output_tokens": 327680,
+      "request_throughput": 2.8170864582952064,
+      "request_goodput": null,
+      "output_throughput": 2884.6965332942914,
+      "total_token_throughput": 25962.268799648624,
+      "mean_ttft_ms": 1242.7710533091158,
+      "median_ttft_ms": 1110.6910654343665,
+      "std_ttft_ms": 872.3137380685497,
+      "p90_ttft_ms": 1732.2766577126458,
+      "p99_ttft_ms": 5266.332611867692,
+      "p99.9_ttft_ms": 5552.925411978969,
+      "mean_tpot_ms": 9.870622146533757,
+      "median_tpot_ms": 10.009079474117332,
+      "std_tpot_ms": 0.8380775065240571,
+      "p90_tpot_ms": 10.621055599551498,
+      "p99_tpot_ms": 10.928947829308202,
+      "p99.9_tpot_ms": 11.059828278295905,
+      "mean_itl_ms": 39.95754689248827,
+      "median_itl_ms": 23.818509886041284,
+      "std_itl_ms": 66.1807490338644,
+      "p90_itl_ms": 25.11886968277395,
+      "p99_itl_ms": 347.0352523215115,
+      "p99.9_itl_ms": 347.9469035123475,
+      "mean_e2el_ms": 11340.417509213148,
+      "median_e2el_ms": 11361.634694854729,
+      "std_e2el_ms": 1045.8009883485133,
+      "p90_e2el_ms": 11932.95804169029,
+      "p99_e2el_ms": 15038.680662189146,
+      "p99.9_e2el_ms": 15453.889496619347
+     },
+     "elapsed_s": 139.0
+    }
+   ],
+   "error": null,
+   "started_at": "2026-11-27T06:56:47Z",
+   "finished_at": "2026-11-27T07:21:00Z"
+  }
+ }
+}

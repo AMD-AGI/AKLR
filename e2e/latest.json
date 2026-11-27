@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "updated_at": "2026-11-25T11:06:01Z",
+ "updated_at": "2026-11-27T07:24:05Z",
  "groups": {
   "glm52-fp4/mi355x/sglang": {
    "key": "glm52-fp4/mi355x/sglang",
@@ -15,18 +15,18 @@
    "framework": {
     "id": "sglang"
    },
-   "run_key": "bec7ef29842034df05ed41cc818792fb20f0c58881e8baccd9c90ea3459d69c5",
+   "run_key": "b2260748de52c7300d74e66148951b2f8057ba8fcaddfb695d476ce5f8f50283",
    "complete": true,
    "status": "ok",
    "matched": 5,
    "expected": 5,
-   "tput_geomean_ratio": 1.1273135252929984,
-   "min_ratio": 1.0417584343733404,
-   "max_ratio": 1.2198150654264497,
-   "measured_at": "2026-11-25T10:19:41Z",
-   "aklr_sha": "3e191a8b6049fa74c82af735c4f7386ef08c4861",
-   "run_id": "45587395751",
-   "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45587395751",
+   "tput_geomean_ratio": 1.1245612189947658,
+   "min_ratio": 1.0393879662005645,
+   "max_ratio": 1.2159723118893442,
+   "measured_at": "2026-11-27T04:20:02Z",
+   "aklr_sha": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+   "run_id": "45935411878",
+   "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
    "error": null,
    "gpus": 8,
    "image": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
@@ -34,9 +34,9 @@
    "gpu": "AMD Instinct MI355X",
    "report": true,
    "source": {
-    "run_id": "45587395751",
-    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45587395751",
-    "commit": "3e191a8b6049fa74c82af735c4f7386ef08c4861",
+    "run_id": "45935411878",
+    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
+    "commit": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
     "ref": "refs/heads/main",
     "event": "workflow_dispatch"
    }
@@ -54,18 +54,18 @@
    "framework": {
     "id": "sglang"
    },
-   "run_key": "7789bf1cdea8a4602493b21088bfa1396a74ca7cbde3e77fef78eab63728a18e",
+   "run_key": "e1ff34810a8f70a71a87cc87c442e6dc6e9b5ce0bcde0cde4c74d0a06e7bc39d",
    "complete": true,
    "status": "ok",
    "matched": 5,
    "expected": 5,
-   "tput_geomean_ratio": 1.1808730129468104,
-   "min_ratio": 1.0388720005259828,
-   "max_ratio": 1.28845756799782,
-   "measured_at": "2026-11-25T11:04:53Z",
-   "aklr_sha": "3e191a8b6049fa74c82af735c4f7386ef08c4861",
-   "run_id": "45587395751",
-   "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45587395751",
+   "tput_geomean_ratio": 1.1786953217554008,
+   "min_ratio": 1.0347422268089534,
+   "max_ratio": 1.2913632573995593,
+   "measured_at": "2026-11-27T05:06:25Z",
+   "aklr_sha": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+   "run_id": "45935411878",
+   "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
    "error": null,
    "gpus": 8,
    "image": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
@@ -73,9 +73,126 @@
    "gpu": "AMD Instinct MI355X",
    "report": true,
    "source": {
-    "run_id": "45587395751",
-    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45587395751",
-    "commit": "3e191a8b6049fa74c82af735c4f7386ef08c4861",
+    "run_id": "45935411878",
+    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
+    "commit": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+    "ref": "refs/heads/main",
+    "event": "workflow_dispatch"
+   }
+  },
+  "musespark-fp4/mi355x/vllm": {
+   "key": "musespark-fp4/mi355x/vllm",
+   "model": {
+    "id": "musespark-fp4",
+    "display_name": "Muse Spark Open MXFP4"
+   },
+   "target": {
+    "id": "mi355x",
+    "runner_label": "conductor-mi355x"
+   },
+   "framework": {
+    "id": "vllm"
+   },
+   "run_key": "2dc73a3274b04b89caa17197303c66eb1edbd08a589718d5c00a8b666edb594a",
+   "complete": true,
+   "status": "ok",
+   "matched": 5,
+   "expected": 5,
+   "tput_geomean_ratio": 1.0917942878332692,
+   "min_ratio": 0.9774146400423217,
+   "max_ratio": 1.188858955099125,
+   "measured_at": "2026-11-27T05:47:37Z",
+   "aklr_sha": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+   "run_id": "45935411878",
+   "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
+   "error": null,
+   "gpus": 8,
+   "image": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1",
+   "host": "smci355-ccs-aus-m14-09",
+   "gpu": "AMD Instinct MI355X",
+   "report": true,
+   "source": {
+    "run_id": "45935411878",
+    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
+    "commit": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+    "ref": "refs/heads/main",
+    "event": "workflow_dispatch"
+   }
+  },
+  "dsv41flash-fp4/mi355x/sglang": {
+   "key": "dsv41flash-fp4/mi355x/sglang",
+   "model": {
+    "id": "dsv41flash-fp4",
+    "display_name": "DeepSeek-V4.1-Flash"
+   },
+   "target": {
+    "id": "mi355x",
+    "runner_label": "conductor-mi355x"
+   },
+   "framework": {
+    "id": "sglang"
+   },
+   "run_key": "7d529e2905272359ff239438b47d310d4822e4ae9ca3a1ac7ca1e0f9c59e25fd",
+   "complete": true,
+   "status": "ok",
+   "matched": 2,
+   "expected": 2,
+   "tput_geomean_ratio": 1.0024565248569834,
+   "min_ratio": 0.9974602805958994,
+   "max_ratio": 1.0074777951338416,
+   "measured_at": "2026-11-27T06:15:32Z",
+   "aklr_sha": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+   "run_id": "45935411878",
+   "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
+   "error": null,
+   "gpus": 2,
+   "image": "lmsysorg/sglang:v0.5.23-rocm10-mi35x@sha256:cff45eca86da10fbe140f85df196ef241e932bbae8036afa45942e633c3ed6c5",
+   "host": "smci355-ccs-aus-m14-09",
+   "gpu": "AMD Instinct MI355X",
+   "report": true,
+   "source": {
+    "run_id": "45935411878",
+    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
+    "commit": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+    "ref": "refs/heads/main",
+    "event": "workflow_dispatch"
+   }
+  },
+  "dsv41flash-fp4/mi355x/vllm": {
+   "key": "dsv41flash-fp4/mi355x/vllm",
+   "model": {
+    "id": "dsv41flash-fp4",
+    "display_name": "DeepSeek-V4.1-Flash"
+   },
+   "target": {
+    "id": "mi355x",
+    "runner_label": "conductor-mi355x"
+   },
+   "framework": {
+    "id": "vllm"
+   },
+   "run_key": "3e87c144783be84e0b076320b4b38a2a4ba067746ab6ad876f214fc0346a5cbd",
+   "complete": true,
+   "status": "ok",
+   "matched": 2,
+   "expected": 2,
+   "tput_geomean_ratio": 0.9999604291415303,
+   "min_ratio": 0.9902024092632529,
+   "max_ratio": 1.0098146101188457,
+   "measured_at": "2026-11-27T07:21:00Z",
+   "aklr_sha": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
+   "run_id": "45935411878",
+   "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
+   "error": null,
+   "gpus": 2,
+   "image": "vllm/vllm-openai-rocm:v0.34.0-rocm100@sha256:3cb773d23f063afa86291ef75773cdd486154ddea94c213300f4ed7cc42b7af1",
+   "host": "smci355-ccs-aus-m14-09",
+   "gpu": "AMD Instinct MI355X",
+   "report": true,
+   "source": {
+    "run_id": "45935411878",
+    "run_url": "https://github.com/AMD-AGI/AKLR/actions/runs/45935411878",
+    "commit": "e967fa1f7f9641d91bda3caaf41a78ff88c4d3ed",
     "ref": "refs/heads/main",
     "event": "workflow_dispatch"
    }
