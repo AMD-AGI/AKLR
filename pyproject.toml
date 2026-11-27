@@ -37,6 +37,7 @@ aklr = "aklr.plugins.aiter.provider:provider"
 include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
+"aklr.core.validation.validators.verify" = ["*.cpp"]
 "aklr.plugins" = ["*/*/*/impls/*/*/*.json", "*/*/*/*.hip"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.

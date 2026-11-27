@@ -19,6 +19,7 @@ import aklr
 from aklr.core.contract.spec import FrozenModel, axes_text
 from aklr.core.platform.toolchain import unmet_requirement
 from aklr.core.validation.validators.verify._flydsl import FlyDSLCompiler
+from aklr.core.validation.validators.verify._native import HipCompiler, HsacoCompiler
 from aklr.core.validation.validators.verify._recording import RecordingCompiler
 from aklr.core.validation.validators.verify._triton import TritonCompiler
 
@@ -36,6 +37,8 @@ __all__ = [
 COMPILERS: Final[dict[str, type[FlyDSLCompiler] | type[RecordingCompiler]]] = {
     "flydsl": FlyDSLCompiler,
     "triton": TritonCompiler,
+    "hip": HipCompiler,
+    "hsaco": HsacoCompiler,
 }
 MANIFEST: Final = "compilations.jsonl"
 PR_SET_PDEATHSIG: Final = 1
@@ -77,38 +80,40 @@ class Compilation(FrozenModel):
             python_path = os.pathsep.join(
                 [str(Path(aklr.__file__).resolve().parents[1]), *filter(None, [os.environ.get("PYTHONPATH")])]
             )
-            environment = compiler.environment(kernel.targets[0].arch, directory) | {
-                "PYTHONPATH": python_path
-            }
-            if device is not None:
-                environment |= {"HIP_VISIBLE_DEVICES": device, "CUDA_VISIBLE_DEVICES": device}
-            run = f"from {compiler.__module__} import {compiler.__name__} as compiler"
-            run += "; import sys; compiler(*sys.argv[1:]).compile_workloads()"
-            argv = [sys.executable, "-c", run, str(root / schema_path), schema_path, str(directory)]
-            argv += [str(first), str(count)]
-            timeout = STARTUP_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(workloads)
-            with (directory / "compiler.log").open("w", encoding="utf-8") as log:
-                compiling = subprocess.Popen(
-                    argv,
-                    env=os.environ | environment,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    preexec_fn=lambda: ctypes.CDLL(None).prctl(PR_SET_PDEATHSIG, signal.SIGKILL),
-                )
-                try:
-                    compiling.wait(timeout)
-                except subprocess.TimeoutExpired:
-                    crash = f"compile: the compiler ran {timeout:.0f} s"
-                finally:
-                    with contextlib.suppress(ProcessLookupError, PermissionError):
-                        os.killpg(compiling.pid, signal.SIGKILL)
-                    compiling.wait()
-            if not crash and compiling.returncode:
-                logged = (directory / "compiler.log").read_text(encoding="utf-8").strip().splitlines()
-                crash = (
-                    f"compile: the compiler exited {compiling.returncode}: {(logged or ['no message'])[-1]}"
-                )
+            try:
+                environment = compiler.environment(kernel.targets[0].arch, directory) | {
+                    "PYTHONPATH": python_path
+                }
+            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+                crash = f"compile: {type(error).__name__}: {error}"
+            else:
+                if device is not None:
+                    environment |= {"HIP_VISIBLE_DEVICES": device, "CUDA_VISIBLE_DEVICES": device}
+                run = f"from {compiler.__module__} import {compiler.__name__} as compiler"
+                run += "; import sys; compiler(*sys.argv[1:]).compile_workloads()"
+                argv = [sys.executable, "-c", run, str(root / schema_path), schema_path, str(directory)]
+                argv += [str(first), str(count)]
+                timeout = STARTUP_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(workloads)
+                with (directory / "compiler.log").open("w", encoding="utf-8") as log:
+                    compiling = subprocess.Popen(
+                        argv,
+                        env=os.environ | environment,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                        preexec_fn=lambda: ctypes.CDLL(None).prctl(PR_SET_PDEATHSIG, signal.SIGKILL),
+                    )
+                    try:
+                        compiling.wait(timeout)
+                    except subprocess.TimeoutExpired:
+                        crash = f"compile: the compiler ran {timeout:.0f} s"
+                    finally:
+                        with contextlib.suppress(ProcessLookupError, PermissionError):
+                            os.killpg(compiling.pid, signal.SIGKILL)
+                        compiling.wait()
+                if not crash and compiling.returncode:
+                    logged = (directory / "compiler.log").read_text(encoding="utf-8").strip().splitlines()
+                    crash = f"compile: the compiler exited {compiling.returncode}: {(logged or ['no message'])[-1]}"
         manifest = directory / MANIFEST
         lines = manifest.read_text(encoding="utf-8").splitlines() if manifest.is_file() else []
         compilations = []
