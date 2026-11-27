@@ -52,7 +52,7 @@ def _unbundle(path: Path, arch: str) -> Path:
     return output
 
 
-def _symbols(data: bytes) -> dict[str, tuple[int, int, int]]:
+def _symbols(data: bytes) -> dict[str, tuple[int, int, int, int]]:
     if data[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", data, 18)[0] != 224:
         raise ValueError("expected a little-endian ELF64 AMDGPU code object")
     offset = struct.unpack_from("<Q", data, 40)[0]
@@ -70,7 +70,7 @@ def _symbols(data: bytes) -> dict[str, tuple[int, int, int]]:
                 continue
             owner = sections[index]
             start = owner[4] + address - owner[3]
-            symbols[strings[name:].partition(b"\0")[0].decode()] = (address, size, start)
+            symbols[strings[name:].partition(b"\0")[0].decode()] = (address, size, start, info & 15)
     return symbols
 
 
@@ -87,11 +87,17 @@ def _isa(path: Path, arch: str) -> str:
     if target.partition("--")[2].partition(":")[0] != arch:
         raise ValueError(f"code object target {target!r} does not match {arch}")
     descriptors = []
+    entries = {}
     for kernel in metadata["amdhsa.kernels"]:
         symbol = symbols.get(kernel[".symbol"])
         if symbol is None or symbol[1] != 64:
             raise ValueError(f"no 64-byte descriptor for {kernel['.name']}")
         start = symbol[2]
+        entry = symbol[0] + struct.unpack_from("<q", data, start + 16)[0]
+        code = symbols.get(kernel[".name"])
+        if code is None or code[0] != entry:
+            raise ValueError(f"descriptor entry for {kernel['.name']} does not match its kernel symbol")
+        entries[entry] = kernel[".name"]
         group, private, kernarg = struct.unpack_from("<III", data, start)
         rsrc3 = struct.unpack_from("<I", data, start + 44)[0]
         rsrc1, rsrc2, properties, preload = struct.unpack_from("<IIHH", data, start + 48)
@@ -147,11 +153,16 @@ def _isa(path: Path, arch: str) -> str:
             + ".end_amdhsa_kernel\n"
         )
     dump = _run(_llvm("llvm-objdump"), "-d", "--no-show-raw-insn", f"--mcpu={arch}", str(path))
+    boundaries = {symbol[0] for symbol in symbols.values() if symbol[3] in (2, 10)} | entries.keys()
     text = [f'.amdgcn_target "{target}"']
     for line in dump.splitlines():
         header = re.fullmatch(r"([0-9a-fA-F]+) <(.+)>:", line)
         if header:
-            text.extend((".section .text", f"{header[2]}:"))
+            address = int(header[1], 16)
+            if address in boundaries:
+                text.extend((".section .text", f"{entries.get(address, header[2])}:"))
+            else:
+                text.append(f".Lnative_symbol_{address:x}:")
             continue
         instruction = re.match(r"\s+(.*?)\s+// ([0-9A-Fa-f]+):", line)
         if instruction is None:

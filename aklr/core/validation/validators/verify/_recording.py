@@ -165,6 +165,8 @@ class RecordingCompiler:
         kernarg: bytes | None,
     ) -> dict[str, Any]:
         metadata = kernel_metadata(isa, kernel)
+        if any(not 1 <= len(dimensions) <= 3 for dimensions in (grid, block)):
+            raise ValueError("invalid launch dimensions")
         grid, block = [list(dimensions) + [1] * (3 - len(dimensions)) for dimensions in (grid, block)]
         if len(grid) != 3 or len(block) != 3 or any(not isinstance(v, int) or v < 0 for v in grid + block):
             raise ValueError("invalid launch dimensions")
@@ -201,6 +203,11 @@ class RecordingCompiler:
                 if tensor is None:
                     raise ValueError(f"unknown pointer at kernarg offset {offset}")
                 known = next((n for n, t in self.tensors.items() if t.data_ptr() == pointer), None)
+                if known is None and any(
+                    tensor.untyped_storage().data_ptr() == original.untyped_storage().data_ptr()
+                    for original in self.tensors.values()
+                ):
+                    raise ValueError("an aliased tensor view cannot be modeled as an independent array")
                 name = known or f"workspace{pointer:x}"
                 dtype = _DTYPES[str(tensor.dtype).removeprefix("torch.")]
                 shape = (
@@ -223,7 +230,12 @@ class RecordingCompiler:
                 }
                 if known is None:
                     self.workspaces.add(pointer)
-                if arrays[name]["kind"] == "in" and dtype == "i32" and tensor.numel() <= 1 << 16:
+                if (
+                    known is not None
+                    and arrays[name]["kind"] == "in"
+                    and dtype == "i32"
+                    and tensor.numel() <= 1 << 16
+                ):
                     arrays[name]["contents"] = tensor.flatten().tolist()
                 pointers[offset] = name
             elif kind == "by_value" and values is not None:

@@ -195,3 +195,49 @@ def test_compiled_triton_and_gluon_remain_correct_at_runtime(tmp_path, builder_r
     )
     builder_registry.build(schema)(**call)
     assert case.compare({"out": call["out"]}, inputs) == {}
+
+
+def test_triton_does_not_treat_an_offset_input_view_as_a_fresh_output(tmp_path):
+    source = TRITON_GEMM.replace("    gemm[lambda", "    a = a[:, 1:]\n    gemm[lambda")
+    schema = OpCase.of("gemm@1.0").schema(source, language="triton")
+    (compilation,) = compile_schema(tmp_path, schema)
+    assert "aliased tensor view" in compilation.failure
+    assert compilation.launch is None
+
+
+def test_suppressed_workspace_producers_do_not_invent_consumer_contents(tmp_path):
+    source = TRITON_GEMM.replace("import triton\n", "import triton\nimport torch\n", 1)
+    source = source.replace("Out, N: tl.constexpr", "Out, Tmp, N: tl.constexpr")
+    source = source.replace("tl.sum(a * b, 0)", "tl.sum(a * b, 0) + tl.load(Tmp)")
+    source = source.replace(
+        "def run(*,",
+        """@triton.jit
+def produce(Tmp):
+    index = tl.arange(0, 4)
+    tl.store(Tmp + index, 7)
+
+def run(*,""",
+    )
+    source = source.replace(
+        "    gemm[lambda",
+        """    workspace = torch.full((4,), 999, dtype=torch.int32, device=a.device)
+    produce[(1,)](workspace)
+    gemm[lambda""",
+    )
+    source = source.replace("a, b, out, b.shape[0]", "a, b, out, workspace, b.shape[0]")
+    schema = OpCase.of("gemm@1.0").schema(source, language="triton")
+    producer, consumer = compile_schema(tmp_path, schema)
+    assert producer.failure == consumer.failure == ""
+    produced = next(a for a in producer.launch["arrays"] if a["dtype"] == "i32")
+    consumed = next(a for a in consumer.launch["arrays"] if a["name"] == produced["name"])
+    assert produced["kind"] == "out"
+    assert consumed["kind"] == "in"
+    assert "contents" not in consumed
+
+
+def test_triton_rejects_an_empty_grid_specification(tmp_path):
+    source = TRITON_GEMM.replace("(a.shape[0], b.shape[0])", "()")
+    schema = OpCase.of("gemm@1.0").schema(source, language="triton")
+    (compilation,) = compile_schema(tmp_path, schema)
+    assert "invalid launch dimensions" in compilation.failure
+    assert compilation.launch is None
