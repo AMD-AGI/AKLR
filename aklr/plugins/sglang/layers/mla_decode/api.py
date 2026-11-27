@@ -67,7 +67,7 @@ _EMPTY_LSE = -1e30
 
 @sglang_route(
     "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._forward_verify_asm_cprr",
-    versions=("0.5.22",),
+    versions=("0.5.22", "0.5.23"),
 )
 def _forward_verify_asm_cprr(self, q, layer, k_descale, n_rows):
     """DCP target verify on aiter's cp schedule as one op call: each query row reads this rank's shard
