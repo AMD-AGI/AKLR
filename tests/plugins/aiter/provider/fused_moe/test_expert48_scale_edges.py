@@ -11,7 +11,7 @@ from tests.op_case import OpCase
 @pytest.fixture
 def expert48_schema():
     path = Path(
-        "aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts48_topk6_inter_dim3072_global_experts384/dbd3861a735b189f.json"
+        "aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts48_topk6_inter_dim3072_global_experts384/5184d301207c4668.json"
     )
     return ContractRegistry.default().parse_schema(path.read_bytes(), str(path))
 
@@ -82,3 +82,20 @@ def test_mixed_weight_scale_groups_match_finite_reference(builder_registry, expe
     builder_registry.build(expert48_schema)(**call)
     torch.cuda.synchronize(0)
     torch.testing.assert_close(call["out"].cpu(), expected, rtol=0.02, atol=0)
+
+
+@pytest.mark.gfx950
+@pytest.mark.parametrize("rows", [1, 2, 16])
+def test_opposite_large_scaled_contributions_cancel_to_zero(builder_registry, expert48_schema, rows):
+    case = OpCase(expert48_schema.point({"n_tokens": rows}))
+    inputs = prepared(case, 0.625, 127, 254, 0x77, 1.0)
+    weights = inputs["w2"].view(torch.uint8)
+    weights[..., weights.shape[-1] // 2 :] = 0xFF
+    call = case.call(inputs, "cuda:0")
+    assert call["w1"].is_shuffled and call["w2"].is_shuffled
+    call["swiglu_limit"] = 10.0
+    call["out"] = torch.full_like(call["hidden_states"], float("nan"))
+    builder_registry.build(expert48_schema)(**call)
+    torch.cuda.synchronize(0)
+    # Identical gate-up rows give identical Y; each +6 weight has a matching -6 at the same scale.
+    torch.testing.assert_close(call["out"], torch.zeros_like(call["out"]), atol=0, rtol=0)
