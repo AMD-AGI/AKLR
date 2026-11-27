@@ -1,23 +1,17 @@
-from pathlib import Path
-
 import pytest
-
-from aklr.core.contract.registry import ContractRegistry
 
 pytest.importorskip("flydsl.expr")
 
 
-_SCHEMA = "aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512/a24ba3e45a87d1f6.json"
-
-
-def test_small_moe_artifact_loads_on_the_provider_api(builder_registry):
-    path = Path(_SCHEMA)
-    schema = ContractRegistry.default().parse_schema(path.read_bytes(), _SCHEMA)
+def test_small_moe_artifact_loads_on_the_provider_api(builder_registry, small_moe_schema):
+    schema = small_moe_schema
     builder_registry.build(schema)
 
 
 @pytest.mark.parametrize("rows", [1, 2])
-def test_small_tokens_launch_without_aiter_sort_configuration(builder_registry, monkeypatch, rows):
+def test_small_tokens_launch_without_aiter_sort_configuration(
+    builder_registry, monkeypatch, rows, small_moe_schema
+):
     import sys
     from types import ModuleType, SimpleNamespace
 
@@ -43,8 +37,7 @@ def test_small_tokens_launch_without_aiter_sort_configuration(builder_registry, 
     modules["aiter.ops.flydsl.moe_kernels"]._run_compiled = lambda kernel, call: launched.append(call)
     streams = []
     monkeypatch.setattr(torch.cuda, "current_stream", lambda device=None: streams.append(device) or object())
-    path = Path(_SCHEMA)
-    schema = ContractRegistry.default().parse_schema(path.read_bytes(), _SCHEMA)
+    schema = small_moe_schema
     runnable = builder_registry.build(schema)
     hidden = torch.empty(rows, 6144, dtype=torch.bfloat16)
     w1 = torch.empty(257, 1024, 3072, dtype=torch.uint8)
