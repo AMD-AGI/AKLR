@@ -14,8 +14,17 @@ __all__ = ["deepseek_v4_hc_boundary", "deepseek_v4_hc_boundary_post"]
 
 # Columns of every copy one program owns. sglang slices 64 (_HC_BOUNDARY_BLOCK_K) and reads the count
 # back from part_sq.shape[0], so the slicing is AKLR's to choose: at decode rows 80 programs of 2 warps
-# leave the machine idle, and a narrower slice fills it. The op's schemas carry this count as n_slices.
-SLICE_WIDTH = 64
+# leave the machine idle (the 2 MiB projection read at 303 GB/s, 4% of the device), and a narrower slice
+# fills it: 16 columns, 320 programs, is 1.3-1.6x on MI355X. The op's schemas carry the count as n_slices.
+NARROW_SLICE_WIDTH, WIDE_SLICE_WIDTH, NARROW_MAX_ROWS = 16, 64, 48
+
+
+def slice_width(n_rows: int) -> int:
+    """16 columns (320 programs for DeepSeek-V4.1) up to NARROW_MAX_ROWS rows, sglang's 64 above.
+    Measured on MI355X (aklr validate, cold graph replay): with a pending post the narrow slice is
+    1.52x at 6 rows, 1.46x at 12 and 1.36x at 24, but 0.94x at 96 and 0.89x at 192, where the rows
+    already fill the machine and the extra programs only split the projection read."""
+    return NARROW_SLICE_WIDTH if n_rows <= NARROW_MAX_ROWS else WIDE_SLICE_WIDTH
 
 
 @api(DEEPSEEK_V4_HC_BOUNDARY)
@@ -46,12 +55,12 @@ def _hc_boundary_partials(
         or pre_prev is None
         or y is None
         or m == 0
-        or h % SLICE_WIDTH
+        or h % slice_width(m)
         or not residual.is_contiguous()
         or (has_post and not x.is_contiguous())
     ):
         return FallbackReason.OUT_OF_CONTRACT
-    slices, mix = h // SLICE_WIDTH, hc_fn.shape[0]
+    slices, mix = h // slice_width(m), hc_fn.shape[0]
     part_mix = torch.empty((slices, m, mix), dtype=torch.float32, device=residual.device)
     part_sq = torch.empty((slices, m), dtype=torch.float32, device=residual.device)
     if has_post:

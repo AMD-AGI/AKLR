@@ -1,0 +1,215 @@
+{
+  "schema_version": 5,
+  "name": "deepseek_v4_hc_boundary_hc_mult4_hidden_size5120_n_mix24_n_slices320",
+  "contract_id": "deepseek_v4_hc_boundary@1.0",
+  "description": "With no pending post: y = sum_k pre_prev[k] * residual[:, k] in fp32 (copy order), rounded to bf16; per slice s of n_slices over the hidden columns, part_mix[s] = sum_k residual[:, k, slice] hc_fn[:, k * H + slice]^T and part_sq[s] = sum_k sum residual[:, k, slice]**2, fp32.",
+  "op_type": "deepseek_v4_hc_boundary",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Rows in this call."
+    },
+    "hc_mult": {
+      "type": "const",
+      "value": 4,
+      "description": "Residual copies: 4."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 5120,
+      "description": "Hidden size, a multiple of the slice width."
+    },
+    "n_mix": {
+      "type": "const",
+      "value": 24,
+      "description": "Mixing coefficients per row: (2 + hc_mult) * hc_mult."
+    },
+    "n_slices": {
+      "type": "const",
+      "value": 320,
+      "description": "Partials per row: hidden columns of every copy in slices of hidden_size // n_slices."
+    },
+    "flat_size": {
+      "type": "const",
+      "value": 20480,
+      "description": "Columns of hc_fn: hc_mult * hidden_size."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "residual": {
+      "shape": [
+        "n_tokens",
+        "hc_mult",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The residual copies."
+    },
+    "pre_prev": {
+      "shape": [
+        "n_tokens",
+        "hc_mult"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The previous pre: each copy's collapse weight."
+    },
+    "hc_fn": {
+      "shape": [
+        "n_mix",
+        "flat_size"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The mixing projection, fp32."
+    }
+  },
+  "outputs": {
+    "y": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The collapse sum_k pre[k] * copy_k (fp32 in copy order), bf16."
+    },
+    "part_mix": {
+      "shape": [
+        "n_slices",
+        "n_tokens",
+        "n_mix"
+      ],
+      "dtype": "float32",
+      "description": "Per slice s: sum over its columns of every copy of copy * hc_fn, fp32."
+    },
+    "part_sq": {
+      "shape": [
+        "n_slices",
+        "n_tokens"
+      ],
+      "dtype": "float32",
+      "description": "Per slice s: sum over its columns of every copy of copy**2, fp32."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "accuracy": "passed",
+      "speedup": 1.152,
+      "microseconds": 5.95
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      },
+      "accuracy": "passed",
+      "speedup": 1.16,
+      "microseconds": 6.05
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "accuracy": "passed",
+      "speedup": 1.151,
+      "microseconds": 6.17
+    },
+    {
+      "axes": {
+        "n_tokens": 6
+      },
+      "accuracy": "passed",
+      "speedup": 1.152,
+      "microseconds": 6.23
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "accuracy": "passed",
+      "speedup": 1.145,
+      "microseconds": 6.3
+    },
+    {
+      "axes": {
+        "n_tokens": 12
+      },
+      "accuracy": "passed",
+      "speedup": 1.134,
+      "microseconds": 6.41
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "accuracy": "passed",
+      "speedup": 1.129,
+      "microseconds": 6.47
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      },
+      "accuracy": "passed",
+      "speedup": 1.105,
+      "microseconds": 6.49
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "accuracy": "passed",
+      "speedup": 1.075,
+      "microseconds": 6.63
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      },
+      "accuracy": "passed",
+      "speedup": 1.033,
+      "microseconds": 6.94
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "Cursor agent (DSv4.1 TP2 tuning)",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"DeepSeek-V4's mHC sublayer boundary at decode rows: each program owns BLOCK_M rows and one SLICE-wide hidden slice\nof every residual copy, walked CHUNK columns at a time. Per copy k it applies the pending post,\nres_out[k] = post[k] * x + sum_j comb[j, k] * res[j] (fp32, no contraction, rounded to bf16), accumulates the collapse\ny = sum_k pre[k] * res_out[k] and the slice's mixing partials res_out[k] . hc_fn[:, k] (fp32 MFMA) and squares. Without\na pending post the copies are read as they are.\"\"\"\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit(do_not_specialize=[\"M\"])\ndef _boundary_kernel(\n    x_ptr, res_ptr, post_ptr, comb_ptr, pre_ptr, w_ptr, res_out_ptr, y_ptr, part_mix_ptr, part_sq_ptr, M,\n    H: tl.constexpr, MIX: tl.constexpr, MIX_PAD: tl.constexpr, BLOCK_M: tl.constexpr, SLICE: tl.constexpr,\n    CHUNK: tl.constexpr, HAS_POST: tl.constexpr, HAS_COMBINE: tl.constexpr,\n):\n    pid_m = tl.program_id(0)\n    pid_s = tl.program_id(1)\n    offs_m = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)).to(tl.int64)\n    mask_m = offs_m < M\n    m2 = mask_m[:, None]\n    offs_n = tl.arange(0, MIX_PAD)\n    mask_n = offs_n < MIX\n    cj = tl.arange(0, 4)\n    cc = tl.arange(0, 16)\n    if HAS_POST:\n        post_t = tl.load(post_ptr + offs_m[:, None] * 4 + cj[None, :], mask=m2, other=0.0)\n        comb_t = tl.load(comb_ptr + offs_m[:, None] * 16 + cc[None, :], mask=m2, other=0.0)\n    if HAS_COMBINE:\n        pre_t = tl.load(pre_ptr + offs_m[:, None] * 4 + cj[None, :], mask=m2, other=0.0)\n    acc = tl.zeros([BLOCK_M, MIX_PAD], dtype=tl.float32)\n    sq = tl.zeros([BLOCK_M], dtype=tl.float32)\n    for c in tl.static_range(SLICE // CHUNK):\n        offs_h = pid_s * SLICE + c * CHUNK + tl.arange(0, CHUNK)\n        r_off = offs_m[:, None] * (4 * H) + offs_h[None, :]\n        if HAS_POST:\n            xa = tl.load(x_ptr + offs_m[:, None] * H + offs_h[None, :], mask=m2, other=0.0).to(tl.float32)\n            r0 = tl.load(res_ptr + r_off, mask=m2, other=0.0).to(tl.float32)\n            r1 = tl.load(res_ptr + r_off + H, mask=m2, other=0.0).to(tl.float32)\n            r2 = tl.load(res_ptr + r_off + 2 * H, mask=m2, other=0.0).to(tl.float32)\n            r3 = tl.load(res_ptr + r_off + 3 * H, mask=m2, other=0.0).to(tl.float32)\n        y = tl.zeros([BLOCK_M, CHUNK], dtype=tl.float32)\n        for k in tl.static_range(4):\n            if HAS_POST:\n                pk = tl.sum(tl.where((cj == k)[None, :], post_t, 0.0), axis=1)\n                c0 = tl.sum(tl.where((cc == k)[None, :], comb_t, 0.0), axis=1)\n                c1 = tl.sum(tl.where((cc == 4 + k)[None, :], comb_t, 0.0), axis=1)\n                c2 = tl.sum(tl.where((cc == 8 + k)[None, :], comb_t, 0.0), axis=1)\n                c3 = tl.sum(tl.where((cc == 12 + k)[None, :], comb_t, 0.0), axis=1)\n                v = xa * pk[:, None]\n                v += r0 * c0[:, None]\n                v += r1 * c1[:, None]\n                v += r2 * c2[:, None]\n                v += r3 * c3[:, None]\n                vb = v.to(tl.bfloat16)\n                tl.store(res_out_ptr + r_off + k * H, vb, mask=m2)\n                xt = vb.to(tl.float32)\n            else:\n                xt = tl.load(res_ptr + r_off + k * H, mask=m2, other=0.0).to(tl.float32)\n            if HAS_COMBINE:\n                pp = tl.sum(tl.where((cj == k)[None, :], pre_t, 0.0), axis=1)\n                y += pp[:, None] * xt\n            w = tl.load(w_ptr + offs_n[None, :] * (4 * H) + k * H + offs_h[:, None], mask=mask_n[None, :], other=0.0)\n            acc += tl.dot(xt, w, input_precision=\"ieee\")\n            sq += tl.sum(xt * xt, axis=1)\n        if HAS_COMBINE:\n            tl.store(y_ptr + offs_m[:, None] * H + offs_h[None, :], y.to(tl.bfloat16), mask=m2)\n    tl.store(part_mix_ptr + (pid_s * M + offs_m[:, None]) * MIX + offs_n[None, :], acc, mask=m2 & mask_n[None, :])\n    tl.store(part_sq_ptr + pid_s * M + offs_m, sq, mask=mask_m)\n\n\n# BLOCK_M, CHUNK, num_warps, num_stages. The slice width comes from part_mix's first dimension, which\n# the route sets (SLICE_WIDTH): 16 columns, so 320 programs for DeepSeek-V4.1's 5120, against sglang's\n# 80 of 64 columns with 2 warps. Measured on MI355X (work_tp4/bench_all.log, 2026-11-27): at 6 rows\n# 5.28 -> 3.65 us without a pending post and 6.46 -> 4.12 us with one; at 48 rows 1.30x and 1.25x.\n# slice width -> BLOCK_M, CHUNK, num_warps, num_stages\n_CONFIGS = {16: (16, 16, 1, 1), 64: (16, 64, 2, 1)}\nCFG = None\n\n\ndef _run(residual, pre_prev, hc_fn, y, part_mix, part_sq, x, post, comb, residual_out):\n    has_post, has_combine = x is not None, pre_prev is not None\n    m, _, h = residual.shape\n    slices, _, mix = part_mix.shape\n    bm, chunk, warps, stages = CFG or _CONFIGS.get(h // slices, (16, 64, 2, 1))\n    _boundary_kernel[(triton.cdiv(m, bm), slices)](\n        x if has_post else residual, residual, post if has_post else part_sq, comb if has_post else part_sq,\n        pre_prev if has_combine else part_sq, hc_fn, residual_out if has_post else part_sq,\n        y if has_combine else part_sq, part_mix, part_sq, m,\n        H=h, MIX=mix, MIX_PAD=32, BLOCK_M=bm, SLICE=h // slices, CHUNK=chunk, HAS_POST=has_post,\n        HAS_COMBINE=has_combine, num_warps=warps, num_stages=stages,\n        enable_fp_fusion=False,\n    )\n\n\ndef run(*, residual, pre_prev, hc_fn, part_mix, part_sq, y):\n    _run(residual, pre_prev, hc_fn, y, part_mix, part_sq, None, None, None, None)\n"
+      }
+    ]
+  }
+}
