@@ -270,7 +270,8 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.3.2"
+      "flydsl": ">=0.3.2",
+      "aiter": ">=0.1.21.dev66"
     },
     "entry_point": "kernel.py::run",
     "sources": [
