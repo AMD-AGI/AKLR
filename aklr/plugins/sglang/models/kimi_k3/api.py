@@ -369,6 +369,9 @@ def _scale(device, value: float):
     if scale is None:
         scale = torch.full((), float(value), dtype=torch.float32, device=device)
         if not torch.cuda.is_current_stream_capturing():
+            if scale.is_cuda:
+                # filled before it is kept: every stream (a graph capture's too) reads the cached tensor
+                torch.cuda.current_stream(scale.device).synchronize()
             _SCALES[key] = scale
     return scale
 

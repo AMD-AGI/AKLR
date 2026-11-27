@@ -616,6 +616,30 @@ def test_the_kernels_scales_are_made_once_outside_a_graph_capture(sglang, backen
     assert again[0] is q_scale and again[1] is kv_scale and q_scale is not kv_scale
 
 
+@pytest.mark.parametrize("capturing", [False, True], ids=["outside_capture", "in_capture"])
+def test_a_kept_scale_is_filled_before_another_stream_reads_it(monkeypatch, capturing):
+    """A scale on the GPU is kept only once its stream has run the fill: a later call on another stream, a
+    graph capture's among them, reads it with no wait of its own. One made in a capture is the capture's."""
+    synced, made = [], []
+
+    class Stream:
+        def synchronize(self):
+            synced.append(made[-1])
+
+    def full(*args, **kwargs):
+        made.append(SimpleNamespace(is_cuda=True, device=torch.device("cuda", 1)))
+        return made[-1]
+
+    monkeypatch.setattr(torch, "full", full)
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda device=None: Stream())
+    monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: capturing)
+    first, again = api._scale("cuda:1", 0.5), api._scale("cuda:1", 0.5)
+    if capturing:
+        assert synced == [] and first is not again and api._SCALES == {}
+    else:
+        assert synced == [first] and again is first
+
+
 def test_scales_made_inside_a_graph_capture_are_not_kept(monkeypatch, sglang, backend):
     """A tensor filled inside a capture is the graph's: each captured call fills its own, and the first call
     outside a capture makes the ones that are kept, which a later capture reads."""
@@ -720,3 +744,22 @@ def test_the_baseline_packs_the_query_as_sglang_does(core, op, plain_branch, ker
     out = KimiK3MlaVerifyQBaseline().baseline(**call)["q"]
     assert out.dtype == FP8 and out.is_contiguous()
     assert torch.equal(bits(out), bits(sglangs_query(core.q_nope_out, core.q_pe, kernel_heads)))
+
+
+def fp8_codes(*codes):
+    return torch.tensor(codes, dtype=torch.uint8).view(FP8).view(1, 1, len(codes))
+
+
+@pytest.mark.parametrize(
+    ("kernel", "name"),
+    [((0x80, 0x7F), "a -0 for +0"), ((0x00, 0xFF), "the negative NaN code for the positive one")],
+    ids=["signed_zero", "nan_sign"],
+)
+def test_the_check_compares_the_querys_bytes(kernel, name):
+    """The contract's query is torch's cast byte for byte: a kernel writing a -0 for +0, or another NaN code,
+    fails the check, which a numeric bound alone would pass."""
+    expected = fp8_codes(0x00, 0x7F)
+    check = KimiK3MlaVerifyQReference().check
+    assert check({"q": expected.clone()}, {"q": expected}, KIMI_K3_MLA_VERIFY_Q) == {}
+    failures = check({"q": fp8_codes(*kernel)}, {"q": expected}, KIMI_K3_MLA_VERIFY_Q)
+    assert failures.keys() == {"q"} and failures["q"].startswith("1 of 2 bytes differ"), name

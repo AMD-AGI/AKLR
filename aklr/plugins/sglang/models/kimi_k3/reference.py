@@ -96,3 +96,18 @@ class KimiK3MlaVerifyQReference(OpReference):
         tokens, kernel_heads = q.shape[0], q.shape[1]
         rows = torch.cat([q_nope, q_pe], dim=-1).to(torch.float8_e4m3fn).view(tokens, -1, q.shape[2])
         return {"q": rows[:, torch.arange(kernel_heads, device=rows.device) % rows.shape[1]]}
+
+    def check(self, outputs, expected, schema):
+        """q byte for byte, as the contract promises: a numeric bound takes -0 for +0 and one NaN
+        code for another."""
+        got, want = (t.contiguous().view(torch.uint8) for t in (outputs["q"], expected["q"]))
+        if got.shape != want.shape:
+            return {"q": f"shape {tuple(got.shape)}, expected {tuple(want.shape)}"}
+        differ = got != want
+        if not bool(differ.any()):
+            return {}
+        first = tuple(int(i) for i in differ.nonzero()[0])
+        return {
+            "q": f"{int(differ.sum())} of {differ.numel()} bytes differ, the first at {first}: "
+            f"{int(got[first]):#04x}, expected {int(want[first]):#04x}"
+        }
