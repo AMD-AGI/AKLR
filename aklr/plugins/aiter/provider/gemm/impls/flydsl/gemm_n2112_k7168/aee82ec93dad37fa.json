@@ -62,272 +62,434 @@
     {
       "axes": {
         "m": 148
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.047,
+      "microseconds": 16.4
     },
     {
       "axes": {
         "m": 152
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.042,
+      "microseconds": 16.5
     },
     {
       "axes": {
         "m": 156
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.028,
+      "microseconds": 16.8
     },
     {
       "axes": {
         "m": 164
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 0.963,
+      "microseconds": 19.7
     },
     {
       "axes": {
         "m": 168
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 0.971,
+      "microseconds": 19.7
     },
     {
       "axes": {
         "m": 172
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 0.981,
+      "microseconds": 19.8
     },
     {
       "axes": {
         "m": 176
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 0.993,
+      "microseconds": 19.8
     },
     {
       "axes": {
         "m": 180
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.007,
+      "microseconds": 19.8
     },
     {
       "axes": {
         "m": 184
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.011,
+      "microseconds": 19.8
     },
     {
       "axes": {
         "m": 188
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.012,
+      "microseconds": 19.8
     },
     {
       "axes": {
         "m": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.013,
+      "microseconds": 19.9
     },
     {
       "axes": {
         "m": 196
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.106,
+      "microseconds": 19.8
     },
     {
       "axes": {
         "m": 204
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.119,
+      "microseconds": 19.9
     },
     {
       "axes": {
         "m": 208
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.129,
+      "microseconds": 19.8
     },
     {
       "axes": {
         "m": 212
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.134,
+      "microseconds": 19.9
     },
     {
       "axes": {
         "m": 216
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.131,
+      "microseconds": 20.1
     },
     {
       "axes": {
         "m": 220
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.136,
+      "microseconds": 20.0
     },
     {
       "axes": {
         "m": 228
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.068,
+      "microseconds": 21.6
     },
     {
       "axes": {
         "m": 232
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.077,
+      "microseconds": 21.6
     },
     {
       "axes": {
         "m": 236
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.071,
+      "microseconds": 21.7
     },
     {
       "axes": {
         "m": 244
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.104,
+      "microseconds": 21.3
     },
     {
       "axes": {
         "m": 248
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.103,
+      "microseconds": 21.4
     },
     {
       "axes": {
         "m": 252
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.104,
+      "microseconds": 21.4
     },
     {
       "axes": {
         "m": 256
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.1,
+      "microseconds": 21.6
     },
     {
       "axes": {
         "m": 260
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.445,
+      "microseconds": 24.7
     },
     {
       "axes": {
         "m": 264
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.46,
+      "microseconds": 24.8
     },
     {
       "axes": {
         "m": 268
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.472,
+      "microseconds": 24.9
     },
     {
       "axes": {
         "m": 272
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.498,
+      "microseconds": 24.7
     },
     {
       "axes": {
         "m": 276
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.519,
+      "microseconds": 24.5
     },
     {
       "axes": {
         "m": 280
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.518,
+      "microseconds": 24.6
     },
     {
       "axes": {
         "m": 284
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.531,
+      "microseconds": 24.5
     },
     {
       "axes": {
         "m": 288
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.517,
+      "microseconds": 24.8
     },
     {
       "axes": {
         "m": 292
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.396,
+      "microseconds": 24.7
     },
     {
       "axes": {
         "m": 296
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.394,
+      "microseconds": 24.8
     },
     {
       "axes": {
         "m": 300
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.397,
+      "microseconds": 24.9
     },
     {
       "axes": {
         "m": 304
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.425,
+      "microseconds": 24.7
     },
     {
       "axes": {
         "m": 308
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.446,
+      "microseconds": 24.6
     },
     {
       "axes": {
         "m": 312
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.454,
+      "microseconds": 24.7
     },
     {
       "axes": {
         "m": 316
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.467,
+      "microseconds": 24.7
     },
     {
       "axes": {
         "m": 320
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.461,
+      "microseconds": 25.0
     },
     {
       "axes": {
         "m": 324
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.48,
+      "microseconds": 24.9
     },
     {
       "axes": {
         "m": 328
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.487,
+      "microseconds": 24.9
     },
     {
       "axes": {
         "m": 332
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.491,
+      "microseconds": 24.9
     },
     {
       "axes": {
         "m": 340
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.385,
+      "microseconds": 24.8
     },
     {
       "axes": {
         "m": 344
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.374,
+      "microseconds": 25.2
     },
     {
       "axes": {
         "m": 348
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.378,
+      "microseconds": 25.1
     },
     {
       "axes": {
         "m": 352
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.374,
+      "microseconds": 25.5
     },
     {
       "axes": {
         "m": 356
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.391,
+      "microseconds": 25.4
     },
     {
       "axes": {
         "m": 360
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.4,
+      "microseconds": 25.7
     },
     {
       "axes": {
         "m": 364
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.414,
+      "microseconds": 25.5
     },
     {
       "axes": {
         "m": 368
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.426,
+      "microseconds": 25.6
     },
     {
       "axes": {
         "m": 372
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.453,
+      "microseconds": 25.2
     },
     {
       "axes": {
         "m": 376
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.451,
+      "microseconds": 25.6
     },
     {
       "axes": {
         "m": 380
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.461,
+      "microseconds": 25.5
     }
   ],
   "layout_variants": {
