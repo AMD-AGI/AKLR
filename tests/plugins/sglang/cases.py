@@ -900,6 +900,48 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="strided_beta",
     ),
+    # Kimi-K3's KDA chain verify on sglang 0.5.23's Triton backend shrunk: two heads (12 at TP8), chains of 3
+    # tokens (8), a ring of 4 rows (16), the convolution input and beta column slices of sglang's projections;
+    # then the softplus gate on one head, a window line more than requests. No padding request is drawn, as
+    # for kda_chain_verify_ring: sglang's kernel leaves its output rows unwritten.
+    *(
+        PointSpec(
+            contract_id="kimi_k3_sgl_kda_verify@1.0",
+            axes={
+                "n_requests": n_requests,
+                "n_tokens": n_requests * n_verify_tokens,
+                "n_verify_tokens": n_verify_tokens,
+                "n_heads": n_heads,
+                "n_slots": n_slots,
+                "n_lines": n_lines,
+                "ring_len": ring_len,
+            },
+            dtypes={
+                "mixed_qkv": "bfloat16",
+                "conv_weight": "float32",
+                "conv_state": "bfloat16",
+                "cache_indices": "int32",
+                "conv_window": "bfloat16",
+                "window_indices": "int32",
+                "a": "bfloat16",
+                "b": "bfloat16",
+                "a_log": "float32",
+                "dt_bias": "float32",
+                "ssm_state": "float32",
+                "ring_v": "bfloat16",
+                "ring_k": "bfloat16",
+                "ring_g": "float32",
+                "ring_beta": "float32",
+                "output": "bfloat16",
+            },
+            attrs={"has_lower_bound": has_lower_bound},
+            layout_variant_name="strided_rows",
+        )
+        for n_requests, n_verify_tokens, n_heads, n_slots, n_lines, ring_len, has_lower_bound in (
+            (4, 3, 2, 8, 4, 4, True),
+            (3, 2, 1, 5, 4, 2, False),
+        )
+    ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
 # tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU

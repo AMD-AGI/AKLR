@@ -14,7 +14,10 @@ import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang.layers.kda_triton import api, baseline
-from aklr.plugins.sglang.layers.kda_triton.contract import CONTRACTS
+from aklr.plugins.sglang.layers.kda_triton.contract import (
+    KIMI_K3_SGL_KDA_PREFILL,
+    KIMI_K3_SGL_KDA_PREFILL_TRACK,
+)
 from aklr.plugins.sglang.layers.kda_triton.reference import (
     KimiK3SglKdaPrefillReference,
     KimiK3SglKdaPrefillTrackReference,
@@ -499,7 +502,9 @@ def test_the_track_baseline_asks_chunk_kda_for_the_snapshots(sglang_kernels):
     assert call["track_chunk_idx"] is chunks
 
 
-@pytest.mark.parametrize("contract", CONTRACTS, ids=lambda c: c.contract_id)
+@pytest.mark.parametrize(
+    "contract", [KIMI_K3_SGL_KDA_PREFILL, KIMI_K3_SGL_KDA_PREFILL_TRACK], ids=lambda c: c.contract_id
+)
 def test_a_prefill_may_name_more_sequences_than_slots(contract):
     """Padding sequences take slot -1, any number of them: a call of more sequences than the pool has slots is inside
     the contract (validation's draws keep n_seqs <= n_slots, for their slots are distinct)."""
