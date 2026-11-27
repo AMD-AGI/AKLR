@@ -24,10 +24,16 @@ def test_zero_operands_with_large_valid_scales_stay_zero(builder_registry, kerne
     inputs["a_scale"].fill_(2.0**64)
     inputs["b_scale"].fill_(2.0**64)
     call = case.call(inputs, "cuda:0")
-    call["out"] = torch.full((case.point.axes["m"], case.point.axes["n"]), float("nan"), dtype=getattr(torch, case.point.dtypes["out"]), device="cuda:0")
+    call["out"] = torch.full(
+        (case.point.axes["m"], case.point.axes["n"]),
+        float("nan"),
+        dtype=getattr(torch, case.point.dtypes["out"]),
+        device="cuda:0",
+    )
     builder_registry.build(kernel_schema)(**call)
     torch.cuda.synchronize(0)
     torch.testing.assert_close(call["out"], torch.zeros_like(call["out"]), atol=0, rtol=0)
+
 
 def test_calls_use_current_compiler_options(builder_registry, kernel_schema, monkeypatch):
     import os
