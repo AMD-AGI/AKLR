@@ -1,3 +1,5 @@
+deepseek_v4_hc_boundary_hc_mult#_hidden_size#_n_mix#_n_slices#
+deepseek_v4_hc_boundary_post_hc_mult#_hidden_size#_n_mix#_n_slices#
 dsv4_compression_metadata_max_pages#_c128_width#
 deepseek_v4_wo_a_mxfp8_n_groups#_o_lora_rank#_group_dim#
 deepseek_v4_wo_a_mxfp8_strided_rows_n_groups#_o_lora_rank#_group_dim#
