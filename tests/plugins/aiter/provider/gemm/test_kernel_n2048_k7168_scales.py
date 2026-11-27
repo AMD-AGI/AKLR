@@ -82,6 +82,7 @@ def test_split_k_call_initializes_its_tag_words(builder_registry, kernel_schema,
     monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
     monkeypatch.setattr(torch.cuda, "current_stream", lambda *args: object())
     monkeypatch.setattr(expr, "Stream", lambda stream: stream)
+
     class ExternalJit:
         def __init__(self, function):
             self.function = function
@@ -121,6 +122,7 @@ def test_split_k_state_is_reset_on_every_graph_replay(builder_registry, kernel_s
         graph.replay()
         torch.cuda.synchronize(0)
         torch.testing.assert_close(call["out"], torch.full_like(call["out"], value * 7168), atol=0, rtol=0)
+
 
 def test_calls_use_current_compiler_options(builder_registry, kernel_schema, monkeypatch):
     import os
