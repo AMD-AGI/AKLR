@@ -141,8 +141,9 @@ baseline; `--run-dir` (default `./aklr-runs/<schema>-<time>`).
 
 ## How a candidate is judged
 
-- **Correct** when `python -m aklr validate --stages audit,bench` finds nothing wrong on any workload: a wrong
-  output on one workload rejects the candidate.
+- **Correct** when `python -m aklr validate --validators audit,bench` finds nothing wrong on any workload: a wrong
+  output on one workload rejects the candidate. The bench runs whatever the audit reports, so the driver reads both:
+  an audit that did not pass rejects every workload (`not_audited`), whatever the bench found.
 - **Fast** by AKLR's graph timer on AKLR's timing inputs. A candidate is kept only when it beats the kernel kept so
   far by more than the measured noise.
 - The score is the baseline's time over the candidate's, per workload, averaged over the workloads.

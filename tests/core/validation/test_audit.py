@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from aklr.core.validation import AuditStage, ValidationScope
-from aklr.core.validation.stages._audit._hip import check_hip_kernel
-from aklr.core.validation.stages._audit._hsaco import check_hsaco_kernel
-from aklr.core.validation.stages._audit._stage import check_kernel
-from aklr.core.validation.stages._report._finding import Finding
+from aklr.core.validation import AuditValidator, ValidationScope
+from aklr.core.validation.validators.audit._hip import check_hip_kernel
+from aklr.core.validation.validators.audit._hsaco import check_hsaco_kernel
+from aklr.core.validation.validators.audit._validator import check_kernel
+from aklr.core.validation.validators.report._finding import Finding
 from tests.op_case import HIP_GEMM_KERNEL_SOURCE, HSACO_GEMM_KERNEL_SOURCE, OpCase
 
 _SIGNATURE = "def run(*, a, b, trans_b, bias, out_dtype, out):"  # gemm@1.0's call keys
@@ -419,9 +419,7 @@ _OLD_FORMAT_PATH = "aklr/plugins/aiter/provider/gemm/kernels/gemm.py"  # a base 
 _LEGACY_SOLUTION_PATH = "aklr/plugins/aiter/provider/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
 
 
-class TestAuditStage:
-    """``AuditStage.run`` against a base whose files are given, no git."""
-
+class TestAuditValidator:
     @pytest.mark.parametrize(
         ("base", "head_source", "head_ms", "measured", "codes"),
         [
@@ -507,8 +505,8 @@ class TestAuditStage:
             ((tmp_path / head_path).resolve(),),
             (),
         )
-        report = AuditStage().run(scope, None)
-        assert {f.code.value for f in report.findings} == codes
+        report = AuditValidator().run(scope, None)
+        assert {f.code for f in report.findings} == codes
 
     def test_hip_kernel_takes_the_sh_rules(self, tmp_path: Path) -> None:
         """A hip schema's kernel is audited by SH0-SH5, not SA0-SA5."""
@@ -519,8 +517,8 @@ class TestAuditStage:
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
-        (finding,) = AuditStage().run(scope, None).findings
-        assert finding.code.value == "source_rejected"
+        (finding,) = AuditValidator().run(scope, None).findings
+        assert finding.code == "source_rejected"
         assert finding.detail.startswith("SH3 kernel.hip:")
 
     def test_hsaco_kernel_takes_the_sa_and_sc_rules(self, tmp_path: Path) -> None:
@@ -534,6 +532,6 @@ class TestAuditStage:
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
-        findings = AuditStage().run(scope, None).findings
-        assert {f.code.value for f in findings} == {"source_rejected"}
+        findings = AuditValidator().run(scope, None).findings
+        assert {f.code for f in findings} == {"source_rejected"}
         assert sorted(f.detail.split(" kernel.py:")[0] for f in findings) == ["SA2", "SC1"]

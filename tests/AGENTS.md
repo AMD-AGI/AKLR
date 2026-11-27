@@ -31,5 +31,5 @@
    or the process.
 7. **Markers.** Markers are registered in `conftest.py`. A GPU requirement is the `gpu` or `gfx950`
    marker, never a skip written in the test.
-8. **Checks.** Rule 4 is checked in part by `python3 tests/check_layout.py`; pre-commit runs it. Run
+8. **Checks.** Rule 4 is checked in part by `python3 scripts/lint/check_tests_layout.py`; pre-commit runs it. Run
    it after changing a test and fix what it reports in the test; do not add an ignore.

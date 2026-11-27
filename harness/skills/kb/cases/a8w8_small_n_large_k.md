@@ -154,10 +154,10 @@ python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_
 python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096/b74d90fec78ced01.json
 ```
 
-Each runs the audit and bench stages and writes `aklr_validation/report.md` with the per-Point speedup
+Each runs the audit and bench validators and writes `aklr_validation/report.md` with the per-Point speedup
 (`aklr/plugins/aiter/README.md` § Commands). Add `--base origin/main` only on a branch that edits the file: with the base set,
 bench measures only schemas that are not at the base, so on an unchanged checkout it skips the bench
-(`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). The local result does not count; CI's
+(`aklr/core/validation/validators/validation_scope.py`, `of_working_tree`). The local result does not count; CI's
 measurement is the one dispatch reads.
 
 ## Rollback
@@ -183,4 +183,4 @@ wrong result, a crash, or a regression above the threshold that CI has not yet m
 - S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json#kernel.py:881 `_SMALL_TABLE` sets split_k = 1 for every m it lists; wave 0 sums the wave partials at :829
 - S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1024_k4096/2ab6fdd5f7487f88.json#kernel.py:57 `_select_tiles(4096)` returns (64, 128, 1)
 - S7 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n1536_k4096/b74d90fec78ced01.json#kernel.py:513 wave wk walks K blocks wk + i·WK; padded A row stride at :194
-- S8 aklr/core/validation/stages/validation_scope.py:69 with `--base`, bench drops the schemas present at the base
+- S8 aklr/core/validation/validators/validation_scope.py:67 with `--base`, bench drops the schemas present at the base

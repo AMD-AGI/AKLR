@@ -170,7 +170,7 @@ python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168
 The report goes to `aklr_validation/report.md`; a run outside CI checks the file, the served numbers are CI's
 (`aklr/plugins/aiter/README.md` § Workflow). Add `--base origin/main` only on a branch that edits the file: with the base set,
 bench measures only schemas that are not at the base, so on an unchanged checkout it skips the bench
-(`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). Validate's bitwise check runs on an
+(`aklr/core/validation/validators/validation_scope.py`, `of_working_tree`). Validate's bitwise check runs on an
 otherwise idle GPU, where every split is resident; test n6288 and k35840 also with a grid that is not. To read a
 kernel:
 `git show <rev>:<schema> | python3 -c 'import json,sys; print(json.load(sys.stdin)["kernel"]["sources"][0]["content"])'`.

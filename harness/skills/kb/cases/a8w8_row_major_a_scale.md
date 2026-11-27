@@ -145,10 +145,10 @@ On an MI355X, in a checkout of main (its files carry later CI numbers than the t
 python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/28f1ec94b60ce6b4.json
 ```
 
-and the same for the other three paths under `sources`. Each runs the audit and bench stages and writes
+and the same for the other three paths under `sources`. Each runs the audit and bench validators and writes
 `aklr_validation/report.md` with the per-Point speedup (`aklr/plugins/aiter/README.md` § Commands). Add `--base origin/main`
 only on a branch that edits the file: with the base set, bench measures only schemas that are not at the base, so on
-an unchanged checkout it skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). The
+an unchanged checkout it skips the bench (`aklr/core/validation/validators/validation_scope.py`, `of_working_tree`). The
 local result does not count; CI's measurement is the one dispatch reads.
 
 ## Rollback

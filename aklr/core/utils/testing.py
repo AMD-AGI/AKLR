@@ -53,18 +53,8 @@ def kernel_tracer():
     return tracer
 
 
-def _links_rocprofiler_sdk() -> bool:
-    with open("/proc/self/maps") as maps:
-        return any("librocprofiler-sdk.so" in line for line in maps)
-
-
 if torch.version.hip is not None:
-    # rocprofiler-sdk intercepts only queues made after the tool registers; a torch that links the SDK
-    # configures it as the GPU initializes, after which SDK 1.3.5 takes no tool, so register now
-    if _links_rocprofiler_sdk():
-        kernel_tracer()
-    else:
-        torch.cuda._lazy_call(kernel_tracer)
+    kernel_tracer()
 
 
 @triton.jit

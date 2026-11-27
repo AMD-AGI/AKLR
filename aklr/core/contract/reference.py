@@ -51,4 +51,4 @@ class DistOpReference(OpReference):
     @abstractmethod
     def reference(self, calls: Sequence[Mapping[str, Any]], rank: int) -> Mapping[str, Tensor]:
         """``OpReference.reference`` of rank ``rank``'s call; ``calls`` holds every rank's call in
-        rank order, each on its rank's device."""
+        rank order, all on the calling rank's device."""

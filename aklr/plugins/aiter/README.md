@@ -111,11 +111,12 @@ aklr/plugins/aiter/
 ```
 
 - A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
-  at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its
-  own inputs. Its reference is a `DistOpReference`, whose `reference(calls, rank)` takes every rank's call in rank
-  order, each on its rank's device (`cuda:<rank>`), and returns rank `rank`'s outputs. Its baseline is a
-  `DistOpBaseline`, whose `profile` starts every rank's call together; its `setup()` runs once each rank's process
-  is in the group.
+  at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws every
+  rank's inputs on its own device and calls with its own. Its reference is a `DistOpReference`, whose
+  `reference(calls, rank)` takes every rank's call in rank order, all on the calling rank's device, and returns rank
+  `rank`'s outputs. Its baseline is a `DistOpBaseline`, whose `profile` starts every rank's call together; its
+  `setup()` runs once each rank's process is in the group. The group size is the op type's `OpBench`, a subclass in
+  `aklr/core/validation/validators/bench/_custom/<op_type>.py`, not part of the op package.
 
 - `<language>` equals the schema's `kernel.language` (`flydsl`, `hip`, `hsaco` or `triton`, `Language` in
   `aklr/core/contract/spec/_kernel.py`). `impls/` is not a Python package: it holds language directories, they hold
@@ -246,7 +247,7 @@ is the contract's `baseline`; every contract has exactly one:
   engine does not do (a copy of the output, a re-layout of a weight).
 - Takes the kernel's call by keyword, imports the engine inside the method, returns the outputs by name (a mutable
   input it writes is read from the call), and raises `NotImplementedError` for a call the engine does not serve
-  (bench: `baseline_failed`).
+  (bench: `baseline_unbound`).
 - `setup()` sets up what the calls take for granted beyond their arguments, as the engine does before its first
   (mega_moe's mori heap), and `teardown()` undoes it; nothing by default.
 - `profile(fn)` times one call, the kernel's and the baseline's alike (a CUDA graph, cache flushes taken out);
@@ -355,7 +356,7 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
   globals and fails to compile a plain `BLOCK = 64` or an annotated `BLOCK: tl.constexpr = 64` read inside the
   kernel. Pass such a value as a `tl.constexpr` parameter (`_k[grid](..., BLOCK=BLOCK)`) or write it inside the
   device function.
-- The authority is `aklr/core/validation/stages/_audit/_rules.py`, whose rules SA0–SA5 every source must pass
+- The authority is `aklr/core/validation/validators/audit/_rules.py`, whose rules SA0–SA5 every source must pass
   before it reaches a GPU; a source too deeply nested to audit (a few thousand chained operators) is rejected
   (SA0).
 
@@ -379,7 +380,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
   `Tensor(a!)`, and it returns `()`: aklr calls it as `run(**call)`, and the rules of `run` hold (it writes the
   preallocated outputs and the mutable inputs, reads its other inputs only and keeps nothing across calls).
 - Launch on `at::hip::getCurrentHIPStream()`; allocate scratch with `at::empty` on an argument's device.
-- Audit applies SH0–SH5 (`aklr/core/validation/stages/_audit/_hip.py`) instead of SA0–SA5, on the text with
+- Audit applies SH0–SH5 (`aklr/core/validation/validators/audit/_hip.py`) instead of SA0–SA5, on the text with
   comments and literals blanked: no unterminated comment or literal (SH0); the one registration above, in the entry
   file, and no other library macro (SH1: a second library of one namespace aborts the process that loads it);
   includes are sources, `hip/`, `ATen/`, `c10/`, `torch/library.h` or a listed standard header (SH2); no
@@ -416,7 +417,7 @@ def run(*, a, b, trans_b, bias, out_dtype, out):
   `aklr/core/jit/hsaco.py`, or for shared memory, to the op's `OpBaseline.setup`.
 - `requires` pins the HIP that loads the code objects, such as `{"hip": ">=7.15"}`.
 - Sources are audited like other Python kernels (SA0–SA5), then by SC1–SC2
-  (`aklr/core/validation/stages/_audit/_hsaco.py`), so that kernel code reaches the GPU only through the launcher.
+  (`aklr/core/validation/validators/audit/_hsaco.py`), so that kernel code reaches the GPU only through the launcher.
   SC1 limits imports to sibling sources, `aklr.core.jit.hsaco`, `torch`, and a few standard modules with no side
   effects. SC2 rejects `__import__`, `eval`, `exec`, `compile`, `globals`, `vars`, and the torch APIs that reach
   native code (`torch._C`, `torch.ops.load_library`, `torch.utils.cpp_extension`, `torch.cuda.cudart`). The audit
@@ -439,8 +440,8 @@ values are only the sizes bench runs. `scalars` holds every present scalar input
 captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over the contract's baseline) and
 `accuracy` are written by CI on every workload or none (a `failed` one may lack `speedup`; it is never dispatched),
 with one complete `kernel.targets` item. `microseconds` records the time behind that `speedup`: the kernel's median
-time per call in the same rounds against the baseline (graph timer, 3 significant digits), absent on a workload that
-was not timed. CI rewrites a file only when a workload's accuracy changes, a speedup or time comes or goes, or a
+time per call in the same trials against the baseline (graph timer, 3 significant digits), absent on a workload that
+was not timed against it. CI rewrites a file only when a workload's accuracy changes, a speedup or time comes or goes, or a
 speedup moves by more than 2%, and then writes all three from one run, so `microseconds` always matches the
 `speedup` beside it. It is not meant for comparing times across files measured in different runs.
 
@@ -450,7 +451,7 @@ the same scalars gets the same values in every file and every language on the sa
 them on its GPU, so they differ from a CPU draw (the tests') and between GPU models.
 
 Correctness is always checked on the default inputs (every tensor drawn from its `distribution`, every scalar at
-its declaration's default). Captured scalars other than the defaults add one more input set, named `workload`.
+its declaration's default): bench runs no input set with a workload's captured scalars.
 
 ## Names
 
@@ -484,10 +485,10 @@ and tensor lifetimes are plain enums read by the json functions.
 
 Any input set name other than `workload` gives a default input set; the same `workload_hash` and name give the
 same values bit for bit.
+Bench's input sets are named `trial <n>` and go through `stored_inputs`.
 
-The existing first-capture and post-timing checks overwrite reused input buffers, including weights, through
-`.data.copy_()`: addresses and tensor versions stay unchanged. This exposes stale weight caches keyed by address
-or version without adding check steps or timing rounds. A mismatch fails the existing capture or post-timing check.
+Each trial draws new tensors, weights included, checks them once and times them; bench never overwrites an input
+buffer in place, so it has no check that exposes a weight cache keyed by address or version going stale.
 
 A schema file carries no semantics stamp. After a change to the schema format, rewrite every committed file as
 `OpContract.schema_text` writes it (`ContractRegistry.parse_schema` names the first differing line).
@@ -498,9 +499,9 @@ A schema file carries no semantics stamp. After a change to the schema format, r
 |---|---|---|
 | `python -m aklr export [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
 | `python -m aklr export check` | checks every committed schema and `impls/`; no GPU, no environment | 0 clean, 1 problems on stderr, 2 usage |
-| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] [--under DIR] [--exclude DIR] [--no-timing] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md`. `--under` keeps the schemas under DIR, `--exclude` drops them; `--no-timing` builds and checks the kernels only, on the workloads not recorded `failed` (dispatch never serves those), timing and writing back nothing; any finding fails it. A schema whose `kernel.requires` the environment misses is skipped, as dispatch skips it | 0 passed, 1 failed, 2 usage, 3 aborted |
+| `python -m aklr validate [PATH ...] [--base REV] [--validators audit,bench] [--under DIR] [--exclude DIR] [--no-timing] [--num-trials N] [--isolate OP_TYPE] ...` | the audit and bench validators (default: both; `--validators` names which, and each runs whatever the other reports); writes `aklr_validation/report.json`, `report.md` and the measured schemas under `schemas/`. `--under` keeps the schemas under DIR, `--exclude` drops them; `--num-trials N` sets the trials per workload (default 3), `--isolate OP_TYPE` runs that op type's bench tasks in fresh processes; `--no-timing` builds and checks the kernels only, on the workloads not recorded `failed` (dispatch never serves those), timing and writing back nothing; any finding fails it. A schema whose `kernel.requires` the environment misses is skipped, as dispatch skips it | 0 passed, 1 failed, 2 usage, 3 aborted |
 
-Options and stages of `validate`: `python -m aklr validate --help`.
+Options and validators of `validate`: `python -m aklr validate --help`.
 
 ## Environment variables
 

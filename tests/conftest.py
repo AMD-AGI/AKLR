@@ -38,6 +38,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     )
     has_gpu = torch.cuda.is_available()
     has_gfx950 = has_gpu and DeviceTarget.current().arch == "gfx950"
+    for name in ("ROCPROFILER_REGISTER_FORCE_LOAD", "ROCPROFILER_REGISTER_LIBRARY"):
+        os.unsetenv(name)
     for item in items:
         if item.get_closest_marker("gpu") and not has_gpu:
             item.add_marker(pytest.mark.skip(reason="needs a GPU"))

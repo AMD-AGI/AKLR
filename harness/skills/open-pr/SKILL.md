@@ -29,7 +29,7 @@ them before opening the pull request.
    reports are the evidence, and the body names the base.
    - Contracts: the model, serving config and `AKLR_EXPORT` run the workloads came from;
      `python -m aklr export check`.
-   - Kernels: `python -m aklr validate --base origin/main --stages audit,bench <schemas>` on the target GPU (a
+   - Kernels: `python -m aklr validate --base origin/main --validators audit,bench <schemas>` on the target GPU (a
      remote node if none is local). Without `--base` a new kernel is held to the retention
      threshold (0.99) instead of the entry one (1.05) and is not timed against a served kernel,
      so a local pass can still fail CI. One table row per contract: measured / all workloads,

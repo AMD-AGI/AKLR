@@ -472,7 +472,7 @@ In Turbo's MXFP4 staged search (FP4:3170-3377):
 
 ## autotune §6 The launch path
 
-In AKLR a Point's `speedup` is kernel time in CUDA-graph replays (`aklr/core/validation/stages/_measure.py`), read
+In AKLR a Point's `speedup` is kernel time in CUDA-graph replays (`aklr/core/validation/validators/bench/_measure/_op_bench.py`), read
 by Kineto up to measurement profile 18 and by AKLR's own rocprofiler-sdk tracer (`aklr_kernel_tracer`) from profile
 19: host launch cost is outside it, so the host-side gaps below buy nothing on AKLR's ruler; they matter to an eager
 caller.

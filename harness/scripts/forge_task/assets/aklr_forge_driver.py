@@ -3,7 +3,7 @@
 
 """KernelForge driver for one AKLR schema. Correctness is what ``python -m aklr validate`` returns for the kernel's
 sources (``kernel.py`` and the modules it imports relatively) published as the schema's kernel; timing is AKLR's own
-graph timer on AKLR's timing inputs, the candidate alone. ``forge_task.workspace`` fills the placeholders below.
+graph timer on the inputs of validate's first trial, the candidate alone. ``forge_task.workspace`` fills the placeholders below.
 """
 
 from __future__ import annotations
@@ -34,23 +34,23 @@ KERNEL = WORKSPACE / "kernel.py"
 # The package the candidate's sources are imported into, as AKLR imports a kernel's: a package made in memory.
 CANDIDATE_PACKAGE = "forge_candidate"
 
-# Findings that mean a workload's output cannot be trusted; NOT_FASTER and REGRESSED only grade speed.
+# Findings that mean a workload's output cannot be trusted; not_faster and regressed only grade speed.
 INCORRECT_CODES = frozenset(
     {
         "schema_invalid",
-        "kernel_missing",
         "source_rejected",
         "build_failed",
-        "candidate_crash",
-        "candidate_timeout",
-        "capture_unsafe",
-        "input_mutation",
+        "task_crashed",
+        "task_timeout",
+        "candidate_raised",
+        "wrong_outputs",
         "numeric_mismatch",
-        "output_caching",
-        "nondeterministic",
-        "post_timing_mismatch",
     }
 )
+# A workload's verdicts that mean AKLR checked nothing on it.
+UNCHECKED_CODES = frozenset({"platform_fault", "baseline_unbound"})
+NOT_COMPARED = "not_compared"
+NOT_AUDITED = "not_audited"
 
 
 def _aklr():
@@ -134,9 +134,7 @@ def _publish() -> Path:
 
 
 def _platform_failed(report: dict) -> bool:
-    return any(
-        f["code"] == "platform_failure" for stage in report["stages"] for f in stage.get("findings", [])
-    )
+    return any(f["code"] == "platform_fault" for v in report["validators"] for f in v.get("findings", []))
 
 
 def _report() -> dict:
@@ -162,7 +160,7 @@ def _validate(out: Path) -> dict:
         "-m",
         "aklr",
         "validate",
-        "--stages",
+        "--validators",
         "audit,bench",
         "--devices",
         "0",
@@ -186,42 +184,59 @@ def _validate(out: Path) -> dict:
     return json.loads(report.read_text(encoding="utf-8"))
 
 
-def _stage(report: dict, name: str) -> dict:
-    return next((stage for stage in report["stages"] if stage["stage_name"] == name), {})
+def _validator(report: dict, name: str) -> dict:
+    return next((v for v in report["validators"] if v["name"] == name), {})
 
 
-def _case_id(axes: dict) -> str:
-    return ",".join(f"{name}={value}" for name, value in axes.items())
+def _one_line(text: object) -> str:
+    return " ".join(str(text).split())[:300]
+
+
+def _unaudited(report: dict) -> str | None:
+    audit = next((v for v in report["validators"] if v["name"] == "audit"), None)
+    if audit is None:
+        return "the report has no audit"
+    status = audit.get("status")
+    if status == "passed":
+        return None
+    if status is None:
+        return "audit reported no status"
+    detail = _one_line(audit.get("detail") or "")
+    return f"audit {status}: {detail}" if detail else f"audit {status}"
 
 
 def _outcomes(report: dict) -> dict[str, dict]:
-    """Per workload: whether AKLR found its output wrong, and the baseline's graph time."""
+    _aklr()
+    from aklr.core.validation.validators.workload_key import WorkloadKey
+
     workloads = json.loads(SCHEMA_JSON.read_text(encoding="utf-8"))["workloads"]
-    outcomes = {_case_id(w["axes"]): {"incorrect": [], "baseline_ms": None} for w in workloads}
-    for stage in ("audit", "bench"):
-        # A workload's own finding is filed under the stage's demotions: AKLR serves the schema's other workloads.
-        found = _stage(report, stage)
+    outcomes = {str(WorkloadKey(w["axes"])): {"incorrect": [], "baseline_ms": None} for w in workloads}
+    for name in ("audit", "bench"):
+        found = _validator(report, name)
         for finding in (*found.get("findings", []), *found.get("demotions", [])):
             # An audit finding names no workload: it rejects the kernel everywhere.
-            cases = [_case_id(finding["axes"])] if finding.get("axes") else list(outcomes)
+            cases = [str(WorkloadKey(**finding["workload"]))] if finding.get("workload") else list(outcomes)
             for case_id in cases:
                 if finding["code"] in INCORRECT_CODES:
                     outcomes[case_id]["incorrect"].append(finding["code"])
                 else:
-                    # Why a workload went uncompared (a platform failure), so the caller sees its cause. One short
-                    # line: the detail may quote the candidate's own output, which must not forge a verdict line.
-                    detail = " ".join(str(finding.get("detail", "")).split())[:300]
+                    detail = _one_line(finding.get("detail", ""))
                     outcomes[case_id].setdefault("other", []).append(f"{finding['code']}: {detail}")
-    for record in _stage(report, "bench").get("workload_records", []):
-        outcome = outcomes[_case_id(record["axes"])]
-        outcome["compared"] = record.get("is_compared", False)
-        for timing in record["timings"]:
-            if timing["mode"] == "graph" and timing["versus"] == "baseline":
-                outcome["baseline_ms"] = statistics.median(timing["versus_milliseconds"])
+    for record in _validator(report, "bench").get("records", []):
+        outcome = outcomes[str(WorkloadKey(**record["workload"]))]
+        outcome["checked"] = record["verdict"] not in UNCHECKED_CODES
+        comparison = record.get("comparison")
+        if comparison and record.get("versus") == "baseline":
+            outcome["baseline_ms"] = statistics.median(comparison["opponent_ms"])
+    unaudited = _unaudited(report)
     for outcome in outcomes.values():
+        rejected = bool(outcome["incorrect"])
         # An aborted run compares nothing; a workload AKLR did not compare is not shown correct.
-        if not outcome.get("compared") and not outcome["incorrect"]:
-            outcome["incorrect"].append("not_compared")
+        if not outcome.get("checked") and not rejected:
+            outcome["incorrect"].append(NOT_COMPARED)
+        if unaudited is not None and not rejected:
+            outcome["incorrect"].append(NOT_AUDITED)
+            outcome.setdefault("other", []).append(unaudited)
     return outcomes
 
 
@@ -233,7 +248,7 @@ def _run_correctness() -> int:
     for case_id, outcome in outcomes.items():
         if outcome["incorrect"]:
             line = f"aklr_findings: {case_id} {' '.join(sorted(set(outcome['incorrect'])))}"
-            if "not_compared" in outcome["incorrect"] and outcome.get("other"):
+            if {NOT_COMPARED, NOT_AUDITED} & set(outcome["incorrect"]) and outcome.get("other"):
                 line += f" ({'; '.join(sorted(set(outcome['other'])))})"
             print(line)
     passed = [not outcome["incorrect"] for outcome in outcomes.values()]
@@ -270,24 +285,21 @@ def _write_baseline(path: Path) -> int:
     return 0
 
 
-def _aklr_clock():
-    """AKLR's clock as validate's bench reads it: the contract's baseline profile; a reading the profiler, not the
-    kernel, failed is measured again once."""
+def _aklr_timer():
+    """AKLR's graph timer as validate's bench reads it: the profile of the contract's baseline."""
     registry, *_ = _aklr()
-    from aklr.core.validation.stages._measure import bind_clock
-
-    contract_id = json.loads(_candidate_text()[0])["contract_id"]
-    return bind_clock(registry.get(contract_id).baseline)
+    return registry.get(json.loads(_candidate_text()[0])["contract_id"]).baseline.profile
 
 
 def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
     """Per workload, the candidate's median time over ``rounds`` readings of AKLR's graph timer on the call
     validate's bench times."""
-    clock = _aklr_clock()  # imports the timer's module before the candidate's first GPU call
+    import torch
+
+    profile = _aklr_timer()  # imports the timer's module before the candidate's first GPU call
     candidate = _load_candidate()
     times = {}
-    profiler_warm = False
-    for case_id, call in _calls("cuda").items():
+    for index, (case_id, call) in enumerate(_calls("cuda").items()):
 
         def call_once(call=call) -> None:
             candidate.run(**call)
@@ -295,12 +307,10 @@ def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
         # At least once, as a model's warm-up does: a per-tensor cache fills here, not in a timed graph.
         for _ in range(max(1, warmup)):
             call_once()
-        clock.synchronize()
-        if not profiler_warm:
-            # Validate's profiler warm-up: one unrecorded profile before the first recorded one in the process.
-            clock.graph_reading(call_once)
-            profiler_warm = True
-        readings = [clock.graph_reading(call_once) for _ in range(rounds)]
+        torch.cuda.synchronize()
+        if index == 0:
+            profile(call_once)  # the process's first profile, not recorded
+        readings = [profile(call_once) for _ in range(rounds)]
         times[case_id] = statistics.median(readings)
     return times
 
@@ -316,39 +326,34 @@ def _run_bench(warmup: int, iterations: int) -> int:
 
 
 def _calls(device: str) -> dict[str, dict]:
-    """Per workload, the call validate's bench times, on AKLR's timing inputs, built by AKLR's own trial code:
-    inputs from another draw describe a call nobody scores. The call holds the schema's call keys only, as AKLR's
-    builder hands the kernel: a trial call also carries API parameters an attr hides from the kernel. The outputs
-    dispatch would allocate are allocated here, since the candidate is called directly.
+    """Per workload, by its key's text, the call validate's bench times, on the inputs of its first trial, built
+    by AKLR's own bench code: inputs from another draw describe a call nobody scores. The call holds the schema's
+    call keys only, as AKLR's builder hands the kernel: an api call also carries API parameters an attr hides from
+    the kernel. The outputs dispatch would allocate are allocated here, since the candidate is called directly.
     """
     import torch
 
     registry, *_ = _aklr()
     from aklr.core.contract import semantics
-    from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
+    from aklr.core.validation.validators.bench import InputSampler
+    from aklr.core.validation.validators.bench._measure._contract_workload import ContractWorkload
+    from aklr.core.validation.validators.workload_key import WorkloadKey
 
     text, _ = _candidate_text()
     schema = registry.parse_schema(text.encode(), str(SCHEMA_JSON))
-    contract = registry.get(schema.contract_id)
     calls = {}
-    for workload in schema.workloads:
-        request = TrialRequest.of_workload(
-            str(SCHEMA_JSON),
-            schema,
-            contract,
-            workload,
-            thresholds={},
-            incumbent=None,
-        )
-        assembled = request.assemble_call(request.compose_inputs(None, device), device)
-        call = {key: assembled[key] for key in schema.kernel_call_keys if key in assembled}
-        for name in contract.allocated_outputs:
+    for spec in schema.workloads:
+        key = WorkloadKey.from_workload(spec)
+        workload = ContractWorkload.of(schema, key.axes)
+        assembled = workload.assemble_call(InputSampler(schema, key.axes).draw(0, 0, device), device)
+        call = {name: assembled[name] for name in schema.kernel_call_keys if name in assembled}
+        for name in workload.contract.allocated_outputs:
             call[name] = torch.empty(
-                contract.storage_shape_of(name, request.point),
-                dtype=semantics.torch_dtypes(request.point.dtypes[name])[0],
+                workload.contract.storage_shape_of(name, workload.point),
+                dtype=semantics.torch_dtypes(workload.point.dtypes[name])[0],
                 device=device,
             )
-        calls[_case_id(workload.axes)] = call
+        calls[str(key)] = call
     return calls
 
 

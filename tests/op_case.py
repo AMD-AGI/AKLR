@@ -19,11 +19,10 @@ import torch
 from aklr.core.contract import semantics
 from aklr.core.contract.baseline import DistOpBaseline
 from aklr.core.contract.fastkey import CallArgs
-from aklr.core.contract.locate import op_dir
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
-from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
+from aklr.core.validation.validators.bench._measure._contract_workload import ContractWorkload
 from tests.plugins.aiter.provider import cases as ops_cases
 from tests.plugins.sglang import cases as sglang_cases
 from tests.plugins.vllm import cases as vllm_cases
@@ -247,22 +246,14 @@ class OpCase:
         )
 
     @cached_property
-    def request(self) -> TrialRequest:
-        """``TrialRequest.of_workload`` of ``schema()``'s one workload, no thresholds, no
-        incumbent, no baseline."""
+    def contract_workload(self) -> ContractWorkload:
+        """``ContractWorkload.of`` ``schema()``'s one workload."""
         schema = self.schema()
-        return TrialRequest.of_workload(
-            str(op_dir(self.contract.op_package) / schema.relative_path()),
-            schema,
-            self.contract,
-            schema.workloads[0],
-            thresholds={},
-            incumbent=None,
-        )
+        return ContractWorkload.of(schema, schema.workloads[0].axes)
 
     def inputs(self, input_set: str = "numeric/0") -> dict[str, Any]:
         """The row-major inputs of ``input_set`` drawn on the CPU (``row_major_inputs``)."""
-        request = self.request
+        request = self.contract_workload
         return semantics.row_major_inputs(
             request.schema_json,
             request.workload_json,
@@ -272,8 +263,8 @@ class OpCase:
         )
 
     def call(self, row_major_args: Mapping[str, Any], device: str = "cpu") -> CallArgs:
-        """The api call of ``row_major_args`` on ``device`` (``TrialRequest.assemble_call``)."""
-        return self.request.assemble_call(row_major_args, device)
+        """The api call of ``row_major_args`` on ``device`` (``ContractWorkload.assemble_call``)."""
+        return self.contract_workload.assemble_call(row_major_args, device)
 
     def reference_outputs(self, row_major_args: Mapping[str, Any]) -> dict[str, Any]:
         """The op's reference of ``row_major_args``, by name: one rank's call."""
@@ -281,7 +272,7 @@ class OpCase:
         # row_major_inputs) when a ranks contract gets a Small Point
         if (n_ranks := self.contract.ranks_at(self.point)) > 1:
             raise NotImplementedError(f"{self.contract.contract_id}: a group of {n_ranks} ranks")
-        call = self.request.reference_call(row_major_args, "cpu")
+        call = self.contract_workload.reference_call(row_major_args, "cpu")
         if self.contract.ranks is None:
             return dict(self.contract.reference.reference(**call))
         return dict(self.contract.reference.reference([call], 0))
@@ -295,7 +286,7 @@ class OpCase:
         return self.contract.reference.check(
             {o: t.cpu() for o, t in actual_outputs.items()},
             {o: t.cpu() for o, t in self.reference_outputs(row_major_args).items()},
-            self.request.schema,
+            self.contract_workload.schema,
         )
 
     def check_backend_matches_reference(self) -> None:
@@ -312,7 +303,7 @@ class OpCase:
             finally:
                 baseline.teardown()
         results = self.compare(outputs, args)
-        schema = self.request.schema
+        schema = self.contract_workload.schema
         integral = {
             o for o in schema.mutable_tensors if semantics.DTYPE_TRAITS[self.point.dtypes[o]].is_integral
         }

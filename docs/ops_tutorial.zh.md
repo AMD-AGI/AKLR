@@ -174,16 +174,16 @@ PYTHONPATH=. python ~/make_gemm_schema.py ~/gemm_kernel
 
 ## 4. 本地验证
 
-验证分两步：audit 检查文件格式、和 contract 是否一致、第 3 步的规则，不需要 GPU；bench 在 GPU 上检查对不对、快不快。先只跑 audit：
+验证有两个 validator，各自独立运行，互不依赖对方的结果：audit 检查文件格式、和 contract 是否一致、第 3 步的规则，不需要 GPU；bench 在 GPU 上检查对不对、快不快。先只跑 audit：
 
 ```bash
-python -m aklr validate --stages audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+python -m aklr validate --validators audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
 再在 MI355X 上跑 audit 和 bench。bench 对每个 workload 生成输入，比较 kernel 和 reference 的输出，再把 kernel 和 baseline（这里是 aiter 的 `gemm_a16w16`）交替运行、计时：
 
 ```bash
-python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+python -m aklr validate --base origin/main --validators audit,bench aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
 ```
 
 `--base origin/main` 表示按新 kernel 的标准判：要达到对 baseline 的门槛（默认 1.05），也不能比 main 上同一目录里已有的 kernel 慢。不加的话门槛会松一些，本地过了，CI 也可能不过。

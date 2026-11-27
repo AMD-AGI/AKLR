@@ -56,7 +56,7 @@ def _kernel_and_reference(builder_registry, case: OpCase, kernel: dict, args: di
     for name, tensor in outputs.items():
         assert tensor.float().isfinite().all(), name
     on_gpu = {n: v.cuda() if torch.is_tensor(v) else v for n, v in args.items()}
-    expected = contract.reference.reference(**case.request.reference_call(on_gpu, "cuda"))
+    expected = contract.reference.reference(**case.contract_workload.reference_call(on_gpu, "cuda"))
     return outputs, expected
 
 
@@ -64,7 +64,7 @@ def _run(builder_registry, case: OpCase, kernel: dict, args: dict) -> dict:
     """The kernel's outputs and mutable inputs on ``args``, which are finite and pass the contract's compare against
     the reference of ``args``."""
     outputs, expected = _kernel_and_reference(builder_registry, case, kernel, args)
-    assert case.contract.reference.check(outputs, expected, case.request.schema) == {}
+    assert case.contract.reference.check(outputs, expected, case.contract_workload.schema) == {}
     return outputs
 
 
@@ -72,7 +72,7 @@ def _bound_multiples(case: OpCase, outputs: dict, expected: dict) -> dict[str, f
     """Each bounded tensor's largest error against the reference in multiples of its bound, atol + rtol |y| (past 1,
     the contract's compare fails)."""
     multiples = {}
-    for name, spec in case.request.schema.tensors().items():
+    for name, spec in case.contract_workload.schema.tensors().items():
         if not spec.error_bounds:
             continue
         bound = spec.error_bounds[0][1]
