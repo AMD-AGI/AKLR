@@ -3,7 +3,7 @@
 
 import pytest
 
-from aklr.core.platform.env import ENV_DISABLE, RuntimeEnv
+from aklr.core.platform.env import ENV_DISABLE, ENV_FLYDSL_FASTCALL, RuntimeEnv
 
 
 class TestRuntimeEnv:
@@ -15,6 +15,7 @@ class TestRuntimeEnv:
             ("AKLR_EXPORT", "2"),
             ("AKLR_MIN_SPEEDUP", "abc"),
             ("AKLR_MIN_SPEEDUP", "nan"),
+            ("AKLR_FLYDSL_FASTCALL", "yes"),
         ],
     )
     def test_bad_value_raises(self, monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
@@ -29,3 +30,12 @@ class TestRuntimeEnv:
         env = RuntimeEnv()
         assert env.disabled_contracts == {"gemm@1.0", "bmm@1.0"}
         assert not env.is_all_disabled
+
+    @pytest.mark.parametrize(("value", "enabled"), [(None, True), ("1", True), ("0", False)])
+    def test_flydsl_fastcall(self, monkeypatch: pytest.MonkeyPatch, value: str | None, enabled: bool) -> None:
+        """``AKLR_FLYDSL_FASTCALL`` unset or ``1`` enables the fast path, ``0`` disables it."""
+        if value is None:
+            monkeypatch.delenv(ENV_FLYDSL_FASTCALL, raising=False)
+        else:
+            monkeypatch.setenv(ENV_FLYDSL_FASTCALL, value)
+        assert RuntimeEnv().is_flydsl_fastcall_enabled is enabled
