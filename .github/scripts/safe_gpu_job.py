@@ -100,6 +100,8 @@ class Deployment:
                 AKLR_REPO=f"{env['GITHUB_SERVER_URL']}/{env['GITHUB_REPOSITORY']}",
                 AKLR_COMMIT=env["GITHUB_SHA"],
                 AKLR_SCRIPT=base64.b64encode(script.encode()).decode(),
+                # The pod has RESOURCES' 96 CPUs, SGLang binds each GPU to its share of the node's.
+                SGLANG_SET_CPU_AFFINITY="0",
             ),
         )
         self.api("POST", payload=payload)
