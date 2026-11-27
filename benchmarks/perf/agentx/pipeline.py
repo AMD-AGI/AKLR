@@ -156,7 +156,6 @@ def main(argv: list[str] | None = None) -> int:
             root / "plan/manifest.json",
             root / "results",
             root / "site",
-            config=args.config,
             git_dir=args.git_dir,
             baseline_dir=args.baseline_dir,
             baseline_url=args.baseline_url,

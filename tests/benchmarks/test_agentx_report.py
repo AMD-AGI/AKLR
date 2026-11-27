@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import os
+import re
 import shutil
 import subprocess
 from html import escape
@@ -13,7 +15,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from agentx import report_all, serving_config, utils
+from agentx import pipeline, report_all, serving_config, utils
 
 from tests.benchmarks.agentx_results import REPO
 
@@ -276,3 +278,13 @@ def test_outcome_check_follows_the_upload_and_publish_accepts_a_failed_report_jo
     assert "needs.report.outputs.site_ready == 'true'" in publish_condition
     assert "success()" not in publish_condition
     assert "needs.report.result" not in publish_condition
+
+
+def test_the_local_pipeline_passes_the_report_builder_only_what_it_takes():
+    """pipeline's report step calls report_all.build by keyword: one it does not take fails every local pipeline run
+    after its sweep (it passed config after the builder dropped it)."""
+    source = inspect.getsource(pipeline)
+    call = source[source.index("report_all.build(") :]
+    call = call[: call.index("\n        )\n")]
+    passed = re.findall(r"^\s+(\w+)=", call, re.M)
+    assert passed and set(passed) <= set(inspect.signature(report_all.build).parameters)
