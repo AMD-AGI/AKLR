@@ -11,7 +11,7 @@ experts' activations stay unquantized: the scale rounding of their blocks is the
 import torch
 
 from aklr.core.contract.reference import OpReference
-from aklr.plugins.aiter.fused_moe.reference import mxfp4_weight
+from aklr.plugins.aiter.provider.fused_moe.reference import mxfp4_weight
 
 __all__ = ["MinimaxM2Fp8MoeReference", "MinimaxM2Mxfp4MoeReference"]
 

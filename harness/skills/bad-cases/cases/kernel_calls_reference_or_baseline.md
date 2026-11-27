@@ -8,7 +8,7 @@ the baseline, leave them out of the schema's `workloads`; do not hand them to th
 ## Bad case
 
 The FlyDSL kernel for `fused_moe@1.0` at model dim 7168, 385 experts (PR #237) ran its own code up to 70 tokens.
-Above that it imported `fused_moe_baseline` from `aklr.plugins.aiter.fused_moe.baseline` and called it, and its schema listed
+Above that it imported `fused_moe_baseline` from `aklr.plugins.aiter.provider.fused_moe.baseline` and called it, and its schema listed
 workloads up to 224 tokens. When the baselines became classes, the import failed and the runtime could not load
 any kernel.
 

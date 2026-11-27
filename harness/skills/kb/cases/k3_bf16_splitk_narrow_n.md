@@ -19,15 +19,15 @@ measured:
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.114–1.224; 8 of 8 Points at or above AKLR_MIN_SPEEDUP; CI serves 8 of 8 as of #115", gpu: MI355X, workload: "gemm_n2048_k7168 file 2a721151661b6ac1, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.142–1.360; 21 of the 21 Points up to m 256 at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n384_k7168 file f6d4b839f507a44f, m 7, 14, …, 224 (7 × b) and 256", run_ref: "this file's AKLR validate, local, not CI", date: "2026-11-10"}
 sources:
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n144_k7168/f8ab3dbed316f795.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n768_k7168/399cbcd0ea88f335.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1280_k7168/67a621bfd7700a60.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1536_k7168/3710ec19de2ec868.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2112_k7168/8fccc9b8902f6794.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3584_k7168/f3de6a469554a6d5.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1024_k7168/339a1e8f35d37e20.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n144_k7168/f8ab3dbed316f795.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n768_k7168/399cbcd0ea88f335.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1280_k7168/67a621bfd7700a60.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1536_k7168/3710ec19de2ec868.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2112_k7168/8fccc9b8902f6794.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3584_k7168/f3de6a469554a6d5.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k7168/339a1e8f35d37e20.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json
 ---
 
 # bf16 GEMM at N 144–3584, K 7168 (Kimi-K3): split K across workgroups, fold it inside the launch
@@ -42,7 +42,7 @@ The same fold forms at N 6016–8448 and at K 35840 are in [k3_bf16_splitk_wide_
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`,
   the `CompareSpec` defaults), with the fp32 dot-product error bound of `_dot_k()` (`max_split_k` 16; `GEMM` in
-  `aklr/plugins/aiter/gemm/contract.py`). Every fold these kernels run adds its terms in an order fixed by index.
+  `aklr/plugins/aiter/provider/gemm/contract.py`). Every fold these kernels run adds its terms in an order fixed by index.
 - K = 7168 with N = 144, 768, 1280, 1536, 2112 or 3584 (a weight of 2–49 MiB). At m ≤ 112 the output has 9–224
   column tiles for 256 CUs, so K is split across workgroups to fill the device (`../gemm/small_m.md`
   §3, §4; `../gemm/grid_pricing.md` §1, §2).
@@ -232,8 +232,8 @@ Counter-signals:
 AKLR validate (measurement profile 19) on one MI355X at main 0e02a81, not CI: N 1024 1.069–1.466 over aiter, highest
 at m 1 (the GEMV), lowest at m 32 and 128 (1.071, 1.069) *(field, E13)*; N 2048 × K 7168 1.114–1.224, highest at
 m 128 (split across workgroups) *(field, E14)*. Reproduce with `python -m aklr validate` on
-`aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1024_k7168/339a1e8f35d37e20.json` and
-`aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json` (§ Reproduce). To roll back, delete the file: its
+`aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k7168/339a1e8f35d37e20.json` and
+`aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json` (§ Reproduce). To roll back, delete the file: its
 Points are then served by no file, and the caller runs its own path. Roll back N 2048 × K 7168 for a wrong or NaN
 output under a CUDA graph that reuses its workspace.
 
@@ -302,7 +302,7 @@ Counter-signals:
   fold is right only while no leftover word equals this launch's tag. Each 16 B slot carries its own tag, so a
   slot seen half written (new tag, old sums) would be wrong; no test here forces that.
 
-To reproduce: `python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json --base
+To reproduce: `python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json --base
 origin/main` on a branch without the file (§ Reproduce). To roll back, delete the file: its Points go back to aiter.
 
 ## Reproduce
@@ -310,12 +310,12 @@ origin/main` on a branch without the file (§ Reproduce). To roll back, delete t
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root, one schema at a time:
 
 ```
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n144_k7168/f8ab3dbed316f795.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n768_k7168/399cbcd0ea88f335.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1280_k7168/67a621bfd7700a60.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1536_k7168/3710ec19de2ec868.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2112_k7168/8fccc9b8902f6794.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3584_k7168/f3de6a469554a6d5.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n144_k7168/f8ab3dbed316f795.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n768_k7168/399cbcd0ea88f335.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1280_k7168/67a621bfd7700a60.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1536_k7168/3710ec19de2ec868.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2112_k7168/8fccc9b8902f6794.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3584_k7168/f3de6a469554a6d5.json
 ```
 
 The report goes to `aklr_validation/report.md`; this run checks the file, the served numbers are CI's
@@ -351,13 +351,13 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n1536: single-launch fold +33.9–84.9% at m ≤ 112 (recorded); XCD-grouped order + tiles +17.6, 19.2, 3.6, 17.3% at m 893–16384 (recorded); 256 flagged workgroups +4.2–15.6% at m ≤ 112 (recorded); 12-wave split tiles +20.7 / +8.2% at 893 / 2732 (gemm_n1536_k7168)
 - E11 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n2112: pipelined kernel + fold +39.1–82.2% at m ≤ 112 (recorded); reducer workgroups +3.9, 3.7, 4.7, 4.7, 5.1, 6.1, 6.9, 9.8% at m 40–112 (recorded); split-major order +22.8% at 893; per-XCD tiles +7.3, 18.1, 4.4% at 2732, 9397, 16384 (recorded); larger tiles +8.3 / +10.5% at 9397 / 16384 (gemm_n2112_k7168)
 - E12 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n3584: K-split kernel +15.1–76.1% (recorded); reduce-scatter +4.6, 1.4, 2.0, 2.7, 1.5, 2.1, 7.8, 11.9, 11.3% at m 21–98; `nt` B + A first +2.9–6.4% (recorded); columns over waves +2.7–4.5% at m 21–98 (recorded); whole-line planes +0.3–1.4%; all off +23.2–125.2% (gemm_n3584_k7168)
-- S1 aklr/plugins/aiter/gemm/contract.py:95 `_dot_k()` (fp32, `max_split_k` 16) on `GEMM` at :128; `_SLACK`, `_SQRT_LENGTH_MULTIPLE`, `_CONSTANT_MULTIPLE` at AMD-AGI/AKLR@8f6812f:aklr/core/contract/semantics/_compare.py:331-333 (removed with `DotProductBound`)
-- S2 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n144_k7168/f8ab3dbed316f795.json#kernel.py:25 the NaN-pattern MAGIC; agent-scope atomic flag store and poll at :70 and :82; `_CONFIG` at :102; `_LARGE` at :679; unbounded polls at :355 and :597; co-residency assert at :189
-- S3 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n768_k7168/399cbcd0ea88f335.json#kernel.py:22 `_CONFIGS`; splits per XCD at :163; bounded poll at :232, NaN at :250, flag clear at :259; workspace per call at :391
-- S4 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1280_k7168/67a621bfd7700a60.json#kernel.py:1 docstring; `p24 = ma >= 4` at :1328; operands loaded straight from global at :1364; `_CONFIGS` at :1473; NaN on timeout at :747, :924, :1447
-- S5 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1536_k7168/3710ec19de2ec868.json#kernel.py:21 poll bound "only guards against a hang"; `_config` at :48; dispatch tag at :292; (value, tag) pairs at :493; the fold after the poll loop sums without checking at :596
-- S6 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2112_k7168/8fccc9b8902f6794.json#kernel.py:181 `_count_ready` "this call's tag" over a static `_MAGIC` (:64); bounded polls with NaN at :536, :616, :694; split-major order at :311
-- S7 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3584_k7168/f3de6a469554a6d5.json#kernel.py:29 `CONFIGS`; `TAGGED_PLANES` at :46; plane and flag stores without cache bits, polls with `sc1` (:56, :57); `_pack24` at :102; all splits of a tile on one XCD at :228; polls at :528 and :607, NaN at :537; "clear the tags or flags for the next call" at :641
+- S1 aklr/plugins/aiter/provider/gemm/contract.py:95 `_dot_k()` (fp32, `max_split_k` 16) on `GEMM` at :128; `_SLACK`, `_SQRT_LENGTH_MULTIPLE`, `_CONSTANT_MULTIPLE` at AMD-AGI/AKLR@8f6812f:aklr/core/contract/semantics/_compare.py:331-333 (removed with `DotProductBound`)
+- S2 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n144_k7168/f8ab3dbed316f795.json#kernel.py:25 the NaN-pattern MAGIC; agent-scope atomic flag store and poll at :70 and :82; `_CONFIG` at :102; `_LARGE` at :679; unbounded polls at :355 and :597; co-residency assert at :189
+- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n768_k7168/399cbcd0ea88f335.json#kernel.py:22 `_CONFIGS`; splits per XCD at :163; bounded poll at :232, NaN at :250, flag clear at :259; workspace per call at :391
+- S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1280_k7168/67a621bfd7700a60.json#kernel.py:1 docstring; `p24 = ma >= 4` at :1328; operands loaded straight from global at :1364; `_CONFIGS` at :1473; NaN on timeout at :747, :924, :1447
+- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1536_k7168/3710ec19de2ec868.json#kernel.py:21 poll bound "only guards against a hang"; `_config` at :48; dispatch tag at :292; (value, tag) pairs at :493; the fold after the poll loop sums without checking at :596
+- S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2112_k7168/8fccc9b8902f6794.json#kernel.py:181 `_count_ready` "this call's tag" over a static `_MAGIC` (:64); bounded polls with NaN at :536, :616, :694; split-major order at :311
+- S7 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3584_k7168/f3de6a469554a6d5.json#kernel.py:29 `CONFIGS`; `TAGGED_PLANES` at :46; plane and flag stores without cache bits, polls with `sc1` (:56, :57); `_pack24` at :102; all splits of a tile on one XCD at :228; polls at :528 and :607, NaN at :537; "clear the tags or flags for the next call" at :641
 - E13 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate at 0e02a81, measurement profile 19: one-sided lower bound of the aiter / kernel time ratio over 16 rounds of CUDA-graph replays with L2 flushed before each call, one MI355X, aiter 0.1.21.dev66+gdbd8bf5bd] 339a1e8f35d37e20, measured as its predecessor, whose one difference was `torch.cuda.current_stream()` without `a.device`: 1.466, 1.323, 1.305, 1.203, 1.225, 1.071, 1.129, 1.069 at m 1, 2, 4, 8, 16, 32, 64, 128; accuracy passed (gemm_n1024_k7168)
 - E14 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the ruler of E13] 2a721151661b6ac1: 1.183, 1.184, 1.199, 1.159, 1.114, 1.180, 1.154, 1.224 at m 1, 2, 4, 8, 16, 32, 64, 128; accuracy passed (gemm_n2048_k7168)
 - E15 [2026-11, gfx950, FlyDSL 0.3.2, N=20, eager and op-level CUDA-graph stress on one MI355X, main 0e02a81 with each schema, each try compared byte for byte with an eager call alone] 339a1e8f35d37e20 (its predecessor, as in E13) and 2a721151661b6ac1, every listed Point: the forge driver's conditions (streams limited to 16 and 64 CUs; a second concurrent call on the same inputs) and one captured graph replayed on the same inputs, 20 tries each; one graph replayed 24 times with three AKLR input sets rotated into its buffers; two calls at once on two streams with different inputs, unrestricted and both on the same 64 CUs, 20 tries each: 0 tries differ
@@ -365,13 +365,13 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E17 [2026-11, gfx950, FlyDSL 0.3.2, N=7, AKLR `bench_cudagraph` with L2 flushed before each call, medians of 7 readings] N 1024 × K 7168 ring: m 4 rotated starts (multipliers 1, 3, 5, 9, 13 and two other forms) 5.27–5.34 against 5.246 µs unrotated; m 8 first form 5.86–6.01 against 5.985 unrotated, best rotation (1, 8) 5.856 against the unrotated 4-wave, 4-column, 6-slot ring 5.793
 - E18 [2026-11, gfx950, FlyDSL 0.3.2, N=5, AKLR `bench_cudagraph` with L2 flushed before every call, median of 5 readings, one measurement per configuration] N 2048 × K 7168 m 8: split 4 across workgroups 7.71 against the whole K in one workgroup 7.00 µs
 - E19 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI perf runs; measurement profile 19 for #102] Points at or above 1.03 as of #102 (6d7cfec, CI run 42549655045): n144 17 of 17, n768 11 of 11, n1536 15 of 17 (not m 9397, 16384), n2112 15 of 17 (not m 9397, 16384), n3584 11 of 11; n1280 14 of 15 (not m 9397) from d908d01 (#71, CI run 42000899019), which #102 left unchanged (each schema's `workloads` at 6d7cfec)
-- S8 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1024_k7168/339a1e8f35d37e20.json#kernel.py:24 `_build_gemv_launcher` (loads issued at :51-56, butterfly at :64-71); `_build_skw` at :102 (`ROT` at :200-202, fold at :271-292); `_SKW_CONFIG` at :304; preload hint and its comment at :313-315; `torch.matmul` fallback at :345
-- S9 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json#kernel.py:301 `_compile_skw_sk`: XCD numbering at :346-352, plane store `sc0 sc1` at :394, `vmcnt(0)` at :395, tag at :397-405, slot store at :408, `vmcnt(0)` at :409, slot loads at :410-415, `readfirstlane` at :422, fold in split order at :368-381; `_compile_skw_av` at :229; `_CONFIGS` and `_SK_CONFIGS` at :442 and :450; `torch.empty` per call at :467
+- S8 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k7168/339a1e8f35d37e20.json#kernel.py:24 `_build_gemv_launcher` (loads issued at :51-56, butterfly at :64-71); `_build_skw` at :102 (`ROT` at :200-202, fold at :271-292); `_SKW_CONFIG` at :304; preload hint and its comment at :313-315; `torch.matmul` fallback at :345
+- S9 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json#kernel.py:301 `_compile_skw_sk`: XCD numbering at :346-352, plane store `sc0 sc1` at :394, `vmcnt(0)` at :395, tag at :397-405, slot store at :408, `vmcnt(0)` at :409, slot loads at :410-415, `readfirstlane` at :422, fold in split order at :368-381; `_compile_skw_av` at :229; `_CONFIGS` and `_SK_CONFIGS` at :442 and :450; `torch.empty` per call at :467
 - E20 [2026-11, gfx950, FlyDSL 0.3.2, N=3–4 pairs, forge-loop paired keep gate on AKLR's graph timer, each kept round timed beside the round before it] gemm_n384_k7168, per Point at m 1, 2, 4, 8, 16, 32, 64, 128, 256: the port of N 1024's file with narrowed tiles, over the starting `torch.matmul`: 2.023, 1.973, 1.921, 1.790, 2.301, 2.220, 1.487, 1.535, 1.161; the XCD-blocked order at m 64–256 and 16×2 tiles at m 8: 1.014, 1.011, 1.001, 1.076, 1.000, 1.000, 1.025, 1.040, 1.172; the kernarg preload: 1.004, 1.009, 1.003, 1.003, 1.014, 1.014, 1.013, 1.006, 1.006; the split across workgroups at m 256: 0.981, 0.991, 1.000, 1.001, 1.001, 1.003, 1.001, 1.000, 1.114
 - E21 [2026-11, gfx950, FlyDSL 0.3.2, N=2–3 readings per arm, each a median of 5 calls of AKLR `bench_cudagraph` with L2 flushed before every call, interleaved with the kept kernel] gemm_n384_k7168 m 256: the kept whole-K path (`XG` 2) 9.44–9.47 µs; split 4 across workgroups, 32×64 tiles, 2 ring slots, `XG` 4: 8.48–8.50; with 3 slots, `XG` 4 / 8 (2 × 3 / 1 × 6 tiles per XCD): 8.55 / 11.17; without the XCD block (64×32 tiles, three tries), the split at m 256 paired against the kept kernel: 1.025, 1.045, 1.044, each rejected by the keep gate; m 128: the kept whole-K path 6.92–6.95, split 4 with one K slice per XCD on 32×32 tiles 6.43; m 8: the kept ring 4.684 (driver `--bench-mode`); the keep gate's noise floor 0.0043
 - E22 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate measurement profile 19, one MI355X, aiter 0.1.21.dev66+gdbd8bf5bd, each file validated on its own] f6d4b839f507a44f with `--base` main 49de226 at m 7, 14, 21, 28, 35, 42, 49, 56, 70, 84, 98, 112, 126, 140, 154, 168, 182, 196, 210, 224, 256: 1.297, 1.283, 1.285, 1.303, 1.264, 1.142, 1.227, 1.251, 1.237, 1.154, 1.248, 1.260, 1.322, 1.273, 1.236, 1.184, 1.260, 1.225, 1.258, 1.321, 1.360; its predecessor at the campaign's Points (m 1, 2, 4, …, 256, main d7c0a3e): 1.244, 1.250, 1.251, 1.205, 1.269, 1.316, 1.296, 1.327, 1.359; a file built on N 2048's `_compile_skw_sk` at every m, not delivered: 1.245, 1.238, 1.253, 1.247, 1.280, 1.223, 1.224, 1.318, 1.333; all accuracy passed
 - E23 [2026-11, gfx950, FlyDSL 0.3.2, N=1–2 readings per configuration, the run's own timing (timer not recorded)] gemm_n384_k7168 with N 2048's builders ported: `_compile_skw_av` (whole K, 16×8 tiles, 48 workgroups), best of four rows, m 1 / 8: 5.55 / 6.09 µs; `_compile_skw_sk`, one wave per workgroup, split 8 on 16×16 tiles (192 workgroups), 14 ring slots: m 1 4.38 and 4.44, m 8 4.56; split 7, 16 slots: 4.41 / 4.50
-- S10 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json#kernel.py:41 `_build_skw`, its XCD-blocked order at :114; `_build_sk` at :308: tile count from the row, `m <= MT * TM`, at :321, XCD block at :363, tag at :481, slot stores `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509, output store where every tag matched at :545; `_SK_CONFIG` and `_SKW_CONFIG` at :560 and :564; kernarg preload at :585; `torch.empty` per call at :617; `torch.matmul` for any other m at :634
+- S10 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json#kernel.py:41 `_build_skw`, its XCD-blocked order at :114; `_build_sk` at :308: tile count from the row, `m <= MT * TM`, at :321, XCD block at :363, tag at :481, slot stores `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509, output store where every tag matched at :545; `_SK_CONFIG` and `_SKW_CONFIG` at :560 and :564; kernarg preload at :585; `torch.empty` per call at :617; `torch.matmul` for any other m at :634
 - E24 [2026-11, gfx950, FlyDSL 0.3.2, N=3–24 (the driver's 3 tries per `--stress` condition, 24 graph replays, 20 tries per concurrent condition); each byte-compared with the call alone on AKLR's input sets] f6d4b839f507a44f at all 21 Points: the forge driver's `--stress` passed; one captured graph replayed 24 times with three input sets (outputs differ between sets) rotated into its buffers, 0 differ; two calls at once on two streams with different inputs, unrestricted and both on the same first 64 CUs, 20 tries each, 0 differ
 - E25 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate measurement profile 19, local, each file validated on its own, no `--base`] rows of the same kernel file at the 21 Points: 120 workgroups at m 35, 70, 140, 154 (8-row × 16, 16×16, 32×16, 32×16 tiles): 1.069, 1.132, 1.067, 1.002 (0.995 with `--base`); 216–240 workgroups (8-row × 8, 8-row × 16, 16×16, 16×16): 1.262, 1.240, 1.255, 1.227; m 168, 182, 196, 210, 224 with 32×16 whole-K tiles (144–168 workgroups): 1.080, 1.106, 1.095, 1.105, 1.077; on m 256's split grid: 1.191, 1.262, 1.227, 1.257, 1.330
 - E26 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=20, AKLR `bench_cudagraph` with L2 flushed, arms in random order] n1280 with the owner + tail split off (`SK_G` and `SK_A` 0 in the m 2732 row of `_CONFIGS`) against the delivered file: m 16384 time ratio 0.999 (95% interval 0.998–1.000), the same final ISA and bitwise-identical output (gemm_n1280_k7168)

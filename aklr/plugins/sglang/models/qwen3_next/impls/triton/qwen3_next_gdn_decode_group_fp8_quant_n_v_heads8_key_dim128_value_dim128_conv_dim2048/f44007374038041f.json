@@ -216,8 +216,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.478,
-      "microseconds": 8.64
+      "speedup": 2.451,
+      "microseconds": 8.83
     },
     {
       "axes": {
@@ -229,7 +229,7 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.432,
+      "speedup": 2.453,
       "microseconds": 8.91
     },
     {
@@ -242,8 +242,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.437,
-      "microseconds": 9.01
+      "speedup": 2.452,
+      "microseconds": 8.89
     },
     {
       "axes": {
@@ -255,8 +255,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.461,
-      "microseconds": 9.02
+      "speedup": 2.464,
+      "microseconds": 8.95
     },
     {
       "axes": {
@@ -268,8 +268,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 3.182,
-      "microseconds": 7.47
+      "speedup": 3.19,
+      "microseconds": 7.42
     },
     {
       "axes": {
@@ -281,8 +281,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 3.183,
-      "microseconds": 8.39
+      "speedup": 3.239,
+      "microseconds": 8.28
     },
     {
       "axes": {
@@ -294,8 +294,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.371,
-      "microseconds": 12.7
+      "speedup": 2.396,
+      "microseconds": 12.6
     },
     {
       "axes": {
@@ -307,8 +307,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.778,
-      "microseconds": 24.9
+      "speedup": 1.782,
+      "microseconds": 24.8
     },
     {
       "axes": {
@@ -320,8 +320,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.446,
-      "microseconds": 45.3
+      "speedup": 1.447,
+      "microseconds": 45.2
     }
   ],
   "layout_variants": {

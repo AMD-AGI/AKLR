@@ -126,4 +126,4 @@ goes into the same pull request: apply `$RUN/knowledge_patch/knowledge_patch.dif
 | `$RUN/workspace/kernel.py` | the kernel; `driver.py` beside it is the measurement and the agents cannot edit it |
 | `$RUN/workspace/forge_experiments/` | the dashboard, each round's lesson, `ablation.md`, `finalize.md` |
 | `$RUN/knowledge_patch/` | the proposed skill patch and `distill.md`, its evidence |
-| `aklr/plugins/aiter/<op>/impls/<language>/<name>/<id>.json` | the delivered kernel, written by `publish` |
+| `aklr/plugins/aiter/provider/<op>/impls/<language>/<name>/<id>.json` | the delivered kernel, written by `publish` |

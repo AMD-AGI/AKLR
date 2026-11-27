@@ -3,7 +3,7 @@
 Let KernelForge's agents write and tune the kernel of one AKLR schema, then put the kernel they end with back
 into AKLR.
 
-A schema without a kernel is a problem waiting for one: `aklr/plugins/aiter/<op>/impls/<language>/<name>/*.json` with an
+A schema without a kernel is a problem waiting for one: `aklr/plugins/aiter/provider/<op>/impls/<language>/<name>/*.json` with an
 empty `kernel.sources`. `forge_task` turns it into a task for KernelForge's optimization loop and writes the
 result back. KernelForge does the optimizing, with its own commands; `forge_task` adds only what is AKLR's:
 
@@ -36,7 +36,7 @@ one reviewed commit ── publish ──▶ aklr/plugins/aiter ── aklr vali
 ## Run a campaign
 
 Run every command from the AKLR clone's root. The example optimizes `bmm_n128_k512`; `ls -d
-aklr/plugins/aiter/*/impls/*/*/` lists the schema names.
+aklr/plugins/aiter/provider/*/impls/*/*/` lists the schema names.
 
 **1. Prepare the task.** A few minutes on one GPU; no agent runs yet.
 

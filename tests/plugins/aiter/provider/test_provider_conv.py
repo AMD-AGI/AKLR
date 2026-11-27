@@ -15,11 +15,11 @@ import torch
 
 from aklr.core.runtime.builder import RunnableMetadata
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.aiter.kda_conv.reference import KimiK3KdaConvReference
+from aklr.plugins.aiter.provider.kda_conv.reference import KimiK3KdaConvReference
 
 provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
-conv = importlib.import_module("aklr.plugins.aiter.provider.conv")
+conv = importlib.import_module("aklr.plugins.aiter.provider.kda_conv.selector")
 
 BF16, F32, I32 = torch.bfloat16, torch.float32, torch.int32
 KERNEL = RunnableMetadata(

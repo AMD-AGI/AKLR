@@ -150,8 +150,8 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.542,
-      "microseconds": 8.86
+      "speedup": 2.476,
+      "microseconds": 9.05
     }
   ],
   "layout_variants": {

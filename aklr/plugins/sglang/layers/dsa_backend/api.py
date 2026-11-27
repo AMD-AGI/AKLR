@@ -51,29 +51,6 @@ def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_tabl
     )
 
 
-@sglang_route(
-    "sglang.srt.layers.attention.dsa.dsa_indexer.Indexer._get_topk_paged",
-    versions=("0.5.24.dev809",),
-)
-def _get_topk_paged(self, forward_batch, layer_id, q_fp8, *args, **kwargs):
-    """No op: tells AKLR's aiter provider whether the logits this paged top-k asks next are a target
-    verify's, whose rows it scores by request; sglang runs its own top-k. Under decode context parallelism
-    sglang's indexer runs decode and verify alone, and with speculative decoding the target's decode is a
-    verify: speculative_num_draft_tokens rows a request, each passed the request's block table row."""
-    from aklr.plugins.aiter.provider.mla import note_target_verify
-
-    rows, draft_tokens = q_fp8.shape[0], 0
-    if forward_batch.forward_mode.is_target_verify():
-        try:
-            from sglang.srt.runtime_context import get_parallel, get_spec
-        except ImportError:
-            get_parallel = None
-        if get_parallel is not None and get_parallel().attn_dcp_size > 1:
-            draft_tokens = get_spec().speculative_num_draft_tokens or 0
-    note_target_verify(rows if draft_tokens else 0, draft_tokens)
-    return FallbackReason.OUT_OF_CONTRACT
-
-
 # HIP's DSA top-k: sglang turns the v2 paged top-k off there for DSA models
 @sglang_route("sgl_kernel.top_k.fast_topk_transform_fused", versions=("0.5.22", "0.5.23"))
 def _fast_topk_transform_fused(score, lengths, page_table_size_1, cu_seqlens_q, topk, row_starts=None):

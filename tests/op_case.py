@@ -24,7 +24,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
 from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
-from tests.plugins.aiter import cases as ops_cases
+from tests.plugins.aiter.provider import cases as ops_cases
 from tests.plugins.sglang import cases as sglang_cases
 from tests.plugins.vllm import cases as vllm_cases
 
@@ -154,7 +154,7 @@ def _one_rank_group(is_needed: bool):
 
 _NO_OP_KERNEL_SOURCE = "def run(**call): ...\n"  # a schema's kernel no test runs
 
-# every contract's small Points (tests/plugins/aiter/cases.py, tests/plugins/<framework>/cases.py),
+# every contract's small Points (tests/plugins/aiter/provider/cases.py, tests/plugins/<framework>/cases.py),
 # contract order: each contract's base Point first
 _SMALL_POINTS: tuple[PointSpec, ...] = tuple(
     sorted(
