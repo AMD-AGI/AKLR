@@ -1,0 +1,236 @@
+{
+  "schema_version": 5,
+  "name": "fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512",
+  "contract_id": "fused_moe@1.0",
+  "description": "Route each token to its top-k experts, run both projections, combine.",
+  "op_type": "fused_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "Hidden size."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 257,
+      "description": "Local experts on this rank."
+    },
+    "topk": {
+      "type": "const",
+      "value": 9,
+      "description": "Experts per token."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 512,
+      "description": "Expert intermediate size."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 1024,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 192,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 16,
+      "description": "w2 scale columns."
+    }
+  },
+  "attrs": {
+    "activation": "silu",
+    "quant_type": "per_1x32",
+    "doweight_stage1": false,
+    "gate_mode": "separated",
+    "has_expert_mask": false,
+    "act_quant": 4
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per expert."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 256,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -10,
+        "log2_hi": -4
+      },
+      "description": "Per 1 x 32 block of w2."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "shuffled_16x16": {
+        "layouts": {
+          "w1": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "w2": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "w1_scale": {
+            "kind": "e8m0_scales",
+            "block_size": 32,
+            "pad_to": [256, 8],
+            "shuffled": true
+          },
+          "w2_scale": {
+            "kind": "e8m0_scales",
+            "block_size": 32,
+            "pad_to": [256, 8],
+            "shuffled": true
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 3
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bounded"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2",
+      "aiter": ">=0.1.21.dev66"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Sort-free MXFP4 fused MoE for one or two tokens, with fixed-order route reduction.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.expr import gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n# The token's lanes quantize its bf16 activations to MXFP4 in registers, each lane one scale group and so\n# one scaled-MFMA A fragment; the preshuffled weight bytes are the B fragment as stored. Partial sums meet\n# in LDS and are reduced in a fixed order, so the output does not depend on wave timing.\n\nMODEL_DIM = 6144\nINTER = 512\nTOPK = 9\nW1_EXPERT_BYTES = 2 * INTER * MODEL_DIM // 2\nW1S_EXPERT_BYTES = 2 * INTER * (MODEL_DIM // 32)\nW2_EXPERT_BYTES = MODEL_DIM * INTER // 2\nW2S_EXPERT_BYTES = MODEL_DIM * (INTER // 32)\nLOG2E = 1.4426950408889634\nOOB = 0x7FFFFFF0\nFP4 = 4\n\n\ndef _global_ptr(addr_i64, elem_ty):\n    ptr_ty = fx.PointerType.get(elem_ty, address_space=fx.AddressSpace.Global, alignment=4)\n    return fx.inttoptr(ptr_ty, addr_i64)\n\n\ndef _buf_tiles(addr_i64, num_bytes, tile_elems):\n    nb = fx.Int64(num_bytes)\n    view = fx.Tensor(fx.make_view(_global_ptr(addr_i64, T.i32), fx.make_layout(nb // fx.Int64(4), 1)))\n    buf = fx.rocdl.make_buffer_tensor(view, max_size=False, num_records_bytes=nb)\n    return fx.logical_divide(buf, fx.make_layout(tile_elems, 1))\n\n\ndef _load(atom, tiles, n, idx):\n    r = fx.make_rmem_tensor(fx.make_layout(n, 1), fx.Int32)\n    fx.copy(atom, fx.slice(tiles, (None, idx)), r)\n    return r.load()\n\n\ndef _pkmax_u16(a, b):\n    va = fx.Vector.from_elements([a], fx.Int32).bitcast(fx.Uint16)\n    vb = fx.Vector.from_elements([b], fx.Int32).bitcast(fx.Uint16)\n    return fx.Int32(fx.max(va, vb).bitcast(fx.Int32)[0])\n\n\ndef _quant_group(h):\n    \"\"\"32 bf16 in 16 dwords -> (4 dwords of fp4 codes, e8m0 scale as i32).\"\"\"\n    m = h[0] & fx.Int32(0x7FFF7FFF)\n    for j in range_constexpr(1, 16):\n        m = _pkmax_u16(m, h[j] & fx.Int32(0x7FFF7FFF))\n    a = fx.max(fx.Uint32(m & fx.Int32(0xFFFF)), fx.Uint32(m.shrui(fx.Int32(16)) & fx.Int32(0xFFFF)))\n    amax = (fx.Int32(a) << fx.Int32(16)).bitcast(fx.Float32)\n    wi = (amax * fx.Float32(1.0 / 6.0)).bitcast(fx.Int32)\n    bexp = (wi + fx.Int32(0x7FFFFF)).shrui(fx.Int32(23)) & fx.Int32(0xFF)\n    e8 = (fx.Uint32(bexp) < fx.Uint32(254)).select(bexp, fx.Int32(254))\n    qs = (e8 << fx.Int32(23)).bitcast(fx.Float32).ir_value()\n    out = []\n    for d in range_constexpr(4):\n        pk = fx.Int32(0).ir_value()\n        for j in range_constexpr(4):\n            src = fx.Vector.from_elements([h[4 * d + j]], fx.Int32).bitcast(fx.BFloat16).ir_value()\n            pk = rocdl.cvt_scalef32_pk_fp4_bf16(T.i32, pk, src, qs, j)\n        out.append(fx.Int32(pk))\n    return out, e8\n\n\ndef _bf16_bits(x):\n    u = x.bitcast(fx.Int32)\n    u = u + fx.Int32(0x7FFF) + (u.shrui(fx.Int32(16)) & fx.Int32(1))\n    return u.shrui(fx.Int32(16))\n\n\ndef _mfma(a4, b4, acc, sa, opsel_b, sb):\n    return rocdl.mfma_scale_f32_16x16x128_f8f6f4(T.f32x4, [a4, b4, acc, FP4, FP4, 0, sa, opsel_b, sb])\n\n\n@functools.cache\ndef compile_stage1(NW):\n    NCH = MODEL_DIM // 128\n    CPW = NCH // NW\n    assert CPW * NW == NCH and CPW % 2 == 0\n\n    @fx.struct\n    class Shared:\n        acc: fx.Array[fx.Float32, NW * 32, 16]\n\n    @flyc.kernel(name=f\"moe_small_s1_w{NW}\", known_block_size=[64 * NW, 1, 1])\n    def s1(\n        arg_x: fx.Int64,\n        arg_w: fx.Int64,\n        arg_ws: fx.Int64,\n        arg_ids: fx.Int64,\n        arg_inter: fx.Int64,\n        i32_n: fx.Int32,\n    ):\n        lds = fx.SharedAllocator().allocate(Shared).peek().acc.ptr\n        tx = fx.Int32(gpu.thread_id(\"x\"))\n        bx = fx.Int32(gpu.block_id(\"x\"))\n        lane = tx % fx.Int32(64)\n        wave = fx.Int32(rocdl.readfirstlane(T.i32, tx // fx.Int32(64)))\n        route = bx // fx.Int32(INTER // 16)\n        cg = bx % fx.Int32(INTER // 16)\n        tok = route // fx.Int32(TOPK)\n        e = fx.Int32(rocdl.readfirstlane(T.i32, _global_ptr(arg_ids, T.i32)[route]))\n        l16 = lane // fx.Int32(16)\n        lm16 = lane % fx.Int32(16)\n\n        w_tiles = _buf_tiles(arg_w + fx.Int64(e) * fx.Int64(W1_EXPERT_BYTES), W1_EXPERT_BYTES, 4)\n        ws_tiles = _buf_tiles(arg_ws + fx.Int64(e) * fx.Int64(W1S_EXPERT_BYTES), W1S_EXPERT_BYTES, 1)\n        x_tiles = _buf_tiles(arg_x, fx.Int64(i32_n) * fx.Int64(MODEL_DIM * 2), 4)\n        a128 = fx.make_copy_atom(fx.rocdl.BufferCopy128b(2), fx.Int32)\n        x128 = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), fx.Int32)\n        a32 = fx.make_copy_atom(fx.rocdl.BufferCopy32b(), fx.Int32)\n\n        c0 = wave * fx.Int32(CPW)\n        rt_g = cg\n        rt_u = cg + fx.Int32(INTER // 16)\n        r2 = cg % fx.Int32(2)\n        sh = r2 * fx.Int32(8)\n        r32_g = cg // fx.Int32(2)\n        r32_u = r32_g + fx.Int32(INTER // 32)\n        # Weights first: every load of this wave's K slice.\n        bg, bu, sg, su = [], [], [], []\n        for i in range_constexpr(CPW):\n            c = c0 + fx.Int32(i)\n            bg.append(\n                _load(a128, w_tiles, 4, (rt_g * fx.Int32(2 * NCH) + c * fx.Int32(2)) * fx.Int32(32) + lane)\n            )\n            bu.append(\n                _load(a128, w_tiles, 4, (rt_u * fx.Int32(2 * NCH) + c * fx.Int32(2)) * fx.Int32(32) + lane)\n            )\n        for i in range_constexpr(CPW // 2):\n            cp = c0 // fx.Int32(2) + fx.Int32(i)\n            sidx_g = ((r32_g * fx.Int32(NCH // 2) + cp) * fx.Int32(4) + l16) * fx.Int32(16) + lm16\n            sidx_u = ((r32_u * fx.Int32(NCH // 2) + cp) * fx.Int32(4) + l16) * fx.Int32(16) + lm16\n            sg.append(fx.Int32(_load(a32, ws_tiles, 1, sidx_g)[0]).shrui(sh))\n            su.append(fx.Int32(_load(a32, ws_tiles, 1, sidx_u)[0]).shrui(sh))\n        # Activations: lane l%16 == 0 carries the token, K block 4c + l/16.\n        xbase = (lm16 == fx.Int32(0)).select(tok * fx.Int32(MODEL_DIM // 8), fx.Int32(OOB // 16))\n        acc_g = fx.Vector.filled(4, 0.0, fx.Float32)\n        acc_u = fx.Vector.filled(4, 0.0, fx.Float32)\n        for i in range_constexpr(CPW):\n            c = c0 + fx.Int32(i)\n            kb = c * fx.Int32(4) + l16\n            h = []\n            for j in range_constexpr(4):\n                v = _load(x128, x_tiles, 4, xbase + kb * fx.Int32(4) + fx.Int32(j))\n                for q in range_constexpr(4):\n                    h.append(fx.Int32(v[q]))\n            codes, e8 = _quant_group(h)\n            a4 = fx.Vector.from_elements(codes, fx.Int32)\n            acc_g = _mfma(a4, bg[i], acc_g, e8, (i % 2) * 2, sg[i // 2])\n            acc_u = _mfma(a4, bu[i], acc_u, e8, (i % 2) * 2, su[i // 2])\n        if lane < fx.Int32(16):\n            lds[wave * fx.Int32(32) + lane] = fx.Vector(acc_g)[0]\n            lds[wave * fx.Int32(32) + fx.Int32(16) + lane] = fx.Vector(acc_u)[0]\n        gpu.barrier()\n        if tx < fx.Int32(8):\n            bits = []\n            for j in range_constexpr(2):\n                col = tx * fx.Int32(2) + fx.Int32(j)\n                g = lds[col]\n                u = lds[fx.Int32(16) + col]\n                for w in range_constexpr(1, NW):\n                    g = g + lds[fx.Int32(w * 32) + col]\n                    u = u + lds[fx.Int32(w * 32 + 16) + col]\n                ex = fx.Float32(rocdl.exp2(T.f32, (g * fx.Float32(-LOG2E)).ir_value()))\n                sig = fx.Float32(rocdl.rcp(T.f32, fx.Float32(1.0) + ex))\n                bits.append(_bf16_bits(g * sig * u))\n            packed = bits[0] | (bits[1] << fx.Int32(16))\n            _global_ptr(arg_inter, T.i32)[route * fx.Int32(INTER // 2) + cg * fx.Int32(8) + tx] = packed\n\n    @flyc.jit\n    def launch(\n        arg_x: fx.Int64,\n        arg_w: fx.Int64,\n        arg_ws: fx.Int64,\n        arg_ids: fx.Int64,\n        arg_inter: fx.Int64,\n        i32_n: fx.Int32,\n        i32_grid: fx.Int32,\n        stream: fx.Stream,\n    ):\n        s1(arg_x, arg_w, arg_ws, arg_ids, arg_inter, i32_n).launch(\n            grid=(fx.Int64(i32_grid), 1, 1), block=(64 * NW, 1, 1), stream=stream\n        )\n\n    return launch\n\n\n@functools.cache\ndef compile_stage2():\n    NCH = INTER // 128\n    NRB = MODEL_DIM // 32\n\n    @fx.struct\n    class Shared:\n        acc: fx.Array[fx.Float32, TOPK * 32, 16]\n\n    @flyc.kernel(name=\"moe_small_s2\", known_block_size=[64 * TOPK, 1, 1])\n    def s2(\n        arg_inter: fx.Int64,\n        arg_w: fx.Int64,\n        arg_ws: fx.Int64,\n        arg_ids: fx.Int64,\n        arg_tw: fx.Int64,\n        arg_out: fx.Int64,\n        i32_n: fx.Int32,\n    ):\n        lds = fx.SharedAllocator().allocate(Shared).peek().acc.ptr\n        tx = fx.Int32(gpu.thread_id(\"x\"))\n        bx = fx.Int32(gpu.block_id(\"x\"))\n        lane = tx % fx.Int32(64)\n        r = fx.Int32(rocdl.readfirstlane(T.i32, tx // fx.Int32(64)))\n        tok = bx // fx.Int32(NRB)\n        rb = bx % fx.Int32(NRB)\n        route = tok * fx.Int32(TOPK) + r\n        e = fx.Int32(rocdl.readfirstlane(T.i32, _global_ptr(arg_ids, T.i32)[route]))\n        l16 = lane // fx.Int32(16)\n        lm16 = lane % fx.Int32(16)\n\n        w_tiles = _buf_tiles(arg_w + fx.Int64(e) * fx.Int64(W2_EXPERT_BYTES), W2_EXPERT_BYTES, 4)\n        ws_tiles = _buf_tiles(arg_ws + fx.Int64(e) * fx.Int64(W2S_EXPERT_BYTES), W2S_EXPERT_BYTES, 1)\n        h_tiles = _buf_tiles(arg_inter, fx.Int64(i32_n) * fx.Int64(TOPK * INTER * 2), 4)\n        a128 = fx.make_copy_atom(fx.rocdl.BufferCopy128b(2), fx.Int32)\n        h128 = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), fx.Int32)\n        a32 = fx.make_copy_atom(fx.rocdl.BufferCopy32b(), fx.Int32)\n\n        b = [[None] * NCH for _ in range(2)]\n        for t in range_constexpr(2):\n            rt = rb * fx.Int32(2) + fx.Int32(t)\n            for c in range_constexpr(NCH):\n                b[t][c] = _load(\n                    a128, w_tiles, 4, (rt * fx.Int32(2 * NCH) + fx.Int32(2 * c)) * fx.Int32(32) + lane\n                )\n        s = []\n        for cp in range_constexpr(NCH // 2):\n            sidx = ((rb * fx.Int32(NCH // 2) + fx.Int32(cp)) * fx.Int32(4) + l16) * fx.Int32(16) + lm16\n            s.append(fx.Int32(_load(a32, ws_tiles, 1, sidx)[0]))\n        wt = fx.Float32(_global_ptr(arg_tw, T.f32)[route])\n        hbase = (lm16 == fx.Int32(0)).select(route * fx.Int32(INTER * 2 // 16), fx.Int32(OOB // 16))\n        acc = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range(2)]\n        for c in range_constexpr(NCH):\n            kb = fx.Int32(4 * c) + l16\n            h = []\n            for j in range_constexpr(4):\n                v = _load(h128, h_tiles, 4, hbase + kb * fx.Int32(4) + fx.Int32(j))\n                for q in range_constexpr(4):\n                    h.append(fx.Int32(v[q]))\n            codes, e8 = _quant_group(h)\n            a4 = fx.Vector.from_elements(codes, fx.Int32)\n            for t in range_constexpr(2):\n                acc[t] = _mfma(a4, b[t][c], acc[t], e8, (c % 2) * 2 + t, s[c // 2])\n        if lane < fx.Int32(16):\n            for t in range_constexpr(2):\n                lds[r * fx.Int32(32) + fx.Int32(16 * t) + lane] = fx.Vector(acc[t])[0] * wt\n        gpu.barrier()\n        if tx < fx.Int32(16):\n            bits = []\n            for j in range_constexpr(2):\n                col = tx * fx.Int32(2) + fx.Int32(j)\n                acc_s = lds[col]\n                for rr in range_constexpr(1, TOPK):\n                    acc_s = acc_s + lds[fx.Int32(rr * 32) + col]\n                bits.append(_bf16_bits(acc_s))\n            packed = bits[0] | (bits[1] << fx.Int32(16))\n            _global_ptr(arg_out, T.i32)[tok * fx.Int32(MODEL_DIM // 2) + rb * fx.Int32(16) + tx] = packed\n\n    @flyc.jit\n    def launch(\n        arg_inter: fx.Int64,\n        arg_w: fx.Int64,\n        arg_ws: fx.Int64,\n        arg_ids: fx.Int64,\n        arg_tw: fx.Int64,\n        arg_out: fx.Int64,\n        i32_n: fx.Int32,\n        i32_grid: fx.Int32,\n        stream: fx.Stream,\n    ):\n        s2(arg_inter, arg_w, arg_ws, arg_ids, arg_tw, arg_out, i32_n).launch(\n            grid=(fx.Int64(i32_grid), 1, 1), block=(64 * TOPK, 1, 1), stream=stream\n        )\n\n    return launch\n\n\n# Largest token count served by the sort-free two-launch path.\n_SMALL_N_MAX = 2\n_S1_WAVES = 8\n\n\n@functools.cache\ndef _plan(M, topk, w1_shape, w2_shape, dtype, w1_dtype, w1_shuffled, w2_shuffled):\n    fp4 = getattr(torch, \"float4_e2m1fn_x2\", torch.uint8)\n    if (\n        M not in (1, 2)\n        or topk != TOPK\n        or w1_shape != (257, 2 * INTER, MODEL_DIM // 2)\n        or w2_shape != (257, MODEL_DIM, INTER // 2)\n        or dtype != torch.bfloat16\n        or w1_dtype not in (fp4, torch.uint8)\n        or not (w1_shuffled and w2_shuffled)\n    ):\n        return None\n    return {\n        \"small\": True,\n        \"model_dim\": MODEL_DIM,\n        \"s1\": compile_stage1(_S1_WAVES),\n        \"s2\": compile_stage2(),\n    }\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    activation,\n    quant_type,\n    doweight_stage1,\n    gate_mode,\n    act_quant,\n    expert_mask,\n    beta,\n    linear_beta,\n    out_dtype,\n    out,\n):\n    M, topk = topk_ids.shape\n    dtype = hidden_states.dtype if out_dtype is None else out_dtype\n    plan = None\n    if (\n        activation == \"silu\"\n        and quant_type == \"per_1x32\"\n        and not doweight_stage1\n        and gate_mode == \"separated\"\n        and act_quant == 4\n        and expert_mask is None\n        and out.dtype == dtype\n        and out.is_contiguous()\n        and hidden_states.is_contiguous()\n        and topk_ids.is_contiguous()\n        and topk_weights.is_contiguous()\n        and topk_ids.dtype == torch.int32\n        and topk_weights.dtype == torch.float32\n    ):\n        plan = _plan(\n            M,\n            topk,\n            tuple(w1.shape),\n            tuple(w2.shape),\n            dtype,\n            w1.dtype,\n            bool(getattr(w1, \"is_shuffled\", False)),\n            bool(getattr(w2, \"is_shuffled\", False)),\n        )\n    if plan is None or out.shape != (M, plan[\"model_dim\"]):\n        raise RuntimeError(\"unsupported input for the small-token kernel\")\n\n    if plan[\"small\"]:\n        from aiter.ops.flydsl.moe_kernels import _run_compiled\n\n        stream = torch.cuda.current_stream(out.device)\n        inter = torch.empty(M * topk, INTER, dtype=torch.bfloat16, device=out.device)\n        _run_compiled(\n            plan[\"s1\"],\n            (\n                hidden_states.data_ptr(),\n                w1.data_ptr(),\n                w1_scale.data_ptr(),\n                topk_ids.data_ptr(),\n                inter.data_ptr(),\n                M,\n                M * topk * (INTER // 16),\n                stream,\n            ),\n        )\n        _run_compiled(\n            plan[\"s2\"],\n            (\n                inter.data_ptr(),\n                w2.data_ptr(),\n                w2_scale.data_ptr(),\n                topk_ids.data_ptr(),\n                topk_weights.data_ptr(),\n                out.data_ptr(),\n                M,\n                M * (MODEL_DIM // 32),\n                stream,\n            ),\n        )\n        return\n"
+      }
+    ]
+  }
+}
