@@ -72,7 +72,7 @@ Validation (`python -m aklr validate`) checks each kernel with three validators,
 
 - audit: checks the kernel code against the rules, for example that it keeps no state between calls and does not modify read-only inputs.
 - bench: draws several sets of inputs from the contract, and compares the kernel's results with the reference for correctness and with the baseline for performance. After a PR merges, CI writes these results into its JSON files; at runtime, only kernels that passed and are faster than SGLang are used.
-- verify: compiles each FlyDSL kernel for each workload it serves and has [Volta](https://github.com/francois141/ptx_verifier) run workgroup 0 of each launch symbolically on the compiled ISA. Six rules read that one run:
+- verify: compiles each FlyDSL, Triton/Gluon, HIP and hsaco kernel for each workload it serves, for the schema's target, and has [Volta](https://github.com/francois141/ptx_verifier) run workgroup 0 of each launch symbolically on the compiled ISA. Six rules read that one run:
 
   | rule | rejects |
   |---|---|
@@ -82,6 +82,8 @@ Validation (`python -m aklr validate`) checks each kernel with three validators,
   | VR4 `lds_bounds` | an LDS access outside the workgroup's allocation |
   | VR5 `lds_uninitialized_read` | nothing: an LDS word read before any wave wrote it is listed as unchecked, `uninitialized-read` |
   | VR6 `global_bounds` | a global read or write past the end of the array it indexes |
+
+  The workload's call runs with each kernel launch recorded instead of run: verify takes the compiled ISA (a hsaco kernel's code object, disassembled), the launch's grid, block and arguments, and maps each pointer argument to the call's tensor or the allocation it points into, read when the kernel is launched.
 
   `proved` means Volta's run of workgroup 0 at that workload's arguments ended without the rule's defect; other workgroups, atomics and the values the kernel computes are not checked, and Volta's AMD frontend is experimental. A rejection fails validation. A path a rule cannot decide is listed as unchecked and fails nothing: Volta stops at the first instruction it cannot run, so when a run stops, the rule that names the stop rejects and the other five are unchecked, `aborted`. Three stops are unchecked under every rule. When every conflict Volta lists is one `buffer_load ... lds` instruction against itself (two waves loading the same bytes to one address), VR1 is unchecked, `duplicate-load`. A kernel serving fewer rows than its tile reads LDS rows it never loaded and discards what it computes from them, which Volta cannot tell from a read that misses its barrier, so VR5 never rejects. A global access at an address that is not just past an array (a pointer the launch passes as a plain integer, a read of an output) is one Volta does not model, not a VR6 rejection.
 

@@ -11,7 +11,12 @@ from aklr.core.contract.op import OpContract
 from aklr.core.validation import ValidationScope, VerifyReport, VerifyValidator
 from aklr.core.validation.report import PlatformRecord
 from aklr.core.validation.validators.verify import Compilation
-from tests.op_case import OpCase
+from tests.op_case import (
+    HIP_GEMM_KERNEL_SOURCE,
+    HSACO_GEMM_KERNEL_SOURCE,
+    OpCase,
+    hsaco_gemm_sources,
+)
 
 _PLATFORM = PlatformRecord("gfx950", "MI355X", 1, "7", "2", "3", "0.5")
 _RULES = (
@@ -410,3 +415,177 @@ def test_a_written_report_reads_back(tmp_path, volta):
     written = TypeAdapter(VerifyReport).dump_python(report, mode="json")
     assert written["name"] == "verify"
     assert TypeAdapter(VerifyReport).validate_python(written) == report
+
+
+_TRITON_GEMM_KERNEL_SOURCE = """\
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def gemm(a, b, out, k: tl.constexpr, n: tl.constexpr):
+    row = tl.program_id(0)
+    columns = tl.arange(0, n)
+    depth = tl.arange(0, k)
+    x = tl.load(a + row * k + depth).to(tl.float32)
+    w = tl.load(b + columns[:, None] * k + depth[None, :]).to(tl.float32)
+    tl.store(out + row * n + columns, tl.sum(w * x[None, :], axis=1).to(tl.bfloat16))
+
+
+def run(*, a, b, out, **_):
+    gemm[(a.shape[0],)](a, b, out, k=a.shape[1], n=b.shape[0], num_warps=1)
+"""
+# the Triton gemm also flagging each row it wrote in a uint32 and a bool tensor run() allocates
+_TRITON_FLAGGED_GEMM_KERNEL_SOURCE = """\
+import torch
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def gemm(a, b, out, flags, done, k: tl.constexpr, n: tl.constexpr):
+    row = tl.program_id(0)
+    columns = tl.arange(0, n)
+    depth = tl.arange(0, k)
+    x = tl.load(a + row * k + depth).to(tl.float32)
+    w = tl.load(b + columns[:, None] * k + depth[None, :]).to(tl.float32)
+    tl.store(out + row * n + columns, tl.sum(w * x[None, :], axis=1).to(tl.bfloat16))
+    tl.store(flags + row, 1)
+    tl.store(done + row, True)
+
+
+def run(*, a, b, out, **_):
+    flags = torch.zeros(a.shape[0], dtype=torch.uint32, device=a.device)
+    done = torch.zeros(a.shape[0], dtype=torch.bool, device=a.device)
+    gemm[(a.shape[0],)](a, b, out, flags, done, k=a.shape[1], n=b.shape[0], num_warps=1)
+"""
+# the gemm case's arrays: a is m=4 x k=128, b n=16 x k=128, out m x n, all bf16
+_GEMM_ARRAYS = [
+    {"name": "a", "kind": "in", "dtype": "bf16", "shape": [4, 128]},
+    {"name": "b", "kind": "in", "dtype": "bf16", "shape": [16, 128]},
+    {"name": "out", "kind": "out", "dtype": "bf16", "shape": [4, 16]},
+]
+_GEMM_POINTERS = [{"ptr": "a"}, {"ptr": "b"}, {"ptr": "out"}]
+# a templated kernel staging a @ b.T in a float scratch tensor run() allocates, and a second kernel
+# converting it to out
+_HIP_STAGED_GEMM_KERNEL_SOURCE = """\
+#include <ATen/hip/HIPContext.h>
+#include <ATen/ops/empty.h>
+#include <hip/hip_bf16.h>
+#include <optional>
+#include <torch/library.h>
+
+namespace staged {
+
+template <int K>
+__global__ void accumulate(const __hip_bfloat16 *a, const __hip_bfloat16 *b, float *scratch) {
+    float acc = 0.0f;
+    for (int i = 0; i < K; ++i) {
+        acc += __bfloat162float(a[blockIdx.x * K + i]) * __bfloat162float(b[threadIdx.x * K + i]);
+    }
+    scratch[blockIdx.x * blockDim.x + threadIdx.x] = acc;
+}
+
+} // namespace staged
+
+namespace {
+
+__global__ void convert(const float *scratch, __hip_bfloat16 *out) {
+    out[blockIdx.x * blockDim.x + threadIdx.x] = __float2bfloat16(scratch[blockIdx.x * blockDim.x + threadIdx.x]);
+}
+
+void run(const at::Tensor &a, const at::Tensor &b, bool trans_b,
+         const std::optional<at::Tensor> &bias, at::ScalarType out_dtype, at::Tensor &out) {
+    auto scratch = at::empty({a.size(0), b.size(0)}, a.options().dtype(at::kFloat));
+    auto stream = at::hip::getCurrentHIPStream();
+    staged::accumulate<128><<<a.size(0), b.size(0), 0, stream>>>(
+        static_cast<const __hip_bfloat16 *>(a.data_ptr()), static_cast<const __hip_bfloat16 *>(b.data_ptr()),
+        static_cast<float *>(scratch.data_ptr()));
+    convert<<<a.size(0), b.size(0), 0, stream>>>(
+        static_cast<const float *>(scratch.data_ptr()), static_cast<__hip_bfloat16 *>(out.data_ptr()));
+}
+
+} // namespace
+
+#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)
+TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
+    m.def("run(Tensor a, Tensor b, bool trans_b, Tensor? bias, ScalarType out_dtype, "
+          "Tensor(a!) out) -> ()",
+          &run);
+}
+"""
+
+
+def _compilations(tmp_path: Path, language: str, source: str, other_sources=None) -> list[Compilation]:
+    """The gemm case's one workload compiled by the ``language`` kernel ``source``: its launches."""
+    schema = OpCase.of("gemm@1.0").schema(source, language=language, other_sources=other_sources)
+    schema_path = f"aklr/plugins/aiter/provider/gemm/impls/{language}/{schema.name}/{0:0>16}.json"
+    (tmp_path / schema_path).parent.mkdir(parents=True)
+    (tmp_path / schema_path).write_text(schema.schema_text(), encoding="utf-8")
+    compilations = Compilation.of_schema(tmp_path, schema_path, schema, tmp_path / "compiled", 0, 1, None)
+    for compilation in compilations:
+        assert compilation.failure == ""
+        assert compilation.axes == {"m": 4}
+        assert f".amdhsa_kernel {compilation.kernel}\n" in Path(compilation.isa_path).read_text(
+            encoding="utf-8"
+        )
+    return compilations
+
+
+def _compiled(tmp_path: Path, language: str, source: str, other_sources=None) -> Compilation:
+    """The gemm case's one workload compiled by the ``language`` kernel ``source``: its one launch."""
+    (compilation,) = _compilations(tmp_path, language, source, other_sources)
+    return compilation
+
+
+@pytest.mark.gpu
+def test_a_triton_kernel_compiles_to_its_isa_and_launch(tmp_path):
+    compilation = _compiled(tmp_path, "triton", _TRITON_GEMM_KERNEL_SOURCE)
+    assert compilation.kernel == "gemm"
+    launch = compilation.launch
+    assert (launch["grid"], launch["block"]) == ([4, 1, 1], [64, 1, 1])
+    assert launch["arrays"] == _GEMM_ARRAYS
+    assert launch["params"][:3] == _GEMM_POINTERS
+    assert set(map(str, launch["params"][3:])) == {"{'int': 0}"}
+
+
+@pytest.mark.gpu
+def test_a_triton_kernel_writing_unsigned_and_bool_tensors_lays_them_out(tmp_path):
+    launch = _compiled(tmp_path, "triton", _TRITON_FLAGGED_GEMM_KERNEL_SOURCE).launch
+    assert launch["arrays"][3:] == [
+        {"name": "workspace24", "kind": "out", "dtype": "i32", "shape": [4]},
+        {"name": "workspace32", "kind": "out", "dtype": "u8", "shape": [4]},
+    ]
+    assert launch["params"][3:5] == [{"ptr": "workspace24"}, {"ptr": "workspace32"}]
+
+
+@pytest.mark.gpu
+def test_a_hip_kernel_compiles_to_its_isa_and_launch(tmp_path):
+    compilation = _compiled(tmp_path, "hip", HIP_GEMM_KERNEL_SOURCE)
+    assert "gemm" in compilation.kernel
+    launch = compilation.launch
+    assert (launch["grid"], launch["block"], launch["dynamic_shared_bytes"]) == ([4, 1, 1], [16, 1, 1], 0)
+    assert launch["arrays"] == _GEMM_ARRAYS
+    assert launch["params"][:4] == [*_GEMM_POINTERS, {"int": 128}]
+
+
+@pytest.mark.gpu
+def test_a_templated_hip_kernel_reads_a_scratch_tensor_the_call_frees(tmp_path):
+    accumulate, convert = _compilations(tmp_path, "hip", _HIP_STAGED_GEMM_KERNEL_SOURCE)
+    assert "accumulate" in accumulate.kernel
+    assert "convert" in convert.kernel
+    scratch = {"name": "workspace16", "kind": "out", "dtype": "i32", "shape": [64]}
+    assert accumulate.launch["arrays"] == [*_GEMM_ARRAYS[:2], scratch]
+    assert accumulate.launch["params"][:3] == [{"ptr": "a"}, {"ptr": "b"}, {"ptr": "workspace16"}]
+    assert convert.launch["arrays"] == [{**scratch, "name": "workspace0", "kind": "in"}, _GEMM_ARRAYS[2]]
+    assert convert.launch["params"][:2] == [{"ptr": "workspace0"}, {"ptr": "out"}]
+
+
+@pytest.mark.gpu
+def test_an_hsaco_kernel_compiles_to_its_isa_and_launch(tmp_path):
+    compilation = _compiled(tmp_path, "hsaco", HSACO_GEMM_KERNEL_SOURCE, hsaco_gemm_sources())
+    assert compilation.kernel == "gemm"
+    launch = compilation.launch
+    assert (launch["grid"], launch["block"], launch["dynamic_shared_bytes"]) == ([4, 1, 1], [16, 1, 1], 0)
+    assert launch["arrays"] == _GEMM_ARRAYS
+    assert launch["params"][:5] == [*_GEMM_POINTERS, {"int": 16}, {"int": 128}]

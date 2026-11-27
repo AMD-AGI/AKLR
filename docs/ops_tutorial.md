@@ -174,7 +174,7 @@ The file name `<uuid>` comes from the file's content: after a change to the kern
 
 ## 4. Validate locally
 
-Validation has three validators, each run on its own, whatever the others report: audit checks the file's format, its agreement with the contract and the rules of step 3, without a GPU; bench checks on a GPU that the kernel is correct and fast; verify compiles each FlyDSL kernel and has Volta look in the compiled ISA for LDS races, barrier misuse, reads of pending loads and out-of-bounds accesses. First the audit alone:
+Validation has three validators, each run on its own, whatever the others report: audit checks the file's format, its agreement with the contract and the rules of step 3, without a GPU; bench checks on a GPU that the kernel is correct and fast; verify compiles each FlyDSL, Triton/Gluon, HIP and hsaco kernel and has Volta look in the compiled ISA for LDS races, barrier misuse, reads of pending loads and out-of-bounds accesses. First the audit alone:
 
 ```bash
 python -m aklr validate --validators audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
