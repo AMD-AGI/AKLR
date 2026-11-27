@@ -97,7 +97,11 @@ def test_every_route_takes_its_targets_parameters(target, versions, route):
     if not hook.sglang_version_matches(installed_sglang(), versions):
         pytest.skip("declared for another sglang, which holds its target")
     if not target.startswith("aiter."):
-        assert parameters(route) == parameters(pkgutil.resolve_name(target))
+        taken = parameters(route)
+        if route in hook._AROUND:
+            assert taken[0][0] == "orig", taken[0]
+            taken = taken[1:]
+        assert taken == parameters(pkgutil.resolve_name(target))
         return
     # A newer aiter than the installed one adds parameters at the end, which the route takes too.
     aiters = pkgutil.resolve_name(target)
@@ -145,8 +149,8 @@ def hooks(monkeypatch):
     return registered
 
 
-def declare(route):
-    hook.sglang_route(TARGET, versions=(INSTALLED,))(route)
+def declare(route, **kw):
+    hook.sglang_route(TARGET, versions=(INSTALLED,), **kw)(route)
 
 
 def wrapper(hooks):
@@ -186,6 +190,23 @@ def test_trace_names_the_route_and_its_result_once(hooks, monkeypatch, caplog, m
         f"{prefix} result=fallback reason=not_measured",
     ]
     assert all(line.startswith("[aklr plugin] pid=") for line in lines)
+
+
+def test_an_around_route_steps_around_sglangs_own(hooks):
+    """A route that must see what sglang's own call returns -- to compare with it, or to run
+    before and after it -- takes it as its first argument and owns the decision."""
+    declare(lambda orig, x: f"aklr({orig(x)})", around=True)
+    hook.install()
+    assert wrapper(hooks)(original, 1) == "aklr(sglang(1))"
+
+
+def test_an_around_route_is_not_traced_as_a_dispatch(hooks, monkeypatch, caplog):
+    """It is a step of sglang's own call, not an op asked for and served or declined."""
+    monkeypatch.setenv(ENV_TRACE, "all")
+    declare(lambda orig, x: orig(x), around=True)
+    hook.install()
+    assert wrapper(hooks)(original, 1) == "sglang(1)"
+    assert [r.message for r in caplog.records if r.name == "aklr.trace.plugin"] == []
 
 
 def test_a_raising_route_raises(hooks):
