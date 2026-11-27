@@ -18,7 +18,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/quantization/
   - aiter/fused_moe.py
   - aiter/ops/flydsl/
-  - aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
 ---
 
 # MoE in FlyDSL
@@ -96,8 +96,8 @@ for _r in range_constexpr(_NREP):
     if _i < fx.Int32(_MT):
         _lds_atomic_add(cnt_tiles, _tk_regs[_r], 1)
 # f: rank among this expert's items, in item order (g1_fold.py:2145-2160)
-_x = _is_eq(_v, fold_e)          # 1 where this item routes to the block's expert
-_inc2 = _dpp_scan_wave(_x)       # inclusive scan inside the wave, then wave totals through LDS
+_x = _is_eq(_v, fold_e)  # 1 where this item routes to the block's expert
+_inc2 = _dpp_scan_wave(_x)  # inclusive scan inside the wave, then wave totals through LDS
 _d = _base + _p2 + _inc2 - _x - _lo
 ```
 

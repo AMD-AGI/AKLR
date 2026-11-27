@@ -33,6 +33,31 @@ def test_no_two_routes_take_one_target():
     assert targets and len(set(targets)) == len(targets)
 
 
+@pytest.mark.parametrize(
+    ("installed", "supported"),
+    [
+        ("0.5.23", True),
+        ("0.5.23.dev20261120+g28e5763574", True),
+        ("0.5.23.dev20261121+gnew", True),
+        ("0.5.24", True),
+        ("0.5.23.dev20261119", False),
+        ("0.5.22", False),
+    ],
+)
+def test_deepseek_moe_hook_from_minimum_version(monkeypatch, installed, supported):
+    registered = []
+    registry = ModuleType("sglang.srt.plugins.hook_registry")
+    registry.HookType = SimpleNamespace(AROUND="around")
+    registry.HookRegistry = SimpleNamespace(register=lambda *args: registered.append(args))
+    monkeypatch.setitem(sys.modules, registry.__name__, registry)
+    # External distribution metadata and Python resolution, not AKLR routing internals.
+    monkeypatch.setattr(hook, "version", lambda dist: installed)
+    monkeypatch.setattr(pkgutil, "resolve_name", lambda target: original)
+    hook.install()
+    target = "sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal"
+    assert any(name == target for name, _, _ in registered) is supported
+
+
 def installed_sglang():
     try:
         return hook.sglang_version()
@@ -42,7 +67,7 @@ def installed_sglang():
 
 def model_image_only(versions):
     """A route declared only for development builds: a model image's sglang, where it was tested."""
-    return all(Version(v).is_devrelease for v in versions)
+    return all(not v.startswith(("<", ">", "=", "!", "~")) and Version(v).is_devrelease for v in versions)
 
 
 def test_every_route_was_tested_on_the_installed_sglang():
@@ -51,7 +76,7 @@ def test_every_route_was_tested_on_the_installed_sglang():
     untested = [
         target
         for target, versions, _ in DECLARED
-        if installed not in versions and not model_image_only(versions)
+        if not hook.sglang_version_matches(installed, versions) and not model_image_only(versions)
     ]
     assert untested == []
 
@@ -69,7 +94,7 @@ def parameters(fn, *, defaults=True):
 
 @pytest.mark.parametrize(("target", "versions", "route"), DECLARED, ids=[t for t, _, _ in DECLARED])
 def test_every_route_takes_its_targets_parameters(target, versions, route):
-    if installed_sglang() not in versions:
+    if not hook.sglang_version_matches(installed_sglang(), versions):
         pytest.skip("declared for another sglang, which holds its target")
     if not target.startswith("aiter."):
         assert parameters(route) == parameters(pkgutil.resolve_name(target))
@@ -248,7 +273,9 @@ def register_calls(monkeypatch):
     """What register() did, in order."""
     calls = []
     monkeypatch.setattr(plugin, "register_sglang_plugin", lambda: calls.append("aklr starts"))
-    monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.plugins.aiter.gemm", "aklr.plugins.sglang.x.y"))
+    monkeypatch.setattr(
+        plugin, "op_packages", lambda: ("aklr.plugins.aiter.provider.gemm", "aklr.plugins.sglang.x.y")
+    )
     monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
     monkeypatch.setattr(hook, "install", lambda: calls.append("install"))
     return calls

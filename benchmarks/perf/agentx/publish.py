@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MIT
-"""Merge one run's report site into the agentx/ section of the site-data branch, by target."""
+"""Merge one run's report site into the agentx/ section of the site-data branch, by target.
+
+`rerender` rebuilds that section's pages from the results it already holds, with this checkout's code.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +11,31 @@ import shutil
 import sys
 from pathlib import Path
 
+from perf_utils.gh import repo_url
+
 from agentx.model_config import ConfigError, select_runs
-from agentx.report_all import indexed_targets, render_index, source_commits
-from agentx.utils import DEFAULT_CONFIG, SCHEMA, load_config, read_json, target_path, utc_now, write_json
+from agentx.report import COMPARED_BASELINE, write_report
+from agentx.report_all import (
+    baseline_kind,
+    failure_summary,
+    indexed_targets,
+    measured_fields,
+    page_notice,
+    render_index,
+    source_commits,
+    target_key,
+)
+from agentx.utils import (
+    DEFAULT_CONFIG,
+    REPO_ROOT,
+    SCHEMA,
+    load_config,
+    read_json,
+    target_path,
+    utc_now,
+    validated_results,
+    write_json,
+)
 
 SECTION_SCHEMA = 1
 SECTION_TITLE = {"en": "AgentX end-to-end performance", "zh": "AgentX 端到端性能"}
@@ -88,6 +113,50 @@ def merge(site: Path, section: Path, source: dict, *, config: Path | str = DEFAU
     return manifest
 
 
+def rerender(section: Path, *, git_dir: Path = REPO_ROOT) -> dict:
+    """Re-render every target page and the index from the section's own results; no data changes.
+
+    A page keeps the baseline it was published against. An older page that compared with a baseline
+    since replaced by its own run cannot be rebuilt faithfully and is left as it is.
+    """
+    manifest = read_json(section / "manifest.json")
+    if manifest.get("schema") != SCHEMA:
+        raise ValueError(f"site-data/agentx manifest schema {manifest.get('schema')!r} is not {SCHEMA}")
+    url = repo_url()
+    for item in manifest["targets"]:
+        relative = target_path(*target_key(item))
+        item.pop("mode", None)
+        path = section / relative / "results.json"
+        if not item.get("report") or not path.is_file():
+            continue
+        shown = read_json(path)
+        if target_key(shown) != target_key(item):
+            raise ValueError(f"{relative} holds results of another target")
+        view = validated_results(shown)
+        historical = item.get("failure_stage") is not None or item.get("status") == "not-run"
+        baseline = None
+        if not historical:
+            compared = section / relative / COMPARED_BASELINE
+            promoted = section / relative / f"baseline-{baseline_kind(view)}.json"
+            if compared.is_file():
+                baseline = read_json(compared)
+            elif promoted.is_file() and read_json(promoted)["run"].get("id") != view["run"].get("id"):
+                baseline = read_json(promoted)
+            elif (section / relative / "report.json").is_file() and read_json(
+                section / relative / "report.json"
+            ).get("history") is not None:
+                print(f"{relative}: its comparison baseline is no longer stored; kept the existing page")
+                continue
+            item["error"] = failure_summary(view) if item.get("status") != "ok" else None
+        item.update(measured_fields(view, url))
+        write_report(
+            shown, baseline, section / relative, url, git_dir, notice=page_notice(item, shown, historical)
+        )
+    write_json(section / "manifest.json", manifest)
+    (section / "index.html").write_text(render_index(manifest, home="../index.html"))
+    return manifest
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m agentx publish", description=__doc__)
     parser.add_argument("--site", type=Path, required=True, help="this run's report site")
@@ -116,4 +185,24 @@ def main(argv: list[str] | None = None) -> int:
             f"{item['model']['id']}/{item['target']['id']}/{item['framework']['id']}: "
             f"{item['status']} from run {item.get('source', {}).get('run_id', '?')}"
         )
+    return 0
+
+
+def rerender_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python3 -m agentx rerender",
+        description="Re-render site-data/agentx pages from the results it holds, with this checkout's code.",
+    )
+    parser.add_argument("section", type=Path, help="agentx/ in a site-data checkout; edited in place")
+    args = parser.parse_args(argv)
+    if not (args.section / "manifest.json").is_file():
+        print(f"{args.section} has no manifest.json; nothing to re-render")
+        return 0
+    try:
+        manifest = rerender(args.section)
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    for item in manifest["targets"]:
+        print("/".join(target_key(item)) + (": re-rendered" if item.get("report") else ": index only"))
     return 0

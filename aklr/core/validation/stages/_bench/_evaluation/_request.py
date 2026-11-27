@@ -223,8 +223,9 @@ class TrialRequest:
         for name, attr in contract.attrs.items():
             if attr.param_name is not None:
                 call[attr.param_name] = point.attrs[name]
-        if "out_dtype" in call:
-            call["out_dtype"] = semantics.torch_dtypes(point.dtypes["out"])[0]
+        for o, spec in contract.outputs.items():
+            if spec.dtype.param_name is not None:
+                call[spec.dtype.param_name] = semantics.torch_dtypes(point.dtypes[o])[0]
         for o in contract.required_outputs:
             dtype = semantics.torch_dtypes(point.dtypes[o])[0]
             shape = contract.storage_shape_of(o, point)

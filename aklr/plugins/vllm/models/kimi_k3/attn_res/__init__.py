@@ -3,6 +3,6 @@
 
 """Kimi-K3's attention residual (vLLM's ``models/kimi_k3/amd/ops/attn_res.py``)."""
 
-from aklr.plugins.vllm.models.kimi_k3.attn_res.api import kimi_k3_attn_res
+from aklr.plugins.vllm.models.kimi_k3.attn_res.api import kimi_k3_attn_res, kimi_k3_attn_res_fp8
 
-__all__ = ["kimi_k3_attn_res"]
+__all__ = ["kimi_k3_attn_res", "kimi_k3_attn_res_fp8"]

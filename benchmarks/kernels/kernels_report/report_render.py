@@ -252,7 +252,7 @@ def index_page(reports: list[ContractReport], context: Context, lang: str) -> st
         (tr(lang, "Range", "范围"), "num"),
         (tr(lang, "Kernels", "Kernel 数"), "num"),
         (tr(lang, "Measured", "测量时间"), ""),
-        (tr(lang, "Source (main)", "来源（main）"), ""),
+        (tr(lang, "main", "main"), ""),
         (tr(lang, "Baseline", "Baseline"), ""),
     )
     head = "".join(f'<th class="{css}">{label}</th>' for label, css in headers)

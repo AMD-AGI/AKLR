@@ -401,7 +401,7 @@ aiter's tuner `tile_m` filter reaches one M-block only when M ≤ 16 or M is its
     before in one).
   - **Not in aiter's bf16 GEMM kernels**; its FlyDSL MoE helpers set it. Several of AKLR's own bf16 GEMM
     kernels use it; they sit in the schema `.json` files, not in `.py` files
-    (`grep -l kernarg-preload-count aklr/plugins/aiter/gemm/impls/flydsl/*/*.json`).
+    (`grep -l kernarg-preload-count aklr/plugins/aiter/provider/gemm/impls/flydsl/*/*.json`).
 - aiter's generic kernel does not skip A rows past M: it clamps them to row 0 and loads them
   (`splitk_hgemm.py:512-519`).
 
