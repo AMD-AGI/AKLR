@@ -241,3 +241,29 @@ def test_triton_rejects_an_empty_grid_specification(tmp_path):
     (compilation,) = compile_schema(tmp_path, schema)
     assert "invalid launch dimensions" in compilation.failure
     assert compilation.launch is None
+
+
+def test_noncontiguous_integer_inputs_do_not_supply_logically_reordered_contents(tmp_path):
+    source = TRITON_GEMM.replace("import triton\n", "import triton\nimport torch\n", 1)
+    source = source.replace("    gemm[lambda", "    a = a.view(torch.int32).mT\n    gemm[lambda")
+    schema = OpCase.of("gemm@1.0").schema(source, language="triton")
+    (compilation,) = compile_schema(tmp_path, schema)
+    assert compilation.failure == ""
+    array = next(a for a in compilation.launch["arrays"] if a["name"] == "a")
+    assert array["kind"] == "in"
+    assert array["dtype"] == "i32"
+    assert "contents" not in array
+
+
+def test_triton_specialized_unit_stride_keeps_the_correct_runtime_arguments(tmp_path):
+    source = TRITON_GEMM.replace("Out, N: tl.constexpr", "Out, stride_ak, N: tl.constexpr")
+    source = source.replace("A + m * K + k,", "A + m * K + k * stride_ak,")
+    source = source.replace("a, b, out, b.shape[0]", "a, b, out, a.stride(1), b.shape[0]")
+    schema = OpCase.of("gemm@1.0").schema(source, language="triton")
+    (compilation,) = compile_schema(tmp_path, schema)
+    assert compilation.failure == ""
+    assert [p for p in compilation.launch["params"] if "ptr" in p] == [
+        {"ptr": "a"},
+        {"ptr": "b"},
+        {"ptr": "out"},
+    ]

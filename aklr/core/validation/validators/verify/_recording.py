@@ -234,6 +234,7 @@ class RecordingCompiler:
                     known is not None
                     and arrays[name]["kind"] == "in"
                     and dtype == "i32"
+                    and tensor.is_contiguous()
                     and tensor.numel() <= 1 << 16
                 ):
                     arrays[name]["contents"] = tensor.flatten().tolist()

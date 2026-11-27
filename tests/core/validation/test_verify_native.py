@@ -263,6 +263,21 @@ def test_hip_records_launches_and_suppresses_only_extension_kernels(tmp_path, pe
     TORCH_CHECK(out.eq(7).all().item<bool>(), "verify executed a target kernel");""",
     )
     if per_thread:
+        for shared in (0, 128):
+            original = f"""gemm<<<a.size(0), b.size(0), {shared}, at::hip::getCurrentHIPStream()>>>(
+        static_cast<const __hip_bfloat16 *>(a.data_ptr()),
+        static_cast<const __hip_bfloat16 *>(b.data_ptr()),
+        static_cast<__hip_bfloat16 *>(out.data_ptr()), static_cast<int>(a.size(1)));"""
+            replacement = f"""{{
+        const auto *a_pointer = static_cast<const __hip_bfloat16 *>(a.data_ptr());
+        const auto *b_pointer = static_cast<const __hip_bfloat16 *>(b.data_ptr());
+        auto *out_pointer = static_cast<__hip_bfloat16 *>(out.data_ptr());
+        int k = static_cast<int>(a.size(1));
+        void *arguments[] = {{&a_pointer, &b_pointer, &out_pointer, &k}};
+        hipLaunchKernel_spt(reinterpret_cast<const void *>(&gemm), dim3(a.size(0)),
+                            dim3(b.size(0)), arguments, {shared}, at::hip::getCurrentHIPStream());
+    }}"""
+            source = source.replace(original, replacement)
         source = "#define HIP_API_PER_THREAD_DEFAULT_STREAM 1\n" + source
     schema = OpCase.of("gemm@1.0").schema(source, language="hip")
     path = tmp_path / "schema.json"
