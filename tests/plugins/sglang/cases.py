@@ -908,6 +908,39 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="strided_rows",
     ),
+    # DeepSeek-V4's mHC boundary at a 256-wide hidden size in 64-column slices, without and with a pending post
+    PointSpec(
+        contract_id="deepseek_v4_hc_boundary@1.0",
+        axes={"n_tokens": 6, "hc_mult": 4, "hidden_size": 256, "n_mix": 24, "n_slices": 4},
+        dtypes={
+            "residual": "bfloat16",
+            "pre_prev": "float32",
+            "hc_fn": "float32",
+            "y": "bfloat16",
+            "part_mix": "float32",
+            "part_sq": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="deepseek_v4_hc_boundary_post@1.0",
+        axes={"n_tokens": 6, "hc_mult": 4, "hidden_size": 256, "n_mix": 24, "n_slices": 4},
+        dtypes={
+            "x": "bfloat16",
+            "residual": "bfloat16",
+            "post": "float32",
+            "comb": "float32",
+            "pre_prev": "float32",
+            "hc_fn": "float32",
+            "residual_out": "bfloat16",
+            "y": "bfloat16",
+            "part_mix": "float32",
+            "part_sq": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # DeepSeek-V4's compressed-cache metadata with a 4-page table of 256-slot pages
     PointSpec(
         contract_id="dsv4_compression_metadata@1.0",

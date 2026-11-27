@@ -1,3 +1,5 @@
+deepseek_v4_hc_boundary_hc_mult#_hidden_size#_n_mix#_n_slices#
+deepseek_v4_hc_boundary_post_hc_mult#_hidden_size#_n_mix#_n_slices#
 dsv4_compression_metadata_max_pages#_c128_width#
 add_attn_res_hidden_size#_n_bank_rows#
 add_attn_res_write_hidden_size#_n_bank_rows#
