@@ -8,7 +8,7 @@ import torch
 
 from aklr.core.contract.reference import OpReference
 from aklr.core.contract.semantics import rounded_to_bfloat16
-from aklr.plugins.aiter.fused_moe.reference import mxfp4_weight, mxfp8
+from aklr.plugins.aiter.provider.fused_moe.reference import mxfp4_weight, mxfp8
 
 __all__ = [
     "KimiK3LatentMoeReference",

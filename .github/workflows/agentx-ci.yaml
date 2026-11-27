@@ -170,6 +170,7 @@ jobs:
           TARGET_ID: ${{ matrix.target }}
           FRAMEWORK_ID: ${{ matrix.framework }}
           HF_HUB_DIR: ${{ vars.AKLR_AGENTX_HF_HUB_DIR }}
+          AGENTX_JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/job/${{ job.check_run_id }}
         # exec: a cancelled run's SIGINT must reach the sweep, which then stops its container.
         run: |
           run="models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID"

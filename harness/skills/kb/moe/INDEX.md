@@ -23,7 +23,7 @@ FlyDSL, aiter or Turbo source they cite, should carry over to Triton or HIP; the
 
 ## What it computes
 
-`fused_moe@1.0` (`aklr/plugins/aiter/fused_moe/contract.py`, reference in `reference.py`): for each token and each of its top-k
+`fused_moe@1.0` (`aklr/plugins/aiter/provider/fused_moe/contract.py`, reference in `reference.py`): for each token and each of its top-k
 experts e (`topk_ids`), stage 1 computes act(x · W1_gate,eᵀ, x · W1_up,eᵀ), stage 2 projects that row with W2_e, and
 the output row is the sum over the token's k routes of `topk_weights` × that projection.
 
@@ -38,7 +38,7 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 - The var axis is `n_tokens`; model dim, experts, top-k and inter dim are fixed per schema name.
 - Compare: `determinism: bounded`, and one whole-output SQNR bound against the
   reference in the output dtype: 20 dB with MXFP8 activations (`act_quant` 8), 10 dB
-  with MXFP4 (`out`'s `error_bounds` in `aklr/plugins/aiter/fused_moe/contract.py`). Atomic accumulation passes
+  with MXFP4 (`out`'s `error_bounds` in `aklr/plugins/aiter/provider/fused_moe/contract.py`). Atomic accumulation passes
   the SQNR bound, and so do fp8 partial rows and bf16 truncation
   ([fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md), Counter-signals).
 - Every AKLR kernel computes it in two GEMM stages. How the routes reach their expert's rows is the main choice at a
@@ -141,14 +141,14 @@ tokens per call. Reuse the mechanism and re-derive the number.
 
 ## In AKLR
 
-- The contract and its compare: `aklr/plugins/aiter/fused_moe/contract.py`. The api:
-  `aklr/plugins/aiter/fused_moe/api.py`. The baseline call and its environment (`AITER_BF16_FP8_MOE_BOUND=16` for gate mode
-  interleave, sglang's DeepSeek-V4 setting): `aklr/plugins/aiter/fused_moe/baseline.py`.
+- The contract and its compare: `aklr/plugins/aiter/provider/fused_moe/contract.py`. The api:
+  `aklr/plugins/aiter/provider/fused_moe/api.py`. The baseline call and its environment (`AITER_BF16_FP8_MOE_BOUND=16` for gate mode
+  interleave, sglang's DeepSeek-V4 setting): `aklr/plugins/aiter/provider/fused_moe/baseline.py`.
 - Kernel form, scratch and compile function: `aklr/plugins/aiter/README.md` § The kernel section and ABI (`../SKILL.md`, Stop
   table). Workflow and CI: § Workflow. The serving threshold: § Environment variables. Kernel-less files (a
   definition: loaded and audited, not served): § Schema fields.
 - `AKLR_DISABLE=fused_moe@1.0` stops serving every MoE schema.
-- Kernel-less `fused_moe` files on main at e525989, counted from `aklr/plugins/aiter/fused_moe/impls/flydsl/`: 14 of the 46
+- Kernel-less `fused_moe` files on main at e525989, counted from `aklr/plugins/aiter/provider/fused_moe/impls/flydsl/`: 14 of the 46
   files, 89 Points, none served (S1). By schema name, after `fused_moe_`:
 
 | Name | Points |

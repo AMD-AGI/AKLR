@@ -16,12 +16,12 @@ measured:
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.092–1.353 at m 2–64; m 1 (1.022) and 128 (0.978) not listed; CI serves 6 of 6 as of #115", gpu: MI355X, workload: "gemm_n7168_k512 kernel of file 862651698bc1ad5b, measured on a file with the same kernel and m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.181–1.303 at m 32–128; m 1–16 (1.020–1.036) not listed; CI serves 3 of 3 as of #115", gpu: MI355X, workload: "gemm_n3584_k512 kernel of file 243648f4674e3d98, measured on a file that imported the same HGEMM from aiter 0.1.21.dev66+gdbd8bf5bd, with m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
 sources:
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1536_k128/d04dde8be68a2a26.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n163840_k256/23e2302f084044da.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2304_k1536/595f5d5c86d5c218.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3072_k512/fa4e12923a15c59a.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n7168_k512/862651698bc1ad5b.json
-  - aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1536_k128/d04dde8be68a2a26.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n163840_k256/23e2302f084044da.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2304_k1536/595f5d5c86d5c218.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3072_k512/fa4e12923a15c59a.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k512/862651698bc1ad5b.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json
 ---
 
 # bf16 GEMM at short K or large M only (Kimi-K3): no K loop to split, a persistent grid where M is large
@@ -37,7 +37,7 @@ None of the four splits K across workgroups. n2304's `_build` and n3072's `_buil
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`,
   the `CompareSpec` defaults), with the fp32 dot-product error bound of `_dot_k()` (`GEMM` in
-  `aklr/plugins/aiter/gemm/contract.py`). Every output is one fp32 sum in a fixed order.
+  `aklr/plugins/aiter/provider/gemm/contract.py`). Every output is one fp32 sum in a fixed order.
 - Shapes:
   - N 1536 × K 128 (a 384 KiB weight) at m 8–16384: K fits one LDS tile.
   - N 163840 × K 256 (80 MiB) at m 1–14: a read-once weight over a very wide N.
@@ -226,8 +226,8 @@ AKLR validate (measurement profile 19) on one MI355X at main 0e02a81, not CI: N 
 highest at m 64 *(field, E12)*; N 3584 × K 512 1.181–1.303, highest at m 64, measured on the file that imported the
 HGEMM from aiter *(field, E13)*. Under stress every listed Point gave the output of the call alone *(field, E16)*.
 Reproduce on an MI355X with aiter at `aiter` in `stack.json` installed, with `python -m aklr validate` on
-`aklr/plugins/aiter/gemm/impls/flydsl/gemm_n7168_k512/862651698bc1ad5b.json` and
-`aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json` (§ Reproduce). To roll back, delete the file: its
+`aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k512/862651698bc1ad5b.json` and
+`aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json` (§ Reproduce). To roll back, delete the file: its
 Points are then served by no file, and the caller runs its own path.
 
 ## Reproduce
@@ -235,10 +235,10 @@ Points are then served by no file, and the caller runs its own path.
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root, one schema at a time:
 
 ```
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1536_k128/d04dde8be68a2a26.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n163840_k256/23e2302f084044da.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2304_k1536/595f5d5c86d5c218.json
-python -m aklr validate aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3072_k512/fa4e12923a15c59a.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1536_k128/d04dde8be68a2a26.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n163840_k256/23e2302f084044da.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2304_k1536/595f5d5c86d5c218.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3072_k512/fa4e12923a15c59a.json
 ```
 
 The report goes to `aklr_validation/report.md`; a run outside CI checks the file, the served numbers are CI's
@@ -272,20 +272,20 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E9 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n2304_k1536: grouping + vector C staging + `nt` C +7.9, 8.1, 2.5, 2.6% (recorded); BK 128 +6.2% at 893; unroll +1.2 / +3.2% at 893 / 2732; scheduler strategy +2.3 / +0.7% at 9397 / 16384; persistent +0.9% at 16384; all changes off +23.2, 15.8, 15.6, 9.5% at m 893, 2732, 9397, 16384 (gemm_n2304_k1536)
 - E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n3072_k512 at m 35107 / 104093 / 342073: port +9.2 / 16.7 / 6.4% (recorded); persistent loop +10.0 / 7.3 / 5.3% (recorded); tail items +2.3 / 0.1 / 0.0%; start delay +2.9 / 1.1 / 0.0%; mid-block barrier + fragment prefetch + kb+2 fill +0.6 / 2.2 / 1.1%; all changes off +28.2 / 31.5 / 13.8% (gemm_n3072_k512)
 - E11 [2026-10, gfx950, FlyDSL 0.3.2, N=2, local validate, one window per run] n1536_k128 delivered beside the dropped last round: 14 and 16 of 17 Points past the local bar against 14 and 12 (gemm_n1536_k128)
-- S1 aklr/plugins/aiter/gemm/contract.py:118 `GEMM` with `_UNSHUFFLED_VARIANTS` (:116) and `_dot_k()` (:91); `CompareSpec` defaults bitwise at aklr/core/contract/spec/_args.py:202
-- S2 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n1536_k128/d04dde8be68a2a26.json#kernel.py:26 `_CONFIGS`; whole-K DMA and one wait at :260; `C_DIRECT` stores at :281; `sc1` stores at :20 and :58
-- S3 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n163840_k256/23e2302f084044da.json#kernel.py:20 `_CONFIGS`; `_grouped_tile` at :47; B loads first at :134; B-first MFMA at :154; wave-order fold at :182 and :197
-- S4 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n2304_k1536/595f5d5c86d5c218.json#kernel.py:35 `_CONFIGS`; scheduler strategy at :114; two-tile assertion at :173; second tile in reverse K at :521
-- S5 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3072_k512/fa4e12923a15c59a.json#kernel.py:49 `_plan`; grid from the CU count at :110; start delay at :476; tail items at :492; `nt` C at :454
+- S1 aklr/plugins/aiter/provider/gemm/contract.py:118 `GEMM` with `_UNSHUFFLED_VARIANTS` (:116) and `_dot_k()` (:91); `CompareSpec` defaults bitwise at aklr/core/contract/spec/_args.py:202
+- S2 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1536_k128/d04dde8be68a2a26.json#kernel.py:26 `_CONFIGS`; whole-K DMA and one wait at :260; `C_DIRECT` stores at :281; `sc1` stores at :20 and :58
+- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n163840_k256/23e2302f084044da.json#kernel.py:20 `_CONFIGS`; `_grouped_tile` at :47; B loads first at :134; B-first MFMA at :154; wave-order fold at :182 and :197
+- S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2304_k1536/595f5d5c86d5c218.json#kernel.py:35 `_CONFIGS`; scheduler strategy at :114; two-tile assertion at :173; second tile in reverse K at :521
+- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3072_k512/fa4e12923a15c59a.json#kernel.py:49 `_plan`; grid from the CU count at :110; start delay at :476; tail items at :492; `nt` C at :454
 - E12 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate at 0e02a81, measurement profile 19: one-sided lower bound of the aiter / kernel time ratio over 16 rounds of CUDA-graph replays with L2 flushed before each call, one MI355X, aiter 0.1.21.dev66+gdbd8bf5bd] a file with the kernel of 862651698bc1ad5b, also listing m 1 and 128: 1.022, 1.100, 1.092, 1.108, 1.132, 1.239, 1.353, 0.978 at m 1, 2, 4, 8, 16, 32, 64, 128; m 128 demoted `not_faster`; accuracy passed
 - E13 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the ruler of E12; 32 rounds at m 2] an earlier version of 243648f4674e3d98 (also listing m 1–16; its `kernel.py` imported the HGEMM from that aiter and passed B's pointer in the bias, semaphore and signal slots, where 243648f4674e3d98 carries copies of aiter's files, S9, and passes a null pointer): 1.036, 1.020, 1.026, 1.030, 1.031, 1.181, 1.303, 1.286 at m 1, 2, 4, 8, 16, 32, 64, 128; m 2 demoted `not_faster`; accuracy passed
 - E14 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the run of E12] per-round times, kernel against aiter: m 1 4.22–4.28 against 4.32–4.37 µs; m 2 4.22–4.25 against 4.64–4.70, m 4 4.25–4.30 against 4.66–4.72, m 8 4.26–4.30 against 4.72–4.78, m 16 4.25–4.28 against 4.80–4.86, m 32 4.23–4.26 against 5.25–5.31, m 64 4.23–4.26 against 5.73–5.77; m 128 4.86–4.92 against 4.78–4.84 (`candidate_milliseconds`, `versus_milliseconds`)
 - E15 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the run of E13] per-round times, kernel against aiter: m 1–16 4.16–4.32 against 4.32–4.46 µs; m 32–128 4.29–4.40 against 5.08–5.67
 - E16 [2026-11, gfx950, FlyDSL 0.3.2, N=20, eager and op-level CUDA-graph stress on one MI355X, main 0e02a81 with each schema, each try compared byte for byte with an eager call alone] 862651698bc1ad5b and the predecessor of 243648f4674e3d98 (the kernel of E13, listing m 32–128), every listed Point: the forge driver's conditions (streams limited to 16 and 64 CUs; a second concurrent call on the same inputs) and one captured graph replayed on the same inputs, 20 tries each; one graph replayed 24 times with three AKLR input sets rotated into its buffers; two calls at once on two streams with different inputs, unrestricted and both on the same 64 CUs, 20 tries each: 0 tries differ
 - E17 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI perf runs; measurement profile 19 for #102] Points at or above 1.03 as of #102 (6d7cfec, CI run 42549655045): n1536_k128 7 of 17 (m 12, 16, 60, 893–16384; m 8–112 0.964–1.034), n163840_k256 11 of 11; n2304_k1536 4 of 4 from 90b9d50 (CI run 41976547645) and n3072_k512 3 of 3 from d908d01 (#71, CI run 42000899019), which #102 left unchanged; n1536_k128 in d908d01 (#71): 14 of 17, m 8–112 1.018–1.037, not m 24, 48, 80 (each schema's `workloads` at 6d7cfec and 0e02a81)
-- S6 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n7168_k512/862651698bc1ad5b.json#kernel.py:23 `_CONFIGS` (tile, waves, paired 16 B stores) per m; `_C_AUX` `sc1` at :31; every chunk's DMAs issued at :139-144; per-chunk wait at :179-181; permuted B rows at :126-130; B first in the MFMA at :191-193
-- S7 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json#kernel.py:13 relative imports of `compile_hgemm_kernel` and (:14) `_run_compiled`, `ptr_arg`; `_config` at :17-22; a null pointer in the bias, semaphore and signal slots at :31-33
-- S8 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json#splitk_hgemm.py:1093 `launch_hgemm_kernel(C, A, B, BIAS, m, semaphore, signal, stream)`; semaphore and signal bound only under `IS_SPLIT_K` at :341, the bias only under `HAS_BIAS` at :262 and :1082; without `B_TO_LDS` only A has LDS storage at :196-208; the copy of ROCm/aiter@dbd8bf5bd:aiter/ops/flydsl/kernels/splitk_hgemm.py (:1094, :342, :263, :1083, :197-209 there) with its aiter import made relative at :15
-- S9 aklr/plugins/aiter/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json#buffer_ops.py:39 `_get_buffer_flags` with no `FLYDSL_GPU_ARCH` read (:65); its tensor_shim.py:76 default strides without `tolist`; the same lines in aklr/plugins/aiter/fused_moe/impls/flydsl/fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384/033eff70aa1f4ee2.json#buffer_ops.py:39 and its tensor_shim.py:175
+- S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k512/862651698bc1ad5b.json#kernel.py:23 `_CONFIGS` (tile, waves, paired 16 B stores) per m; `_C_AUX` `sc1` at :31; every chunk's DMAs issued at :139-144; per-chunk wait at :179-181; permuted B rows at :126-130; B first in the MFMA at :191-193
+- S7 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json#kernel.py:13 relative imports of `compile_hgemm_kernel` and (:14) `_run_compiled`, `ptr_arg`; `_config` at :17-22; a null pointer in the bias, semaphore and signal slots at :31-33
+- S8 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json#splitk_hgemm.py:1093 `launch_hgemm_kernel(C, A, B, BIAS, m, semaphore, signal, stream)`; semaphore and signal bound only under `IS_SPLIT_K` at :341, the bias only under `HAS_BIAS` at :262 and :1082; without `B_TO_LDS` only A has LDS storage at :196-208; the copy of ROCm/aiter@dbd8bf5bd:aiter/ops/flydsl/kernels/splitk_hgemm.py (:1094, :342, :263, :1083, :197-209 there) with its aiter import made relative at :15
+- S9 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3584_k512/243648f4674e3d98.json#buffer_ops.py:39 `_get_buffer_flags` with no `FLYDSL_GPU_ARCH` read (:65); its tensor_shim.py:76 default strides without `tolist`; the same lines in aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384/033eff70aa1f4ee2.json#buffer_ops.py:39 and its tensor_shim.py:175
 - E18 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1, one compile per file; `.amdhsa_user_sgpr_kernarg_preload_length` read from the final ISA and from the code object's kernel descriptor, which agree] SGPRs preloaded: n1536_k128 6 and n163840_k256 6, all three pointers of a 24-byte kernarg; n2304_k1536 2 of a 72-byte kernarg with `amdgpu-kernarg-preload-count` 16; n3072_k512 0 (no count set)
 - E19 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, FlyDSL 0.3.2, aiter dbd8bf5, N=8 rounds, medians; AKLR's `bench_cudagraph` (profile 19, L2 flushed per call) and back-to-back calls in one CUDA graph rotating 96 operand copies (704 MB of B)] 862651698bc1ad5b back to back 3.625 µs at m 2 to 4.341 at m 64, 4.330–4.398 under `bench_cudagraph`; same-grid spin kernels of 1.82–4.40 µs back to back read 4.52–4.57 µs under `bench_cudagraph`; aiter `gemm_a16w16` 0.81–0.89 µs slower than the kernel back to back at m 2–16; every output within tolerance

@@ -114,7 +114,7 @@ def _output(error_bounds: SqnrBound) -> TensorSpec:
     return TensorSpec(
         description="This rank's share of the MoE's output.",
         shape=("n_tokens", "model_dim"),
-        dtype=DTypeSpec(same_as_tensor="hidden_states"),
+        dtype=DTypeSpec(same_as_tensor="hidden_states", param_name="out_dtype"),
         error_bounds=error_bounds,
     )
 

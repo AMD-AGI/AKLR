@@ -43,7 +43,7 @@ class TestSchemaFile:
         byte; its kernel takes neither them nor the inputs they gate. An interleave
         schema, ``has_swiglu_limit`` true, takes ``swiglu_limit``."""
         registry = ContractRegistry.default()
-        impls = Path("aklr/plugins/aiter/fused_moe/impls/flydsl")
+        impls = Path("aklr/plugins/aiter/provider/fused_moe/impls/flydsl")
         separated = impls / (
             "fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/f13fecf15dbe0a9d.json"
         )
@@ -253,7 +253,7 @@ class TestSchemaFile:
 
     def test_read_schemas_leaves_skipped_contracts_unchecked(self, tmp_path: Path) -> None:
         """A stale schema is an error, unless its contract is skipped (AKLR_DISABLE)."""
-        registry, op_package = ContractRegistry.default(), "aklr.plugins.aiter.gemm"
+        registry, op_package = ContractRegistry.default(), "aklr.plugins.aiter.provider.gemm"
         op_dir = locate.op_dir(op_package)
         path = locate.committed_schema_paths(op_dir)[0]
         stale = tmp_path.joinpath(*op_package.split("."), path.relative_to(op_dir))

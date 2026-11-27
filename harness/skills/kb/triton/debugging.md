@@ -325,17 +325,23 @@ without `allow_flush_denorm` the 4 DSA 64-head kernels' code did not change; acc
    from aklr.core.contract import semantics
    from aklr.core.contract.registry import ContractRegistry
    from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
-   path = "aklr/plugins/aiter/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json"
+
+   path = "aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json"
    registry = ContractRegistry.default()
    schema = registry.parse_schema(Path(path).read_bytes(), path)
    contract = registry.get(schema.contract_id)
    workload = next(w for w in schema.workloads if w.axes == {"m": 16})
    request = TrialRequest.of_workload(path, schema, contract, workload, thresholds={}, incumbent=None)
-   args = request.compose_inputs(next(s for s in request.steps if s.name == "numeric/1"), "cuda")  # the step's inputs
+   args = request.compose_inputs(
+       next(s for s in request.steps if s.name == "numeric/1"), "cuda"
+   )  # the step's inputs
    call = {k: v for k, v in request.assemble_call(args, "cuda").items() if k in schema.kernel_call_keys}
    for name in contract.allocated_outputs:
-       call[name] = torch.empty(contract.storage_shape_of(name, request.point),
-                                dtype=semantics.torch_dtypes(request.point.dtypes[name])[0], device="cuda")
+       call[name] = torch.empty(
+           contract.storage_shape_of(name, request.point),
+           dtype=semantics.torch_dtypes(request.point.dtypes[name])[0],
+           device="cuda",
+       )
    expected = contract.reference.reference(**request.reference_call(args, "cuda"))
    ```
 
@@ -466,11 +472,14 @@ for record in bench["workload_records"]:
     for t in record["timings"]:
         cand = statistics.median(t["candidate_milliseconds"]) * 1e3
         vs = statistics.median(t["versus_milliseconds"]) * 1e3
-        stored = TimingRecord.model_validate(t).speedup_bounds[0]       # what CI stores
-        print(record["axes"], f"{t['n_rounds']} rounds: candidate {cand:.2f} us, {t['versus']} {vs:.2f} us, "
-              f"speedup {stored:.3f}, gate bound {t['ratio_lower_bound']:.3f} (clamped at 2)")
+        stored = TimingRecord.model_validate(t).speedup_bounds[0]  # what CI stores
+        print(
+            record["axes"],
+            f"{t['n_rounds']} rounds: candidate {cand:.2f} us, {t['versus']} {vs:.2f} us, "
+            f"speedup {stored:.3f}, gate bound {t['ratio_lower_bound']:.3f} (clamped at 2)",
+        )
 for f in bench["findings"] + bench.get("demotions", []):
-    print(f["code"], f["axes"], f["detail"][-300:])                    # the cause is at the end
+    print(f["code"], f["axes"], f["detail"][-300:])  # the cause is at the end
 ```
 
 The candidate's microseconds say what a change did: 3 prefetched K groups instead of 5 in the m = 16 fp8 GEMM
@@ -570,7 +579,7 @@ whose bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33)
 - S43 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:181 `parse_options` keeps only the keys that are `HIPOptions` fields
 - S44 triton-lang/triton@c01b677:python/triton/runtime/jit.py:715 at the first compile of a launch, a keyword that is neither an option nor a parameter raises `KeyError("Keyword argument %s was specified but unrecognised")`
 - S45 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/cdna4/async_copy.py:91 `buffer_load_to_shared`: "size per thread * bits per element must be 128 or 32" for the offsets layout, or lowering to LLVM fails
-- S46 aklr/plugins/aiter/gemm/baseline.py:16 `GemmBaseline`: "aiter's tuned 16-bit gemm" (`from aiter.tuned_gemm import gemm_a16w16`, :17); the RMSNorm baselines call `aiter.ops.rmsnorm` (aklr/plugins/aiter/rms_norm/baseline.py:12, :24); `"aiter": "dbd8bf5…"` at stack.json:4
+- S46 aklr/plugins/aiter/provider/gemm/baseline.py:16 `GemmBaseline`: "aiter's tuned 16-bit gemm" (`from aiter.tuned_gemm import gemm_a16w16`, :17); the RMSNorm baselines call `aiter.ops.rmsnorm` (aklr/plugins/aiter/provider/rms_norm/baseline.py:12, :24); `"aiter": "dbd8bf5…"` at stack.json:4
 - S47 triton-lang/triton@c01b677:python/src/ir.cc:1982 a failed pass-manager run throws `PassManager::run failed`; every run enables MLIR's crash reproducer, printed to the console without `TRITON_REPRODUCER_PATH` (:1956) and written to that path with it (:1953), which turns a crash inside a pass into a failed run
 - S48 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/MFMA.cpp:273 "no matching matrix core intrinsic" when no instruction has the requested shape and types
 - S49 triton-lang/triton@c01b677:lib/Conversion/TritonGPUToLLVM/ScanOpToLLVM.cpp:474 "TODO: unsupported scan layout"

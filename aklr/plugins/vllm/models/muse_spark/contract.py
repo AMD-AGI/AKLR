@@ -148,7 +148,7 @@ MUSE_SPARK_MOE = OpContract(
         "out": TensorSpec(
             description="Each route's expert output, unweighted; zeros off this rank.",
             shape=("n_tokens", "topk", "model_dim"),
-            dtype=DTypeSpec(same_as_tensor="hidden_states"),
+            dtype=DTypeSpec(same_as_tensor="hidden_states", param_name="out_dtype"),
             # its MXFP4 activations, as fused_moe's
             error_bounds=MOE_MXFP4_SNR,
         )

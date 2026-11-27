@@ -10,7 +10,7 @@
 # flash-linear-attention project (MIT license)
 # Modified by Advanced Micro Devices, Inc. for the AKLR project.
 # Modified for aklr/plugins/vllm/models/kimi_k3/attn_res: the kernel as is (reformatted), its launcher
-# without the fp8 output
+# with the fp8 output's largest value passed in (vLLM's get_fp8_min_max())
 #
 # This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
 # not the MIT license that covers the rest of AKLR (see LICENSE).
@@ -163,7 +163,10 @@ def attn_res(
     block_write_idx: int,
     eps: float,
     output_norm_eps: float,
-) -> torch.Tensor:
+    *,
+    quant_dtype: torch.dtype | None = None,
+    quant_max: float = 448.0,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     num_tokens, hidden_size = prefix.shape
     assert prefix.stride(-1) == 1
     assert delta is None or delta.stride(-1) == 1
@@ -171,9 +174,16 @@ def attn_res(
     assert norm_weight.stride(-1) == 1
     assert qk_weight.stride(-1) == 1
     assert output_norm_weight is None or output_norm_weight.stride(-1) == 1
-    output = torch.empty_like(prefix, memory_format=torch.contiguous_format)
+    output = torch.empty_like(
+        prefix, dtype=quant_dtype or prefix.dtype, memory_format=torch.contiguous_format
+    )
+    scale = (
+        None
+        if quant_dtype is None
+        else torch.empty((num_tokens, 1), device=prefix.device, dtype=torch.float32)
+    )
     if num_tokens == 0:
-        return output
+        return output if scale is None else (output, scale)
 
     # Source tiling helps decode, while one-source tiles scale better for prefill.
     if num_tokens >= 256 or num_blocks <= 1:
@@ -188,7 +198,7 @@ def attn_res(
         qk_weight,
         output_norm_weight,
         output,
-        None,
+        scale,
         prefix.stride(0),
         0 if delta is None else delta.stride(0),
         blocks.stride(0),
@@ -202,10 +212,10 @@ def attn_res(
         HAS_DELTA=delta is not None,
         WRITE_BLOCK=block_write_idx >= 0,
         APPLY_OUTPUT_NORM=output_norm_weight is not None,
-        QUANT_MAX=0.0,
+        QUANT_MAX=0.0 if quant_dtype is None else quant_max,
         BLOCK_L=block_l,
         BLOCK_D=triton.next_power_of_2(hidden_size),
         num_warps=num_warps,
         num_stages=2,
     )
-    return output
+    return output if scale is None else (output, scale)

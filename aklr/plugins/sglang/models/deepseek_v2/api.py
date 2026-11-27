@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+from functools import cache
+
 from aklr.core.runtime.dispatch import FallbackReason, api
-from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins.sglang.hook import sglang_route, sglang_version, sglang_version_matches
 from aklr.plugins.sglang.models import moe_blocks
 from aklr.plugins.sglang.models.deepseek_v2.contract import (
     DEEPSEEK_V2_FP8_MOE,
@@ -50,7 +52,10 @@ def deepseek_v2_fp8_moe(
 ): ...
 
 
-@sglang_route("sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal", versions=("0.5.23",))
+@sglang_route(
+    "sglang.srt.models.deepseek_v2.DeepseekV2MoE.forward_normal",
+    versions=(">=0.5.23.dev20261120",),
+)
 def _moe_forward_normal(
     self,
     hidden_states,
@@ -139,10 +144,19 @@ def _moe_call(mlp, hidden_states):
     }
 
 
+@cache
+def _native_preserves_fp32_bias():
+    # Distribution metadata is constant for a serving process; do not read it
+    # again on every layer of every forward.
+    # The separately verified 0.5.23 release still casts bias to BF16.
+    return sglang_version_matches(sglang_version(), (">=0.5.23.dev20261120,!=0.5.23",))
+
+
 def _topk_bias(routing, logits_dtype):
-    """``routing``'s correction bias as sglang's select_experts hands it to the top-k: in the
-    router logits' dtype to aiter's grouped top-k (the copy TopKConfig keeps), else as held.
-    GLM-5.2 holds its bias in fp32, which aiter's top-k reads in bf16."""
+    """The bias select_experts gives its native router on this verified version."""
+    if _native_preserves_fp32_bias():
+        return routing.correction_bias
+
     from sglang.srt.environ import envs
     from sglang.srt.layers.moe.topk import _use_aiter
 

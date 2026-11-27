@@ -1,0 +1,60 @@
+{
+ "schema": 1,
+ "gpus": 8,
+ "served_model_name": "amd/Muse-Spark-Open-816B-A42B-Quark-MXFP4",
+ "launch": {
+  "command": [
+   "vllm",
+   "serve",
+   "${E2E_MODEL_PATH}",
+   "--served-model-name",
+   "amd/Muse-Spark-Open-816B-A42B-Quark-MXFP4",
+   "--host",
+   "127.0.0.1",
+   "--port",
+   "${E2E_PORT}",
+   "--enable-expert-parallel",
+   "--tensor-parallel-size",
+   "8",
+   "--dtype",
+   "bfloat16",
+   "--distributed-executor-backend",
+   "mp",
+   "--language-model-only",
+   "--compilation-config",
+   "{\"cudagraph_mode\":\"FULL_AND_PIECEWISE\"}",
+   "--no-enable-prefix-caching",
+   "--enable-chunked-prefill",
+   "--attention-backend",
+   "ROCM_AITER_FA",
+   "--max-model-len",
+   "32768",
+   "--max-num-seqs",
+   "128",
+   "--max-num-batched-tokens",
+   "8192",
+   "--reasoning-parser",
+   "muse",
+   "--enable-auto-tool-choice",
+   "--tool-call-parser",
+   "muse",
+   "--speculative-config",
+   "{\"method\":\"dspark\",\"model\":\"Inferact/Muse-Spark-Open-DSpark\",\"num_speculative_tokens\":7,\"draft_sample_method\":\"probabilistic\",\"rejection_sample_method\":\"block\",\"enable_adaptive_verification\":false,\"attention_backend\":\"ROCM_AITER_FA\",\"revision\":\"ffc3eb50c8ae7a5a391ddedc43085d2e5249bc35\"}"
+  ],
+  "env": {
+   "AITER_UNIFIED_ATTN_SHORT_QUERY_3D": "1",
+   "VLLM_ENGINE_READY_TIMEOUT_S": "7200",
+   "VLLM_KV_CACHE_LAYOUT": "LBHNC",
+   "VLLM_ROCM_MUSE_MOE_REDUCE_DTYPE": "bf16",
+   "VLLM_ROCM_USE_AITER": "1",
+   "VLLM_USE_BREAKABLE_CUDAGRAPH": "1",
+   "VLLM_USE_RUST_FRONTEND": "1"
+  }
+ },
+ "runtime": {
+  "ready_timeout_s": 7200,
+  "poll_s": 10,
+  "point_timeout_s": 10800
+ },
+ "notes": "MI355X TP8 + expert parallelism, with the vLLM cookbook DSpark k=7 settings. The offline HF hub must also contain the Inferact/Muse-Spark-Open-DSpark revision in --speculative-config."
+}

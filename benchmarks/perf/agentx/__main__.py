@@ -12,6 +12,7 @@ COMMANDS = {
     "pipeline": ("agentx.pipeline", "main"),
     "report": ("agentx.report", "main"),
     "publish": ("agentx.publish", "main"),
+    "rerender": ("agentx.publish", "rerender_main"),
     "check-recipes": ("agentx.check_recipes", "main"),
 }
 

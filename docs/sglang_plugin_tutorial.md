@@ -108,7 +108,7 @@ PointSpec(
 Its baseline runs only on gfx950, so its contract id also goes into `GFX950_CONTRACT_IDS` in the same file. Then update `tests/plugins/sglang/names.txt`:
 
 ```bash
-AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/test_contracts.py
+AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/provider/test_contracts.py
 ```
 
 The route needs no test of its own: `tests/plugins/sglang/test_hook.py` checks every route, that its target exists in the installed SGLang with the same parameters and that no other route replaces it.
