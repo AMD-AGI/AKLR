@@ -99,7 +99,10 @@
         "n_candidates": 262208,
         "n_plan_rows": 257,
         "n_pages": 4097
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.729,
+      "microseconds": 47.3
     }
   ],
   "layout_variants": {

@@ -197,7 +197,10 @@
         "n_tokens": 256,
         "n_slots": 257,
         "n_positions": 65536
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.176,
+      "microseconds": 10.2
     }
   ],
   "layout_variants": {

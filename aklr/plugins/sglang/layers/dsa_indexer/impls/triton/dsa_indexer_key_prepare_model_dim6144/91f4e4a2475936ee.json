@@ -150,8 +150,8 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.548,
-      "microseconds": 9.16
+      "speedup": 2.604,
+      "microseconds": 8.76
     },
     {
       "axes": {
@@ -163,8 +163,8 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.814,
-      "microseconds": 9.2
+      "speedup": 2.873,
+      "microseconds": 8.87
     }
   ],
   "layout_variants": {

@@ -8,9 +8,18 @@ import torch
 
 from aklr.core.contract.reference import OpReference
 
-__all__ = ["KimiK3AttnResReference"]
+__all__ = ["KimiK3AttnResFp8Reference", "KimiK3AttnResReference"]
 
 _CHUNK_TOKENS = 2048  # float32 rows of 9 x 8192 per token: about 0.6 GB a chunk
+
+
+def _rsqrt_mean_square(x, eps):
+    """rsqrt(mean(x**2) + eps) over the last dim, kept dim, where squares of large rows pass float32's range: each row
+    scaled down by a power of two first (exact), its eps alike."""
+    shift = torch.frexp(x.abs().amax(-1, keepdim=True)).exponent.clamp_min(0)
+    scaled = torch.ldexp(x, -shift)
+    eps = torch.ldexp(torch.full_like(shift, eps, dtype=x.dtype), -2 * shift)
+    return torch.ldexp((scaled.square().mean(-1, keepdim=True) + eps).rsqrt(), -shift)
 
 
 class KimiK3AttnResReference(OpReference):
@@ -44,12 +53,30 @@ class KimiK3AttnResReference(OpReference):
                 mix = p[tokens]
             else:
                 rows = torch.cat((bank[tokens, :n_valid_rows], p[tokens, None]), dim=1)
-                scores = (rows @ score_weight) * (rows.square().mean(dim=-1) + score_eps).rsqrt()
+                scores = (rows @ score_weight) * _rsqrt_mean_square(rows, score_eps)[..., 0]
                 mix = (torch.softmax(scores, dim=-1)[..., None] * rows).sum(dim=1)
             if norm_weight is not None:
-                mix = mix * (mix.square().mean(dim=-1, keepdim=True) + norm_eps).rsqrt() * norm_weight
+                mix = mix * _rsqrt_mean_square(mix, norm_eps) * norm_weight
             out[tokens] = mix
         if write_bank:
             bank[:, n_valid_rows] = p
         dtype = prefix.dtype
         return {"out": out.to(dtype), "prefix": p.to(dtype), "bank": bank.to(dtype)}
+
+
+class KimiK3AttnResFp8Reference(KimiK3AttnResReference):
+    def reference(self, **call):
+        """quantized, scale, prefix and bank as the call leaves them: the attention residual's out, in the prefix's
+        dtype, quantized per token as vLLM does it in float32 (the fp8 rounding is the operation itself, not an
+        error)."""
+        from aklr.plugins.vllm.models.kimi_k3.attn_res.contract import FP8_MAX
+
+        expected = dict(super().reference(**call))
+        rounded = expected.pop("out").float()
+        floor, inverse_max = (
+            torch.tensor(1e-10, dtype=torch.float32),
+            torch.tensor(1.0 / FP8_MAX, dtype=torch.float32),
+        )
+        scale = torch.maximum(rounded.abs().amax(dim=-1, keepdim=True), floor) * inverse_max
+        values = (rounded * (1.0 / scale)).clamp(-FP8_MAX, FP8_MAX)
+        return {"quantized": values.to(torch.float8_e4m3fn), "scale": scale, **expected}
