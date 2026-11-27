@@ -175,8 +175,9 @@ class SchemaVerdict:
             and all(j.is_measured for j in judgements)
             and all(f.code == FindingCode.NO_QUALIFYING_WORKLOAD for f in deciding)
         )
-        kernel_hash = plan.schema.kernel.content_hash
-        workloads = {str(WorkloadKey.from_workload(w)): w for w in plan.schema.workloads}
+        schema = plan.schema
+        kernel_hash = "" if schema is None else schema.kernel.content_hash
+        workloads = {str(WorkloadKey.from_workload(w)): w for w in (schema.workloads if schema else ())}
         return cls(
             path=plan.path,
             findings=tuple(deciding),

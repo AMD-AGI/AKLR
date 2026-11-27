@@ -143,11 +143,11 @@ class ValidationReport:
         registry = ContractRegistry.default()
         rewritten: dict[str, OpContract] = {}
         for path in self.bench_paths:
-            schema = registry.parse_schema((root / path).read_bytes(), path)
-            if schema.kernel.targets != (target,):
-                continue
             measured = bench.evaluations.get(path)
             if measured is None:
+                continue
+            schema = registry.parse_schema((root / path).read_bytes(), path)
+            if schema.kernel.targets != (target,):
                 continue
             for w in schema.workloads:
                 m = measured[str(WorkloadKey.from_workload(w))]
