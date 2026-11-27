@@ -60,19 +60,18 @@ def test_valid_scale_ratios_do_not_overflow(builder_registry, kernel_schema):
     torch.testing.assert_close(call["out"], torch.full_like(call["out"], 2.0**80), atol=0, rtol=0)
 
 
-def test_calls_accept_changed_tensor_alignment(builder_registry, kernel_schema, monkeypatch):
+def test_calls_use_current_compiler_options(builder_registry, kernel_schema, monkeypatch):
+    import os
+
     import flydsl.compiler as compiler
     import flydsl.expr as expr
 
-    def alignment(args):
-        return args[0].data_ptr() % 16
+    requested_options = []
 
     def compile_kernel(kernel, *args):
-        expected_alignment = alignment(args)
+        requested_options.append(os.environ["FLYDSL_COMPILE_OPT_LEVEL"])
 
         def launch(*values):
-            if alignment(values) != expected_alignment:
-                raise RuntimeError("compiled tensor alignment changed")
             values[2].fill_(1)
 
         launch(*args)
@@ -84,7 +83,7 @@ def test_calls_accept_changed_tensor_alignment(builder_registry, kernel_schema, 
             self.specializations = {}
 
         def __call__(self, *args):
-            key = alignment(args)
+            key = os.environ["FLYDSL_COMPILE_OPT_LEVEL"]
             if key in self.specializations:
                 self.specializations[key](*args)
             else:
@@ -94,17 +93,14 @@ def test_calls_accept_changed_tensor_alignment(builder_registry, kernel_schema, 
     monkeypatch.setattr(compiler, "compile", compile_kernel)
     monkeypatch.setattr(torch.cuda, "current_stream", lambda *args, **kwargs: object())
     monkeypatch.setattr(expr, "Stream", lambda value: value)
+    monkeypatch.setenv("FLYDSL_COMPILE_OPT_LEVEL", "1")
     case = OpCase(kernel_schema.point({"m": 256}))
-    inputs = case.inputs()
-    call = case.call(inputs)
+    call = case.call(case.inputs())
     call["out"] = torch.empty(256, 65536, dtype=torch.bfloat16)
     runnable = builder_registry.build(kernel_schema)
     runnable(**call)
-    shifted = torch.empty(call["a"].numel() + 1, dtype=call["a"].dtype)[1:].reshape(call["a"].shape)
-    shifted.copy_(call["a"])
-    assert shifted.is_contiguous()
-    assert shifted.data_ptr() % 16 != call["a"].data_ptr() % 16
-    call["a"] = shifted
+    monkeypatch.setenv("FLYDSL_COMPILE_OPT_LEVEL", "3")
     call["out"].fill_(float("nan"))
     runnable(**call)
     torch.testing.assert_close(call["out"], torch.ones_like(call["out"]), atol=0, rtol=0)
+    assert requested_options == ["1", "3"]
