@@ -95,30 +95,6 @@
   "workloads": [
     {
       "axes": {
-        "n_tokens": 1,
-        "n_candidates": 262208,
-        "n_plan_rows": 2,
-        "n_pages": 4097
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 2,
-        "n_candidates": 262208,
-        "n_plan_rows": 3,
-        "n_pages": 4097
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 4,
-        "n_candidates": 262208,
-        "n_plan_rows": 5,
-        "n_pages": 4097
-      }
-    },
-    {
-      "axes": {
         "n_tokens": 8,
         "n_candidates": 262208,
         "n_plan_rows": 9,
