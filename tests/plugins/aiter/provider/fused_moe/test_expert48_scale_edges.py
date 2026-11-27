@@ -50,8 +50,9 @@ def test_minimum_e8m0_scale_has_nonzero_contribution(builder_registry, expert48_
 
 
 @pytest.mark.gfx950
-def test_large_scaled_weights_with_zero_input_stay_zero(builder_registry, expert48_schema):
-    case = OpCase(expert48_schema.point({"n_tokens": 16}))
+@pytest.mark.parametrize("rows", [1, 2, 16])
+def test_large_scaled_weights_with_zero_input_stay_zero(builder_registry, expert48_schema, rows):
+    case = OpCase(expert48_schema.point({"n_tokens": rows}))
     inputs = prepared(case, 0.0, 127, 254, 0x77, 1.0)
     call = case.call(inputs, "cuda:0")
     assert call["w1"].is_shuffled and call["w2"].is_shuffled
