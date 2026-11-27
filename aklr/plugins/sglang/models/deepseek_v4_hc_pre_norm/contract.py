@@ -32,7 +32,10 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
-from aklr.plugins.sglang.models.deepseek_v4_hc_pre_norm.baseline import HcPreNormBaseline
+from aklr.plugins.sglang.models.deepseek_v4_hc_pre_norm.baseline import (
+    HcPreNormBaseline,
+    HcPreNormMxfp8Baseline,
+)
 from aklr.plugins.sglang.models.deepseek_v4_hc_pre_norm.reference import HcPreNormReference
 
 __all__ = ["CONTRACTS", "DEEPSEEK_V4_HC_PRE_NORM", "DEEPSEEK_V4_HC_PRE_NORM_MXFP8"]
@@ -209,7 +212,7 @@ DEEPSEEK_V4_HC_PRE_NORM_MXFP8 = OpContract(
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     reference=HcPreNormReference(),
-    baseline=HcPreNormBaseline(),
+    baseline=HcPreNormMxfp8Baseline(),
 )
 
 CONTRACTS = (DEEPSEEK_V4_HC_PRE_NORM, DEEPSEEK_V4_HC_PRE_NORM_MXFP8)

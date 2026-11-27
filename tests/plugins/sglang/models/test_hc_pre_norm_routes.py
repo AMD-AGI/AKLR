@@ -127,12 +127,30 @@ def test_a_norm_that_is_not_the_boundarys_leaves_the_call_to_sglang(sglang):
     assert sglang == ["partials", "sinkhorn"]
 
 
-def test_a_norm_without_the_mxfp8_operand_leaves_the_call_to_sglang(sglang):
-    """The op writes the fp8 codes the next projection takes; a bf16 fake quant stays on sglang."""
+def test_a_norm_whose_fake_quant_is_bf16_leaves_the_call_to_sglang(sglang):
+    """The op writes the fp8 codes the next projection takes; sglang's bf16 fake quant is its own."""
     _, y, coefficients = _boundary(sglang)
-    out = api._rmsnorm_with_sinkhorn(y, torch.ones(HIDDEN), 1e-20, coefficients, fake_quant=False)
+    out = api._rmsnorm_with_sinkhorn(y, torch.ones(HIDDEN), 1e-20, coefficients, emit_fp8=False)
     assert out is FallbackReason.OUT_OF_CONTRACT
     assert sglang == ["partials", "sinkhorn"]
+
+
+def test_a_norm_with_no_fake_quant_asks_the_plain_op(sglang, monkeypatch):
+    """The FFN norm without the MXFP8 operand: the same pair, the op without the codes."""
+    asked = []
+    monkeypatch.setattr(
+        api,
+        "deepseek_v4_hc_pre_norm",
+        lambda *a, **k: asked.append(a) or (torch.zeros(ROWS, HIDDEN),) * 5,
+    )
+    _, y, coefficients = _boundary(sglang)
+    quant, out_norm = api._rmsnorm_with_sinkhorn(
+        y, torch.ones(HIDDEN), 1e-20, coefficients, fake_quant=False
+    )
+    assert quant is None
+    assert out_norm.shape == (ROWS, HIDDEN)
+    assert len(asked) == 1
+    assert sglang == []
 
 
 def test_the_boundarys_own_norm_asks_the_op_once(sglang, monkeypatch):

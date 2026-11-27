@@ -198,17 +198,17 @@ def _hc_boundary_fused_deferred(
     versions=("0.5.23",),
 )
 def _rmsnorm_with_sinkhorn(x, weight, eps, coefficients, *, emit_fp8=False, fake_quant=True):
-    """The pending boundary of ``x`` and this norm in one launch. Without a pending AKLR boundary,
-    or on a norm shape the op has no kernel for, the coefficients are materialized as sglang would
-    and sglang's own launch runs."""
-    from sglang.kernels.ops.quantization.mxfp8_amd_gfx95 import Mxfp8Activation
-
+    """The pending boundary of ``x`` and this norm in one launch: the MXFP8 operand the next
+    projection takes (the attention input norm, and the FFN norm under SGLANG_HIP_FFN_NORM_MXFP8)
+    or the plain norm. sglang's bf16 fake quant, another tensor's norm and shapes the op has no
+    kernel for materialize the coefficients as sglang would and leave the launch to sglang."""
     held = getattr(coefficients, "pending", None)
-    if held is None or x is not held["y"] or x.stride(1) != 1 or not (fake_quant and emit_fp8):
+    mxfp8 = fake_quant and emit_fp8
+    if held is None or x is not held["y"] or x.stride(1) != 1 or (fake_quant and not emit_fp8):
         if held is not None:
             coefficients.materialize()
         return FallbackReason.OUT_OF_CONTRACT
-    out = deepseek_v4_hc_pre_norm_mxfp8(
+    call = (
         held["residual"],
         held["pre_prev"],
         held["hc_fn"],
@@ -220,15 +220,22 @@ def _rmsnorm_with_sinkhorn(x, weight, eps, coefficients, *, emit_fp8=False, fake
         coefficients._pre,
         coefficients._post,
         coefficients._comb,
-        rms_eps=coefficients.rms_eps,
-        hc_eps=coefficients.hc_eps,
-        norm_eps=eps,
-        sinkhorn_iters=coefficients.sinkhorn_iters,
     )
+    scalars = {
+        "rms_eps": coefficients.rms_eps,
+        "hc_eps": coefficients.hc_eps,
+        "norm_eps": eps,
+        "sinkhorn_iters": coefficients.sinkhorn_iters,
+    }
+    op = deepseek_v4_hc_pre_norm_mxfp8 if mxfp8 else deepseek_v4_hc_pre_norm
+    out = op(*call, **scalars)
     if isinstance(out, FallbackReason):
         coefficients.materialize()
         return out
     coefficients.pending = None
     coefficients.materialized = True
-    _, out_norm, _, _, _, quantized, scales = out
-    return Mxfp8Activation(quantized, scales), out_norm
+    if not mxfp8:
+        return None, out[1]
+    from sglang.kernels.ops.quantization.mxfp8_amd_gfx95 import Mxfp8Activation
+
+    return Mxfp8Activation(out[5], out[6]), out[1]
