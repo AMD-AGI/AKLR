@@ -94,3 +94,20 @@ models:
                 model-prefix: kimik3
                 framework: vllm
                 runner_pattern: mi355x
+          sglang:
+            # Both modes on stack.json's AITER, as on vLLM.
+            aiter: stack
+            # The cookbook's command lacks the two server variables every InferenceX SGLang lane serves the AgentX
+            # client with, and SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION, which InferenceX's MI355X SGLang recipes
+            # set: without it SGLang 0.5.23 scales the cookbook's --mem-fraction-static 0.85 to 0.7225 under the
+            # AITER backend, less than the weights take, and the server does not start.
+            advisory_env:
+              PYTHONNOUSERSITE: "1"
+              SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION: "1"
+              SGLANG_TIMEOUT_KEEP_ALIVE: "900"
+            recipe_source:
+              # InferenceX has no SGLang lane for Kimi-K3: the cookbook's MI355X command, at the vLLM lane's
+              # concurrencies.
+              kind: cookbook
+              framework: sglang
+              url: https://docs.sglang.io/cookbook/autoregressive/Moonshotai/Kimi-K3
