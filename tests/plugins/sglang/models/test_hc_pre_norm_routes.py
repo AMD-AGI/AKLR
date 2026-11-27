@@ -78,15 +78,14 @@ def _boundary(sglang_mod_ran, x=None, pre_prev=None, hidden=HIDDEN):
     )
 
 
-def test_a_boundary_with_a_pending_post_stays_on_sglang(sglang):
-    """The post variant keeps sglang's residual_out, which this op does not write."""
-    out = api._hc_boundary_fused_deferred(
-        torch.zeros(ROWS, HIDDEN, dtype=torch.bfloat16),
-        torch.zeros(ROWS, HC, HIDDEN, dtype=torch.bfloat16),
+def _post_boundary(hidden=HIDDEN):
+    return api._hc_boundary_fused_deferred(
+        torch.zeros(ROWS, hidden, dtype=torch.bfloat16),
+        torch.zeros(ROWS, HC, hidden, dtype=torch.bfloat16),
         torch.zeros(ROWS, HC),
         torch.zeros(ROWS, HC, HC),
         torch.zeros(ROWS, HC),
-        torch.zeros(MIX, HC * HIDDEN),
+        torch.zeros(MIX, HC * hidden),
         torch.ones(3),
         torch.zeros(MIX),
         HC,
@@ -94,7 +93,44 @@ def test_a_boundary_with_a_pending_post_stays_on_sglang(sglang):
         1e-20,
         1e-6,
     )
-    assert out is FallbackReason.OUT_OF_CONTRACT
+
+
+def test_a_boundary_with_a_pending_post_defers_it_too(sglang):
+    """Past the rows the fused all-reduce covers the post is still the boundary's; the route hands
+    back the residual it will write and launches nothing."""
+    residual_out, y, coefficients = _post_boundary()
+    assert residual_out.shape == (ROWS, HC, HIDDEN)
+    assert y.shape == (ROWS, HIDDEN)
+    assert sglang == []
+    coefficients.materialize()
+    assert sglang == ["partials", "sinkhorn"]
+
+
+def test_a_pending_post_asks_the_post_op(sglang, monkeypatch):
+    """Its norm asks the contract that writes the new residual as well."""
+    asked = []
+    monkeypatch.setattr(
+        api,
+        "deepseek_v4_hc_pre_norm_post_mxfp8",
+        lambda *a, **k: (
+            asked.append(a)
+            or (
+                torch.zeros(ROWS, HC, HIDDEN),
+                torch.zeros(ROWS, HIDDEN),
+                torch.zeros(ROWS, HIDDEN),
+                torch.zeros(ROWS, HC),
+                torch.zeros(ROWS, HC),
+                torch.zeros(ROWS, HC, HC),
+                torch.zeros(ROWS, HIDDEN),
+                torch.zeros(ROWS, HIDDEN // 32),
+            )
+        ),
+    )
+    _, y, coefficients = _post_boundary()
+    quant, out_norm = api._rmsnorm_with_sinkhorn(y, torch.ones(HIDDEN), 1e-20, coefficients, emit_fp8=True)
+    assert len(asked) == 1
+    assert out_norm.shape == (ROWS, HIDDEN)
+    assert quant.q.shape == (ROWS, HIDDEN)
     assert sglang == []
 
 

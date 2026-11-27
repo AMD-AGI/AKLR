@@ -218,6 +218,18 @@
     },
     {
       "axes": {
+        "n_tokens": 3
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 4
       },
       "scalars": {
@@ -291,6 +303,78 @@
     {
       "axes": {
         "n_tokens": 16
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 20
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999682655225e-21,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48
       },
       "scalars": {
         "rms_eps": 9.999999682655225e-21,

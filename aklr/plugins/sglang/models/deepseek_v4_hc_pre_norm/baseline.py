@@ -3,7 +3,12 @@
 
 from aklr.core.contract.baseline import OpBaseline
 
-__all__ = ["HcPreNormBaseline", "HcPreNormMxfp8Baseline"]
+__all__ = [
+    "HcPreNormBaseline",
+    "HcPreNormMxfp8Baseline",
+    "HcPreNormPostBaseline",
+    "HcPreNormPostMxfp8Baseline",
+]
 
 
 def _sglang_pair(call, emit_fp8):
@@ -17,11 +22,21 @@ def _sglang_pair(call, emit_fp8):
         rmsnorm_with_sinkhorn,
     )
 
-    residual, hc_fn = call["residual"], call["hc_fn"]
+    residual, hc_fn, x = call["residual"], call["hc_fn"], call.get("x")
     hc_mult, hidden = residual.shape[1], residual.shape[2]
     y = torch.empty_like(residual[:, 0])
+    residual_out = torch.empty_like(residual) if x is not None else None
     part_mix, part_sq = _hc_boundary_partials(
-        None, residual, None, None, call["pre_prev"], hc_fn, None, y, hc_mult=hc_mult, prefill=False
+        x,
+        residual,
+        call.get("pending_post"),
+        call.get("pending_comb"),
+        call["pre_prev"],
+        hc_fn,
+        residual_out,
+        y,
+        hc_mult=hc_mult,
+        prefill=False,
     )
     coefficients = HcCoefficients(
         part_mix,
@@ -45,6 +60,7 @@ def _sglang_pair(call, emit_fp8):
         fake_quant=emit_fp8,
     )
     out = {
+        **({"residual_out": residual_out} if x is not None else {}),
         "y": y,
         "out_norm": out_norm,
         "pre": coefficients._pre,
@@ -65,4 +81,17 @@ class HcPreNormBaseline(OpBaseline):
 class HcPreNormMxfp8Baseline(OpBaseline):
     def baseline(self, **call):
         """The pair whose norm launch also writes the next projection's MXFP8 operand."""
+        return _sglang_pair(call, emit_fp8=True)
+
+
+class HcPreNormPostBaseline(OpBaseline):
+    def baseline(self, **call):
+        """The pair with a pending post and the plain norm: the FFN boundary past the rows the fused
+        all-reduce covers, so its post is still the boundary's to apply."""
+        return _sglang_pair(call, emit_fp8=False)
+
+
+class HcPreNormPostMxfp8Baseline(OpBaseline):
+    def baseline(self, **call):
+        """The same with the norm launch also writing the next projection's MXFP8 operand."""
         return _sglang_pair(call, emit_fp8=True)

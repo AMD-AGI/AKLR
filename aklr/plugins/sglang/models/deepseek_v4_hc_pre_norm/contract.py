@@ -35,10 +35,18 @@ from aklr.core.contract.spec import (
 from aklr.plugins.sglang.models.deepseek_v4_hc_pre_norm.baseline import (
     HcPreNormBaseline,
     HcPreNormMxfp8Baseline,
+    HcPreNormPostBaseline,
+    HcPreNormPostMxfp8Baseline,
 )
 from aklr.plugins.sglang.models.deepseek_v4_hc_pre_norm.reference import HcPreNormReference
 
-__all__ = ["CONTRACTS", "DEEPSEEK_V4_HC_PRE_NORM", "DEEPSEEK_V4_HC_PRE_NORM_MXFP8"]
+__all__ = [
+    "CONTRACTS",
+    "DEEPSEEK_V4_HC_PRE_NORM",
+    "DEEPSEEK_V4_HC_PRE_NORM_MXFP8",
+    "DEEPSEEK_V4_HC_PRE_NORM_POST",
+    "DEEPSEEK_V4_HC_PRE_NORM_POST_MXFP8",
+]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _F32 = DTypeSpec(any_of=(DType.FLOAT32,))
@@ -162,6 +170,49 @@ _OUTPUTS = {
     ),
 }
 
+_POST_INPUTS = {
+    "x": TensorSpec(
+        description="The sublayer's output rows, the pending post's.",
+        shape=("n_tokens", "hidden_size"),
+        dtype=_BF16,
+        distribution=_FINITE,
+    ),
+    "pending_post": TensorSpec(
+        description="The previous boundary's post, one weight of x per copy.",
+        shape=("n_tokens", "hc_mult"),
+        dtype=_F32,
+        # about [0.1, 2]: twice a sigmoid
+        distribution=LogUniformDistribution(log2_lo="-3.32", log2_hi="1"),
+    ),
+    "pending_comb": TensorSpec(
+        description="The previous boundary's comb, [j, k] mixing copy j into copy k.",
+        shape=("n_tokens", "hc_mult", "hc_mult"),
+        dtype=_F32,
+        # about [1/16, 1]: a Sinkhorn-normalized softmax
+        distribution=LogUniformDistribution(log2_lo="-4", log2_hi="0"),
+    ),
+}
+_RESIDUAL_OUT = TensorSpec(
+    description="The residual copies after the pending post, bf16.",
+    shape=("n_tokens", "hc_mult", "hidden_size"),
+    dtype=_BF16,
+    error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
+)
+_QUANTIZED = {
+    "quantized": TensorSpec(
+        description="Each normed element over its block's scale, fp8 e4m3.",
+        shape=("n_tokens", "hidden_size"),
+        dtype=_FP8,
+        error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
+    ),
+    "scales": TensorSpec(
+        description="The ue8m0 exponent byte of each 32 columns' scale: scale = 2**(byte - 127).",
+        shape=("n_tokens", "n_blocks"),
+        dtype=_U8,
+        error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
+    ),
+}
+
 _DESCRIPTION = (
     "With flat = residual flattened over the copies, rsqrt = 1 / sqrt(mean(flat**2) + rms_eps) and "
     "logits = (flat @ hc_fn^T) * rsqrt * hc_scale + hc_base, split hc_mult / hc_mult / hc_mult**2: "
@@ -184,35 +235,63 @@ DEEPSEEK_V4_HC_PRE_NORM = OpContract(
     baseline=HcPreNormBaseline(),
 )
 
+_MXFP8_DESCRIPTION = (
+    " out_norm is also quantized per 32 columns to fp8 e4m3 by the smallest power of two >= their amax "
+    "/ 448 (amax floored at 1e-10, the exponent clamped to [1, 254]): quantized holds out_norm / scale "
+    "clamped to +-448, and scales the scale's ue8m0 exponent byte."
+)
+
 DEEPSEEK_V4_HC_PRE_NORM_MXFP8 = OpContract(
     contract_id="deepseek_v4_hc_pre_norm_mxfp8@1.0",
-    description=(
-        _DESCRIPTION + " out_norm is also quantized per 32 columns to fp8 e4m3 by the smallest power of two "
-        ">= their amax / 448 (amax floored at 1e-10, the exponent clamped to [1, 254]): quantized holds "
-        "out_norm / scale clamped to +-448, and scales the scale's ue8m0 exponent byte."
-    ),
+    description=_DESCRIPTION + _MXFP8_DESCRIPTION,
     op_type="deepseek_v4_hc_pre_norm",
     axes=_AXES,
     inputs=_INPUTS,
-    outputs={
-        **_OUTPUTS,
-        "quantized": TensorSpec(
-            description="Each normed element over its block's scale, fp8 e4m3.",
-            shape=("n_tokens", "hidden_size"),
-            dtype=_FP8,
-            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
-        ),
-        "scales": TensorSpec(
-            description="The ue8m0 exponent byte of each 32 columns' scale: scale = 2**(byte - 127).",
-            shape=("n_tokens", "n_blocks"),
-            dtype=_U8,
-            error_bounds=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
-        ),
-    },
+    outputs={**_OUTPUTS, **_QUANTIZED},
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     reference=HcPreNormReference(),
     baseline=HcPreNormMxfp8Baseline(),
 )
 
-CONTRACTS = (DEEPSEEK_V4_HC_PRE_NORM, DEEPSEEK_V4_HC_PRE_NORM_MXFP8)
+_POST_DESCRIPTION = (
+    "residual_out[:, k] = pending_post[k] * x + sum_j pending_comb[j, k] * residual[:, j] (float32, "
+    "multiplies and adds in that order, none contracted), rounded to bf16; then "
+    + _DESCRIPTION[0].lower()
+    + _DESCRIPTION[1:]
+    .replace("residual flattened", "residual_out flattened")
+    .replace("pre_prev[k] * copy_k", "pre_prev[k] * residual_out[:, k]")
+)
+
+DEEPSEEK_V4_HC_PRE_NORM_POST = OpContract(
+    contract_id="deepseek_v4_hc_pre_norm_post@1.0",
+    description=_POST_DESCRIPTION,
+    op_type="deepseek_v4_hc_pre_norm",
+    axes=_AXES,
+    inputs={**_POST_INPUTS, **_INPUTS},
+    outputs={"residual_out": _RESIDUAL_OUT, **_OUTPUTS},
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=HcPreNormReference(),
+    baseline=HcPreNormPostBaseline(),
+)
+
+DEEPSEEK_V4_HC_PRE_NORM_POST_MXFP8 = OpContract(
+    contract_id="deepseek_v4_hc_pre_norm_post_mxfp8@1.0",
+    description=_POST_DESCRIPTION + _MXFP8_DESCRIPTION,
+    op_type="deepseek_v4_hc_pre_norm",
+    axes=_AXES,
+    inputs={**_POST_INPUTS, **_INPUTS},
+    outputs={"residual_out": _RESIDUAL_OUT, **_OUTPUTS, **_QUANTIZED},
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=HcPreNormReference(),
+    baseline=HcPreNormPostMxfp8Baseline(),
+)
+
+CONTRACTS = (
+    DEEPSEEK_V4_HC_PRE_NORM,
+    DEEPSEEK_V4_HC_PRE_NORM_MXFP8,
+    DEEPSEEK_V4_HC_PRE_NORM_POST,
+    DEEPSEEK_V4_HC_PRE_NORM_POST_MXFP8,
+)

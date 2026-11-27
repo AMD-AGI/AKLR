@@ -23,6 +23,9 @@ class HcPreNormReference(OpReference):
         norm_eps,
         post_multiplier,
         sinkhorn_iters,
+        x=None,
+        pending_post=None,
+        pending_comb=None,
         **_,
     ):
         """The mixing statistics of the flattened copies give this boundary's pre / post / comb;
@@ -31,6 +34,16 @@ class HcPreNormReference(OpReference):
         multiply rounds to float32, its exponent rounds upward and is clamped to [1, 254]."""
         copies = residual.float()
         n_tokens, hc, _ = copies.shape
+        out = {}
+        if x is not None:
+            rows = []
+            for k in range(hc):
+                v = x.float() * pending_post[:, k : k + 1]
+                for j in range(hc):
+                    v = v + copies[:, j] * pending_comb[:, j, k : k + 1]
+                rows.append(v.to(torch.bfloat16))
+            out["residual_out"] = torch.stack(rows, 1)
+            copies = out["residual_out"].float()
         flat = copies.flatten(1)
         rsqrt = torch.rsqrt(flat.square().mean(dim=-1, keepdim=True) + rms_eps)
         logits = (flat.double() @ hc_fn.double().mT).float() * rsqrt
@@ -62,6 +75,7 @@ class HcPreNormReference(OpReference):
         scale_value = (exponent << 23).contiguous().view(torch.float32)
         quantized = (grouped / scale_value.unsqueeze(-1)).clamp(-448.0, 448.0)
         return {
+            **out,
             "y": y,
             "out_norm": out_norm,
             "pre": pre,

@@ -8,9 +8,16 @@ from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models.deepseek_v4_hc_pre_norm.contract import (
     DEEPSEEK_V4_HC_PRE_NORM,
     DEEPSEEK_V4_HC_PRE_NORM_MXFP8,
+    DEEPSEEK_V4_HC_PRE_NORM_POST,
+    DEEPSEEK_V4_HC_PRE_NORM_POST_MXFP8,
 )
 
-__all__ = ["deepseek_v4_hc_pre_norm", "deepseek_v4_hc_pre_norm_mxfp8"]
+__all__ = [
+    "deepseek_v4_hc_pre_norm",
+    "deepseek_v4_hc_pre_norm_mxfp8",
+    "deepseek_v4_hc_pre_norm_post",
+    "deepseek_v4_hc_pre_norm_post_mxfp8",
+]
 
 
 @api(DEEPSEEK_V4_HC_PRE_NORM)
@@ -59,6 +66,60 @@ def deepseek_v4_hc_pre_norm_mxfp8(
 ): ...
 
 
+@api(DEEPSEEK_V4_HC_PRE_NORM_POST)
+def deepseek_v4_hc_pre_norm_post(
+    x,
+    pending_post,
+    pending_comb,
+    residual,
+    pre_prev,
+    hc_fn,
+    hc_scale,
+    hc_base,
+    norm_weight,
+    residual_out=None,
+    y=None,
+    out_norm=None,
+    pre=None,
+    post=None,
+    comb=None,
+    *,
+    rms_eps,
+    hc_eps,
+    norm_eps,
+    post_multiplier=2.0,
+    sinkhorn_iters=20,
+): ...
+
+
+@api(DEEPSEEK_V4_HC_PRE_NORM_POST_MXFP8)
+def deepseek_v4_hc_pre_norm_post_mxfp8(
+    x,
+    pending_post,
+    pending_comb,
+    residual,
+    pre_prev,
+    hc_fn,
+    hc_scale,
+    hc_base,
+    norm_weight,
+    residual_out=None,
+    y=None,
+    out_norm=None,
+    pre=None,
+    post=None,
+    comb=None,
+    quantized=None,
+    scales=None,
+    *,
+    rms_eps,
+    hc_eps,
+    norm_eps,
+    post_multiplier=2.0,
+    sinkhorn_iters=20,
+): ...
+
+
 def _deferred_class():
     """A HcCoefficients that holds the boundary's inputs instead of its partials, so that the
     norm launch that follows can run both in one kernel; any other reader materializes it the
@@ -78,13 +139,13 @@ def _deferred_class():
             held, self.pending = self.pending, None
             if held is not None:
                 part_mix, part_sq = _hc_boundary_partials(
-                    None,
+                    held["x"],
                     held["residual"],
-                    None,
-                    None,
+                    held["pending_post"],
+                    held["pending_comb"],
                     held["pre_prev"],
                     held["hc_fn"],
-                    None,
+                    held["residual_out"],
                     held["y"],
                     hc_mult=self.hc_mult,
                 )
@@ -120,23 +181,24 @@ def _deferred():
     return _DEFERRED
 
 
+# Columns of every copy one program of the fused kernel owns; the count of slices follows.
+SLICE_WIDTH = 32
+
+
 def _qualifies(x, residual, pre_prev, hc_fn, hc_mult) -> bool:
     import torch
-    from sglang.kernels.ops.layernorm.mhc_boundary_hip import (
-        _HC_BOUNDARY_BLOCK_K,
-        _hc_boundary_use_prefill,
-    )
+    from sglang.kernels.ops.layernorm.mhc_boundary_hip import _hc_boundary_use_prefill
 
     m, _, h = residual.shape
     return (
-        x is None
-        and pre_prev is not None
+        pre_prev is not None
         and hc_mult == 4
         and m > 0
         and residual.dtype == torch.bfloat16
         and residual.is_contiguous()
-        and h % _HC_BOUNDARY_BLOCK_K == 0
-        and not _hc_boundary_use_prefill(m, False, True, None)
+        and h % SLICE_WIDTH == 0
+        and (x is None or (x.shape == (m, h) and x.dtype == residual.dtype and x.stride(1) == 1))
+        and not _hc_boundary_use_prefill(m, x is not None, True, x)
     )
 
 
@@ -158,17 +220,17 @@ def _hc_boundary_fused_deferred(
     rms_eps,
     hc_eps,
 ):
-    """A boundary with no pending post, at decode rows: the collapse, the mixing statistics and
-    the Sinkhorn all wait for the norm launch that reads the collapse, which runs them in one
-    kernel (``_rmsnorm_with_sinkhorn``). Any other reader of the coefficients -- a norm sglang
-    takes down another path, or the fused all-reduce asking for post / comb -- materializes them
-    through sglang's own two launches. Rows with a pending post stay on sglang."""
+    """A boundary at decode rows: the pending post, the collapse, the mixing statistics and the
+    Sinkhorn all wait for the norm launch that reads the collapse, which runs them in one kernel
+    (``_rmsnorm_with_sinkhorn``). Any other reader of the coefficients -- a norm sglang takes down
+    another path, or the fused all-reduce asking for post / comb -- materializes them through
+    sglang's own two launches, which is also what writes the residual the post produces."""
     import torch
 
     if not _qualifies(x, residual, pre_prev, hc_fn, hc_mult):
         return FallbackReason.OUT_OF_CONTRACT
     m, _, h = residual.shape
-    slices = h // 64
+    slices = h // SLICE_WIDTH
     device = residual.device
     coefficients = _deferred()(
         torch.empty((slices, m, hc_fn.shape[0]), dtype=torch.float32, device=device),
@@ -184,13 +246,18 @@ def _hc_boundary_fused_deferred(
         hc_eps=hc_eps,
     )
     y = torch.empty((m, h), dtype=residual.dtype, device=device)
+    residual_out = torch.empty_like(residual) if x is not None else None
     coefficients.pending = {
         "residual": residual,
         "pre_prev": pre_prev.contiguous(),
         "hc_fn": hc_fn,
         "y": y,
+        "x": x,
+        "pending_post": None if x is None else post_in.contiguous().float(),
+        "pending_comb": None if x is None else comb_in.contiguous().float(),
+        "residual_out": residual_out,
     }
-    return None, y, coefficients
+    return residual_out, y, coefficients
 
 
 @sglang_route(
@@ -208,18 +275,25 @@ def _rmsnorm_with_sinkhorn(x, weight, eps, coefficients, *, emit_fp8=False, fake
         if held is not None:
             coefficients.materialize()
         return FallbackReason.OUT_OF_CONTRACT
+    post_pending = held["x"] is not None
     call = (
-        held["residual"],
-        held["pre_prev"],
-        held["hc_fn"],
-        coefficients.hc_scale,
-        coefficients.hc_base,
-        weight.contiguous(),
-        held["y"],
-        None,
-        coefficients._pre,
-        coefficients._post,
-        coefficients._comb,
+        ((held["x"], held["pending_post"], held["pending_comb"]) if post_pending else ())
+        + (
+            held["residual"],
+            held["pre_prev"],
+            held["hc_fn"],
+            coefficients.hc_scale,
+            coefficients.hc_base,
+            weight.contiguous(),
+        )
+        + ((held["residual_out"],) if post_pending else ())
+        + (
+            held["y"],
+            None,
+            coefficients._pre,
+            coefficients._post,
+            coefficients._comb,
+        )
     )
     scalars = {
         "rms_eps": coefficients.rms_eps,
@@ -227,15 +301,21 @@ def _rmsnorm_with_sinkhorn(x, weight, eps, coefficients, *, emit_fp8=False, fake
         "norm_eps": eps,
         "sinkhorn_iters": coefficients.sinkhorn_iters,
     }
-    op = deepseek_v4_hc_pre_norm_mxfp8 if mxfp8 else deepseek_v4_hc_pre_norm
+    op = (
+        (deepseek_v4_hc_pre_norm_post_mxfp8 if mxfp8 else deepseek_v4_hc_pre_norm_post)
+        if post_pending
+        else (deepseek_v4_hc_pre_norm_mxfp8 if mxfp8 else deepseek_v4_hc_pre_norm)
+    )
     out = op(*call, **scalars)
     if isinstance(out, FallbackReason):
         coefficients.materialize()
         return out
     coefficients.pending = None
     coefficients.materialized = True
+    # the contracts' output order: (residual_out,) y, out_norm, pre, post, comb (, quantized, scales)
+    norm_at = 2 if post_pending else 1
     if not mxfp8:
-        return None, out[1]
+        return None, out[norm_at]
     from sglang.kernels.ops.quantization.mxfp8_amd_gfx95 import Mxfp8Activation
 
-    return Mxfp8Activation(out[5], out[6]), out[1]
+    return Mxfp8Activation(out[norm_at + 4], out[norm_at + 5]), out[norm_at]
