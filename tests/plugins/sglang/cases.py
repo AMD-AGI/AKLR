@@ -908,6 +908,28 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="strided_rows",
     ),
+    # DeepSeek-V4's compressed-cache metadata with a 4-page table of 256-slot pages
+    PointSpec(
+        contract_id="dsv4_compression_metadata@1.0",
+        axes={"n_rows": 6, "n_write": 6, "max_pages": 4, "c128_width": 8},
+        dtypes={
+            "seq_lens": "int32",
+            "positions": "int32",
+            "raw_out_loc": "int32",
+            "page_table": "int32",
+            "c4_out_loc": "int64",
+            "c4_positions": "int32",
+            "c4_seq_lens_raw": "int32",
+            "c4_seq_lens_clamp1": "int32",
+            "c128_out_loc": "int64",
+            "c128_positions": "int32",
+            "c128_seq_lens_raw": "int32",
+            "c128_seq_lens_clamp1": "int32",
+            "c128_page_indices": "int32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # test_backend_matches_reference's: aiter runs Kimi-K3's latent MoE only at the expert shapes it has
 # tuned (kimik3_a8w4_tuned_fmoe.csv), any other on a CK build that has no SiTU
