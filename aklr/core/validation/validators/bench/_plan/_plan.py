@@ -34,7 +34,7 @@ class WorkloadPlan:
 @dataclass(frozen=True)
 class SchemaPlan:
     path: str
-    schema: Schema
+    schema: Schema | None
     workloads: tuple[WorkloadPlan, ...] = ()
     findings: tuple[Finding, ...] = ()
     skipped: str | None = None
@@ -49,7 +49,14 @@ class SchemaPlan:
         plans = []
         for absolute in scope.bench_paths:
             path = scope.relative_path(absolute)
-            schema = registry.parse_schema(Path(absolute).read_bytes(), path)
+            try:
+                schema = registry.parse_schema(Path(absolute).read_bytes(), path)
+            except ValueError as error:
+                finding = Finding(
+                    code=FindingCode.SCHEMA_INVALID, schema_path=path, workload=None, detail=str(error)
+                )
+                plans.append(cls(path=path, schema=None, findings=(finding,)))
+                continue
             if not schema.kernel.sources:
                 continue
             baseline_type = type(registry.get(schema.contract_id).baseline)

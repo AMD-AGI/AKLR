@@ -178,6 +178,21 @@ class TestWriteBack:
         )
         assert list(report.measured_schemas(tmp_path)) == [path]
 
+    def test_a_bench_path_the_bench_did_not_evaluate_is_not_read(self, tmp_path: Path) -> None:
+        path, report = self._report(tmp_path, 1.5, 1.6)
+        broken = "aklr/plugins/aiter/provider/gemm/impls/triton/broken/0000000000000001.json"
+        (tmp_path / broken).parent.mkdir(parents=True)
+        (tmp_path / broken).write_text("{not json", encoding="utf-8")
+        report = ValidationReport(
+            head_sha=report.head_sha,
+            base_sha=None,
+            platform=report.platform,
+            schema_paths=(broken, path),
+            bench_paths=(broken, path),
+            validators=report.validators,
+        )
+        assert list(report.measured_schemas(tmp_path)) == [path]
+
     def test_a_speedup_within_two_percent_rewrites_nothing(self, tmp_path: Path) -> None:
         _, report = self._report(tmp_path, 1.5, 1.51)
         assert report.measured_schemas(tmp_path) == {}

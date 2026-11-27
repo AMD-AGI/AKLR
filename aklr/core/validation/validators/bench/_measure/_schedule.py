@@ -36,6 +36,8 @@ class TaskSchedule:
     def tasks(self, plans: Sequence[SchemaPlan], profile: MeasurementProfile) -> list[BenchTask]:
         tasks = []
         for plan in plans:
+            if plan.schema is None:
+                continue
             n = len(plan.workloads)
             count = -(-n // self.max_workloads)
             bench_type = OpBench.for_op(plan.schema.op_type)

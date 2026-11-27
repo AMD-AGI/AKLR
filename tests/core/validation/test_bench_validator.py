@@ -67,6 +67,17 @@ def _schema(
     return case.contract.narrow(case.point, workloads=workloads, kernel=_kernel(source, arch, requires))
 
 
+def _norm_schema(
+    epsilon: float, source: str = GEMM_KERNEL_SOURCE, speedup: float | None = None
+) -> OpContract:
+    """An rmsnorm schema of one workload at the scalar epsilon, stored passed at speedup (None: unmeasured)."""
+    case = OpCase.of("rmsnorm@1.0")
+    workload = case.contract.workload_for(case.point, {"epsilon": epsilon})
+    if speedup is not None:
+        workload = workload.model_copy(update={"accuracy": "passed", "speedup": speedup})
+    return case.contract.narrow(case.point, workloads=[workload], kernel=_kernel(source))
+
+
 def _group_schema(ep_size: int) -> OpContract:
     """A mega_moe schema of one workload, on an expert-parallel group of ep_size ranks."""
     case = OpCase.of("mega_moe@1.0")
@@ -223,6 +234,31 @@ class TestPlan:
             _BASELINE,
         )
         assert opponent.path.endswith("0000000000000001.json")
+
+    def test_an_incumbent_measured_at_other_scalars_leaves_the_baseline_to_be_timed(
+        self, repo: _Repo
+    ) -> None:
+        # its stored speedup is of another call: carried over, it would write a wrong one against the Baseline
+        repo.write(_norm_schema(1e-3, _OTHER_KERNEL, speedup=2.0), "1")
+        base = repo.commit()
+        workload = _only(repo.plans(base, repo.write(_norm_schema(1e-4), "2")))
+        assert workload.opponent.label == "baseline"
+
+    def test_an_incumbent_measured_at_the_same_scalars_is_timed(self, repo: _Repo) -> None:
+        repo.write(_norm_schema(1e-3, _OTHER_KERNEL, speedup=2.0), "1")
+        base = repo.commit()
+        workload = _only(repo.plans(base, repo.write(_norm_schema(1e-3), "2")))
+        assert (workload.opponent.label, workload.opponent.stored_speedup) == ("incumbent", 2.0)
+
+    def test_a_schema_that_does_not_parse_is_its_own_finding_and_the_others_are_planned(
+        self, repo: _Repo
+    ) -> None:
+        broken = repo.root / f"aklr/plugins/aiter/provider/gemm/impls/triton/broken/{'1':0>16}.json"
+        broken.parent.mkdir(parents=True)
+        broken.write_text("{not json", encoding="utf-8")
+        broken_plan, plan = repo.plans(None, broken, repo.write(_schema(), "2"))
+        assert (broken_plan.workloads, _codes(broken_plan.findings)) == ((), ["schema_invalid"])
+        assert (len(plan.workloads), plan.findings) == (1, ())
 
     def test_the_incumbent_with_the_higher_stored_speedup_is_chosen(self, repo: _Repo) -> None:
         repo.write(_schema(_OTHER_KERNEL, speedup=1.5), "1")
@@ -511,6 +547,17 @@ class TestVerdict:
     def test_a_bench_of_no_trials_is_refused(self, num_trials: int) -> None:
         with pytest.raises(ValueError, match="num_trials"):
             BenchValidator(["cuda:0"], num_trials=num_trials)
+
+    def test_a_schema_that_does_not_parse_fails_the_bench_and_the_others_are_measured(
+        self, repo: _Repo
+    ) -> None:
+        broken = repo.root / f"aklr/plugins/aiter/provider/gemm/impls/triton/broken/{'1':0>16}.json"
+        broken.parent.mkdir(parents=True)
+        broken.write_text("{not json", encoding="utf-8")
+        report = repo.run(_Tasks({1: _timed(1.5)}), None, broken, repo.write(_schema(), "2"))
+        assert (report.status, _codes(report.findings)) == ("failed", ["schema_invalid"])
+        assert [r.verdict for r in report.records] == ["passed"]
+        assert len(report.evaluations) == 1
 
     def test_a_report_read_back_shows_the_protocol_it_was_measured_under(self, repo: _Repo) -> None:
         report = repo.run(_Tasks({1: _timed(1.5)}), None, repo.write(_schema(), "2"))

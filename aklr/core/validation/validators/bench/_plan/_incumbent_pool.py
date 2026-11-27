@@ -104,7 +104,8 @@ class IncumbentPool:
                 continue
             if not (self._runs_here(base) and served.qualifies(self.min_speedup)):
                 continue
-            speedup = served.speedup if WorkloadKey.from_workload(served) == key else None
+            is_same_call = WorkloadKey.from_workload(served) == key and served.scalars == workload.scalars
+            speedup = served.speedup if is_same_call else None
             rank = (speedup or 0.0, base.kernel.content_hash, path)
             ranked.append((rank, IncumbentOpponent(self.baseline, path, base, speedup)))
         return max(ranked, key=lambda item: item[0], default=(None, None))[1]
