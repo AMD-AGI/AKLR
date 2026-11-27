@@ -81,6 +81,7 @@ class TestCheckKernel:
                 id="getattr_optional_dtype",
             ),
             pytest.param("_X: tuple[int, ...] = (1,)\n", id="annotated_constant"),
+            pytest.param("def _rows(input):\n    return input.shape[0]\n", id="param_named_input"),
             pytest.param(
                 "import flydsl.expr as fx\n\n_N = fx.Int32(fx.Int32(4) * 2)\n",
                 id="nested_flydsl_constant",
@@ -200,6 +201,20 @@ class TestCheckKernel:
                 id="augmented_assignment_to_input",
             ),
             pytest.param(
+                '"""K."""\ndef _rows(input):\n    return input.shape[0]\n\n\n'
+                + _SIGNATURE
+                + "\n    input()\n    out.copy_(a @ b.mT)\n",
+                "SA3",
+                id="builtin_input_beside_a_param_of_that_name",
+            ),
+            pytest.param(
+                '"""K."""\ndef _rows(open=open("/tmp/data")):\n    return open\n\n\n'
+                + _SIGNATURE
+                + "\n    out.copy_(a @ b.mT)\n",
+                "SA3",
+                id="builtin_called_in_the_default_of_a_param_of_that_name",
+            ),
+            pytest.param(
                 '"""K."""\nimport functools\nimport torch\n\n\n'
                 + "@functools.cache\ndef _compile(n):\n"
                 + '    torch.set_float32_matmul_precision("medium")\n    return n\n\n\n'
@@ -242,6 +257,20 @@ class TestCheckKernel:
                 '"""K."""\n' + _SIGNATURE.replace("out):", "out, **_):") + "\n    ...\n",
                 "SA4",
                 id="extra_kwargs",
+            ),
+            pytest.param(
+                '"""K."""\nfrom aklr.plugins.aiter.provider.gemm.baseline import GemmBaseline\n\n\n'
+                + _SIGNATURE
+                + "\n    out.copy_(a @ b.mT)\n",
+                "SA5",
+                id="imports_the_baseline",
+            ),
+            pytest.param(
+                '"""K."""\n'
+                + _SIGNATURE
+                + "\n    import aklr.plugins.aiter.provider.gemm.reference\n    out.copy_(a @ b.mT)\n",
+                "SA5",
+                id="imports_aklr_in_launch",
             ),
         ],
     )
@@ -385,9 +414,9 @@ class TestCheckHsacoKernel:
 
 
 _BAD_SOURCE = '"""K."""\n' + _SIGNATURE + "\n    a.zero_()\n"
-_OLD_FORMAT_PATH = "aklr/ops/gemm/kernels/gemm.py"  # a base that predates the format
+_OLD_FORMAT_PATH = "aklr/plugins/aiter/provider/gemm/kernels/gemm.py"  # a base that predates the format
 # origin/main's solution file layout: under impls/, but its stem is not a schema uuid
-_LEGACY_SOLUTION_PATH = "aklr/ops/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
+_LEGACY_SOLUTION_PATH = "aklr/plugins/aiter/provider/gemm/impls/triton/fp8/fp8_gfx950_m1.json"
 
 
 class TestAuditStage:
@@ -454,7 +483,7 @@ class TestAuditStage:
                 workloads=[{"axes": {"m": m}, **measurement} for m in ms],
                 kernel=case.schema(source).kernel.model_copy(update={"author": author}),
             )
-            return f"aklr/ops/{op_type}/{schema.relative_path()}", schema.schema_text()
+            return f"aklr/plugins/aiter/provider/{op_type}/{schema.relative_path()}", schema.schema_text()
 
         head_path, head_text = schema_at(head_source, head_ms, head_author)
         (tmp_path / head_path).parent.mkdir(parents=True)
@@ -482,11 +511,11 @@ class TestAuditStage:
         assert {f.code.value for f in report.findings} == codes
 
     def test_hip_kernel_takes_the_sh_rules(self, tmp_path: Path) -> None:
-        """A hip schema's kernel is audited by SH0-SH5, not SA0-SA4."""
+        """A hip schema's kernel is audited by SH0-SH5, not SA0-SA5."""
         case = OpCase.of("gemm@1.0")
         source = HIP_GEMM_KERNEL_SOURCE.replace(_LAUNCH, '    (void)getenv("X");\n' + _LAUNCH)
         schema = case.schema(source, language="hip")
-        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path = tmp_path / "aklr/plugins/aiter" / case.contract.op_type / schema.relative_path()
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
@@ -495,13 +524,13 @@ class TestAuditStage:
         assert finding.detail.startswith("SH3 kernel.hip:")
 
     def test_hsaco_kernel_takes_the_sa_and_sc_rules(self, tmp_path: Path) -> None:
-        """An hsaco schema's kernel is audited by SA0-SA4, then SC1-SC2."""
+        """An hsaco schema's kernel is audited by SA0-SA5, then SC1-SC2."""
         case = OpCase.of("gemm@1.0")
         source = HSACO_GEMM_KERNEL_SOURCE.replace(
             "import struct\n", "import ctypes\nimport struct\n"
         ).replace(_HSACO_LAUNCH, "    a.zero_()\n" + _HSACO_LAUNCH)
         schema = case.schema(source, language="hsaco", other_sources=_CODE_OBJECTS)
-        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path = tmp_path / "aklr/plugins/aiter" / case.contract.op_type / schema.relative_path()
         path.parent.mkdir(parents=True)
         path.write_text(schema.schema_text(), encoding="utf-8")
         scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())

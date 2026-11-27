@@ -43,7 +43,7 @@ class TestSchemaFile:
         byte; its kernel takes neither them nor the inputs they gate. An interleave
         schema, ``has_swiglu_limit`` true, takes ``swiglu_limit``."""
         registry = ContractRegistry.default()
-        impls = Path("aklr/ops/fused_moe/impls/flydsl")
+        impls = Path("aklr/plugins/aiter/provider/fused_moe/impls/flydsl")
         separated = impls / (
             "fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/f13fecf15dbe0a9d.json"
         )
@@ -253,7 +253,7 @@ class TestSchemaFile:
 
     def test_read_schemas_leaves_skipped_contracts_unchecked(self, tmp_path: Path) -> None:
         """A stale schema is an error, unless its contract is skipped (AKLR_DISABLE)."""
-        registry, op_package = ContractRegistry.default(), "aklr.ops.gemm"
+        registry, op_package = ContractRegistry.default(), "aklr.plugins.aiter.provider.gemm"
         op_dir = locate.op_dir(op_package)
         path = locate.committed_schema_paths(op_dir)[0]
         stale = tmp_path.joinpath(*op_package.split("."), path.relative_to(op_dir))
@@ -270,15 +270,15 @@ class TestMutableInput:
     compared as a result after the call."""
 
     def test_contract_rules(self) -> None:
-        """A floating mutable input needs error_bounds, an input that is not mutable has
-        none, and a mutable input is required and per_call."""
+        """A mutable input needs error_bounds, an input that is not mutable has none, and a
+        mutable input is required and per_call."""
         contract = ContractRegistry.default().get("gdn_decode@1.0")
         assert contract.mutable_inputs == ("conv_state", "delta_state")
         assert contract.mutable_tensors == ("normalized", "conv_state", "delta_state")
         bounds = contract.inputs["delta_state"].error_bounds
-        with pytest.raises(ValueError, match="delta_state: a floating mutable tensor needs"):
+        with pytest.raises(ValueError, match="delta_state: a mutable tensor needs"):
             _with_tensor(contract, "delta_state", error_bounds=())
-        with pytest.raises(ValueError, match="projected_qkvz: only a mutable input has error_bounds"):
+        with pytest.raises(ValueError, match="projected_qkvz: only a mutable tensor has error_bounds"):
             _with_tensor(contract, "projected_qkvz", error_bounds=bounds)
         with pytest.raises(ValueError, match="delta_state: a mutable input is required"):
             _with_tensor(contract, "delta_state", lifetime="weight")
@@ -288,7 +288,7 @@ class TestMutableInput:
             _with_tensor(optional, "delta_state", present_when="has_delta_state")
 
     def test_compare_checks_it(self) -> None:
-        """``compare_outputs`` checks a state as the call leaves it: one element off its
+        """``OpReference.check`` checks a state as the call leaves it: one element off its
         reference fails it."""
         case = OpCase.of("gdn_decode@1.0")
         args = case.inputs()
@@ -302,14 +302,14 @@ class TestMutableInput:
             r: t.to(semantics.torch_dtypes(case.point.dtypes[r])[0], copy=True) for r, t in reference.items()
         }
 
-        def compare() -> dict[str, semantics.CompareResult]:
-            return semantics.compare_outputs(case.request.schema_json, actual, reference)
+        def compare() -> dict[str, str]:
+            return case.contract.reference.check(actual, reference, case.request.schema)
 
-        assert all(r.is_passed for r in compare().values())
+        assert compare() == {}
         flat = actual["delta_state"].view(-1)
         flat[0] = 0.0 if flat[0].abs() > 1 else 100.0
         results = compare()
-        assert results["normalized"].is_passed and results["delta_state"].is_bound_exceeded
+        assert list(results) == ["delta_state"]
 
 
 def _with_tensor(contract: OpContract, name: str, **update: object) -> OpContract:

@@ -168,7 +168,7 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.085,
+      "speedup": 1.093,
       "microseconds": 223.0
     },
     {
@@ -179,8 +179,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.328,
-      "microseconds": 251.0
+      "speedup": 1.318,
+      "microseconds": 250.0
     },
     {
       "axes": {
@@ -190,8 +190,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.493,
-      "microseconds": 325.0
+      "speedup": 1.487,
+      "microseconds": 324.0
     },
     {
       "axes": {
@@ -201,8 +201,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.582,
-      "microseconds": 493.0
+      "speedup": 1.614,
+      "microseconds": 489.0
     },
     {
       "axes": {
@@ -212,8 +212,8 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.62,
-      "microseconds": 874.0
+      "speedup": 1.629,
+      "microseconds": 866.0
     }
   ],
   "layout_variants": {
@@ -245,9 +245,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

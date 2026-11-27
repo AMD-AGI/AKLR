@@ -87,7 +87,7 @@ def test_the_brief_states_the_operator_and_points_at_aklrs_rules(aklr_root: Path
     assert "Inputs: `a`, `b`. Outputs: `out`." in brief
     assert str(run.schema_json) in brief
     assert all(f"`{case_id}`" in brief for case_id in CASES)
-    assert f"{aklr_root}/aklr/ops/README.md" in brief
+    assert f"{aklr_root}/aklr/plugins/aiter/README.md" in brief
     assert "bitwise" in brief
     assert "faster than the baseline on average" in brief
 
@@ -119,35 +119,20 @@ def test_a_starting_kernel_takes_the_schemas_call_keys_not_every_api_param(tmp_p
     assert "def run(*, a, b, trans_b, bias, out_dtype, out):" in kernel
 
 
-def test_an_op_whose_contract_has_no_baseline_needs_a_starting_kernel(tmp_path: Path):
+def test_a_non_gemm_op_has_no_built_in_starting_kernel(tmp_path: Path):
     root = install_aklr(tmp_path / "aklr")
-    schema = load(write_schema(root, schema_payload("topk_demo", op_type="topk")))
+    schema = load(write_schema(root, schema_payload("mla_demo", op_type="mla")))
     with pytest.raises(workspace.StartingKernelError, match="--starting-kernel"):
         workspace.builtin_starting_kernel(schema, root)
 
 
-def test_any_op_with_a_baseline_starts_from_it_into_every_output(tmp_path: Path):
-    root = install_aklr(tmp_path / "aklr")
-    schema = load(write_schema(root, schema_payload("mla_demo", op_type="mla")))
-    (kernel,) = workspace.builtin_starting_kernel(schema, root).values()
-    assert "torch" not in kernel
-    assert "from aklr.core.contract.registry import gemm_scaled_baseline" in kernel
-    assert "zip((out,), results, strict=True)" in kernel
-    compile(kernel, "kernel.py", "exec")
-
-
-def test_a_scaled_gemm_schema_starts_from_its_contracts_baseline_into_the_output(tmp_path: Path):
+def test_a_scaled_gemm_has_no_built_in_starting_kernel(tmp_path: Path):
     root = install_aklr(tmp_path / "aklr")
     payload = schema_payload()
     payload["inputs"]["a_scale"] = {"shape": ["m", 1], "dtype": "float32"}
     payload["inputs"]["b_scale"] = {"shape": [1, 1], "dtype": "float32"}
-    schema = load(write_schema(root, payload))
-    (kernel,) = workspace.builtin_starting_kernel(schema, root).values()
-    assert "torch" not in kernel
-    assert "from aklr.core.contract.registry import gemm_scaled_baseline" in kernel
-    assert "def run(*, a, b, a_scale, b_scale, trans_b, bias, out_dtype, out):" in kernel
-    assert "target.copy_(value)" in kernel
-    compile(kernel, "kernel.py", "exec")
+    with pytest.raises(workspace.StartingKernelError, match="--starting-kernel"):
+        workspace.builtin_starting_kernel(load(write_schema(root, payload)), root)
 
 
 def test_a_starting_kernel_aklr_passes_is_kept(aklr_root: Path, tmp_path: Path):
@@ -240,5 +225,5 @@ def test_a_schema_outside_aklr_ops_is_refused(aklr_root: Path, tmp_path: Path, p
     copy = tmp_path / parent / "schema.json"
     copy.parent.mkdir(parents=True)
     shutil.copyfile(find(aklr_root, SCHEMA_NAME), copy)
-    with pytest.raises(SchemaError, match="not under aklr/ops"):
+    with pytest.raises(SchemaError, match="not under aklr/plugins/aiter"):
         load(copy)

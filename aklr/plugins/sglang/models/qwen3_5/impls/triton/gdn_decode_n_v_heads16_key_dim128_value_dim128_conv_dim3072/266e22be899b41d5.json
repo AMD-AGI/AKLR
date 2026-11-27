@@ -190,8 +190,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.004,
-      "microseconds": 9.22
+      "speedup": 2.014,
+      "microseconds": 8.79
     }
   ],
   "layout_variants": {
@@ -203,9 +203,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "triton",

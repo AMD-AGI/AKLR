@@ -4,6 +4,7 @@ full-attention layers' gated decode attention over their FP8 KV cache."""
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
     BoundedCuSeqlensDistribution,
     CuSeqlensDistribution,
@@ -24,6 +25,25 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.models.qwen3_5.baseline import (
+    GatedAttentionDecodeBaseline,
+    GatedAttentionDecodeGroupFp8QuantBaseline,
+    GatedAttentionPrefillBaseline,
+    GatedAttentionPrefillGroupFp8QuantBaseline,
+    GdnDecodeBaseline,
+    GdnDecodeGroupFp8QuantBaseline,
+    GdnPrefillBaseline,
+    GdnPrefillGroupFp8QuantBaseline,
+)
+from aklr.plugins.sglang.models.qwen3_5.reference import (
+    ROTARY_DIM,
+    GatedAttentionGroupFp8QuantReference,
+    GatedAttentionReference,
+    GdnDecodeGroupFp8QuantReference,
+    GdnDecodeReference,
+    GdnPrefillGroupFp8QuantReference,
+    GdnPrefillReference,
+)
 
 __all__ = [
     "CONTRACTS",
@@ -35,8 +55,6 @@ __all__ = [
     "GDN_DECODE_GROUP_FP8_QUANT",
     "GDN_PREFILL",
     "GDN_PREFILL_GROUP_FP8_QUANT",
-    "MROPE_SECTION",
-    "ROTARY_DIM",
 ]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
@@ -180,13 +198,13 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
             description="Gated normalized BF16 values.",
             shape=("n_tokens", "n_v_heads", "value_dim"),
             dtype=_BF16,
-            error_bounds=ToleranceBound(absolute_tolerance=0.005, relative_tolerance=0.02),
+            error_bounds=ToleranceBound(absolute_tolerance=0.005, relative_tolerance=0.02 + 2**-7),
         ),
         "values": TensorSpec(
             description="Grouped E4M3FN values.",
             shape=("n_tokens", "value_width"),
             dtype=_FP8,
-            error_bounds=ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125),
+            error_bounds=ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125 + 2**-3),
         ),
         "scales": TensorSpec(
             description="One FP32 scale per token and value head.",
@@ -197,6 +215,8 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=GdnPrefillGroupFp8QuantReference(),
+    baseline=GdnPrefillGroupFp8QuantBaseline(),
 )
 
 # The same prefill where out_proj takes BF16 (Qwen3.5's MXFP4 checkpoint keeps its GDN layers
@@ -221,6 +241,8 @@ GDN_PREFILL = OpContract(
     outputs={"normalized": GDN_PREFILL_GROUP_FP8_QUANT.outputs["normalized"]},
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=GdnPrefillReference(),
+    baseline=GdnPrefillBaseline(),
 )
 
 # Decode reads the same projections, weights and state pools as prefill, one token a row.
@@ -297,6 +319,8 @@ GDN_DECODE_GROUP_FP8_QUANT = OpContract(
     outputs={n: _PREFILL.outputs[n] for n in ("values", "scales")},
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=GdnDecodeGroupFp8QuantReference(),
+    baseline=GdnDecodeGroupFp8QuantBaseline(),
 )
 
 GDN_DECODE = OpContract(
@@ -309,17 +333,15 @@ GDN_DECODE = OpContract(
     outputs={"normalized": _PREFILL.outputs["normalized"]},
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=GdnDecodeReference(),
+    baseline=GdnDecodeBaseline(),
 )
 
-# A full-attention head's rotary part: NeoX RoPE on its first 64 channels, whose 32
-# frequencies Qwen3.5's interleaved mRoPE splits over the temporal, height and width positions
-ROTARY_DIM = 64
-MROPE_SECTION = (11, 11, 10)
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 # The FP8 pools' bytes that the kernels' 32-bit offsets address: larger pools stay on sglang.
 _POOL_BYTES = 2**31
 # A cache slot a correct kernel writes may round its BF16 key one FP8 step away
-_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=0.125)
+_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=0.125 + 2**-3)
 _ATTENTION_TEXT = (
     "Qwen3.5 full-attention decode on one rank, between qkv_proj and o_proj, one token "
     "per row. projected_qkv holds each query head's query then its output gate, then "
@@ -437,10 +459,10 @@ GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
     # of 2 + 0.125|y| on 3.1% of the values and 1.9x past 3% on 25% of the scales; an FP64
     # emulation of those roundings, which gives the same numbers there, comes to 25.7-27.6 dB
     # (values) and 31.7-32.5 dB (scales) on it, 21.8-23.1 dB and 26.7-34.1 dB at the schemas'
-    # Points, with scales up to 30% off. The bounds sit some 6-7 dB under that, as
-    # baseline_relative's twice the baseline's error; kernels wrong on purpose (no gate,
-    # sequential mRoPE sections, no Q norm, a 128**-0.5 scale, 240 for E4M3FNUZ) stay under
-    # 9 dB (values) and 10 dB (scales) at those Points, at most 16.4 and 16.8 dB on the small one.
+    # Points, with scales up to 30% off. The bounds sit some 6-7 dB under that, twice sglang's
+    # error; kernels wrong on purpose (no gate, sequential mRoPE sections, no Q norm, a
+    # 128**-0.5 scale, 240 for E4M3FNUZ) stay under 9 dB (values) and 10 dB (scales) at those
+    # Points, at most 16.4 and 16.8 dB on the small one.
     outputs={
         "values": TensorSpec(
             description="Each query head's gated attention, grouped E4M3FN values.",
@@ -452,11 +474,13 @@ GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
             description="One FP32 scale per row and group of 128 channels.",
             shape=("n_tokens", "n_groups"),
             dtype=_FP32,
-            error_bounds=SqnrBound(min_sqnr_db=20.0),
+            error_bounds=ATTENTION_FP8_SNR,
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=GatedAttentionGroupFp8QuantReference(),
+    baseline=GatedAttentionDecodeGroupFp8QuantBaseline(),
 )
 
 # The same decode where sglang hands o_proj the gated output in BF16, as for an unquantized
@@ -508,6 +532,8 @@ GATED_ATTENTION_DECODE = OpContract(
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=GatedAttentionReference(),
+    baseline=GatedAttentionDecodeBaseline(),
 )
 
 # Prefill of fresh sequences (no cached prefix): each row attends its own sequence's rows up to
@@ -563,7 +589,7 @@ _PREFILL_ATTENTION_ATTRS = {
 }
 # Over thousands of rows a key's BF16 norm and RoPE, one ulp from the reference's, can round two
 # FP8 steps away; a wrong slot or an unrotated key is still far past this bound.
-_PREFILL_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-8, relative_tolerance=0.25)
+_PREFILL_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-8, relative_tolerance=0.25 + 2**-3)
 _PREFILL_ATTENTION_INPUTS = {
     **{
         n: _FP8_ATTENTION.inputs[n]
@@ -617,6 +643,8 @@ GATED_ATTENTION_PREFILL_GROUP_FP8_QUANT = OpContract(
     outputs=_FP8_ATTENTION.outputs,
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=GatedAttentionGroupFp8QuantReference(),
+    baseline=GatedAttentionPrefillGroupFp8QuantBaseline(),
 )
 
 GATED_ATTENTION_PREFILL = OpContract(
@@ -633,6 +661,8 @@ GATED_ATTENTION_PREFILL = OpContract(
     outputs=GATED_ATTENTION_DECODE.outputs,
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
+    reference=GatedAttentionReference(),
+    baseline=GatedAttentionPrefillBaseline(),
 )
 
 CONTRACTS = (

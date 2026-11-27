@@ -14,12 +14,12 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "0.355–1.198; 2 of 13 Points ≥ 1.03 (m 1, 2), 1 served (m 1); at m 2–64 a Triton kernel of the same name is served", gpu: MI355X, workload: "gemm_n6144_k2048, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
   - {metric: "speedup over aiter, CI, per Point", value: "0.418–1.208; 2 of 13 Points ≥ 1.03 (m 1, 2)", gpu: MI355X, workload: "gemm_n6144_k3072, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
-  - aklr/ops/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
-  - aklr/ops/gemm/impls/triton/gemm_n2624_k6144/7511d8bbfacd4d06.json
-  - aklr/ops/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
+  - aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n2624_k6144/7511d8bbfacd4d06.json
+  - aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json
 ---
 
 # bf16 GEMM at wide N: a wave per output column at M ≤ 2
@@ -32,8 +32,8 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0;
-  `GEMM` in `aklr/ops/gemm/contract.py`). The served FlyDSL paths keep each output's whole K in one wave; the served
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`;
+  `GEMM` in `aklr/plugins/aiter/provider/gemm/contract.py`). The served FlyDSL paths keep each output's whole K in one wave; the served
   Triton n2624 kernel at m = 64 splits K six ways across workgroups and a second kernel adds the six fp32 slices in
   slice order.
 - N × K = 2624 × 6144, 3072 × 6144, 6144 × 2048, 6144 × 3072: a weight of 30.75, 36, 24 and 36 MiB, a streaming
@@ -68,7 +68,7 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
   unchanged; the code packs on every call.
 - **Not the compile-function form.** `run` keeps built launches in a module-level dict (`_RUN_CACHE`), not in a
   `functools.cache` function, so compilation and scratch allocation run inside `run` on a Point's first call
-  (`aklr/ops/README.md` § The kernel section and ABI).
+  (`aklr/plugins/aiter/README.md` § The kernel section and ABI).
 
 ## Mechanism
 
@@ -93,7 +93,7 @@ on the LDS path for MFMA tiles; at m ≤ 2 these kernels issue no MFMA.
 
 `speedup` as CI writes it into each schema's `workloads`: a lower bound of the CUDA-graph time ratio aiter /
 kernel (`aklr/core/validation/stages/_bench/_report.py`). Dispatch serves each Point with the file of the highest
-`speedup`, from 1.05 (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables). Bold: the file served
+`speedup`, from 1.05 (`AKLR_MIN_SPEEDUP`, `aklr/plugins/aiter/README.md` § Environment variables). Bold: the file served
 there. Per Point:
 
 The predecessor repository's CI ran an editable install whose `setup.py` replaced any other FlyDSL with its pin, so
@@ -117,14 +117,14 @@ m = 2, the FlyDSL file passes 1.03 but the Triton file is served.
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root:
 
 ```
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
 ```
 
 The Triton files validate the same way. The report goes to `aklr_validation/report.md`; a run outside CI checks the file,
-the served numbers are CI's (`aklr/ops/README.md` § Workflow). Add `--base origin/main` only on a branch that edits
+the served numbers are CI's (`aklr/plugins/aiter/README.md` § Workflow). Add `--base origin/main` only on a branch that edits
 the file: with the base set, bench measures only schemas that are not at the base, so on an unchanged checkout it
 skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). To read a kernel:
 `git show <rev>:<schema> | python3 -c 'import json,sys; print(json.load(sys.stdin)["kernel"]["sources"][0]["content"])'`.

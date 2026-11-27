@@ -1,158 +1,61 @@
 # Ops tutorial: adding a kernel to an AKLR op
 
-This tutorial adds a kernel to an op in `aklr/ops/`, from the op's definition to a merged kernel. Its example is `fused_moe`, the experts of an MoE layer (the computation AITER's `fused_moe` does), at the shapes of GLM-5's MoE layer. The [plugin tutorial](plugin_tutorial.md) continues with the same layer and optimizes beyond this op's boundary.
+This tutorial shows how to write a kernel for an op already in `aklr/plugins/aiter/`: generate its file, write the kernel, validate it and open a PR, up to inference using it. The example is the bf16 matrix multiply (`gemm@1.0`) at n=1024, k=4096. The last section covers creating an op when none fits.
 
-## Concepts
+The full rules are in [`aklr/plugins/aiter/README.md`](../aklr/plugins/aiter/README.md).
 
-Contract: **a contract is the complete definition of an op.** It is an `OpContract` constant in `aklr/ops/<op>/contract.py`, registered in that module's `CONTRACTS` (the registry discovers it automatically).
+## 0. Concepts
 
-Schema: **a schema is a JSON file.** It narrows an op's `OpContract` to one scenario (fixed dtypes, const axes, attrs, layout), lists the workloads that scenario serves (concrete values of the var axes), and embeds the kernel source. Schemas live at `aklr/ops/<op>/impls/<language>/<name>/<uuid>.json`. The schema is the interface agreement between AKLR and other kernel-generation tools.
+An op has five parts:
 
-## Workflow
-
-```mermaid
-flowchart TD
-    S{"1. Does the target op already have a contract?"} -->|"No: path A"| A["1. A Create the op<br/>contract.py / reference.py / api.py / baseline.py / __init__.py<br/>small test Points + names.txt"]
-    S -->|"Yes: path B"| B["1. B Narrow to a scenario<br/>get → PointSpec → workload_for → narrow → schema_text"]
-    A -->|"once the contract is registered"| B
-    B -->|"kernel-less schema<br/>(sources = [], temporary uuid)"| D["2. Develop the kernel<br/>fill in sources / requires / author"]
-    D --> R["2. Rerun the 1. B script<br/>write the schema with the kernel (new uuid)"]
-    R --> V["3. Local validation<br/>validate --base origin/main --stages audit,bench"]
-    V -->|"no_qualifying_workload: fail"| D
-    V -->|"demoted (performance or correctness fails): delete those workloads"| R
-    V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → aiter-test → sglang-test → vllm-test"]
-    P -->|"merged into main"| M["4. main's push CI remeasures<br/>publish-measurement bot updates the aklr-perf/main PR"]
-    M -->|"bot PR merged"| N["4. workloads carry accuracy / speedup / microseconds"]
-```
-
-| Step | Key actions | Output |
+| Part | Where | What it is |
 |---|---|---|
-| 1. A contract does not exist | Create `contract.py`/`reference.py`/`api.py`/`baseline.py`/`__init__.py` and small test Points, update `names.txt`, then narrow as in 1. B | New op package + kernel-less schema |
-| 1. B contract exists | `get` → `PointSpec` → `workload_for` → `narrow(sources=[])` → `schema_text()` | kernel-less schema (temporary uuid) |
-| 2. Develop the kernel | Fill in `kernel.sources` and `requires` (optionally `author`), then rerun the 1. B script | Schema with the kernel (new uuid) |
-| 3. Local validation | `python -m aklr validate --base origin/main --stages audit,bench <schema>`; check the demoted list and delete the workloads that miss the bar | `aklr_validation/report.md`, `report.json` |
-| 4. PR/CI/write-back | Add `ci:gpu` to the PR; after merge, a bot PR writes back the measurements | Kernel merged into the main branch |
+| contract | `aklr/plugins/aiter/provider/<op>/contract.py`, an `OpContract` | the op's definition: inputs, outputs, shapes, dtypes, how much error each output may have, and the reference and baseline below |
+| reference | `reference.py`, an `OpReference` class | the right answer, computed in torch from the math |
+| baseline | `baseline.py`, an `OpBaseline` class | the code the inference engine (aiter, sglang, vLLM) runs for the op today |
+| api | `api.py`, an `@api` function | the entry the inference engine calls |
+| schema | `impls/<language>/<scenario>/<uuid>.json` | one kernel: its source, and the shapes it serves |
 
-## 1. Generate a kernel-less schema
+A kernel has to pass two checks:
 
-### 1. A contract does not exist: create the contract
+- **Correct**: its outputs differ from the reference's by no more than the contract allows (the error bound).
+- **Fast**: it beats the baseline. Validation asks for a speedup of 1.05 by default; at inference the bar is the environment variable `AKLR_MIN_SPEEDUP`, also 1.05 by default.
 
-Following `harness/skills/port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
+Some words:
 
-1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`.
-2. `reference.py`: `<contract>_reference(point, row_major_args)` in the op's dtypes, else float32 (for now float32, each input read through `semantics.to_float32`); integer outputs in their declared dtype. Rules: "Reference and baseline" in `aklr/ops/README.md`.
-3. `api.py`: an `@api(<CONTRACT>)` stub (the body may only be `...`).
-4. `baseline.py`: one `<contract>_baseline` per contract that has a baseline, the engine's own call for the op. It takes the api's arguments (passed as the call's keyword arguments), imports AITER or SGLang inside the function, and returns the outputs the same way the api does; for an unsupported call it raises `NotImplementedError` (bench reports `baseline_failed`). Without this function the op is its own baseline, and the kernel has nothing to beat.
-5. `__init__.py`: exports the api.
-6. Add each contract's base small Point to `SMALL_POINTS` in `tests/ops/cases.py`, in contract order, then run `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` to regenerate `tests/ops/names.txt` and commit it with the rest.
+- **Axis**: an integer describing a shape, such as gemm's `m`, `n` and `k`. One that can change from call to call is a **var axis** (gemm's `m`, the tokens).
+- **Scenario**: everything but the var axes fixed (n, k, the dtypes, whether there is a bias, ...). One schema file is one scenario.
+- **Workload**: one value of the var axes, such as `m=256`. A schema lists every workload its kernel serves.
 
-Only non-`.md` changes under `aklr/core/` make CI test **all** committed schemas (`aklr/core/validation/stages/validation_scope.py`). A new `aklr/ops/<op>` is not among them: it is tested by change set, so only the schemas in the change are tested (the last section of `new-op.md` says all schemas are tested; that is outdated, and `validation_scope.py` is authoritative). Open it as a separate PR from the kernel.
+At inference the api takes a call and finds its scenario and workload: when a kernel there is correct and fast enough, it runs it; otherwise it returns a `FallbackReason` and the engine runs its own code.
 
-### 1. B contract exists: generate the concrete schema
+## 1. Find the op and the scenario
 
-Pin the scenario (const axes, dtypes, attrs, layout) and list the var-axis values to serve. These values come from the real workloads. Call `ContractRegistry.default().get(...)`, `PointSpec`, `workload_for`, `narrow(..., kernel={"sources": []})` and `schema_text()` in turn, and write the result to `op_dir(contract.op_package) / schema.relative_path()`. You can start from the script template below (angle brackets are placeholders; for a complete runnable script, see the example below):
-
+Find the contract in `aklr/plugins/aiter/provider/<op>/contract.py`. gemm's is in `aklr/plugins/aiter/provider/gemm/contract.py`:
 
 ```python
-from aklr.core.contract.locate import op_dir
-from aklr.core.contract.registry import ContractRegistry
-from aklr.core.contract.spec import PointSpec
-
-# Get the contract
-c = ContractRegistry.default().get("<op>@<version>")
-# Fix the scenario: axes gives the const axes (the var axis is only a placeholder), attrs the attrs, dtypes each tensor's dtype, layout_variant_name the layout
-p = PointSpec(
-    contract_id="<op>@<version>",
-    axes={"<var axis>": <placeholder>, "<const axis>": <value>, ...},
-    dtypes={"<tensor>": "<dtype>", ...},  # set optional tensors that are absent to None
-    attrs={"<attr>": <value>, ...},
-    layout_variant_name="<layout>")
-# Build one workload per var-axis value ({}: scalars take their defaults)
-workloads = [c.workload_for(p.model_copy(update={"axes": {**p.axes, "<var axis>": t}}), {}) for t in (<v1>, <v2>, ...)]
-# Narrow to a schema; sources=[] means kernel-less; fill in language/targets/entry_point for the contract and target hardware
-s = c.narrow(p, workloads=workloads, kernel={"language": "<flydsl|triton|hip>", "targets": [{"arch": "<arch>", "hardware": "<hardware>"}],
-                                            "entry_point": "<entry file>::run", "requires": {}, "author": "", "sources": []})
-# Output path: this uuid belongs to the kernel-less version only and is temporary
-path = op_dir(c.op_package) / s.relative_path()
-# Write out schema_text()
-path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(s.schema_text(), encoding="utf-8")
+GEMM = OpContract(
+    contract_id="gemm@1.0",
+    description="16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+    axes={"m": ..., "n": ..., "k": ...},  # m is the var axis
+    attrs={"trans_b": ..., "has_bias": ...},  # whether b is (n, k); whether there is a bias
+    inputs={"a": ..., "b": ..., "bias": ...},
+    outputs=...,  # out; a bf16 out's error bound: a signal-to-noise ratio (SQNR) of 45 dB or more
+    ...
+)
 ```
 
-## 2. Develop the concrete kernel
+Then fix the scenario. This tutorial uses `n=1024` and `k=4096`; `a`, `b` and `out` in bf16; `b` of shape `(n, k)` (`trans_b=True`); no bias; and `m` at 1, 2, 4, ..., 4096.
 
-When developing the kernel, change only three fields in the kernel section: `kernel.sources`, `kernel.requires` and `kernel.author`. The author chooses the workloads in the script; every other field is derived from the contract.
+In real work the scenario and the values of `m` come from a real model: run it once with `AKLR_EXPORT=1`, then `python -m aklr export --language <language>` writes every scenario the model called (the Workflow in `aklr/plugins/aiter/README.md`). This tutorial writes them out by hand.
 
-- `sources`: for flydsl/triton the entry is `kernel.py::run`, and other files may only be imported relatively; hip uses `.hip`/`.h`, with the entry `kernel.hip::run`. The entry file must start with a docstring describing the kernel (a leading comment for hip). Writing it out with `narrow(..., kernel=...)` + `schema_text()` is recommended. Path rules:
-  - flydsl/triton: a Python kernel is a flat package, so a path may not contain `/`, and there may be no `__init__.py`;
-  - hip: nested directories are allowed, e.g. `include/utils.h`;
-- `requires`: toolchain version constraints, required. Name at least the kernel's own language, with the version you developed on as the lower bound: `{"flydsl": ">=0.3.2"}`, `{"triton": ">=3.8"}`, or `{"hip": ">=7.15"}` (the HIP version torch reports, not the ROCm release: ROCm 10.0 ships HIP 7.15). `python -m aklr export check` rejects a kernel without it; at runtime a kernel whose `requires` the installed toolchain misses is skipped. Also name every library the kernel imports beyond torch, such as `{"mori": ">=1.2.4"}`; `export check` rejects a kernel that imports one without it.
-- `author`: the author's name.
+When no op fits, see section 6 first.
 
-Once every source field is filled in, rerun the 1.B script (replace `"sources": []` with `[SourceFile(path=..., content=...), ...]`, importing `SourceFile` from `aklr.core.contract.spec`; see the step 1 script in the example), which writes a schema file with a new uuid.
+## 2. Generate the schema file
 
-## 3. Local validation
-
-Local validation checks that the schema is well-formed and that the kernel's performance meets the bar for merging.
-
-```bash
-python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/impls/<lang>/<name>/<uuid>.json
-```
-
-- **audit**: checks that the text equals `schema_text()`, naming, consistency with the contract, path/uuid, domain, scalars, duplicates, measurement fields, and audits the source
-- **bench**:
-  - Correctness: for each workload, compares against the reference implementation on inputs sampled from the declared distributions;
-  - Performance: compares against the baseline over multiple rounds under CUDA graph.
-
-**Thresholds**: every Point of a new kernel must reach ≥ **1.05** over the baseline (`<contract>_baseline` in `aklr/ops/<op>/baseline.py`) and ≥ **0.99** against the kernel already serving it, and runtime serving requires ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses the bar is only recorded in the report's demoted list and does not fail validate. The demoted list holds both performance misses and correctness failures (such as `numeric_mismatch`, `build_failed`, `candidate_crash`, which CI writes as `accuracy: failed`); both kinds need handling. Only when not a single workload qualifies does the schema report `no_qualifying_workload`.
-
-## 4. PR and CI
-
-**PR rules**:
-- Write the body following `.github/pull_request_template.md`. Add `ci:gpu` to both kernel and code PRs (an external contributor's CI run waits for a maintainer to approve it); a kernel PR pastes the results from 3.;
-- The code for a new op (`contract.py` and the rest, which counts as code) goes in its own PR; the kernel-less schema (called contract in the template) and the schema with the kernel each fill in their own section of the template.
-- Do not write `accuracy`/`speedup`/`microseconds` in a submitted PR (writing them by hand reports `perf_edited`). After merge, main's push CI remeasures and `publish-measurement` updates the `aklr-perf/main` bot PR; only after that bot PR is squash-merged under its own title do the workloads carry `accuracy`/`speedup`/`microseconds`.
-
-**CI rules**:
-- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → aiter-test (GPU, `aiter_image`, for now the sglang image, with the baseline aiter installed over its own: `tests/core`, `tests/ops`, `tests/benchmarks`, then `validate --base <merge base> --under aklr/ops --exclude aklr/ops/mega_moe`, mega_moe's baseline needing a mori fix) → sglang-test (`sglang_image` as it ships: `tests/plugins/aiter`, `tests/plugins/sglang`, then `validate --under aklr/plugins --exclude aklr/plugins/vllm` and `--under aklr/ops --no-timing`) → vllm-test (`vllm_image` as it ships: `tests/plugins/vllm`, then `validate --under aklr/plugins/vllm` and `--under aklr/ops --no-timing`). Validation runs only when there are schemas to bench.
-- Only non-`.md` changes under `aklr/core/` and `stack.json` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
-
-## 5. Runtime dispatch
-
-When the api is called, if the call's Point is in the workloads of a loaded schema (one whose `targets`/`requires` match this machine), and that workload's `accuracy` is not `failed` and its `speedup ≥ AKLR_MIN_SPEEDUP` (default 1.05), that kernel runs.
-
-In every other case no kernel runs: the api returns a `FallbackReason`, and the caller runs its own implementation.
-
-| `FallbackReason` | Trigger |
-|---|---|
-| `no_schema` | No schema is loaded |
-| `disabled` | Turned off by `AKLR_DISABLE` |
-| `out_of_contract` | No Point describes this call |
-| `no_workload` | The call's Point is not in the workloads of any loaded schema (e.g. the value of `<var axis>` is not in the list) |
-| `not_measured` | Not measured yet |
-| `inaccurate` | The measurement is `failed` |
-| `not_qualified` | Measured and passed, but speedup < `AKLR_MIN_SPEEDUP` (default 1.05) |
-| `not_warmed` | Inside graph capture, and the Point has never run outside a graph |
-
-## Example: adding a fused MoE schema
-
-How the example steps map to the sections above: steps 0 and 1 correspond to 1. B, step 2 to writing the kernel in §2, step 3 first runs the §2 rerun script and then the §3 validation, and steps 4 and 5 correspond to §4.
-
-**0. Choose the scenario.** What `fused_moe@1.0` (`FUSED_MOE` in `aklr/ops/fused_moe/contract.py`) does: it routes each token to its top-k experts, runs the two projections, and combines the results. The weights are always MXFP4.
-
-- axes: var axis `n_tokens` (1–65536); const axes `model_dim`, `inter_dim` (both multiples of 128), `n_experts`, `topk`, `global_experts`; derived axes `gate_up_rows = 2 * inter_dim`, `model_blocks = model_dim // 32`, `inter_blocks = inter_dim // 32`.
-- attrs: `activation` (silu/gelu/situv2/swiglu), `quant_type` (only `per_1x32`), `doweight_stage1`, `gate_mode` (separated/interleave), `has_expert_mask`, `act_quant` (4/8), plus two optional attrs, `has_num_local_tokens` and `has_swiglu_limit`.
-- Inputs: `hidden_states` (bf16/fp16, `(n_tokens, model_dim)`); `w1` (fp4 `float4_e2m1`, `(n_experts, gate_up_rows, model_dim)`, gate rows first, then up rows) and `w2` (fp4, `(n_experts, model_dim, inter_dim)`); `w1_scale`/`w2_scale` (e8m0, one value per 1×32 block).
-- Routing inputs: `topk_weights` (fp32/bf16/fp16) and `topk_ids` (int32/int64, distinct within each row), both of shape `(n_tokens, topk)`.
-- layout: `row_major`, `shuffled_16x16` (w1/w2 get a 16×16 preshuffle, and both scales are shuffled and padded to (256, 8); detected when `w1.is_shuffled` and `w2.is_shuffled` are true and `w1_scale.ndim == 3`), `gate_up_interleaved`.
-- Accuracy requirements: SQNR of `out` ≥ 13 dB; `determinism` is `bounded`, with a `max_violation_fraction` of 1e-3.
-
-Fix GLM-5's MXFP4 MoE layer at TP8: `model_dim=6144`; `n_experts=257`, the 256 routed experts plus the shared one, which sglang appends as the last expert; `topk=9`, 8 routed experts plus the shared one; `inter_dim=256`, GLM-5's 2048 split over 8 GPUs; without EP (`global_experts=1`, `expert_mask`/`num_local_tokens` absent). The attrs are `silu`, `per_1x32`, `doweight_stage1=False`, `separated`, `act_quant=4`; the dtypes are bf16 activations, fp32 `topk_weights` and int32 `topk_ids`; the layout is `shuffled_16x16`. This scenario is already in the repository, so what you generate can be checked against the committed file.
-
-**1. Generate the kernel-less schema.** Put the script outside the clone and run it from the repository root. With no arguments it writes the kernel-less definition; with one kernel-directory argument it fills `kernel.sources` with the sources in that directory (step 3 reuses this).
+A schema file is not written by hand: a script generates it from the contract. Save this script as `~/make_gemm_schema.py` (outside the repository):
 
 ```python
-# ~/make_moe_schema.py
 import sys
 from pathlib import Path
 
@@ -160,72 +63,232 @@ from aklr.core.contract.locate import op_dir
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import PointSpec, SourceFile
 
-contract = ContractRegistry.default().get("fused_moe@1.0")
-base = PointSpec(
-    contract_id="fused_moe@1.0",
-    axes={"n_tokens": 1, "model_dim": 6144, "n_experts": 257, "topk": 9, "inter_dim": 256, "global_experts": 1},
-    dtypes={"hidden_states": "bfloat16", "w1": "float4_e2m1", "w2": "float4_e2m1", "topk_weights": "float32",
-            "topk_ids": "int32", "w1_scale": "float8_e8m0", "w2_scale": "float8_e8m0",
-            "expert_mask": None, "num_local_tokens": None, "out": "bfloat16"},
-    attrs={"activation": "silu", "quant_type": "per_1x32", "doweight_stage1": False, "gate_mode": "separated",
-           "has_expert_mask": False, "has_num_local_tokens": False, "has_swiglu_limit": False, "act_quant": 4},
-    layout_variant_name="shuffled_16x16")
-workloads = [contract.workload_for(base.model_copy(update={"axes": {**base.axes, "n_tokens": t}}), {})
-             for t in (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096)]  # silu has no scalars
-kernel = {"language": "flydsl", "targets": [{"arch": "gfx950", "hardware": "MI355X"}],
-          "entry_point": "kernel.py::run", "sources": []}
-if len(sys.argv) > 1:                                                          # step 2: fill in the kernel
-    kernel["sources"] = [SourceFile(path=p.name, content=p.read_text(encoding="utf-8"))
-                         for p in sorted(Path(sys.argv[1]).glob("*.py"))]      # paths must be ascending and unique
-    if not kernel["sources"]:
-        sys.exit(f"no .py files in {sys.argv[1]}")
-    kernel["author"] = "<your name>"                                           # optional
-schema = contract.narrow(base, workloads=workloads, kernel=kernel)
+contract = ContractRegistry.default().get("gemm@1.0")
+
+# the scenario: everything but m fixed
+point = PointSpec(
+    contract_id="gemm@1.0",
+    axes={"m": 1, "n": 1024, "k": 4096},  # m is the var axis; this 1 is a placeholder
+    dtypes={"a": "bfloat16", "b": "bfloat16", "bias": None, "out": "bfloat16"},  # None: no such input
+    attrs={"trans_b": True, "has_bias": False},
+    layout_variant_name="row_major",  # the data layout: plain row-major
+)
+
+# the values of m to serve: one workload each
+workloads = [
+    contract.workload_for(point.model_copy(update={"axes": {**point.axes, "m": m}}), {})
+    for m in (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096)
+]
+
+# the kernel: given a directory, its .py files; without one, no sources
+sources = []
+if len(sys.argv) > 1:
+    sources = [SourceFile(path=f.name, content=f.read_text(encoding="utf-8")) for f in sorted(Path(sys.argv[1]).glob("*.py"))]
+kernel = {
+    "language": "triton",
+    "targets": [{"arch": "gfx950", "hardware": "MI355X"}],
+    "entry_point": "kernel.py::run",
+    "requires": {"triton": ">=3.8"} if sources else {},  # none without a kernel
+    "author": "<your name>",
+    "sources": sources,
+}
+schema = contract.narrow(point, workloads=workloads, kernel=kernel)  # the contract's schema for this scenario
+print("run's parameters:", ", ".join(schema.kernel_call_keys))
+if not sources:
+    sys.exit()  # no kernel yet: print the parameters only, write no file
+
 path = op_dir(contract.op_package) / schema.relative_path()
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(schema.schema_text(), encoding="utf-8")
 print(path)
 ```
 
-Running `python ~/make_moe_schema.py` writes `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json` (`<uuid0>` belongs to the kernel-less version only and is temporary). Only `shuffled_16x16` appears in the name because it is not the first declared layout; every other attr/dtype is its first declared value and stays out of the name (the Names section of `aklr/ops/README.md`). Apart from `kernel.sources` and the measurement fields, the file equals the committed `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json`. An excerpt of the new file:
-
-```json
-"axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 6144, ...}, "n_experts": {..., "value": 257}, "topk": {..., "value": 9},
-         "inter_dim": {..., "value": 256}, "gate_up_rows": {..., "value": 512}, "model_blocks": {..., "value": 192}, "inter_blocks": {..., "value": 8}},
-"attrs": {"activation": "silu", "quant_type": "per_1x32", "doweight_stage1": false, "gate_mode": "separated", "has_expert_mask": false, "act_quant": 4},
-"inputs": {"hidden_states": {"shape": ["n_tokens", "model_dim"], "dtype": "bfloat16", ...}, "w1": {"shape": ["n_experts", "gate_up_rows", "model_dim"], "dtype": "float4_e2m1", ...},
-           "topk_ids": {"shape": ["n_tokens", "topk"], "dtype": "int32", "distribution": {"kind": "int_range", "lo": 0, "hi": 256, "distinct": true}, ...}, ...},
-"workloads": [{"axes": {"n_tokens": 1}}, ..., {"axes": {"n_tokens": 4096}}],
-"layout_variants": {"by_name": {"shuffled_16x16": {"layouts": {"w1": {"kind": "preshuffle", "tile": [16, 16]}, ...,
-    "w1_scale": {"kind": "e8m0_scales", "block_size": 32, "pad_to": [256, 8], "shuffled": true}, ...}, ...}}},
-"compare": {"max_violation_fraction": 0.001, "determinism": "bounded", "element_order": "fixed"},
-"kernel": {"language": "flydsl", "targets": [{"arch": "gfx950", "hardware": "MI355X"}], "entry_point": "kernel.py::run", "sources": []}
-```
-
-**2. Develop the kernel.** Write the entry as `def run(*, hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, activation, quant_type, doweight_stage1, gate_mode, act_quant, expert_mask, beta, linear_beta, out_dtype, out) -> None`, matching the existing kernels in the repository. In this scenario `expert_mask`, `beta` and `linear_beta` are passed as `None`; `w1`/`w2` and both scales arrive already in the shuffled layout; the result is written into `out`. Suppose the kernel source lives in ~/moe_kernel: the entry is kernel.py::run, the top level of the directory holds only the .py files the kernel uses, and step 3 reads all of them into sources.
-
-```text
-~/moe_kernel/
-├── kernel.py        # entry: module docstring + def run(...); the reference 1fee… has only this one source file
-├── helper_1.py      # hypothetical helper module: kernel.py imports it relatively with from .helper_1 import ...
-└── helper_2.py      # same as above
-```
-
-**3. Local validation.** Once the kernel is written, rerun `make_moe_schema.py` to generate the final schema file `<uuid1>.json`
+Run it from the repository root, **with `PYTHONPATH=.`**. Without it Python may use an aklr installed elsewhere, and write the file there.
 
 ```bash
-D=aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256
-# ~/moe_kernel: the kernel source directory written in step 2 (contains the kernel.py::run entry file)
-python ~/make_moe_schema.py ~/moe_kernel             # → $D/<uuid1>.json
-rm $D/<uuid0>.json                                   # delete the original schema
-python -m aklr validate --stages audit $D/<uuid1>.json   # optional: quick self-check without a GPU
-python -m aklr validate --base origin/main --stages audit,bench $D/<uuid1>.json
+PYTHONPATH=. python ~/make_gemm_schema.py
+# run's parameters: a, b, trans_b, bias, out_dtype, out
 ```
 
-**4. Open a PR to run CI** Push the code to the remote repository and open a PR. Add `ci:gpu` when opening it, paste the conclusion of the `report.md` from step 3 into the body, and state where the shapes and the `n_tokens` values come from. main's push CI remeasures, and then the `aklr-perf/main` bot PR writes back `accuracy`/`speedup` for the workloads kept in the PR; they take effect only after that bot PR merges.
+The fields of `kernel`:
 
-**5. Complete the merge.** Once the PR has merged and then the `aklr-perf/main` bot PR carrying its measurements, dispatch serves the kernel at every workload whose speedup reaches `AKLR_MIN_SPEEDUP` (§5).
+- `language`: `triton`, `flydsl`, `hip` or `hsaco`.
+- `targets`: the GPUs the kernel runs on. No other GPU loads it.
+- `entry_point`: the entry function, `<file>::<function>`, usually `kernel.py::run`.
+- `requires`: required. The lowest version of the kernel's language (`triton`, `flydsl`, ...) it works with: the version you developed on. Add every library the kernel imports besides torch too. A machine whose versions fall short does not load the kernel.
+- `author`: who wrote it; may be left out.
+
+## 3. Write the kernel
+
+Write `kernel.py` in `~/gemm_kernel/`. Here is a Triton kernel that works: it cuts `out` into 64×64 blocks, each computed by one parallel instance on the GPU, adding up 64 columns of `k` at a time.
+
+```python
+"""bf16 gemm out = a @ b.T, b as (n, k): one program per 64 x 64 tile of out, k in steps of 64."""
+
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def _gemm(a, b, out, m, n, k, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
+    rows = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
+    cols = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    for start in range(0, k, BLOCK_K):
+        ks = start + tl.arange(0, BLOCK_K)
+        x = tl.load(a + rows[:, None] * k + ks[None, :], mask=rows[:, None] < m, other=0.0)
+        y = tl.load(b + cols[:, None] * k + ks[None, :], mask=cols[:, None] < n, other=0.0)
+        acc += tl.dot(x, tl.trans(y))
+    mask = (rows[:, None] < m) & (cols[None, :] < n)
+    tl.store(out + rows[:, None] * n + cols[None, :], acc.to(out.dtype.element_ty), mask=mask)
+
+
+def run(*, a, b, trans_b, bias, out_dtype, out):
+    m, k = a.shape
+    n = b.shape[0]
+    grid = (triton.cdiv(m, 64), triton.cdiv(n, 64))
+    _gemm[grid](a, b, out, m, n, k, BLOCK_M=64, BLOCK_N=64, BLOCK_K=64)
+```
+
+The rules `run` must keep (validation checks them; the full list is "The kernel section and ABI" in `aklr/plugins/aiter/README.md`):
+
+1. **Parameters**: exactly the ones step 2 printed, all passed by name. An input the scenario does not have (`bias` here) is `None`.
+2. **Results go into `out`**: `out` is already allocated; `run` writes into it and returns nothing.
+3. **Write only outputs**: inputs are read only, except those the contract marks `mutable` (writable), such as a KV cache.
+4. **Keep no state**: nothing computed from the arguments is kept for the next call, such as a repacked weight; no `global` or `nonlocal`. A compiled kernel may be cached per shape (in an `@functools.cache` function).
+5. **Never wait for the GPU**: only submit work on the current torch stream, and call nothing that waits for the GPU to finish (`.item()`, `.cpu()`, `torch.cuda.synchronize()`, ...). The engine records calls into a CUDA graph and replays it, and such calls fail while it records.
+6. **No side effects**: no `print`, no file reads or writes, no environment reads, no change to torch's global settings.
+7. **Scratch memory** is allocated inside `run` (`torch.empty`, ...).
+8. **Import nothing of aklr** but `aklr.core.jit`.
+9. **The entry file opens with a docstring** saying how the kernel computes.
+
+With the kernel written, run the script again, this time with the kernel's directory:
+
+```bash
+PYTHONPATH=. python ~/make_gemm_schema.py ~/gemm_kernel
+# run's parameters: a, b, trans_b, bias, out_dtype, out
+# aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+```
+
+The file name `<uuid>` comes from the file's content: after a change to the kernel, the workloads or the author, running the script again gives a new name, and the old file is yours to delete. The repository already has a FlyDSL kernel for this scenario (`aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1024_k4096/`) to compare with: but for the `kernel` section and the measurements CI wrote into the committed file (`accuracy`, `speedup`, `microseconds`), the two files are the same.
+
+## 4. Validate locally
+
+Validation has two stages: audit checks the file's format, its agreement with the contract and the rules of step 3, without a GPU; bench checks on a GPU that the kernel is correct and fast. First the audit alone:
+
+```bash
+python -m aklr validate --stages audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+```
+
+Then audit and bench on an MI355X. Bench draws inputs for each workload, compares the kernel's outputs with the reference's, then runs the kernel and the baseline (aiter's `gemm_a16w16` here) in turns, timing both:
+
+```bash
+python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json
+```
+
+`--base origin/main` judges the file as a new kernel: it has to reach the bar over the baseline (1.05 by default), and not be slower than the kernel already in the same directory on main. Without it the bar is lower, and a file passing locally can still fail CI.
+
+The results are in `aklr_validation/report.md`. For the kernel above, on an MI355X (excerpt):
+
+```text
+## AKLR validation: failed (bench)
+| schema | axes | verdict | graph/baseline |
+| triton/gemm_n1024_k4096/<uuid> | m=1    | not_faster (demoted) | 0.5000 |
+| ...                              | ...    | ...                  | ...    |
+| triton/gemm_n1024_k4096/<uuid> | m=4096 | not_faster (demoted) | 0.6375 |
+- `no_qualifying_workload` triton/gemm_n1024_k4096/<uuid>: no workload both passes correctness and has a graph/baseline speedup >= 1.05
+```
+
+`graph/baseline` is the speedup over aiter, a cautious estimate from several rounds of timing; each round's ratio is held between 0.5 and 2, so 0.5 means half as fast as aiter, or slower. All 13 workloads of this kernel are correct, but none is fast enough (1.05 by default), so none can be used and the file fails.
+
+There are three outcomes:
+
+| Outcome | Meaning | What to do |
+|---|---|---|
+| passed | every workload is correct and fast enough | open a PR |
+| some workloads marked `(demoted)` | those workloads are wrong (such as `numeric_mismatch`) or too slow (`not_faster`). Inference does not use the kernel for them; validation does not fail on them | improve the kernel, or remove those values of `m` from the script and generate the file again |
+| `no_qualifying_workload` | no workload is both correct and fast; validation fails | improve the kernel |
+
+How to read an accuracy failure, and whether a slow result is the machine's noise: `harness/skills/read-validation/SKILL.md`. How to make a kernel fast: `harness/skills/kb/SKILL.md`.
+
+## 5. Open a PR, and when it takes effect
+
+- Write the body following `.github/pull_request_template.md`, with the results of step 4 and where the scenario and the values of `m` come from.
+- Add the `ci:gpu` label: without it CI does not validate on a GPU.
+- Do not write `accuracy`, `speedup` or `microseconds` into the file yourself: only CI writes them, and validation reports a hand-written one as `perf_edited`.
+
+Once the PR merges, CI measures again on main, and a bot opens (or updates) a PR on the `aklr-perf/main` branch that writes the measurements into the file. **Once that PR merges**, inference uses your kernel.
+
+At inference a call runs your kernel when all of these hold: the engine has the AKLR plugin on, so the call reaches the api (`aklr/plugins/README.md`); the machine matches `targets` and `requires`; the call's shape is one of the file's workloads; that workload's `accuracy` is not `failed`; and its `speedup` is at least `AKLR_MIN_SPEEDUP` (1.05 by default). Otherwise the api returns a `FallbackReason` and the engine runs its own code:
+
+| `FallbackReason` | Why |
+|---|---|
+| `no_schema` | no schema is loaded |
+| `disabled` | turned off by `AKLR_DISABLE` |
+| `out_of_contract` | the call is outside what the contract defines |
+| `no_workload` | the shape is not a workload of any schema |
+| `not_measured` | no measurement yet |
+| `inaccurate` | the measurement is `failed` |
+| `not_qualified` | measured and correct, but its `speedup` falls short of `AKLR_MIN_SPEEDUP` |
+| `not_warmed` | a CUDA graph is being recorded, and this shape never ran outside a recording before |
+
+## 6. Create an op
+
+When no op fits, create one first. An op is five files under `aklr/plugins/aiter/provider/<op>/`. gemm is the example below; its full code is in `aklr/plugins/aiter/provider/gemm/`.
+
+1. **`contract.py`**: defines the `OpContract`, and lists it in the file's `CONTRACTS` (AKLR finds it there; there is nothing else to register).
+   - `op_type` is the directory's name, `<op>`.
+   - Name the axes, inputs and outputs after the math, not after the baseline's parameters. An op usually has one output, `out`; with several, none of them is called `out`.
+   - Every output and every writable input has an error bound, `error_bounds`. Use the common ones in `aklr/core/contract/semantics/_error_bounds.py` where they fit (`tolerance(...)`, `GEMM_BF16_SNR`, ...).
+   - `compare=CompareSpec(determinism=...)`: whether two runs on the same inputs must give the same bytes. `bitwise` (the same) is the default; a kernel using atomic adds, whose result changes with the order of execution, needs `bounded` (each run within the error bound).
+   - Last, `reference=` and `baseline=`: instances of the two classes below.
+
+2. **`reference.py`**: one `OpReference` class per contract.
+
+   ```python
+   class GemmReference(OpReference):
+       def reference(self, *, a, b, trans_b, out_dtype, bias=None, **_):
+           """``a @ b.T + bias``."""
+           return {"out": _out(a.float() @ _weight(b, trans_b).mT, bias).to(out_dtype)}
+   ```
+
+   - Takes the kernel's parameters by name; `**_` takes the ones it does not use.
+   - Returns a dict: one item per output (and per writable input it changes), **each in the dtype the contract declares**.
+   - Written from the math, not copied from a kernel or the baseline. For now it computes in float32 throughout, with no rounding beyond what is needed.
+   - A rule no error bound can state (such as top-k results in any order) goes in an override of `check`.
+
+3. **`baseline.py`**: one `OpBaseline` class per contract: the engine's own call for the op.
+
+   ```python
+   class GemmBaseline(OpBaseline):
+       def baseline(self, *, a, b, trans_b=True, bias=None, out_dtype=None, out=None):
+           """aiter's tuned 16-bit gemm, b as (n, k) only."""
+           from aiter.tuned_gemm import gemm_a16w16
+
+           if not trans_b:
+               raise NotImplementedError("aiter's gemm_a16w16 takes b as (n, k) only")
+           return {"out": gemm_a16w16(a, b, bias=bias, otype=out_dtype)}
+   ```
+
+   - Calls the function the engine calls, with the arguments it passes: nothing reimplemented, nothing added.
+   - Imports the engine inside the method, so a machine without the engine can still import the file.
+   - Raises `NotImplementedError` for a call the engine does not serve.
+
+4. **`api.py`**: one `@api` function per contract, whose body is only `...`:
+
+   ```python
+   @api(GEMM)
+   def gemm(a, b, trans_b=True, bias=None, out_dtype=None, out=None): ...
+   ```
+
+5. **`__init__.py`**: exports the api functions.
+
+6. **Tests**: add a small-shaped `PointSpec` (written like `point` in step 2's script) to `SMALL_POINTS` in `tests/plugins/aiter/provider/cases.py`, in contract order, then run `AKLR_UPDATE_NAMES=1 pytest tests/plugins/aiter/provider/test_contracts.py` to regenerate `tests/plugins/aiter/names.txt`, and commit it too.
+
+An op several GPUs call together (expert parallelism, for example) sets the contract's `ranks`, and its reference and baseline are a `DistOpReference` and a `DistOpBaseline` (`aklr/plugins/aiter/README.md`).
+
+Open the new op's code in a PR of its own, merged before the kernel's.
 
 ## Next
 
-`fused_moe` covers only the experts of the MoE layer. The [plugin tutorial](plugin_tutorial.md) takes the whole layer, router and top-k included.
+A kernel replaces one op. To fuse several steps of the engine into one computation (a whole MoE layer, for example), see the [SGLang plugin tutorial](sglang_plugin_tutorial.md) and the [vLLM plugin tutorial](vllm_plugin_tutorial.md).

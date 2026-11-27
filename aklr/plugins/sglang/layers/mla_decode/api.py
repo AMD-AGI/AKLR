@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
-from aklr.ops.mla import flash_mla_with_kvcache
+from aklr.plugins.aiter.provider.mla import flash_mla_with_kvcache
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.layers.mla_decode.contract import KIMI_K3_MLA_DECODE
 

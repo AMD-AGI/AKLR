@@ -3,7 +3,7 @@
 Let KernelForge's agents write and tune the kernel of one AKLR schema, then put the kernel they end with back
 into AKLR.
 
-A schema without a kernel is a problem waiting for one: `aklr/ops/<op>/impls/<language>/<name>/*.json` with an
+A schema without a kernel is a problem waiting for one: `aklr/plugins/aiter/provider/<op>/impls/<language>/<name>/*.json` with an
 empty `kernel.sources`. `forge_task` turns it into a task for KernelForge's optimization loop and writes the
 result back. KernelForge does the optimizing, with its own commands; `forge_task` adds only what is AKLR's:
 
@@ -14,13 +14,13 @@ result back. KernelForge does the optimizing, with its own commands; `forge_task
 ```
 schema without a kernel ── prepare ──▶ KernelForge task ── forge-loop ──▶ the kernel the loop kept
 the kernel the loop kept ── forge-ablate, forge-finalize ──▶ one reviewed commit
-one reviewed commit ── publish ──▶ aklr/ops ── aklr validate ──▶ your pull request
+one reviewed commit ── publish ──▶ aklr/plugins/aiter ── aklr validate ──▶ your pull request
 ```
 
 ## Before you start
 
 - An MI355X (gfx950) machine, inside the ROCm container you run AKLR in.
-- A clone of AKLR that is yours alone: while a candidate is checked, the driver writes it into `aklr/ops/`.
+- A clone of AKLR that is yours alone: while a candidate is checked, the driver writes it into `aklr/plugins/aiter/`.
 - AKLR installed in that container from your clone (`pip install -e .`), and the baseline that its validate run times
   against, as `CONTRIBUTING.md` § The AITER baseline installs it.
 - In that container:
@@ -36,7 +36,7 @@ one reviewed commit ── publish ──▶ aklr/ops ── aklr validate ─�
 ## Run a campaign
 
 Run every command from the AKLR clone's root. The example optimizes `bmm_n128_k512`; `ls -d
-aklr/ops/*/impls/*/*/` lists the schema names.
+aklr/plugins/aiter/provider/*/impls/*/*/` lists the schema names.
 
 **1. Prepare the task.** A few minutes on one GPU; no agent runs yet.
 
@@ -46,8 +46,7 @@ HIP_VISIBLE_DEVICES=0 python harness/scripts/forge_task prepare --schema bmm_n12
 ```
 
 It checks the starting kernel with AKLR, records AKLR's baseline times and writes the task into `$RUN`. A plain GEMM
-schema starts from torch; any other starts from its contract's AKLR baseline, copied into the preallocated outputs.
-A contract without a baseline needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
+schema starts from torch. Any other needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
 of several files: every `*.py` in the directory, `kernel.py` among them.
 
 **2. Optimize.** Hours, and the agents cost money from here: in the Kimi-K3 runs, about $10 an hour on a GEMM
@@ -111,11 +110,11 @@ python harness/scripts/forge_task publish $RUN
 python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
 ```
 
-`publish` writes the reviewed kernel into `aklr/ops/` as the schema's kernel, with `kernel.requires` pinning the
+`publish` writes the reviewed kernel into `aklr/plugins/aiter/` as the schema's kernel, with `kernel.requires` pinning the
 installed toolchain of its language as the lower bound unless the schema already pins one; lower it if the kernel
 runs on an older release. Give validate that path: with none, it
 checks only the schema files a change touches, and only when it touches nothing else; on a branch that also changes
-code, it checks every schema in AKLR, which takes hours. Commit the kernel as `aklr/ops/README.md` describes and
+code, it checks every schema in AKLR, which takes hours. Commit the kernel as `aklr/plugins/aiter/README.md` describes and
 open a pull request. What the run taught goes into the same pull request: apply
 `$RUN/knowledge_patch/knowledge_patch.diff`, then review it item by item as kb's `CONTRIBUTING.md` says --
 edits to existing pages in place, new pages in their folder, reviewed in the kernel's pull request. A change to the method itself

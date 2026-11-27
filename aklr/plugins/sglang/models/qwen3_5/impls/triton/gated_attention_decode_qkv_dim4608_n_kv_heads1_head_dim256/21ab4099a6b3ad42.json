@@ -206,8 +206,8 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.482,
-      "microseconds": 99.3
+      "speedup": 1.601,
+      "microseconds": 81.0
     }
   ],
   "layout_variants": {
@@ -219,9 +219,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "triton",

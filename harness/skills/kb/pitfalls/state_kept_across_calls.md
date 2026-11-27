@@ -6,7 +6,7 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
 sources:
-  - "aklr/ops/README.md"
+  - "aklr/plugins/aiter/README.md"
   - "aklr/core/validation/stages/_bench/_evaluation/_candidate.py:402"
   - "aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_decode_n_v_heads16_key_dim128_value_dim128_conv_dim3072/caa6bfbe5226d564.json"
 ---
@@ -44,7 +44,7 @@ The first two forms keep something derived from an argument across calls; in the
 2. **A derived-weight cache keyed on identity or `_version`.** The launcher repacks a weight once and skips the
    repack while `b is cached_weight` and `b._version == cached_version` (S1). A reload through
    `param.data.copy_` keeps the address and the version, and a CUDA graph replay does not run the Python check
-   at all (`aklr/ops/README.md` § The kernel section and ABI), so the kernel keeps reading the old packed weight.
+   at all (`aklr/plugins/aiter/README.md` § The kernel section and ABI), so the kernel keeps reading the old packed weight.
    A speedup measured on cache hits leaves out the repack.
 3. **Work that depends on the state's history, timed on state replayed in place.** The op's state is an input the
    kernel updates in place (`delta_state`, `conv_state`), and #75's kernel stores only the 64 B segments of it whose
@@ -55,11 +55,11 @@ The first two forms keep something derived from an argument across calls; in the
    nothing.
 
 AKLR's first-capture and post-timing checks overwrite reused input buffers, weights included, through
-`.data.copy_()` (`aklr/ops/README.md` § Semantics); that fails form 2. Form 1 recomputes on the new values and
+`.data.copy_()` (`aklr/plugins/aiter/README.md` § Semantics); that fails form 2. Form 1 recomputes on the new values and
 passes them, and the bench times every participant on one call's tensors (S2), so a form-1 kernel would read as a
 cache hit in AKLR's timing too. That last point is read from the code; no CI run of such a kernel is recorded.
 The README's rule that nothing derived from an argument is kept across calls is enforced by audit only for
-`global` and `nonlocal`; review catches the rest (`aklr/ops/README.md` § The kernel section and ABI). A form-3
+`global` and `nonlocal`; review catches the rest (`aklr/plugins/aiter/README.md` § The kernel section and ABI). A form-3
 kernel is right on any state, so no check fails it, and AKLR's timing replays the state in place (S2): CI times it
 on state near its fixed point.
 
@@ -89,7 +89,7 @@ on state near its fixed point.
 
 - Repack on every call, or serve the contract's shuffled layout variant where it has one (`../SKILL.md`, the
   table under "Stop: what a AKLR kernel cannot do"). A kernel keeps nothing derived from an argument between
-  calls, and no call depends on what an earlier call left (`aklr/ops/README.md` § The kernel section and ABI).
+  calls, and no call depends on what an earlier call left (`aklr/plugins/aiter/README.md` § The kernel section and ABI).
 - In an optimization loop, time candidates on inputs that change between calls, and reject a candidate whose
   source keeps argument-derived data, whatever its score.
 - For an op that updates its state in place, quote the speedup timed with the state refreshed before each call, not

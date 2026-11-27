@@ -190,8 +190,8 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.472,
-      "microseconds": 185.0
+      "speedup": 1.435,
+      "microseconds": 188.0
     },
     {
       "axes": {
@@ -205,7 +205,7 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.442,
+      "speedup": 1.444,
       "microseconds": 198.0
     },
     {
@@ -220,7 +220,7 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.43,
+      "speedup": 1.414,
       "microseconds": 218.0
     },
     {
@@ -235,8 +235,8 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.487,
-      "microseconds": 225.0
+      "speedup": 1.468,
+      "microseconds": 227.0
     }
   ],
   "layout_variants": {
@@ -248,9 +248,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "triton",

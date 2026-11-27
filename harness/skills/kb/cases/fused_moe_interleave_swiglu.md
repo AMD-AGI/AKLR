@@ -18,20 +18,20 @@ measured:
   - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.358–1.962; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256 file de33eb69f7382c64, measured as its earlier version with the same GPU code, m 16, 32, 64, 128, 256", run_ref: "base 0e02a81", date: "2026-11-09"}
   - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.250–1.662; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512 file 972c3bd59239eaf2, measured as its earlier version with the same GPU code, m 16, 32, 64, 128, 256", run_ref: "base 0e02a81", date: "2026-11-09"}
 sources:
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts32_topk6_inter_dim2048_global_experts256/b0d4e3a0da5b11ef.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts64_topk6_inter_dim2048_global_experts256/be44bdea6a2c68e0.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256/8e1a32b04ba2889d.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512/7f829107afe8cf06.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts32_topk6_inter_dim2048_global_experts256/bb6ccce6542567b1.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts64_topk6_inter_dim2048_global_experts256/adceb630ed50ab0b.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256/de33eb69f7382c64.json
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512/972c3bd59239eaf2.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts32_topk6_inter_dim2048_global_experts256/b0d4e3a0da5b11ef.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts64_topk6_inter_dim2048_global_experts256/be44bdea6a2c68e0.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256/8e1a32b04ba2889d.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512/7f829107afe8cf06.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts32_topk6_inter_dim2048_global_experts256/bb6ccce6542567b1.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts64_topk6_inter_dim2048_global_experts256/adceb630ed50ab0b.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256/de33eb69f7382c64.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512/972c3bd59239eaf2.json
 ---
 
 # MXFP4 fused MoE with clamped SwiGLU, gate/up-interleaved weights, hidden 4096, top-6
 
 DeepSeek-V4-Flash's MoE (hidden 4096, 256 routed experts, top-6:
-`aklr/benchmarks/models/deepseekv4/README.md`) under four schema names: expert parallel with 32 or 64 local experts
+`config.json` of `deepseek-ai/DeepSeek-V4-Flash`) under four schema names: expert parallel with 32 or 64 local experts
 of 256 and inter dim 2048, and all 256 experts local at inter dim 256 or 512. Each name has two kernel files, split
 by token count:
 
@@ -50,11 +50,11 @@ is one (token, expert) pair, 6m per call; how many land on one expert depends on
   [fused_moe_interleave_swiglu_hidden7168.md](fused_moe_interleave_swiglu_hidden7168.md).
 - Contract `fused_moe@1.0`, layout variant `gate_up_interleaved`: `w1` (experts, 2 × inter, 4096) with gate and up rows
   interleaved in 16-row tiles and fp4 e2m1 in 16 × 64-byte blocks, `w2` (experts, 4096, inter), E8M0 scales per 1×32
-  stored 2-D (`aklr/ops/fused_moe/contract.py`, the `gate_up_interleaved` variant). `gate_mode` interleave with
+  stored 2-D (`aklr/plugins/aiter/provider/fused_moe/contract.py`, the `gate_up_interleaved` variant). `gate_mode` interleave with
   `swiglu_limit` (gate clamped to at most the limit, up to ± the limit, then SiLU(gate)·up). bf16 `hidden_states`,
   fp32 `topk_weights` (asserted by the 1–8-token kernel and `de33eb69…`), int32 `topk_ids` (the schemas' dtype),
   routing weight in stage 2, bf16 `out`.
-- Activations: the reference keeps them unrounded in this gate mode (`aklr/ops/fused_moe/reference.py`, its
+- Activations: the reference keeps them unrounded in this gate mode (`aklr/plugins/aiter/provider/fused_moe/reference.py`, its
   docstring), and `act_quant`'s description counts aiter's fp8 activations past `AITER_BF16_FP8_MOE_BOUND` rows
   within the bound. The 1–8-token kernel keeps them bf16; the 16–256-token kernels quantize them to MX-fp8
   (Counter-signals).
@@ -64,17 +64,17 @@ is one (token, expert) pair, 6m per call; how many land on one expert depends on
   `has_num_local_tokens` names of this shape (m 1024 and 2048) have no kernel.
 - Every workload passes `swiglu_limit` 10.0. The contract's interval starts at 7.0, but its comment validates the
   interleave gate mode from DeepSeek-V4's 10 only, since aiter's CK-Tile decode path does not clamp.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, whole-output SQNR ≥ 13 dB (`SqnrBound`). The
+- Compare: `determinism: bounded`, whole-output SQNR ≥ 13 dB (`SqnrBound`). The
   1–8-token kernel reduces in a fixed order with no atomics; the 16–256-token kernels add into `out` with atomics,
   except `de33eb69…` at 16 and 32 tokens.
 - Points. Served on main: m 1, 2 (expert parallel) and m 1, 2, 4, 8 (all local), by the 1–8-token files
   *(field, E1, E17)*, and, as of #125, m 16, 32, 64, 128 and 256 of every name, by the 16–256-token files, whose CI
   `speedup` is 1.235 or more; a workload without a `speedup` of 1.05 or more is not served
-  (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables; S13). Each name also has a kernel-less file
-  (`550200e0…`, `58ad3640…`, `af9db8f6…`, `ff293e2a…`) defining m 16–256, which is not served (`aklr/ops/README.md`
+  (`AKLR_MIN_SPEEDUP`, `aklr/plugins/aiter/README.md` § Environment variables; S13). Each name also has a kernel-less file
+  (`550200e0…`, `58ad3640…`, `af9db8f6…`, `ff293e2a…`) defining m 16–256, which is not served (`aklr/plugins/aiter/README.md`
   § Schema fields); no other Point of these names has a kernel.
 - The baseline is aiter's `fused_moe` with `AITER_BF16_FP8_MOE_BOUND=16`, sglang's DeepSeek-V4 setting
-  (`aklr/ops/fused_moe/baseline.py`): below 16 rows aiter keeps bf16 activations, from 16 it runs fp8. One kernel
+  (`aklr/plugins/aiter/provider/fused_moe/baseline.py`): below 16 rows aiter keeps bf16 activations, from 16 it runs fp8. One kernel
   file measures each Point, so the yardstick is aiter.
 
 ## Counter-signals
@@ -305,15 +305,15 @@ tokens: 25.9 and 78.3 µs against aiter's 42.0 and 105.9 (`bb6ccce6…`); 58.2 a
 On an MI355X, from the repository root, one schema file at a time:
 
 ```
-python -m aklr validate aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512/972c3bd59239eaf2.json
+python -m aklr validate aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512/972c3bd59239eaf2.json
 ```
 
 and the same for the other paths under `sources`. Each runs the audit and bench stages and writes
-`aklr_validation/report.md` with the per-Point speedup (`aklr/ops/README.md` § Commands); its `graph/baseline` column
+`aklr_validation/report.md` with the per-Point speedup (`aklr/plugins/aiter/README.md` § Commands); its `graph/baseline` column
 is the gate's bound, and `report.json` beside it holds every round. Add `--base origin/main` only on a branch
 that edits the file: with the base set, bench measures only schemas that are not at the base, so on an unchanged
 checkout it skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). The local result
-does not count; CI's measurement is the one dispatch reads (`aklr/ops/README.md` § Workflow).
+does not count; CI's measurement is the one dispatch reads (`aklr/plugins/aiter/README.md` § Workflow).
 
 ## Rollback
 
@@ -355,10 +355,10 @@ contract becomes bitwise (atomic stage 2) or its error bound no longer admits fp
 - S5 kernel.py:210 `_reduce_waves` sums in wave order (:222–223); clamp, SiLU and the row-0 store at :311–325
 - S6 kernel.py:401 `_stage2_tp`, route sum in route order with the `LOC >= 0` select at :448–455; `_stage2_ep` at :462, one-local-route split at :488–497 (`_split_chunks`, :333); `UNROLL2` at :547
 - S7 kernel.py:1 the docstring (binning into 16-row tiles, `num_local_tokens` at :11–12); `run` passes `HAS_NLT=False` at :596–597; scratch `ws` per shape at :548–552; fp32 `topk_weights` asserted at :526
-- S8 aklr/ops/fused_moe/baseline.py:44 `AITER_BF16_FP8_MOE_BOUND=16` for gate_mode interleave; aklr/ops/fused_moe/contract.py:249 the comment (:249–252): the interleave limit validated from 10 because aiter's CK-Tile decode path does not clamp; interval from 7.0 at :253; reference.py:71 activations kept unrounded under interleave (:90–93)
+- S8 aklr/plugins/aiter/provider/fused_moe/baseline.py:44 `AITER_BF16_FP8_MOE_BOUND=16` for gate_mode interleave; aklr/plugins/aiter/provider/fused_moe/contract.py:249 the comment (:249–252): the interleave limit validated from 10 because aiter's CK-Tile decode path does not clamp; interval from 7.0 at :253; reference.py:71 activations kept unrounded under interleave (:90–93)
 - S9 bb6ccce6542567b1.json#kernel.py:392 `_TIERS` by route count (fold at m ≤ 128, comment on the K rotation at :388–391); the routing heads `part1s` (:431) at m ≤ 32 and `part1w` (:564) above, chosen at :946; activations quantized in stage 1's A loader (comment at :401–403); the prelude with W1-warming workgroups at :104 and :148; fp8 conversion by `cvt_pk_fp8_f32` in the prelude (:250) and the fold's quantization (:803), by `cvt_scalef32_pk_fp8_bf16` in the A loader (:896); the edited builder of each configuration in `_S1_BUILDERS` (:983) and `_S2_BUILDERS` (:990), loaded by `_s1_compile` (:998) and `_s2_compile` (:1006); buffers per call at :1075–1080; stage 2 `mode="atomic"` at :1146. bb6ccce6542567b1.json#edited_builders.py:1 the docstring listing the edits; the 16-token stage-1 builder at :67, its K rotation at :686, fold head at :582 and padding rows past the activations at :801; the A-loader quantization of the 32-token builder at :6772; stage 2's late `num_valid_ids` read at :3803 and K rotation at :4858; `_make_zero` in the 256-token builder at :20753
 - S10 adceb630ed50ab0b.json#kernel.py:51 `_CFG` (16-row blocks, fused at m ≤ 128, comments at :42–50); `_prologue` at :95, its MX-fp8 scaling by hand and `cvt_pk_fp8_f32` at :198–221; the fused stage 1's `CvtScaleF32PkFp8Bf16Op` at :2246–2247; `_fused_route_head` at :287; stage-2 builder copy at :471, `raw_ptr_buffer_atomic_fadd` at :1370; LDS padded to cap workgroups per CU at :1610; `_plan` asserting hidden = 16 × global experts and ≤ 64 local at :3184; buffers per call at :3309
 - S11 de33eb69f7382c64.json#kernel.py:16 route thresholds (`DIRECT_MAX_ROUTES` 96, `FLY_MAX_ROUTES` 1536, expert-major stage 2 from 384, `SPEC` from 1536); `_stage1` per route with the XCD placement at :175–176 and w1 read cached (cache policy 0) at :203; `_cvt_fp8` with `cvt_scalef32_pk_fp8_bf16` at :266 and `mfma_scale_f32_16x16x128_f8f6f4` at :273; `_stage1_ex` with `_route_list` ballots at :478 and the zeroing of `out` at :395; `_atom_pk` (`BufferAtomicPkAdd`) at :78, used at :633 and :643; `_stage2_tp` route-order sum at :738; `_build` with fp32 `topk_weights` asserted at :753, scratch sizes at :772 and the scratch allocated in each call in `launch` at :863; kernarg preload at :858; `run` asserting at most `FLY_MAX_ROUTES` routes and no expert mask at :895
 - S12 972c3bd59239eaf2.json#kernel.py:53 `_E`, `_TOPK`, `_D`, `_INTER` fixed; `_kn1` (aiter kernel names) at :72; `_k_stagger` at :85 and `_fold_k_stagger` at :92; `_kernarg_preload` at :107; `_fp8_pack` with `cvt_pk_fp8_f32` at :237 and :246, used by the prep kernel at :386; `_fp8_pack_bf16` with `cvt_scalef32_pk_fp8_bf16` at :302, used by the folded stage 1 at :2429; `_rows16` at :3824; own stage 2 over the routed rows at :3831; the copy of aiter's v2 stage 2 past `_rows16` at :4350 (972c3bd59239eaf2.json#fused_moe_v2_stage2.py:25); `_fold` (m ≤ 128) at :4388 and `_setup_fold` (8-route blocks) at :4394; buffers per call at :4445
-- S13 aklr/core/contract/spec/_workloads.py:38 `qualifies`: a workload without `speedup` does not reach `AKLR_MIN_SPEEDUP` (:41); aklr/ops/README.md:338 `AKLR_MIN_SPEEDUP`, default 1.05
+- S13 aklr/core/contract/spec/_workloads.py:38 `qualifies`: a workload without `speedup` does not reach `AKLR_MIN_SPEEDUP` (:41); aklr/plugins/aiter/README.md:512 `AKLR_MIN_SPEEDUP`, default 1.05
 - S14 bb6ccce6542567b1.json#aiter_stubs.py:1 stand-ins for aiter's `dtypes`, `fp8_e8m0`, `logger`, `ActivationType` and `get_cu_num`, the same file in adceb630ed50ab0b and 972c3bd59239eaf2; in the copies, a nested import of a module the file does not carry raising at bb6ccce6542567b1.json#moe_kernels.py:643, environment defaults at bb6ccce6542567b1.json#tensor_shim.py:24 and :27 and moe_kernels.py:2062, the argument-keyed pad cache turned off at moe_kernels.py:1177 and :1182 (its `global` is rejected by SA1), `.tolist()` replaced at tensor_shim.py:175 (SA3), and the launch-argument builders a listed Point reaches take the stream of their input's device (`dev`) at moe_kernels.py:838 and :930 (972c3bd59239eaf2.json#moe_kernels.py:838, at 256 tokens); the copies' other `torch.cuda.current_stream()` calls, 18 in bb6ccce6542567b1 and 20 in 972c3bd59239eaf2, are reached at no listed Point, and adceb630ed50ab0b's copies launch nothing; adceb630ed50ab0b.json#mx_types.py:1 keeps aiter's int enums only; 972c3bd59239eaf2.json#fused_moe_v2_stage2.py:1 the three functions copied from aiter's `fused_moe.py`

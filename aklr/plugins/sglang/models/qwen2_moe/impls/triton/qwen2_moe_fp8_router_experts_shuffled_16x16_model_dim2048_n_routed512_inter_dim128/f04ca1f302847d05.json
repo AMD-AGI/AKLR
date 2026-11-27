@@ -160,23 +160,23 @@
         "n_tokens": 1024
       },
       "accuracy": "passed",
-      "speedup": 1.102,
-      "microseconds": 141.0
+      "speedup": 1.087,
+      "microseconds": 142.0
     },
     {
       "axes": {
         "n_tokens": 2048
       },
       "accuracy": "passed",
-      "speedup": 1.196,
-      "microseconds": 165.0
+      "speedup": 1.169,
+      "microseconds": 168.0
     },
     {
       "axes": {
         "n_tokens": 4096
       },
       "accuracy": "passed",
-      "speedup": 1.267,
+      "speedup": 1.269,
       "microseconds": 228.0
     },
     {
@@ -184,7 +184,7 @@
         "n_tokens": 5120
       },
       "accuracy": "passed",
-      "speedup": 1.352,
+      "speedup": 1.363,
       "microseconds": 243.0
     },
     {
@@ -192,23 +192,23 @@
         "n_tokens": 8192
       },
       "accuracy": "passed",
-      "speedup": 1.393,
-      "microseconds": 328.0
+      "speedup": 1.388,
+      "microseconds": 327.0
     },
     {
       "axes": {
         "n_tokens": 10240
       },
       "accuracy": "passed",
-      "speedup": 1.354,
-      "microseconds": 396.0
+      "speedup": 1.357,
+      "microseconds": 393.0
     },
     {
       "axes": {
         "n_tokens": 16384
       },
       "accuracy": "passed",
-      "speedup": 1.545,
+      "speedup": 1.572,
       "microseconds": 533.0
     }
   ],
@@ -241,9 +241,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

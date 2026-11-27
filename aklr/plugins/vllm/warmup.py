@@ -22,8 +22,7 @@ import torch
 
 from aklr.core.contract import semantics
 from aklr.core.contract.fastkey import FastKeyCodec
-from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
-from aklr.ops.gemm.api import gemm
+from aklr.core.runtime.dispatch import DispatcherRegistry
 
 __all__ = ["warm_up"]
 
@@ -57,21 +56,23 @@ def _weight_shapes(worker: Any) -> set[tuple[int, int]]:
 
 
 def _call_once(point: Any, device: torch.device) -> bool:
-    """One call of the kernel serving ``point``, on zeros; whether AKLR served it."""
+    """One call of aiter's GEMM at ``point``, on zeros; whether AKLR's kernel served it."""
+    import aiter
+    from aiter.tuned_gemm import gemm_a16w16
 
     def zeros(shape, name):
         return torch.zeros(shape, dtype=semantics.torch_dtypes(point.dtypes[name])[0], device=device)
 
     m, n, k = (point.axes[a] for a in ("m", "n", "k"))
-    trans_b = point.attrs["trans_b"]
-    result = gemm(
+    gemm_a16w16(
         zeros((m, k), "a"),
-        zeros((n, k) if trans_b else (k, n), "b"),
-        trans_b=trans_b,
-        bias=zeros((n,), "bias") if point.attrs["has_bias"] else None,
-        out_dtype=semantics.torch_dtypes(point.dtypes["out"])[0],
+        zeros((n, k), "b"),
+        zeros((n,), "bias") if point.attrs["has_bias"] else None,
+        semantics.torch_dtypes(point.dtypes["out"])[0],
     )
-    return not isinstance(result, FallbackReason)
+    # no interface in this aiter, or no provider enabled: aiter ran its own kernel
+    decision = aiter.plugin.last_decision() if hasattr(aiter, "plugin") else None
+    return getattr(decision, "provider", None) == "aklr"
 
 
 def warm_up(worker: Any) -> None:
@@ -94,6 +95,9 @@ def warm_up(worker: Any) -> None:
     try:
         for point in _served_gemm_points(dispatcher):
             m, nk = point.axes["m"], (point.axes["n"], point.axes["k"])
+            # aiter's GEMM takes the weight as [n, k] alone
+            if not point.attrs["trans_b"]:
+                continue
             if nk == lm_head_nk:
                 heads += _call_once(point, device)
             elif graph_tokens < m <= max_tokens and nk in shapes:

@@ -1,12 +1,12 @@
 name: AKLR-site
 
 # The only workflow that deploys GitHub Pages. CIs write their own section of the site-data branch
-# (agentx/, later accuracy/); this one deploys the branch tip with a home page built from each
-# section's section.json, so no CI's deploy replaces another's results.
+# (agentx/, kernels/, later accuracy/); this one deploys the branch tip with a home page built from
+# each section's section.json, so no CI's deploy replaces another's results.
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] reads only main's code and the site-data branch, never the triggering run's artifacts or code
     # Workflow names, not file names. workflow_run uses main's copy of this file.
-    workflows: [AKLR-agentx-ci]
+    workflows: [AKLR-agentx-ci, AKLR-CI, AKLR-e2e-perf-ci, AKLR-site-rerender]
     # completed, not success: a run whose targets failed may still have published.
     types: [completed]
     # The triggering run's head branch: PR runs never deploy.
@@ -22,20 +22,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    # Only scheduled and manual runs on main write site-data.
+  # Build and deploy are separate jobs, as GitHub documents: the artifact service lists a new artifact
+  # only after a delay (seconds lately), so deploy-pages right after the upload in the same job finds none.
+  # A failed deploy is re-run alone, with the artifact already uploaded; re-running an upload in the same
+  # run would leave two github-pages artifacts, which deploy-pages refuses.
+  build:
+    # Only the runs that write site-data: AgentX's and e2e's scheduled and manual runs, AKLR-CI's main
+    # pushes (publish-kernels), and AKLR-site-rerender.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      contains(fromJSON('["schedule", "workflow_dispatch"]'), github.event.workflow_run.event)
+      github.event.workflow_run.name == 'AKLR-site-rerender' ||
+      contains(fromJSON('["AKLR-agentx-ci", "AKLR-e2e-perf-ci"]'), github.event.workflow_run.name) &&
+      contains(fromJSON('["schedule", "workflow_dispatch"]'), github.event.workflow_run.event) ||
+      github.event.workflow_run.name == 'AKLR-CI' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    outputs:
+      exists: ${{ steps.data.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,6 +74,18 @@ jobs:
         if: steps.data.outputs.exists == 'true'
         with:
           path: ${{ runner.temp }}/site/
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.exists == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
-        if: steps.data.outputs.exists == 'true'
         uses: actions/deploy-pages@v4

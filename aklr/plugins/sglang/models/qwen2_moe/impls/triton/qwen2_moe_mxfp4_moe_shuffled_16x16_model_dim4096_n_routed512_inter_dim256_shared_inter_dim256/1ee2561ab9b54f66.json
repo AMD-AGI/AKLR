@@ -180,12 +180,18 @@
     {
       "axes": {
         "n_tokens": 14336
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.528,
+      "microseconds": 857.0
     },
     {
       "axes": {
         "n_tokens": 15360
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.492,
+      "microseconds": 934.0
     }
   ],
   "layout_variants": {
@@ -234,9 +240,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

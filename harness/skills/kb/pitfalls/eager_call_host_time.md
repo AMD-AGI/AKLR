@@ -6,7 +6,7 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
 sources:
-  - "aklr/ops/topk/impls/flydsl/biased_grouped_topk_renormalize_n_experts896_topk16/04977b1eb28d2a1d.json"
+  - "aklr/plugins/aiter/provider/topk/impls/flydsl/biased_grouped_topk_renormalize_n_experts896_topk16/04977b1eb28d2a1d.json"
   - "ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1358"
 ---
 
@@ -57,5 +57,5 @@ took 85.8 and 96.1 µs per call against aiter's 15.5 and 65.5, 0.18× and 0.68×
 
 - E1 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=30 rounds (flush row) and 50 calls in one window (replay and eager rows), kernel and baseline in one process, CUDA-event time per call, medians; rows: one eager call after a 1 GiB write and a GPU spin (GPU time); graph replays without a flush; eager calls back to back with nothing queued (host-bound); both checked against the contract's float64 reference (ids exact, weights 1e-4): the kernel passed at both n_tokens, aiter failed at 16384 (ids differing in 8.8e-5 of entries, weights in 7.6e-6)] 04977b1eb28d2a1d against aiter's `biased_grouped_topk`, kernel / aiter at n_tokens 2732: flush 7.16 / 20.04 µs (2.80×), replay 5.83 / 16.57 (2.84×), eager 85.79 / 15.49 (0.18×); at n_tokens 16384: flush 15.42 / 71.60 (4.64×), replay 9.45 / 67.04 (7.10×), eager 96.13 / 65.48 (0.68×) (FlyDSL top-k, 896 experts, top 16)
 - E2 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI, stored speedup per Point] 04977b1eb28d2a1d at n_tokens 893, 2732, 9397, 16384: 2.984, 3.725, 6.718, 8.533 (AMD-AGI/AKLR@e193b1d9, CI run 44081029964)
-- S1 aklr/ops/topk/impls/flydsl/biased_grouped_topk_renormalize_n_experts896_topk16/04977b1eb28d2a1d.json#kernel.py:1234 `run` calls `_launch` (:1247) with 14 arguments and `stream` (:1262); `_launch` is a `@flyc.jit` function (:1178-1179), rebound by `flyc.compile[{...}]` applied to it with no arguments (:1215-1217)
+- S1 aklr/plugins/aiter/provider/topk/impls/flydsl/biased_grouped_topk_renormalize_n_experts896_topk16/04977b1eb28d2a1d.json#kernel.py:1234 `run` calls `_launch` (:1247) with 14 arguments and `stream` (:1262); `_launch` is a `@flyc.jit` function (:1178-1179), rebound by `flyc.compile[{...}]` applied to it with no arguments (:1215-1217)
 - S2 ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1358 `JitFunction.__call__`: the globals-drift check, `sig.bind`, `_build_full_cache_key`, then the call-state cache (:1377-1400); `CompileCallable.__call__` with no arguments returns the function itself (:1715-1717); `CompiledFunction` at :1613

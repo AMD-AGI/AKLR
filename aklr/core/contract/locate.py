@@ -6,7 +6,6 @@ from __future__ import annotations
 import functools
 import hashlib
 import importlib
-import pkgutil
 import re
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
@@ -32,41 +31,41 @@ __all__ = [
     "schema_uuid",
 ]
 
-OP_PACKAGE_PATTERN = re.compile(r"aklr\.(?:ops|plugins(?:\.[a-z][a-z0-9_]*)+)\.[a-z][a-z0-9_]*")
+OP_PACKAGE_PATTERN = re.compile(r"aklr\.plugins(?:\.[a-z][a-z0-9_]*)+\.[a-z][a-z0-9_]*")
 # schema_relative_path's layout, relative to an op directory; main's legacy solution
 # files impls/<language>/<dir>/<stem>.json are not schemas
 SCHEMA_PATH_PATTERN: Final = r"^impls/(?P<language>[^/]+)/(?P<name>[^/]+)/(?P<uuid>[0-9a-f]{16})\.json$"
-# the same, relative to the repository: under an op directory of aklr/ops or aklr/plugins
-REPOSITORY_SCHEMA_PATH_PATTERN: Final = r"^aklr/(?:ops|plugins(?:/[^/]+)+)/[^/]+/" + SCHEMA_PATH_PATTERN[1:]
-SCHEMA_ROOTS: Final = ("aklr/ops", "aklr/plugins")
+# the same, relative to the repository: under an op directory of aklr/plugins
+REPOSITORY_SCHEMA_PATH_PATTERN: Final = r"^aklr/plugins(?:/[^/]+)+/[^/]+/" + SCHEMA_PATH_PATTERN[1:]
+SCHEMA_ROOTS: Final = ("aklr/plugins",)
 _AKLR_DIR: Final = Path(__file__).resolve().parents[2]
 
 
 def op_packages() -> tuple[str, ...]:
-    """Every ``aklr.ops.<pkg>`` package and every plugin op package, sorted."""
-    ops = importlib.import_module("aklr.ops")
-    ops_packages = (f"aklr.ops.{m.name}" for m in pkgutil.iter_modules(ops.__path__) if m.ispkg)
-    return tuple(sorted([*ops_packages, *_plugin_op_packages().values()]))
+    """Every op package, sorted."""
+    return tuple(sorted(_op_packages().values()))
 
 
 @functools.cache
-def _plugin_op_packages() -> dict[str, str]:
+def _op_packages() -> dict[str, str]:
     """``op_type -> package`` of every package under ``aklr/plugins`` holding a
-    ``contract.py``: its last name, unique across ``aklr/ops`` and ``aklr/plugins``."""
+    ``contract.py``: its last name, unique across ``aklr/plugins``."""
     packages: dict[str, str] = {}
     plugins_dir = _AKLR_DIR / "plugins"
     for path in sorted(plugins_dir.rglob("contract.py")):
         parts = path.parent.relative_to(plugins_dir).parts
         op_type, package = parts[-1], ".".join(("aklr", "plugins", *parts))
-        if op_type in packages or (_AKLR_DIR / "ops" / op_type).is_dir():
+        if op_type in packages:
             raise ValueError(f"{package}: op_type {op_type!r} is taken")
         packages[op_type] = package
     return packages
 
 
 def op_package_of(op_type: str) -> str:
-    """The package of ``op_type``: a plugin op's, else ``aklr.ops.<op_type>``."""
-    return _plugin_op_packages().get(op_type, f"aklr.ops.{op_type}")
+    """The package of ``op_type``; ``ValueError`` when no op package has that name."""
+    if op_type not in _op_packages():
+        raise ValueError(f"op_type {op_type!r}: no op package of that name under aklr/plugins")
+    return _op_packages()[op_type]
 
 
 def op_module(op_package: str, submodule: str) -> ModuleType:

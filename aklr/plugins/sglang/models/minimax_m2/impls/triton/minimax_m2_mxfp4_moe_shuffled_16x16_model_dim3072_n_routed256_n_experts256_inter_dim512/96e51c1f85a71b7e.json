@@ -161,8 +161,8 @@
         "expert_offset": 0
       },
       "accuracy": "passed",
-      "speedup": 2.676,
-      "microseconds": 21.2
+      "speedup": 2.622,
+      "microseconds": 21.0
     },
     {
       "axes": {
@@ -172,8 +172,8 @@
         "expert_offset": 0
       },
       "accuracy": "passed",
-      "speedup": 2.035,
-      "microseconds": 32.6
+      "speedup": 2.019,
+      "microseconds": 32.1
     },
     {
       "axes": {
@@ -183,8 +183,8 @@
         "expert_offset": 0
       },
       "accuracy": "passed",
-      "speedup": 1.622,
-      "microseconds": 51.4
+      "speedup": 1.605,
+      "microseconds": 51.7
     }
   ],
   "layout_variants": {
@@ -233,9 +233,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

@@ -58,8 +58,7 @@ class ValidationScope:
             changed = (root / p for p, kind in kinds.items() if kind == "schema_data")
             paths = tuple(sorted(p for p in changed if p.is_file()))
         else:
-            op_dirs = [d for d in (root / "aklr/ops").iterdir() if d.is_dir()]
-            op_dirs += [p.parent for p in (root / "aklr/plugins").rglob("contract.py")]
+            op_dirs = [p.parent for p in (root / "aklr/plugins").rglob("contract.py")]
             paths = tuple(p for op_dir in sorted(op_dirs) for p in committed_schema_paths(op_dir))
         bench_paths = paths
         if is_schema_only:

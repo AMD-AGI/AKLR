@@ -161,8 +161,8 @@
         "expert_offset": 0
       },
       "accuracy": "passed",
-      "speedup": 3.505,
-      "microseconds": 14.7
+      "speedup": 3.384,
+      "microseconds": 15.0
     }
   ],
   "layout_variants": {
@@ -211,9 +211,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

@@ -15,21 +15,23 @@ With MXFP4 experts and the shared expert apart in BF16, the whole forward: the s
 expert, then the gate, fused_topk and FusedMoE (sglang's gfx950 small-M kernel where it
 serves, else aiter's fused_moe at per_1x32), then the shared expert's fused gate added."""
 
-from __future__ import annotations
-
 import functools
 
+import torch
+
+from aklr.core.contract.baseline import OpBaseline
+
 __all__ = [
-    "qwen2_moe_fp8_experts_baseline",
-    "qwen2_moe_fp8_router_experts_baseline",
-    "qwen2_moe_mxfp4_moe_baseline",
-    "qwen2_moe_router_baseline",
+    "Qwen2MoeFp8ExpertsBaseline",
+    "Qwen2MoeFp8RouterExpertsBaseline",
+    "Qwen2MoeMxfp4MoeBaseline",
+    "Qwen2MoeRouterBaseline",
 ]
 
 _N_SHARED = 1  # the shared expert fused into the experts' last slot
 
 
-def _check_aiter_path() -> None:
+def _check_aiter_path():
     """Raise unless sglang takes the aiter path the baselines replay: it is chosen at
     import, from SGLANG_USE_AITER=1 on gfx950."""
     from sglang.srt.layers.quantization import unquant
@@ -42,8 +44,6 @@ def _check_aiter_path() -> None:
 def _zero_gate(device, width):
     """A shared expert gate of zeros, for the router alone on sglang's small-M router
     (which gates the shared expert in the same launch)."""
-    import torch
-
     return torch.zeros((1, width), dtype=torch.bfloat16, device=device)
 
 
@@ -150,61 +150,71 @@ def _experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale):
     )
 
 
-def qwen2_moe_router_baseline(hidden_states, router_weight, topk_weights=None, topk_ids=None):
-    """The block's routing: sglang's small-M router where it serves (its shared column
-    dropped, a zero gate standing in), else the gate and fused_topk."""
-    _check_aiter_path()
-    topk = topk_ids.shape[-1]
-    routed = _smallm_router(
+class Qwen2MoeRouterBaseline(OpBaseline):
+    def baseline(self, *, hidden_states, router_weight, topk_weights=None, topk_ids=None):
+        """The block's routing: sglang's small-M router where it serves (its shared column
+        dropped, a zero gate standing in), else the gate and fused_topk."""
+        _check_aiter_path()
+        topk = topk_ids.shape[-1]
+        routed = _smallm_router(
+            hidden_states,
+            router_weight,
+            _zero_gate(hidden_states.device, hidden_states.shape[-1]),
+        )
+        if routed is None or topk + _N_SHARED != routed[1].shape[-1]:
+            weights, ids = _topk(hidden_states, router_weight, topk)
+        else:
+            weights, ids = routed[0][:, :topk], routed[1][:, :topk]
+        return {"topk_weights": weights, "topk_ids": ids}
+
+
+class Qwen2MoeFp8ExpertsBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        hidden_states,
+        topk_weights,
+        topk_ids,
+        shared_gate_weight,
+        w1,
+        w1_scale,
+        w2,
+        w2_scale,
+        out_dtype=None,
+        out=None,
+    ):
+        """_append_shared_to_topk_output's fused gate, then FusedMoE (_experts)."""
+        _check_aiter_path()
+        weights, ids = _with_shared(
+            hidden_states, topk_weights, topk_ids, shared_gate_weight, w1.shape[0] - 1
+        )
+        return {"out": _experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)}
+
+
+class Qwen2MoeFp8RouterExpertsBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
         hidden_states,
         router_weight,
-        _zero_gate(hidden_states.device, hidden_states.shape[-1]),
-    )
-    if routed is None or topk + _N_SHARED != routed[1].shape[-1]:
-        return _topk(hidden_states, router_weight, topk)
-    weights, ids = routed
-    return weights[:, :topk], ids[:, :topk]
-
-
-def qwen2_moe_fp8_experts_baseline(
-    hidden_states,
-    topk_weights,
-    topk_ids,
-    shared_gate_weight,
-    w1,
-    w1_scale,
-    w2,
-    w2_scale,
-    out_dtype=None,
-    out=None,
-):
-    """_append_shared_to_topk_output's fused gate, then FusedMoE (_experts)."""
-    _check_aiter_path()
-    weights, ids = _with_shared(hidden_states, topk_weights, topk_ids, shared_gate_weight, w1.shape[0] - 1)
-    return _experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)
-
-
-def qwen2_moe_fp8_router_experts_baseline(
-    hidden_states,
-    router_weight,
-    shared_gate_weight,
-    w1,
-    w1_scale,
-    w2,
-    w2_scale,
-    topk=10,
-    out_dtype=None,
-    out=None,
-):
-    """_forward_router_experts: sglang's small-M router where it serves, else the gate,
-    fused_topk and the shared expert's fused gate; then FusedMoE (_experts)."""
-    _check_aiter_path()
-    routed = _smallm_router(hidden_states, router_weight, shared_gate_weight)
-    if routed is None or topk + _N_SHARED != routed[1].shape[-1]:
-        weights, ids = _topk(hidden_states, router_weight, topk)
-        routed = _with_shared(hidden_states, weights, ids, shared_gate_weight, router_weight.shape[0])
-    weights, ids = routed
-    return _experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)
+        shared_gate_weight,
+        w1,
+        w1_scale,
+        w2,
+        w2_scale,
+        topk=10,
+        out_dtype=None,
+        out=None,
+    ):
+        """_forward_router_experts: sglang's small-M router where it serves, else the gate,
+        fused_topk and the shared expert's fused gate; then FusedMoE (_experts)."""
+        _check_aiter_path()
+        routed = _smallm_router(hidden_states, router_weight, shared_gate_weight)
+        if routed is None or topk + _N_SHARED != routed[1].shape[-1]:
+            weights, ids = _topk(hidden_states, router_weight, topk)
+            routed = _with_shared(hidden_states, weights, ids, shared_gate_weight, router_weight.shape[0])
+        weights, ids = routed
+        return {"out": _experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)}
 
 
 @functools.cache
@@ -219,8 +229,6 @@ def _silu_and_mul():
 def _fp4x2(weight):
     """An MXFP4 weight as QuarkW4A4MXFp4MoE.apply_weights hands it to the runner: a
     float4_e2m1fn_x2 view (where torch has the dtype), as shuffled as the weight."""
-    import torch
-
     if not hasattr(torch, "float4_e2m1fn_x2"):
         return weight
     view = weight.view(torch.float4_e2m1fn_x2)
@@ -233,7 +241,6 @@ def _mxfp4_experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale):
     gfx950 small-M kernel where it serves (bf16 activations), else aiter's fused_moe at
     per_1x32 (MXFP4 activations) with the gate and up rows apart, at sglang's sorting
     dispatch policy; the scales are uint8, as sglang holds them."""
-    import torch
     from aiter import ActivationType, QuantType
     from aiter.fused_moe import fused_moe
     from aiter.ops.flydsl.moe_common import GateMode
@@ -278,31 +285,34 @@ def _mxfp4_experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale):
     )
 
 
-def qwen2_moe_mxfp4_moe_baseline(
-    hidden_states,
-    router_weight,
-    w1,
-    w1_scale,
-    w2,
-    w2_scale,
-    shared_w1,
-    shared_w2,
-    shared_gate_weight,
-    topk=10,
-    out_dtype=None,
-    out=None,
-):
-    """Qwen2MoeSparseMoeBlock.forward with the shared expert apart, on one stream as sglang
-    runs it eagerly: _forward_shared_experts (gate_up, SiluAndMul, down; its gate deferred),
-    _forward_router_experts (the gate, fused_topk, FusedMoE), then fused_gate_sigmoid_mul_add.
-    In decode capture sglang runs the shared expert beside the router and experts on a second
-    stream (forward_normal_dual_stream); the bench sums kernel times, which that overlap does
-    not shorten."""
-    _check_aiter_path()
-    from sglang.kernels.ops.elementwise.elementwise import fused_gate_sigmoid_mul_add
+class Qwen2MoeMxfp4MoeBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        hidden_states,
+        router_weight,
+        w1,
+        w1_scale,
+        w2,
+        w2_scale,
+        shared_w1,
+        shared_w2,
+        shared_gate_weight,
+        topk=10,
+        out_dtype=None,
+        out=None,
+    ):
+        """Qwen2MoeSparseMoeBlock.forward with the shared expert apart, on one stream as sglang
+        runs it eagerly: _forward_shared_experts (gate_up, SiluAndMul, down; its gate deferred),
+        _forward_router_experts (the gate, fused_topk, FusedMoE), then fused_gate_sigmoid_mul_add.
+        In decode capture sglang runs the shared expert beside the router and experts on a second
+        stream (forward_normal_dual_stream); the bench sums kernel times, which that overlap does
+        not shorten."""
+        _check_aiter_path()
+        from sglang.kernels.ops.elementwise.elementwise import fused_gate_sigmoid_mul_add
 
-    shared = _linear(_silu_and_mul()(_linear(hidden_states, shared_w1)), shared_w2)
-    weights, ids = _topk(hidden_states, router_weight, topk)
-    routed = _mxfp4_experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)
-    fused_gate_sigmoid_mul_add(hidden_states, shared_gate_weight.squeeze(), shared, routed)
-    return routed
+        shared = _linear(_silu_and_mul()(_linear(hidden_states, shared_w1)), shared_w2)
+        weights, ids = _topk(hidden_states, router_weight, topk)
+        routed = _mxfp4_experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)
+        fused_gate_sigmoid_mul_add(hidden_states, shared_gate_weight.squeeze(), shared, routed)
+        return {"out": routed}

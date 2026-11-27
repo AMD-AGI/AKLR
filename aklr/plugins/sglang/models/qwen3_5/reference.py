@@ -6,17 +6,31 @@ numerical oracle; BF16 interfaces and the FP8 quantization boundary are explicit
 This implementation is for correctness and must not be used as a speed baseline.
 """
 
-import inspect
 import itertools
 
 import torch
 import torch.nn.functional as F
 
-from aklr.core.contract.semantics import to_float32
-from aklr.plugins.sglang.models.qwen3_5.contract import MROPE_SECTION, ROTARY_DIM
+from aklr.core.contract.reference import OpReference
+
+__all__ = [
+    "MROPE_SECTION",
+    "ROTARY_DIM",
+    "GatedAttentionGroupFp8QuantReference",
+    "GatedAttentionReference",
+    "GdnDecodeGroupFp8QuantReference",
+    "GdnDecodeReference",
+    "GdnPrefillGroupFp8QuantReference",
+    "GdnPrefillReference",
+]
+
+# A full-attention head's rotary part: NeoX RoPE on its first 64 channels, whose 32
+# frequencies Qwen3.5's interleaved mRoPE splits over the temporal, height and width positions
+ROTARY_DIM = 64
+MROPE_SECTION = (11, 11, 10)
 
 
-def reference_prefill(
+def _prefill(
     projected_qkvz,
     projected_ba,
     conv_state,
@@ -32,6 +46,7 @@ def reference_prefill(
     *,
     scale,
     eps=1e-6,
+    **_,
 ):
     slots, heads, value_dim, key_dim = delta_state.shape
     channels = conv_state.shape[1]
@@ -96,7 +111,7 @@ def reference_prefill(
     return output, conv_result, state_result, values.reshape(rows, -1), scales
 
 
-def reference_decode(
+def _decode(
     projected_qkvz,
     projected_ba,
     conv_state,
@@ -109,6 +124,7 @@ def reference_decode(
     *,
     scale,
     eps=1e-6,
+    **_,
 ):
     """One decode token per row, in float32 between the BF16 and FP8 rounding points.
 
@@ -165,53 +181,39 @@ def reference_decode(
     return normalized, conv_result, state_result, values.reshape(rows, -1), scales
 
 
-def _decode_reference(point, row_major_args, outputs):
-    names = inspect.signature(reference_decode).parameters
-    normalized, conv, state, values, scales = reference_decode(
-        **{k: v for k, v in row_major_args.items() if k in names}
-    )
-    results = {
-        "normalized": normalized,
-        "values": values,
-        "scales": scales,
-        "conv_state": conv,
-        "delta_state": state,
-    }
-    return tuple(to_float32(results[n], point.dtypes[n]) for n in (*outputs, "conv_state", "delta_state"))
+class GdnPrefillGroupFp8QuantReference(OpReference):
+    def reference(self, **call):
+        """The recurrence (_prefill); the BF16 output and its FP8 values and scales, then both
+        final state pools."""
+        normalized, conv_state, delta_state, values, scales = _prefill(**call)
+        return {
+            "normalized": normalized,
+            "values": values,
+            "scales": scales,
+            "conv_state": conv_state,
+            "delta_state": delta_state,
+        }
 
 
-def gdn_decode_group_fp8_quant_reference(point, row_major_args):
-    """Independent decode; the FP8 outputs, then both final state pools."""
-    return _decode_reference(point, row_major_args, ("values", "scales"))
+class GdnPrefillReference(OpReference):
+    def reference(self, **call):
+        """The recurrence (_prefill); the BF16 output, then both final state pools."""
+        normalized, conv_state, delta_state, _, _ = _prefill(**call)
+        return {"normalized": normalized, "conv_state": conv_state, "delta_state": delta_state}
 
 
-def gdn_decode_reference(point, row_major_args):
-    """Independent decode; the BF16 output, then both final state pools."""
-    return _decode_reference(point, row_major_args, ("normalized",))
+class GdnDecodeGroupFp8QuantReference(OpReference):
+    def reference(self, **call):
+        """The decode (_decode); the FP8 values and scales, then both final state pools."""
+        _, conv_state, delta_state, values, scales = _decode(**call)
+        return {"values": values, "scales": scales, "conv_state": conv_state, "delta_state": delta_state}
 
 
-def gdn_prefill_reference(point, row_major_args):
-    """Independent recurrence; the BF16 output, then both final state pools."""
-    call = {k: v for k, v in row_major_args.items() if k != "max_seq_len"}
-    output, conv, state, _, _ = reference_prefill(**call)
-    return tuple(
-        to_float32(t, point.dtypes[n])
-        for n, t in zip(("normalized", "conv_state", "delta_state"), (output, conv, state), strict=True)
-    )
-
-
-def gdn_prefill_group_fp8_quant_reference(point, row_major_args):
-    """Independent recurrence; return outputs followed by final mutable inputs."""
-    call = {k: v for k, v in row_major_args.items() if k != "max_seq_len"}
-    output, conv, state, values, scales = reference_prefill(**call)
-    return tuple(
-        to_float32(t, point.dtypes[n])
-        for n, t in zip(
-            ("normalized", "values", "scales", "conv_state", "delta_state"),
-            (output, values, scales, conv, state),
-            strict=True,
-        )
-    )
+class GdnDecodeReference(OpReference):
+    def reference(self, **call):
+        """The decode (_decode); the BF16 output, then both final state pools."""
+        normalized, conv_state, delta_state, _, _ = _decode(**call)
+        return {"normalized": normalized, "conv_state": conv_state, "delta_state": delta_state}
 
 
 def _rounded(x, dtype):
@@ -248,7 +250,23 @@ def _gemma_norm_rope(x, weight, eps, cos, sin):
 _QUERY_BLOCK = 256
 
 
-def _gated_attention(point, row_major_args):
+def _gated_attention(
+    *,
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    eps,
+    scale,
+    kv_indptr=None,
+    kv_indices=None,
+    cu_seqlens=None,
+    **_,
+):
     """The gated attention (decode, or prefill without kv_indptr) in float32: each query
     head's attention output rounded to BF16 times sigmoid of its gate, before that product's
     own rounding, as (rows, heads, head_dim); then both pools as the call leaves them.
@@ -257,39 +275,35 @@ def _gated_attention(point, row_major_args):
     keeps between its kernels), the keys and values to E4M3FN in the pools, and the
     attention output to BF16. Rows write their slots before any row attends.
     """
-    args, dtypes = row_major_args, point.dtypes
-    qkv_dim, kv_heads, head_dim = (point.axes[n] for n in ("qkv_dim", "n_kv_heads", "head_dim"))
+    qkv_dim, (kv_heads, head_dim) = projected_qkv.shape[1], key_cache.shape[1:]
     kv_width = kv_heads * head_dim
     heads = (qkv_dim - 2 * kv_width) // (2 * head_dim)
     width = heads * head_dim
-    eps, scale = args["eps"], args["scale"]
-    qkv = to_float32(args["projected_qkv"], dtypes["projected_qkv"])
+    qkv = projected_qkv.float()
     rows, device = qkv.shape[0], qkv.device
     query_gate = qkv[:, : 2 * width].reshape(rows, heads, 2, head_dim)
     keys = qkv[:, 2 * width : 2 * width + kv_width].reshape(rows, kv_heads, head_dim)
     values = qkv[:, 2 * width + kv_width :].reshape(rows, kv_heads, head_dim)
 
-    table = to_float32(args["cos_sin_cache"], dtypes["cos_sin_cache"])
+    table = cos_sin_cache.float()
     frequencies = torch.arange(ROTARY_DIM // 2, device=device)
-    rotary_positions = args["positions"].index_select(0, _mrope_axes(device)).T
+    rotary_positions = positions.index_select(0, _mrope_axes(device)).T
     cos = table[rotary_positions, frequencies]
     sin = table[rotary_positions, frequencies + ROTARY_DIM // 2]
-    q_weight = to_float32(args["q_norm_weight"], dtypes["q_norm_weight"])
-    k_weight = to_float32(args["k_norm_weight"], dtypes["k_norm_weight"])
-    query = _gemma_norm_rope(query_gate[:, :, 0], q_weight, eps, cos, sin)
-    keys = _gemma_norm_rope(keys, k_weight, eps, cos, sin)
+    query = _gemma_norm_rope(query_gate[:, :, 0], q_norm_weight.float(), eps, cos, sin)
+    keys = _gemma_norm_rope(keys, k_norm_weight.float(), eps, cos, sin)
 
-    # to_float32 may return its input itself: the pools are written in copies
-    key_cache = to_float32(args["key_cache"], dtypes["key_cache"]).clone()
-    value_cache = to_float32(args["value_cache"], dtypes["value_cache"]).clone()
-    slots = args["cache_locations"]
-    key_cache[slots] = _rounded(keys, torch.float8_e4m3fn)
-    value_cache[slots] = _rounded(values, torch.float8_e4m3fn)
+    # .float() may return its input itself: the pools are written in copies
+    pool_dtype = key_cache.dtype
+    key_cache = key_cache.float().clone()
+    value_cache = value_cache.float().clone()
+    key_cache[cache_locations] = _rounded(keys, torch.float8_e4m3fn)
+    value_cache[cache_locations] = _rounded(values, torch.float8_e4m3fn)
 
     group = heads // kv_heads
     attention = torch.empty((rows, kv_heads, group, head_dim), dtype=qkv.dtype, device=device)
-    if "kv_indptr" in args:
-        starts, indices = args["kv_indptr"].tolist(), args["kv_indices"]
+    if kv_indptr is not None:
+        starts, indices = kv_indptr.tolist(), kv_indices
         for row in range(rows):
             read = indices[starts[row] : starts[row + 1]]
             q = query[row].reshape(kv_heads, group, head_dim)
@@ -297,9 +311,9 @@ def _gated_attention(point, row_major_args):
             attention[row] = torch.einsum("kgt,tkd->kgd", scores.softmax(-1), value_cache[read])
     else:
         # prefill: each row reads its sequence's slots up to its own, in blocks of query rows
-        starts = args["cu_seqlens"].tolist()
+        starts = cu_seqlens.tolist()
         for begin, end in itertools.pairwise(starts):
-            read = args["cache_locations"][begin:end]
+            read = cache_locations[begin:end]
             keys, values = key_cache[read], value_cache[read]
             for first in range(begin, end, _QUERY_BLOCK):
                 last = min(first + _QUERY_BLOCK, end)
@@ -313,45 +327,49 @@ def _gated_attention(point, row_major_args):
                     "rkgt,tkd->rkgd", scores.softmax(-1), values[: last - begin]
                 )
     attention = _rounded(attention.reshape(rows, heads, head_dim), torch.bfloat16)
-    return attention * torch.sigmoid(query_gate[:, :, 1]), key_cache, value_cache
+    return (
+        attention * torch.sigmoid(query_gate[:, :, 1]),
+        key_cache.to(pool_dtype),
+        value_cache.to(pool_dtype),
+    )
 
 
-def gated_attention_decode_group_fp8_quant_reference(point, row_major_args):
-    """The contract's decode in float32; the grouped FP8 values (before their E4M3FN
-    rounding) and scales, then both pools as the call leaves them.
+class GatedAttentionGroupFp8QuantReference(OpReference):
+    def reference(self, **call):
+        """The gated attention (_gated_attention), decode or prefill, in float32; the grouped FP8
+        values and scales, then both pools as the call leaves them.
 
-    Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
-    keeps between its kernels), the keys and values to E4M3FN in the pools, the attention
-    output and the gated output to BF16. Rows write their slots before any row attends.
-    """
-    product, key_cache, value_cache = _gated_attention(point, row_major_args)
-    gated = _rounded(product, torch.bfloat16)
-    rows = gated.shape[0]
-    groups = gated.reshape(rows, -1, 128)
-    scales = groups.abs().amax(-1).clamp_min(1e-10) / 448.0
-    quantized = (groups / scales[..., None]).clamp(-448.0, 448.0).reshape(gated.shape)
-    return quantized, scales, key_cache, value_cache
-
-
-def gated_attention_decode_reference(point, row_major_args):
-    """The contract's decode in float32; the gated output before its BF16 rounding, each
-    row's heads side by side, then both pools as the call leaves them.
-
-    Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
-    keeps between its kernels), the keys and values to E4M3FN in the pools, and the
-    attention output to BF16. Rows write their slots before any row attends.
-    """
-    product, key_cache, value_cache = _gated_attention(point, row_major_args)
-    return product.reshape(product.shape[0], -1), key_cache, value_cache
+        Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
+        keeps between its kernels), the keys and values to E4M3FN in the pools, the attention
+        output and the gated output to BF16, the values to E4M3FN. Rows write their slots before
+        any row attends.
+        """
+        product, key_cache, value_cache = _gated_attention(**call)
+        gated = _rounded(product, torch.bfloat16)
+        rows = gated.shape[0]
+        groups = gated.reshape(rows, -1, 128)
+        scales = groups.abs().amax(-1).clamp_min(1e-10) / 448.0
+        quantized = (groups / scales[..., None]).clamp(-448.0, 448.0).reshape(gated.shape)
+        return {
+            "values": quantized.to(torch.float8_e4m3fn),
+            "scales": scales,
+            "key_cache": key_cache,
+            "value_cache": value_cache,
+        }
 
 
-def gated_attention_prefill_group_fp8_quant_reference(point, row_major_args):
-    """The contract's prefill as the decode reference above: the grouped FP8 values (before
-    their E4M3FN rounding) and scales, then both pools as the call leaves them."""
-    return gated_attention_decode_group_fp8_quant_reference(point, row_major_args)
+class GatedAttentionReference(OpReference):
+    def reference(self, **call):
+        """The gated attention (_gated_attention), decode or prefill, in float32; the gated output,
+        each row's heads side by side, then both pools as the call leaves them.
 
-
-def gated_attention_prefill_reference(point, row_major_args):
-    """The contract's prefill as the decode reference above: the gated output before its
-    BF16 rounding, then both pools as the call leaves them."""
-    return gated_attention_decode_reference(point, row_major_args)
+        Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
+        keeps between its kernels), the keys and values to E4M3FN in the pools, the attention
+        output and the gated output to BF16. Rows write their slots before any row attends.
+        """
+        product, key_cache, value_cache = _gated_attention(**call)
+        return {
+            "gated": product.reshape(product.shape[0], -1).to(torch.bfloat16),
+            "key_cache": key_cache,
+            "value_cache": value_cache,
+        }

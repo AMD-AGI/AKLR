@@ -155,13 +155,24 @@ class _SideEffectRule(SourceRule):
     number = 3
 
     def source_rejections(self, source: ParsedSource) -> Iterable[Rejection]:
+        # in its body a function's own param is not the builtin of its name: aiter's ops take an
+        # ``input``. Its defaults, decorators and annotations run where the builtin still is
+        params = {
+            id(name)
+            for fn in ast.walk(source.tree)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+            for statement in (fn.body if isinstance(fn.body, list) else [fn.body])
+            for name in ast.walk(statement)
+            if isinstance(name, ast.Name)
+            and name.id in {a.arg for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)}
+        }
         for node in ast.walk(source.tree):
             if isinstance(node, ast.Call):
                 qualname = source.qualname(node.func) or ""
                 if qualname.startswith(_GLOBAL_STATE_CALLS):
                     what = f"process-wide torch state {qualname}"
                     yield Rejection.from_node(source.path, node, what)
-            if not isinstance(node, (ast.Name, ast.Attribute)):
+            if not isinstance(node, (ast.Name, ast.Attribute)) or id(node) in params:
                 continue
             qualname = source.qualname(node)
             if qualname in _FILE_CALLS or getattr(node, "id", None) in _INPUT_OUTPUT_CALLS:
@@ -212,10 +223,30 @@ class _EntryRule(SourceRule):
             yield Rejection.from_node(entry_path, entry, f"{symbol} {what}")
 
 
+class _AklrImportRule(SourceRule):
+    """A kernel imports nothing of aklr but ``aklr.core.jit``, aklr's api for kernels: it is
+    checked and timed against aklr's reference and baseline, and served without them."""
+
+    number = 5
+
+    def source_rejections(self, source: ParsedSource) -> Iterable[Rejection]:
+        for node in ast.walk(source.tree):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                if name.partition(".")[0] == "aklr" and not f"{name}.".startswith("aklr.core.jit."):
+                    yield Rejection.from_node(source.path, node, f"imports {name}")
+
+
 SOURCE_RULES: Final = (
     _ParseRule(),
     _GlobalStatementRule(),
     _InputWriteRule(),
     _SideEffectRule(),
     _EntryRule(),
+    _AklrImportRule(),
 )

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from aklr.ops.gemm.api import gemm
 from aklr.plugins.vllm.hook import vllm_route
 
 __all__: list[str] = []
@@ -15,5 +14,7 @@ __all__: list[str] = []
     versions=("0.32.1rc1.dev276", "0.33.0rc1.dev910", "0.33.0", "0.34.0"),
 )
 def _wv_split_krc(a, b, cu_count, bias=None):
-    """vLLM's skinny GEMM on gfx950 for 10 to 128 tokens, ahead of aiter where it fits."""
-    return gemm(a, b, bias=bias)
+    """vLLM's skinny GEMM on gfx950 for 10 to 128 tokens as aiter's GEMM, which AKLR's aiter provider answers."""
+    from aiter.tuned_gemm import gemm_a16w16
+
+    return gemm_a16w16(a, b, bias)

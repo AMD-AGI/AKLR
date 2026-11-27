@@ -99,8 +99,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.584,
-      "microseconds": 385.0
+      "speedup": 1.607,
+      "microseconds": 378.0
     },
     {
       "axes": {
@@ -111,8 +111,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.515,
-      "microseconds": 476.0
+      "speedup": 1.544,
+      "microseconds": 466.0
     },
     {
       "axes": {
@@ -123,8 +123,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.433,
-      "microseconds": 664.0
+      "speedup": 1.463,
+      "microseconds": 647.0
     },
     {
       "axes": {
@@ -135,8 +135,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.388,
-      "microseconds": 853.0
+      "speedup": 1.419,
+      "microseconds": 827.0
     },
     {
       "axes": {
@@ -147,8 +147,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.348,
-      "microseconds": 1050.0
+      "speedup": 1.39,
+      "microseconds": 1010.0
     },
     {
       "axes": {
@@ -159,8 +159,8 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.275,
-      "microseconds": 1460.0
+      "speedup": 1.325,
+      "microseconds": 1400.0
     }
   ],
   "layout_variants": {
@@ -172,9 +172,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "triton",

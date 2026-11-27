@@ -158,67 +158,106 @@
     {
       "axes": {
         "n_tokens": 72
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.157,
+      "microseconds": 220.0
     },
     {
       "axes": {
         "n_tokens": 80
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.155,
+      "microseconds": 224.0
     },
     {
       "axes": {
         "n_tokens": 88
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.087,
+      "microseconds": 250.0
     },
     {
       "axes": {
         "n_tokens": 96
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.07,
+      "microseconds": 256.0
     },
     {
       "axes": {
         "n_tokens": 104
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.092,
+      "microseconds": 259.0
     },
     {
       "axes": {
         "n_tokens": 112
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.08,
+      "microseconds": 260.0
     },
     {
       "axes": {
         "n_tokens": 120
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.095,
+      "microseconds": 263.0
     },
     {
       "axes": {
         "n_tokens": 160
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.129,
+      "microseconds": 270.0
     },
     {
       "axes": {
         "n_tokens": 176
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.152,
+      "microseconds": 276.0
     },
     {
       "axes": {
         "n_tokens": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.164,
+      "microseconds": 279.0
     },
     {
       "axes": {
         "n_tokens": 208
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.256,
+      "microseconds": 281.0
     },
     {
       "axes": {
         "n_tokens": 224
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.159,
+      "microseconds": 277.0
     },
     {
       "axes": {
         "n_tokens": 240
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.295,
+      "microseconds": 279.0
     }
   ],
   "layout_variants": {
@@ -250,9 +289,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, get_args
 
+from aklr.core.contract.baseline import GRAPH_BUDGET_MILLISECONDS, DistOpBaseline, OpBaseline
 from aklr.core.contract.semantics import derive_seed
 from aklr.core.contract.spec import FrozenModel
 from aklr.core.platform.env import DEFAULT_MIN_SPEEDUP
@@ -55,7 +56,6 @@ ROUND_LOOKS = (16, 32)
 # alpha split evenly over the looks, so that stopping early keeps the false-pass rate within ALPHA
 LOOK_ALPHA = ALPHA / len(ROUND_LOOKS)
 N_WARMUP_ROUNDS = 1
-GRAPH_BUDGET_MILLISECONDS = 20.0
 
 MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
     {
@@ -256,18 +256,19 @@ def compare_performance(
 
 class Clock(NamedTuple):
     synchronize: Callable
-    bench_cudagraph: Callable
-    # the torch.distributed group whose ranks time each call together; None: this process alone
-    group: Any = None
+    # the op's baseline profile: it times the kernel's calls and the baseline's alike
+    profile: Callable[[Callable[[], object]], float]
+    # the group's ranks time each call together
+    is_group: bool = False
 
     def graph_reading(self, call: Callable[[], object]) -> float:
         try:
-            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS, group=self.group)
+            return self.profile(call)
         except Exception as e:
             # a rank reading again alone would wait on its peers; the bench reruns the group's task
-            if self.group is not None or not is_tracer_fault(str(e)):
+            if self.is_group or not is_tracer_fault(str(e)):
                 raise
-        return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
+        return self.profile(call)
 
     def time_rounds(
         self,
@@ -314,15 +315,14 @@ class Clock(NamedTuple):
         return tuple(rounds)
 
 
-def bind_clock(group: Any = None) -> Clock:
+def bind_clock(baseline: OpBaseline) -> Clock:
+    """The clock of an op whose baseline is ``baseline``: its profile."""
     import torch
-
-    from aklr.core.utils.testing import bench_cudagraph
 
     return Clock(
         synchronize=torch.cuda.synchronize,
-        bench_cudagraph=bench_cudagraph,
-        group=group,
+        profile=baseline.profile,
+        is_group=isinstance(baseline, DistOpBaseline),
     )
 
 

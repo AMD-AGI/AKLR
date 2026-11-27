@@ -9,7 +9,7 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 sources:
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
+  - aklr/plugins/aiter/provider/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
 ---
 
 # MXFP4 fused MoE at 8–64 tokens: one graph node less
@@ -106,7 +106,7 @@ In FlyDSL: `../flydsl/moe.md` § few_tokens How to write it.
 - Tile-M 16 and inline activation quantization in stage 1 (:1829). One compile per token count, which suits AKLR's
   discrete Points; a server calling arbitrary token counts would compile per count.
 - A bounded contract: stage 2 adds the weighted rows into `out` with bf16x2 atomics (`g2_port.py:899–915`).
-  `fused_moe@1.0` is bounded (`aklr/ops/fused_moe/contract.py`, its `compare`).
+  `fused_moe@1.0` is bounded (`aklr/plugins/aiter/provider/fused_moe/contract.py`, its `compare`).
 
 ## Counter-signals
 

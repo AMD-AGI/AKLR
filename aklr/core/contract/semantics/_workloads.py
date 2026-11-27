@@ -5,13 +5,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections.abc import Mapping
 from typing import Any
 
-from ._compare import mutable_tensor_declarations
 from ._distributions import _DISTRIBUTION_ADAPTER
-from ._dtypes import DTYPE_TRAITS, dtype_storage_shape, from_float32, to_float32
+from ._dtypes import dtype_storage_shape
 
 
 def sorted_key_json(value: Any) -> str:
@@ -93,43 +91,3 @@ def row_major_inputs(
             except ValueError as e:
                 raise ValueError(f"{name}: {e}") from None
     return inputs
-
-
-def magnified_inputs(
-    schema: Mapping[str, Any],
-    distributions: Mapping[str, Mapping[str, Any]],
-    row_major_args: Mapping[str, Any],
-) -> dict[str, Any]:
-    """``row_major_args`` with every ``finite`` floating tensor scaled by one exact ``2**e``, the largest ``e`` keeping tensors and dot_product outputs in range."""
-    bounds = [
-        (o["dtype"]["any_of"][0], o["error_bounds"][0][1])
-        for o in mutable_tensor_declarations(schema).values()
-        if o["error_bounds"]
-    ]
-    log2_budgets = [
-        math.log2(DTYPE_TRAITS[dtype].largest_finite_value / 4 / bound["length"])
-        for dtype, bound in bounds
-        if bound["kind"] == "dot_product"
-    ]
-    if not log2_budgets:
-        raise ValueError("no magnified inputs without a dot_product bound")
-    log2_budget = min(log2_budgets)
-    decoded, log2_limits = {}, []
-    for name, distribution in distributions.items():
-        dtype = schema["inputs"][name]["dtype"]["any_of"][0]
-        if distribution["kind"] in ("int_range", "causal_topk"):
-            continue
-        traits = DTYPE_TRAITS[dtype]
-        x = to_float32(row_major_args[name], dtype)
-        log2_peak = math.log2(max(1.0, x.abs().max().item()))
-        log2_budget -= log2_peak
-        # only a cast float scales exactly: finite int8 and fp4 codes keep their values
-        if distribution["kind"] == "finite" and not traits.is_integral and traits.decoding["kind"] == "cast":
-            decoded[name] = x, dtype
-            log2_limits.append(math.log2(traits.largest_finite_value) - log2_peak)
-    magnified = dict(row_major_args)
-    if decoded:
-        e = max(0, math.floor(min(log2_budget / len(decoded), *log2_limits)))
-        for name, (x, dtype) in decoded.items():
-            magnified[name] = from_float32(x * 2.0**e, dtype)
-    return magnified

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    DeterminismLevel,
+    MOE_MXFP4_SNR,
     DType,
     E8M0Scales,
     FiniteDistribution,
@@ -16,6 +16,7 @@ from aklr.core.contract.semantics import (
 )
 from aklr.core.contract.spec import (
     CompareSpec,
+    DeterminismLevel,
     DTypeSpec,
     LayoutFact,
     LayoutVariant,
@@ -25,6 +26,14 @@ from aklr.core.contract.spec import (
     attr,
     axis,
     derived_axis,
+)
+from aklr.plugins.sglang.models.deepseek_v2.baseline import (
+    DeepseekV2Fp8MoeBaseline,
+    DeepseekV2Mxfp4MoeBaseline,
+)
+from aklr.plugins.sglang.models.deepseek_v2.reference import (
+    DeepseekV2Fp8MoeReference,
+    DeepseekV2Mxfp4MoeReference,
 )
 
 __all__ = ["CONTRACTS", "DEEPSEEK_V2_FP8_MOE", "DEEPSEEK_V2_MXFP4_MOE"]
@@ -163,13 +172,15 @@ DEEPSEEK_V2_MXFP4_MOE = OpContract(
         "out": TensorSpec(
             description=("The experts' output on this rank, before sglang's all-reduce sums the ranks'."),
             shape=("n_tokens", "model_dim"),
-            dtype=_SAME_AS_HIDDEN,
+            dtype=_SAME_AS_HIDDEN.model_copy(update={"param_name": "out_dtype"}),
             # the experts' MXFP4 activations alone come to about 12 dB
-            error_bounds=SqnrBound(min_sqnr_db=10.0),
+            error_bounds=MOE_MXFP4_SNR,
         )
     },
     layout_variants=_MXFP4_LAYOUTS,
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=DeepseekV2Mxfp4MoeReference(),
+    baseline=DeepseekV2Mxfp4MoeBaseline(),
 )
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -249,14 +260,19 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
         "correction_bias": TensorSpec(
             description="Added to the scores to pick experts; never weighs them.",
             shape=("n_routed",),
-            # bf16, as sglang's aiter top-k reads it for fp8 checkpoints: DeepSeek-R1 holds it in
-            # bf16, GLM-5.2 in fp32, which top-k reads through a bf16 copy (the route passes that)
-            # TODO: fp32 for an fp32 bias (GLM-5.x) once the sglang AKLR targets has sglang PR
-            # #44797, whose aiter top-k reads an fp32 bias as it is; 0.5.22 and 0.5.23 do not
-            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
-            # centred on 0 and narrow beside the scores' spread: it moves most tokens' picks,
-            # yet keeps the routes spread over the experts, as a balanced model's are
-            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            # The release takes a bf16 copy; the verified daily preserves a checkpoint's
+            # fp32 bias and routes on fp32 logits. These are separate dispatch keys.
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16, DType.FLOAT32)),
+            # GLM's FP32 checkpoint bias has a positive layer offset and narrow
+            # within-layer spread; sample around8, as the MXFP4 GLM contract does.
+            # Keep the legacy BF16 calibration unchanged.
+            distribution=(
+                (
+                    "correction_bias.dtype == 'float32' and num_expert_group == 1",
+                    LogUniformDistribution(log2_lo="2.99", log2_hi="3.01"),
+                ),
+                (None, LecunNormalDistribution(fan_in="model_dim")),
+            ),
             lifetime="weight",
         ),
         "w1": TensorSpec(
@@ -298,7 +314,7 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
         "out": TensorSpec(
             description=("The experts' output on this rank, before sglang's all-reduce sums the ranks'."),
             shape=("n_tokens", "model_dim"),
-            dtype=_SAME_AS_HIDDEN,
+            dtype=_SAME_AS_HIDDEN.model_copy(update={"param_name": "out_dtype"}),
             # implementations round the second linear's input to fp8 from values they round
             # at other points than the reference does, which flips some fp8 codes: a CPU
             # emulation of the kernels' rounding comes to 35 to 36 dB on the bench's inputs
@@ -317,6 +333,8 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
         }
     ),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=DeepseekV2Fp8MoeReference(),
+    baseline=DeepseekV2Fp8MoeBaseline(),
 )
 
 CONTRACTS = (DEEPSEEK_V2_MXFP4_MOE, DEEPSEEK_V2_FP8_MOE)

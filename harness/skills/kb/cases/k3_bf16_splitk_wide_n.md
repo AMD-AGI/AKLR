@@ -15,11 +15,11 @@ measured:
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "0.949–2.000 (2.000 is the bound's cap); 15 of 17 Points ≥ 1.03 (not m 2732, 9397); CI serves 13 of 17 as of #125", gpu: MI355X, workload: "gemm_n8448_k7168, m 8–16384 (17 Points)", date: "2026-10-26"}
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "0.875–1.231; 11 of 15 Points ≥ 1.03 (not m 80, 893, 9397, 16384); CI serves 9 of 15 as of #125", gpu: MI355X, workload: "gemm_n7168_k35840, m 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 893, 2732, 9397, 16384", date: "2026-10-26"}
 sources:
-  - aklr/ops/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n6288_k7168/f1dc78b3e8b7c074.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/93d75fc23aa2cf3e.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json
+  - aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json
 ---
 
 # bf16 GEMM at N 6016–8448, K 7168 and at K 35840 (Kimi-K3): a few K splits folded inside the launch
@@ -33,9 +33,9 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
 ## Applies when
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
-  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0,
+  `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`,
   the `CompareSpec` defaults), with the fp32 dot-product error bound of `_dot_k()` (`max_split_k` 16; `GEMM` in
-  `aklr/ops/gemm/contract.py`). Every fold these kernels run adds its terms in an order fixed by index, or adds
+  `aklr/plugins/aiter/provider/gemm/contract.py`). Every fold these kernels run adds its terms in an order fixed by index, or adds
   two terms.
 - K = 7168 with N = 6016, 6144, 6288 or 8448 (a weight of 82–115.5 MiB), and N 7168 × K 35840 (490 MiB). At
   m ≤ 112 a grid of 48- to 256-wide column tiles already has 28–128 tiles per row block, so a split of 2–8 fills
@@ -45,7 +45,7 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
   main), so at every Point the yardstick is aiter.
 - **CI serves 62 of their 79 Points** as of #125; the count per file is in § Result, and the current value of each
   Point is the `speedup` in its schema's `workloads`. Dispatch serves a workload only from
-  `AKLR_MIN_SPEEDUP` 1.05 and not one whose accuracy is `failed` (`aklr/ops/README.md` § Environment variables;
+  `AKLR_MIN_SPEEDUP` 1.05 and not one whose accuracy is `failed` (`aklr/plugins/aiter/README.md` § Environment variables;
   `aklr/core/contract/spec/_workloads.py:38`).
 
 ## Counter-signals
@@ -74,14 +74,14 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
 - **Flags read before this call writes them.** Where the tag is the same every call (n6016 above m 32, n6144,
   n8448), the workspace comes from `torch.empty` and the fold clears the flags at the end: a call depends on the
   previous call having cleared them, and a timed-out fold leaves late producers' flags set for the next call
-  (`aklr/ops/README.md` § The kernel section and ABI: scratch rewritten before it is read). Each
+  (`aklr/plugins/aiter/README.md` § The kernel section and ABI: scratch rewritten before it is read). Each
   file's `_count_ready` docstring says the flags hold "this call's tag".
 - **n8448 rounds its partials to 24 bits at m 24–112** (`_pack24`: add 0x80 to the bit pattern and keep the top
   24 bits, round to nearest with ties away from zero) before the fp32 fold; the module docstring says the partials
   are summed and rounded once. Added error ≤ 2⁻¹⁶ of each partial, about a quarter of the bound's accumulation
   term at K 7168 (estimated, as in [k3_bf16_splitk_narrow_n.md](../cases/k3_bf16_splitk_narrow_n.md)).
 - **`run` departs from the ABI.** n6288's `run` allocates the output when `out` is `None` ("the bench harness");
-  `aklr/ops/README.md` § The kernel section and ABI has `run` never allocate an output. AKLR passes `out`.
+  `aklr/plugins/aiter/README.md` § The kernel section and ABI has `run` never allocate an output. AKLR passes `out`.
 - **Code no Point reaches:** n8448's `_CONFIGS` rows 4096, 12288 and 1<<30, which `_CONFIGS4` overrides, and with
   them its asymmetric main loop; n6016's `_swz` branch for 4 chunks per row (K tiles are 64 wide).
 
@@ -160,15 +160,15 @@ small-m code compiles to the earlier kernel's ISA *(field, E12)*.
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root, one schema at a time:
 
 ```
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6288_k7168/f1dc78b3e8b7c074.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/93d75fc23aa2cf3e.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json
+python -m aklr validate aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json
 ```
 
 The report goes to `aklr_validation/report.md`; a run outside CI checks the file, the served numbers are CI's
-(`aklr/ops/README.md` § Workflow). Add `--base origin/main` only on a branch that edits the file: with the base set,
+(`aklr/plugins/aiter/README.md` § Workflow). Add `--base origin/main` only on a branch that edits the file: with the base set,
 bench measures only schemas that are not at the base, so on an unchanged checkout it skips the bench
 (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). Validate's bitwise check runs on an
 otherwise idle GPU, where every split is resident; test n6288 and k35840 also with a grid that is not. To read a
@@ -200,10 +200,10 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] k35840: split-K tiled kernel +3.3, 1.1, 2.4, 2.4, 5.2, 2.4, 2.4, 0.4, 9.7, 2.2, 17.2% at m 8–112; in-launch fold + XCD slices +2.8–8.1% at m ≤ 112 and +10.4% at 893 (recorded); regrouping + 9397 tail +3.6, 3.6, 2.3% at 2732, 9397, 16384; 2732 tail +8.3%; all changes off +5.3–24.6% at m ≤ 112, −13.1% at 893, +7.2% at 2732, +6.3% at 9397, −7.9% at 16384 (gemm_n7168_k35840)
 - E11 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench, group campaign; remeasured rounds 3 pairs] 4-wave AGPR tile n6016 +7.2 / +7.1%, n6144 +6.0 / +6.7% at m 9397 / 16384 (recorded); n6288 192×320 +1.4 / +2.5%; n8448 `nt` C + regrouping +6.5 / 3.0 / 2.1% at 2732 / 9397 / 16384
 - E12 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] earlier → delivered at m 2732 / 9397 / 16384: n6016 1.099 → 1.096, 0.923 → 1.025, 0.876 → 0.969; n6144 1.092 → 1.091, 0.927 → 1.021, 0.850 → 0.952; n6288 1.079 → 1.085, 1.076 → 1.101, 1.145 → 1.146; n8448 0.914 → 0.985, 0.894 → 0.949, 1.109 → 1.127; outputs bit-identical, same ISA up to m 893
-- S1 aklr/ops/gemm/contract.py:95 `_dot_k()` (fp32, `max_split_k` 16) on `GEMM` at :128
-- S2 aklr/ops/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json#kernel.py:25 `_CONFIGS`; preload 16 and AGPR form at :121, :124; `fx.Tensor` arguments at :232; `_count_ready` "this call's tag" at :139; launch tag at :619, NaN at :678; last-split poll at :732; `_CONFIGS4` at :786
-- S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json#kernel.py:26 `_CONFIGS`; `_count_ready` at :127; poll at :427, NaN at :436; `_CONFIGS4` at :505; `fx.Pointer` arguments at :197; preload 8 at :822
-- S4 aklr/ops/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json#kernel.py:1 docstring "sum … in fixed order and round once"; `_RED_FLAGS` at :41; `_pack24` (+0x80, keep the top 24 bits) at :109; preload 8 at :172, `fx.Pointer` arguments at :294; `_count_ready` at :199; reducer poll at :619; `_CONFIGS4` at :710
-- S5 aklr/ops/gemm/impls/flydsl/gemm_n6288_k7168/f1dc78b3e8b7c074.json#kernel.py:22 `_SKINNY`; `_SPIN_LIMIT` "writes an unfolded value" at :33; launch tag at :354; partner's pairs first at :380; poll at :424; own + partner sum at :441; `_CONFIG4` at :727; preload 12 at :738, `fx.Tensor` arguments of the large-m kernel at :786; `run` allocating `out` at :986
-- S6 aklr/ops/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json#kernel.py:27 `_CONFIGS`; `_TAIL_SPLITS` at :80; `_SPIN_LIMIT` at :90; one K slice per XCD at :283; fold at :538; dispatch tag at :661
+- S1 aklr/plugins/aiter/provider/gemm/contract.py:95 `_dot_k()` (fp32, `max_split_k` 16) on `GEMM` at :128
+- S2 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6016_k7168/e9a0bad67ca29740.json#kernel.py:25 `_CONFIGS`; preload 16 and AGPR form at :121, :124; `fx.Tensor` arguments at :232; `_count_ready` "this call's tag" at :139; launch tag at :619, NaN at :678; last-split poll at :732; `_CONFIGS4` at :786
+- S3 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6144_k7168/d0569f6d21f1ccad.json#kernel.py:26 `_CONFIGS`; `_count_ready` at :127; poll at :427, NaN at :436; `_CONFIGS4` at :505; `fx.Pointer` arguments at :197; preload 8 at :822
+- S4 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n8448_k7168/a70dee38ba003870.json#kernel.py:1 docstring "sum … in fixed order and round once"; `_RED_FLAGS` at :41; `_pack24` (+0x80, keep the top 24 bits) at :109; preload 8 at :172, `fx.Pointer` arguments at :294; `_count_ready` at :199; reducer poll at :619; `_CONFIGS4` at :710
+- S5 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n6288_k7168/93d75fc23aa2cf3e.json#kernel.py:22 `_SKINNY`; `_SPIN_LIMIT` "writes an unfolded value" at :33; launch tag at :354; partner's pairs first at :380; poll at :424; own + partner sum at :441; `_CONFIG4` at :727; preload 12 at :738, `fx.Tensor` arguments of the large-m kernel at :786; `run` allocating `out` at :986
+- S6 aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n7168_k35840/7a3e4369839c9930.json#kernel.py:27 `_CONFIGS`; `_TAIL_SPLITS` at :80; `_SPIN_LIMIT` at :90; one K slice per XCD at :283; fold at :538; dispatch tag at :661
 - E15 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1–10 tries per condition, eager calls compared byte for byte with a call on the idle GPU] wrong output, every value finite, no hang: n6288 at m 32 and 60 in every try on a stream limited to 64 or 16 CUs and while another kernel held half the CUs of every XCD for 3 s; k35840 at m 8, 112 and 893 in 4 of 6 tries while another kernel held all of one XCD for 3 s; both 0 of 10 per Point beside a ~8 ms matmul chain on another stream (gemm_n6288_k7168, gemm_n7168_k35840)

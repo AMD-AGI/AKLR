@@ -166,7 +166,7 @@
       },
       "accuracy": "passed",
       "speedup": 2.102,
-      "microseconds": 19.4
+      "microseconds": 19.9
     },
     {
       "axes": {
@@ -176,8 +176,8 @@
         "routed_scaling_factor": 2.5
       },
       "accuracy": "passed",
-      "speedup": 1.549,
-      "microseconds": 25.1
+      "speedup": 1.555,
+      "microseconds": 25.4
     }
   ],
   "layout_variants": {
@@ -226,9 +226,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

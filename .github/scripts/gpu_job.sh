@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Use the same test body and report locations for both execution backends.
 case ${AKLR_GPU_RUNNER:-aklr-safe} in
-  aklr-safe) exec bash .github/scripts/safe_job.sh "$@" ;;
+  aklr-safe) exec python3 .github/scripts/safe_gpu_job.py "$@" ;;
   aklr-gpu) ;;
   *) echo '::error::AKLR_GPU_RUNNER must be aklr-safe or aklr-gpu'; exit 1 ;;
 esac

@@ -250,8 +250,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.47,
-      "microseconds": 67.4
+      "speedup": 2.437,
+      "microseconds": 67.6
     },
     {
       "axes": {
@@ -265,8 +265,8 @@
         "eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 2.082,
-      "microseconds": 93.5
+      "speedup": 2.073,
+      "microseconds": 91.8
     }
   ],
   "layout_variants": {
@@ -278,9 +278,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "triton",

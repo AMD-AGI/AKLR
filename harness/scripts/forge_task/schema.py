@@ -53,7 +53,7 @@ class Schema:
 
 def find(aklr_root: Path, name: str) -> Path:
     """The kernel-less schema file named ``name`` in an AKLR checkout."""
-    pattern = f"aklr/ops/*/impls/*/{name}/*.json"
+    pattern = f"aklr/plugins/aiter/provider/*/impls/*/{name}/*.json"
     matches = [
         path
         for path in sorted(aklr_root.glob(pattern))
@@ -69,11 +69,11 @@ def find(aklr_root: Path, name: str) -> Path:
 
 
 def load(path: Path) -> Schema:
-    """Load a schema file kept where AKLR keeps them, aklr/ops/<op>/impls/<language>/<name>/<uuid>.json: the
+    """Load a schema file kept where AKLR keeps them, aklr/plugins/aiter/provider/<op>/impls/<language>/<name>/<uuid>.json: the
     op folder is where a delivered kernel goes."""
     path = path.resolve()
     if len(path.parents) < 4 or path.parents[2].name != "impls":
-        raise SchemaError(f"{path}: not under aklr/ops/<op>/impls/<language>/<name>/")
+        raise SchemaError(f"{path}: not under aklr/plugins/aiter/provider/<op>/impls/<language>/<name>/")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         schema = Schema(

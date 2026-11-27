@@ -4,8 +4,8 @@
    original paths, stated license or provenance, generator or agent context,
    supported GPUs, and claimed result. Stop and report unresolved provenance.
 2. **Find the contract and its Points.** The kernel serves a contract in
-   `aklr/ops/<op>/contract.py` at a schema name (`aklr/ops/<op>/impls/<language>/<name>/`),
-   or needs a new op ([new-op.md](new-op.md)). List the committed kernels under
+   `aklr/plugins/aiter/provider/<op>/contract.py` at a schema name (`aklr/plugins/aiter/provider/<op>/impls/<language>/<name>/`),
+   or needs a new op (`docs/ops_tutorial.md` § 6). List the committed kernels under
    that name and the Points they serve (stored `speedup` at least
    `AKLR_MIN_SPEEDUP`): those are the incumbents to beat, besides the baseline.
 3. **Triage on AKLR's Points before porting.** Time the source as it is on the

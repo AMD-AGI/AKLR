@@ -12,7 +12,7 @@ SCRIPT = (
     Path(__file__).resolve().parents[2]
     / "automations/shepherd/skills/optimize-and-deliver-kernels/scripts/candidate.py"
 )
-SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_a8w8_n512/0123abcd.json"
+SCHEMA = "aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_a8w8_n512/0123abcd.json"
 
 
 def git(repo, *args):
@@ -47,16 +47,18 @@ def repo(tmp_path):
     git(tmp_path, "init", "-q")
     git(tmp_path, "config", "user.email", "test@example.com")
     git(tmp_path, "config", "user.name", "test")
-    commit(tmp_path, SCHEMA, "aklr/core/x.py", "aklr/ops/gemm/reference.py", "pyproject.toml")
+    commit(
+        tmp_path, SCHEMA, "aklr/core/x.py", "aklr/plugins/aiter/provider/gemm/reference.py", "pyproject.toml"
+    )
     return tmp_path
 
 
 @pytest.mark.parametrize(
     "path",
     [
-        "aklr/ops/gemm/impls/flydsl/gemm_bf16_n512/ffff.json",
-        "aklr/ops/gemm/impls/triton/gemm_bf16_n512/kernel.py",
-        "aklr/ops/fused_moe/impls/triton/moe_x/kernel.py",
+        "aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_bf16_n512/ffff.json",
+        "aklr/plugins/aiter/provider/gemm/impls/triton/gemm_bf16_n512/kernel.py",
+        "aklr/plugins/aiter/provider/fused_moe/impls/triton/moe_x/kernel.py",
         "aklr/plugins/sglang/models/x/impls/triton/y/1.json",
         "aklr/core/README.md",
         "harness/skills/x/SKILL.md",
@@ -75,11 +77,11 @@ def test_unrelated_change_keeps_evidence_fresh(repo, path):
     "path",
     [
         SCHEMA,
-        "aklr/ops/gemm/impls/triton/gemm_a8w8_n512/kernel.py",
-        "aklr/ops/gemm/reference.py",
-        "aklr/ops/__init__.py",
+        "aklr/plugins/aiter/provider/gemm/impls/triton/gemm_a8w8_n512/kernel.py",
+        "aklr/plugins/aiter/provider/gemm/reference.py",
+        "aklr/plugins/aiter/__init__.py",
         # Another op's code can be imported by this one's reference or baseline (mega_moe uses fused_moe's).
-        "aklr/ops/fused_moe/reference.py",
+        "aklr/plugins/aiter/provider/fused_moe/reference.py",
         # The CI workflow pins the baseline every Point is measured against.
         ".github/workflows/ci.yaml",
         "aklr/core/x.py",
@@ -120,7 +122,7 @@ def test_rewritten_history_is_stale(repo):
 
 def test_bad_input_is_an_error_not_fresh(repo):
     head = git(repo, "rev-parse", "HEAD")
-    assert check(repo, head, head, schema="aklr/ops/gemm/reference.py")[0] == 2
+    assert check(repo, head, head, schema="aklr/plugins/aiter/provider/gemm/reference.py")[0] == 2
     assert check(repo, "0" * 40, head)[0] == 2
 
 

@@ -65,32 +65,32 @@
         "n_tokens": 8
       },
       "accuracy": "passed",
-      "speedup": 1.466,
-      "microseconds": 4.59
+      "speedup": 1.531,
+      "microseconds": 4.41
     },
     {
       "axes": {
         "n_tokens": 16
       },
       "accuracy": "passed",
-      "speedup": 1.503,
-      "microseconds": 4.57
+      "speedup": 1.542,
+      "microseconds": 4.41
     },
     {
       "axes": {
         "n_tokens": 24
       },
       "accuracy": "passed",
-      "speedup": 1.519,
-      "microseconds": 4.61
+      "speedup": 1.571,
+      "microseconds": 4.44
     },
     {
       "axes": {
         "n_tokens": 32
       },
       "accuracy": "passed",
-      "speedup": 1.495,
-      "microseconds": 4.65
+      "speedup": 1.549,
+      "microseconds": 4.5
     }
   ],
   "layout_variants": {
@@ -102,9 +102,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
+    "determinism": "bitwise"
   },
   "kernel": {
     "language": "flydsl",

@@ -5,13 +5,8 @@ from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
-from aklr.plugins.sglang.layers.dsa_indexer.contract import (
-    DSA_INDEXER_KEY_PREPARE,
-    DSA_INDEXER_PREPARE,
-    HEAD_DIM,
-    PAGE_SIZE,
-    ROPE_DIM,
-)
+from aklr.plugins.sglang.layers.dsa_indexer.contract import DSA_INDEXER_KEY_PREPARE, DSA_INDEXER_PREPARE
+from aklr.plugins.sglang.layers.dsa_indexer.reference import HEAD_DIM, PAGE_SIZE, ROPE_DIM
 
 __all__ = ["dsa_indexer_key_prepare", "dsa_indexer_prepare"]
 

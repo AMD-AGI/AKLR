@@ -180,17 +180,26 @@
     {
       "axes": {
         "n_tokens": 9216
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.488,
+      "microseconds": 633.0
     },
     {
       "axes": {
         "n_tokens": 12288
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.53,
+      "microseconds": 764.0
     },
     {
       "axes": {
         "n_tokens": 13312
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.556,
+      "microseconds": 818.0
     }
   ],
   "layout_variants": {
@@ -239,9 +248,7 @@
     }
   },
   "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bounded",
-    "element_order": "fixed"
+    "determinism": "bounded"
   },
   "kernel": {
     "language": "triton",

@@ -1,6 +1,6 @@
 # Optimizing a kernel with forge_task
 
-`forge_task` takes a schema in `aklr/ops/` that has no kernel yet and hands it to KernelForge's `forge-loop`.
+`forge_task` takes a schema in `aklr/plugins/aiter/` that has no kernel yet and hands it to KernelForge's `forge-loop`.
 KernelForge's agents write and tune the kernel round by round, and `forge_task` writes the kernel they end with
 back into AKLR. AKLR keeps the measurement: every candidate is checked with `python -m aklr validate` and timed with
 AKLR's own timer, so a kernel that wins in the loop wins in CI too.
@@ -8,7 +8,7 @@ AKLR's own timer, so a kernel that wins in the loop wins in CI too.
 ```
 schema without a kernel ── prepare ──▶ task ── forge-loop ──▶ kept rounds
 kept rounds ── forge-ablate, forge-finalize ──▶ one reviewed commit
-one reviewed commit ── --stress, publish ──▶ aklr/ops ── aklr validate ──▶ pull request
+one reviewed commit ── --stress, publish ──▶ aklr/plugins/aiter ── aklr validate ──▶ pull request
 ```
 
 This page is the walk-through. `harness/scripts/forge_task/README.md` has every option and the error messages. The
@@ -19,7 +19,7 @@ This page is the walk-through. `harness/scripts/forge_task/README.md` has every 
 Inside the ROCm container you run AKLR in:
 
 1. A clone of AKLR that is yours alone, installed from that clone. The driver writes each candidate into its
-   `aklr/ops/` while checking it.
+   `aklr/plugins/aiter/` while checking it.
 
    ```bash
    git clone --recursive https://github.com/AMD-AGI/AKLR.git && cd AKLR && pip install -e .
@@ -52,8 +52,9 @@ Inside the ROCm container you run AKLR in:
 Every command runs from the clone's root. The example optimizes `bmm_n128_k512`.
 
 **1. Prepare** (minutes, no agent yet). It checks the starting kernel with AKLR, records AKLR's baseline time per
-workload in `$RUN/baseline.json`, and writes the task. A plain GEMM starts from torch; any other schema starts from its contract's AKLR baseline. A contract without a
-baseline needs `--starting-kernel <kernel.py or a directory of *.py>`.
+workload in `$RUN/baseline.json`, and writes the task. A plain GEMM starts from torch. Any other schema needs
+`--starting-kernel <kernel.py or a directory of *.py>`: a kernel calling AKLR's baseline fails the audit (SA5: a
+kernel imports nothing of aklr but `aklr.core.jit`).
 
 ```bash
 RUN=~/aklr-runs/bmm_n128_k512
@@ -113,7 +114,7 @@ python harness/scripts/forge_task publish $RUN
 python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
 ```
 
-Commit the published file as `aklr/ops/README.md` describes and open a pull request. What the run taught the skill
+Commit the published file as `aklr/plugins/aiter/README.md` describes and open a pull request. What the run taught the skill
 goes into the same pull request: apply `$RUN/knowledge_patch/knowledge_patch.diff` and review it item by item, as
 `harness/skills/kb/CONTRIBUTING.md` says.
 
@@ -125,4 +126,4 @@ goes into the same pull request: apply `$RUN/knowledge_patch/knowledge_patch.dif
 | `$RUN/workspace/kernel.py` | the kernel; `driver.py` beside it is the measurement and the agents cannot edit it |
 | `$RUN/workspace/forge_experiments/` | the dashboard, each round's lesson, `ablation.md`, `finalize.md` |
 | `$RUN/knowledge_patch/` | the proposed skill patch and `distill.md`, its evidence |
-| `aklr/ops/<op>/impls/<language>/<name>/<id>.json` | the delivered kernel, written by `publish` |
+| `aklr/plugins/aiter/provider/<op>/impls/<language>/<name>/<id>.json` | the delivered kernel, written by `publish` |
