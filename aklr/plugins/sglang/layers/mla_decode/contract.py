@@ -7,12 +7,12 @@ from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
     CuSeqlensDistribution,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
-    SqnrBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -88,7 +88,9 @@ MLA_DECODE = OpContract(
             description="Each head's softmax-weighted sum of the slots' first 512 values.",
             shape=("n_seqs", "n_heads", 512),
             dtype=DTypeSpec(same_as_tensor="q"),
-            error_bounds=SqnrBound(min_sqnr_db=30.0),
+            # sglang's own kernel, which rounds q and the softmax weights to fp8, comes to about
+            # 27-29 dB on the schema's workloads
+            error_bounds=ATTENTION_FP8_SNR,
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
