@@ -305,9 +305,12 @@ def test_a_layer_without_a_gate_floor_verifies_on_the_softplus_gate(verify, op):
     assert point_of(call).attrs == {"has_lower_bound": False}
 
 
-def test_dense_projections_go_to_the_op_as_rows_too(verify, op):
-    """A dense tensor is rows a row apart: the same layout, the same kernels."""
-    verify.mixed_qkv, verify.b = verify.mixed_qkv.contiguous(), verify.b.contiguous()
+@pytest.mark.parametrize("extra", [0, 3], ids=["dense", "rows_off_eight_channels"])
+def test_dense_projections_go_to_the_op_as_rows_too(verify, op, extra):
+    """A dense tensor is rows a row apart: the same layout, the same kernels; so are rows apart by a distance that is
+    no multiple of eight channels (the kernel copies those dense)."""
+    rows = torch.zeros(TOKENS, CONV + extra, dtype=torch.bfloat16)[:, :CONV]
+    verify.mixed_qkv, verify.b = rows.copy_(verify.mixed_qkv), verify.b.contiguous()
     verify.run()
     (call,) = op.calls
     assert not op.asked and call["storage"] == "strided_rows"
@@ -394,10 +397,9 @@ STAYS_WITH_SGLANG = {
         changed(b=torch.zeros(TOKENS, HEADS + 1, dtype=torch.bfloat16)),
         f"beta of ({TOKENS}, {HEADS + 1})",
     ),
-    # the kernels load a row's channels eight at a time from 16-byte aligned addresses
-    "convolution_rows_off_eight_channels": (
-        changed(mixed_qkv=torch.zeros(TOKENS, CONV + 4, dtype=torch.bfloat16)[:, :CONV]),
-        f"convolution rows {CONV + 4} channels apart",
+    "convolution_channels_apart": (
+        changed(mixed_qkv=torch.zeros(TOKENS, 2 * CONV, dtype=torch.bfloat16)[:, ::2]),
+        "convolution channels not dense",
     ),
     "gate_rows_apart": (
         changed(a=torch.zeros(TOKENS, HEADS * DIM + 8, dtype=torch.bfloat16)[:, : HEADS * DIM]),

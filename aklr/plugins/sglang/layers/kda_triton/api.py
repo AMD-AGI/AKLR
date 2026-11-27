@@ -293,11 +293,7 @@ def _forward_target_verify(self, layer, forward_batch, mixed_qkv, a, b):
             f"convolution input of {tuple(mixed_qkv.shape)}",
             mixed_qkv.dim() != 2 or mixed_qkv.shape[1] != 3 * heads * dim,
         ),
-        # the kernels load a row's channels eight at a time, 16 bytes aligned
-        (
-            f"convolution rows {mixed_qkv.stride(0)} channels apart",
-            mixed_qkv.stride(-1) != 1 or mixed_qkv.stride(0) % 8 != 0,
-        ),
+        ("convolution channels not dense", mixed_qkv.stride(-1) != 1),
         (f"gate of {tuple(a.shape)}", a.numel() != seq_len * heads * dim),
         ("gate not dense", not a.is_contiguous()),
         ("beta's heads not dense", b.stride(-1) != 1),

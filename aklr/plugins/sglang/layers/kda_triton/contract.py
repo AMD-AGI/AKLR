@@ -330,13 +330,20 @@ def _verify(ring: OpContract) -> OpContract:
         }
     )
     opening = "Kimi-K3's KDA chain verify in ReplaySSM ring mode."
-    if not ring.description.startswith(opening):
-        raise ValueError("kda_chain_verify_ring's description opens otherwise")
+    # sglang's causal_conv1d_update, the baseline, and the reference sum the taps in FP32, which the ring
+    # contract's words do not say
+    exact = "SiLU of the exact sum of the four inputs ending at it times conv_weight[c], oldest first,"
+    in_fp32 = (
+        "SiLU of the sum of the four inputs ending at it times conv_weight[c], each product and partial "
+        "sum rounded to FP32, oldest first (as sglang's causal_conv1d_update sums them),"
+    )
+    if not ring.description.startswith(opening) or ring.description.count(exact) != 1:
+        raise ValueError("kda_chain_verify_ring's description reads otherwise")
     description = (
         opening.removesuffix(".")
         + ", as sglang 0.5.23's KDA backend runs a target verify of dense chains on its Triton verify "
         "kernel. Token t's convolution input is mixed_qkv[t]'s heads end to end, its beta input b[t, :, 0]."
-        + ring.description.removeprefix(opening)
+        + ring.description.removeprefix(opening).replace(exact, in_fp32)
     )
     fields = {name: getattr(ring, name) for name in type(ring).model_fields}
     fields.update(
