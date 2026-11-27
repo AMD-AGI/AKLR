@@ -52,6 +52,7 @@ from ._layouts import (
     Layout,
     Preshuffle,
     RowMajor,
+    StridedPages,
     StridedRows,
     stored_inputs,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "Preshuffle",
     "RowMajor",
     "SqnrBound",
+    "StridedPages",
     "StridedRows",
     "ToleranceBound",
     "TopkStaticPlanDistribution",

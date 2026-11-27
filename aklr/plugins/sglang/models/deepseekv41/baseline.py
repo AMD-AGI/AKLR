@@ -7,6 +7,7 @@ serves the step."""
 from __future__ import annotations
 
 from aklr.core.contract.baseline import OpBaseline
+from aklr.core.contract.semantics import Deepseekv4KvPages
 
 __all__ = ["deepseekv41_mxfp8_linear_baseline", "deepseekv41_sparse_mla_baseline"]
 
@@ -57,6 +58,10 @@ def deepseekv41_sparse_mla_baseline(
     unsplit from there with sglang's rotation after it."""
     from sglang.srt.layers.attention.hip_flash_mla import aiter_sparse_decode_fwd
 
+    if kv_cache_layout == "strided_pages":
+        pages = Deepseekv4KvPages()
+        kv_cache = pages.encode(kv_cache.contiguous())
+        extra_kv_cache = None if extra_kv_cache is None else pages.encode(extra_kv_cache.contiguous())
     attended, _ = aiter_sparse_decode_fwd(
         q,
         kv_cache,
