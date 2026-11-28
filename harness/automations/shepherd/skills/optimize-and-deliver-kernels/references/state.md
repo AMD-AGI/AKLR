@@ -90,7 +90,7 @@ history is needed; a later patch may still add a key to what the ledger kept, su
 ## Idle rounds
 
 A round that found nothing to do, with every campaign ended and every pool settled, waits only on the
-base branch's head, the open PRs' heads, this checkout's commit and `readiness.md`.
+base branch's head, the open PRs' heads, this checkout's commit, `readiness.md` and the issue requests.
 `scripts/observation.py --config .shepherd/configuration.yaml` prints their fingerprint, taken before
 the round begins. Such a round saves the fingerprint it gave `begin` (never one taken later, which would
 cover a change the round did not look at) as the top-level `idle_observation`, with a `wake_at` at the
@@ -127,6 +127,8 @@ Each campaign records:
   per-Point verdicts, and the last freshness check (main SHA, relevant paths).
 - Cleanup: stop intent, the `release` output, each node's `cleaned.<node>` marker, the `ls` observation,
   and whether it is confirmed or unconfirmed-but-bounded, with the time.
+- Request: `issue`, the number of the issue whose [request](requests.md) admitted it; `pr_url` and a
+  one-line `summary` of the result, which that issue's report shows.
 - Delivery: branch, campaign marker, PR number/URL, head/base, CI/review state, merge commit, comment hashes.
 - Next action, `outcome` once `ended` (delivered, merged, closed, failed, no gain, blocked, stopped), failure or blocked reason, delivered input identity, cooldown-until time.
 

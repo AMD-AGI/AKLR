@@ -8,3 +8,7 @@
 # Results site: the only Pages deploy and the site-data writer.
 /.github/workflows/site.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
 /.github/scripts/commit_site_data.sh	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
+
+# shepherd on GitHub Actions: who may start a paid round, and what an issue can ask for.
+/.github/workflows/shepherd.yaml	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256
+/harness/automations/shepherd/skills/optimize-and-deliver-kernels/scripts/request.py	@RuibinCheung @xiaobochen-amd @jiejingzhangamd @zhenhuang12 @kyle-256

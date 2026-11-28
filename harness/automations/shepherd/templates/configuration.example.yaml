@@ -6,7 +6,9 @@ repository: AMD-AGI/AKLR
 base_branch: main
 execution:
   state_dir: /var/tmp/$USER/shepherd/state  # Local disk that survives reboots (not NFS or /tmp), owned by you; env vars, never a literal username.
-  cluster: null  # remote-gpu cluster name.
+  cluster: null  # remote-gpu cluster name, or `local`: this host's GPUs, without remote-gpu.
+  gpus: []  # Local only: the GPU indices campaigns may use; leave the ones GPU CI tests run on.
+  work_dir: /var/tmp/$USER/shepherd/work  # Local only: campaign directories, on local disk.
   image: null  # ROCm image pinned by digest, e.g. AKLR CI's tag (.github/workflows/ci.yaml) resolved to it.
   pool_hours: 24  # Time limit of each pool node allocation (<= the cluster's MAX_TIME); its node-hour bound.
   runtime_revision: null  # KernelForge (Hyperloom AKLR branch) commit and flydsl version the readiness checks ran.
@@ -16,6 +18,7 @@ policy:
     - type: manual
       schemas: []  # Repository-relative paths to schema JSON files.
     - type: kernel-less  # Schemas with no kernel and a workload no sibling schema's kernel serves.
+    # - type: issue  # Schemas of the issue requests request.py froze (see .github/workflows/shepherd.yaml).
   batch_size: 10
   allowed_ops: [all]  # Op names, or all.
   backends: [flydsl, triton]  # Schema languages forge_task can drive (flydsl, triton, gluon).
@@ -39,5 +42,6 @@ publication:
   allow_draft_pr: false
   allow_pr_comments: false
   allow_ci_gpu_label: false  # GPU CI spending needs separate authorization.
+  ci_gpu_label: ci:gpu  # ci:gpu-direct runs the PR's GPU CI on the aklr-gpu runner.
   attention_issue: null  # Issue number in the repository that gets a comment when a round needs the owner. None: only the report says so.
   branch_prefix: shepherd/

@@ -1,0 +1,221 @@
+name: shepherd
+
+# One shepherd round on the GPU host (harness/automations/shepherd), begun by the schedule or by an
+# allowed user's event: labeling an issue `shepherd` freezes its request, closing it stops the request.
+# A labeled issue's run first follows setup-shepherd, with the issue's text as the owner's choices.
+# issues and schedule events run main's copy of this file; nothing here reads a pull request.
+on:
+  issues:
+    types: [labeled, closed]
+  schedule:
+    - cron: '7,37 * * * *'
+  # TEMPORARY, remove before merge: registers the workflow so this branch can be dispatched.
+  pull_request:
+    paths: [.github/workflows/shepherd.yaml]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: An issue an allowed user wrote, taken as if labeled shepherd now; empty runs a plain round.
+        type: string
+
+permissions: {}
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  SCRIPTS: harness/automations/shepherd/skills/optimize-and-deliver-kernels/scripts
+  CONFIG: .shepherd/configuration.yaml
+  # The model gateway of the agents; its key is passed to their steps only, as the gateway's header.
+  ANTHROPIC_BASE_URL: ${{ vars.SHEPHERD_LLM_BASE_URL }}
+  ANTHROPIC_MODEL: ${{ vars.SHEPHERD_LLM_MODEL }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  round:
+    # Allowed users are the logins in the SHEPHERD_ALLOWED_USERS variable (a JSON list; unset allows
+    # nobody), until a team replaces it. Who caused the event, who started this run or re-run, and who
+    # wrote the issue must all be allowed, so no job reaches the runner for anyone else or their text.
+    if: >-
+      github.event_name == 'schedule' && vars.SHEPHERD_SCHEDULE_ENABLED == 'true' &&
+      (github.run_attempt == 1 || contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.triggering_actor)) ||
+      github.event_name != 'schedule' &&
+      contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.event.sender.login) &&
+      contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.triggering_actor) &&
+      (github.event_name != 'issues' ||
+       contains(fromJSON(vars.SHEPHERD_ALLOWED_USERS || '[]'), github.event.issue.user.login)) &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.action == 'labeled' && github.event.label.name == 'shepherd' ||
+       github.event.action == 'closed' && contains(github.event.issue.labels.*.name, 'shepherd'))
+    # Exactly one runner may carry this label: the ledger lives on its disk, and its lease serializes rounds.
+    runs-on: aklr-gpu
+    # The App token lasts an hour; execution.round_hours must stay under this too.
+    timeout-minutes: 55
+    steps:
+      # Branches, draft PRs and issue comments are the App's; the job token has no permission.
+      - id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_CLAUDE_APP_ID }}
+          private-key: ${{ secrets.AKLR_CLAUDE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install what the host lacks
+        # Nobody logs in to this host: the tools go to the runner user's own directories, once.
+        run: |
+          bin="$HOME/.local/bin"; venv="$HOME/.shepherd/venv"
+          mkdir -p "$bin" && export PATH="$venv/bin:$bin:$PATH"
+          command -v jq > /dev/null ||
+            { curl -fsSL -o "$bin/jq" https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 && chmod +x "$bin/jq"; }
+          command -v gh > /dev/null ||
+            curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz |
+              tar -xz -C "$bin" --strip-components=2 gh_2.63.2_linux_amd64/bin/gh
+          # The helpers run `python3 -I`, which skips the user site: PyYAML goes to a venv first on PATH.
+          python3 -I -c 'import yaml' 2> /dev/null || { python3 -m venv "$venv" && "$venv/bin/pip" install -q pyyaml; }
+          { echo "$venv/bin"; echo "$bin"; } >> "$GITHUB_PATH"
+      - name: TEMPORARY probe of the host (remove before merge)
+        continue-on-error: true
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set +e
+          echo "user $(id -un) home $HOME"; df -h "$HOME" /var/tmp | tail -2
+          for tool in gh jq docker python3 curl git; do echo "$tool: $(command -v $tool || echo MISSING)"; done
+          python3 -I -c 'import yaml, sys; print("yaml", yaml.__version__, sys.version.split()[0])'
+          gh --version | head -1
+          docker ps --format '{{.Names}}' | head -20; echo "docker exit $?"
+          ls /dev/dri | tr '\n' ' '; echo; ls /dev/kfd
+          python3 -c 'import json, os; p = os.path.expanduser("~/.claude/settings.json"); print("claude settings env keys:", sorted(json.load(open(p)).get("env", {})) if os.path.exists(p) else "no file")'
+          echo "base url: $ANTHROPIC_BASE_URL model: $ANTHROPIC_MODEL key set: ${{ secrets.ANTHROPIC_API_KEY != '' }}"
+          echo "key length ${#KEY}"
+          for header in "Ocp-Apim-Subscription-Key: $KEY" "x-api-key: $KEY" "Authorization: Bearer $KEY"; do
+            echo "${header%%:*} -> $(curl -s -m 60 -w ' [%{http_code}]' "$ANTHROPIC_BASE_URL/v1/messages" -H "$header" \
+              -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
+              -d "{\"model\": \"$ANTHROPIC_MODEL\", \"max_tokens\": 8, \"messages\": [{\"role\": \"user\", \"content\": \"ok\"}]}" | cut -c1-300)"
+          done
+          for url in "$ANTHROPIC_BASE_URL" https://api.anthropic.com https://claude.ai; do echo "$url -> $(curl -s -o /dev/null -m 8 -w '%{http_code}' "$url")"; done
+      - name: Link the host's configuration
+        # Uncommitted and outside the workspace, which checkout cleans; setup writes it through the link.
+        run: |
+          host="$HOME/.shepherd/$GITHUB_REPOSITORY/configuration.yaml"
+          mkdir -p "$(dirname "$host")" .shepherd && ln -sfn "$host" "$CONFIG"
+      - name: Take the dispatched issue
+        # As an issues event of now: dispatching it approves its text as it stands.
+        if: inputs.issue != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ISSUE: ${{ inputs.issue }}
+          ALLOWED: ${{ vars.SHEPHERD_ALLOWED_USERS }}
+        run: |
+          [[ $ISSUE =~ ^[0-9]+$ ]] || { echo '::error::issue is not a number'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" > "$RUNNER_TEMP/issue.json"
+          jq -e --argjson allowed "$ALLOWED" '(.pull_request | not) and (.user.login as $author | $allowed | index($author))' \
+            "$RUNNER_TEMP/issue.json" > /dev/null || { echo '::error::not an issue an allowed user wrote'; exit 1; }
+          jq --arg sender "$GITHUB_TRIGGERING_ACTOR" --arg repository "$GITHUB_REPOSITORY" \
+            '{issue: ., sender: {login: $sender}, repository: {full_name: $repository}}' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/event.json"
+          echo "EVENT=$RUNNER_TEMP/event.json" >> "$GITHUB_ENV"
+      - name: Take the event's issue
+        if: inputs.issue == ''
+        run: echo "EVENT=$GITHUB_EVENT_PATH" >> "$GITHUB_ENV"
+      - name: Set up shepherd on this host
+        # The text is the event's own copy of the issue, as the allowed user labeled it.
+        if: github.event.action == 'labeled' || inputs.issue != ''
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          # The gateway reads its key from this header.
+          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.ANTHROPIC_API_KEY }}'
+          CLAUDE_CODE_TMPDIR: ${{ runner.temp }}
+          # Pushes use the App token through gh, without writing a credential to disk.
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: credential.https://github.com.helper
+          GIT_CONFIG_VALUE_0: '!gh auth git-credential'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.app.outputs.token }}
+          bot_name: aklr-claude[bot]
+          bot_id: '355267095'
+          # The classifier would call api.anthropic.com, bypassing the gateway.
+          classify_inline_comments: 'false'
+          include_fix_links: 'false'
+          settings: '{"attribution": false}'
+          # remote-gpu is shut out: the pool is this host.
+          claude_args: |
+            --model ${{ vars.SHEPHERD_LLM_MODEL }}
+            --dangerously-skip-permissions
+            --disallowedTools "Skill(aklr:remote-gpu),Skill(remote-gpu)"
+          prompt: |
+            Read and follow harness/automations/shepherd/templates/actions-setup-prompt.md.
+            The JSON file is ${{ env.EVENT }}: issue #${{ github.event.issue.number || inputs.issue }} of ${{ github.repository }}, labeled by ${{ github.triggering_actor }}.
+      - name: Check the configuration
+        run: |
+          test -f "$CONFIG" || { echo "::error::this host is not set up: an allowed user's shepherd issue sets it up (see setup-shepherd)"; exit 1; }
+          # Isolated as the helpers run; a lease longer than this job would outlive a round it kills.
+          python3 -I -c 'import sys, yaml; sys.exit(not yaml.safe_load(open(sys.argv[1]))["execution"].get("round_hours", 2) <= 0.9)' "$CONFIG" ||
+            { echo '::error::python3 -I needs PyYAML, and execution.round_hours must be at most 0.9'; exit 1; }
+      - name: Freeze or stop the issue's request
+        # From the event's own copy of the issue, as the allowed user saw it; later edits are never read.
+        if: github.event_name == 'issues' || inputs.issue != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ACTION: ${{ github.event.action == 'closed' && 'stop' || 'freeze' }}
+        run: python3 -I "$SCRIPTS/request.py" "$ACTION" --config "$CONFIG" --event "$EVENT"
+      - name: Begin a round
+        id: begin
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          NOW: ${{ github.event_name != 'schedule' && '--now' || '' }}
+        run: |
+          seen=$(python3 -I "$SCRIPTS/observation.py" --config "$CONFIG") || seen=
+          begun=$(python3 -I "$SCRIPTS/state.py" begin --config "$CONFIG" ${seen:+--observation "$seen"} $NOW)
+          echo "$begun"
+          # Busy or waiting: no round, and no model call.
+          if jq -e 'has("round")' <<< "$begun" > /dev/null; then
+            { echo 'begun<<SHEPHERD_EOF'; echo "$begun"; echo SHEPHERD_EOF; } >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run the round
+        if: steps.begin.outputs.begun != ''
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          # The gateway reads its key from this header.
+          ANTHROPIC_CUSTOM_HEADERS: 'Ocp-Apim-Subscription-Key: ${{ secrets.ANTHROPIC_API_KEY }}'
+          CLAUDE_CODE_TMPDIR: ${{ runner.temp }}
+          # Pushes use the App token through gh, without writing a credential to disk.
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: credential.https://github.com.helper
+          GIT_CONFIG_VALUE_0: '!gh auth git-credential'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.app.outputs.token }}
+          bot_name: aklr-claude[bot]
+          bot_id: '355267095'
+          # The classifier would call api.anthropic.com, bypassing the gateway.
+          classify_inline_comments: 'false'
+          include_fix_links: 'false'
+          settings: '{"attribution": false}'
+          # remote-gpu is shut out: the pool is this host.
+          claude_args: |
+            --model ${{ vars.SHEPHERD_LLM_MODEL }}
+            --dangerously-skip-permissions
+            --disallowedTools "Skill(aklr:remote-gpu),Skill(remote-gpu)"
+          prompt: |
+            Read and follow harness/automations/shepherd/templates/actions-prompt.md.
+            `begin` printed:
+            ${{ steps.begin.outputs.begun }}
+      - name: Rewrite the requests' progress comments
+        if: ${{ !cancelled() && steps.begin.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          # Expanded as the helpers expand it.
+          root=$(USER=$(id -un) python3 -c 'import os, sys, yaml; print(os.path.expanduser(os.path.expandvars(yaml.safe_load(open(sys.argv[1]))["execution"]["state_dir"])))' "$CONFIG")
+          python3 -I "$SCRIPTS/state.py" --root "$root" show > "$RUNNER_TEMP/ledger.json"
+          python3 -I "$SCRIPTS/request.py" progress --config "$CONFIG" --ledger "$RUNNER_TEMP/ledger.json"

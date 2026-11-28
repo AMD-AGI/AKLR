@@ -19,6 +19,8 @@ Read a reference before the first action of its kind in a round:
 | [worker](references/worker.md) | any campaign step or campaign cleanup |
 | [validation](references/validation.md) | validating, or any freshness check |
 | [delivery](references/delivery.md) | pushing, opening or commenting on a PR |
+| [local](references/local.md) | anything on a pool or a campaign when `execution.cluster` is `local` |
+| [requests](references/requests.md) | admitting, stopping or closing with an `issue` strategy |
 
 ## Modes
 
@@ -52,7 +54,8 @@ Read a reference before the first action of its kind in a round:
 - Use `campaign.model`, its reasoning effort and the configured budgets; do not substitute them or ask again.
 - `save` is bookkeeping, never a hard limit: it checks the caps and phase order listed in
   [state](references/state.md), and no validation. Never work around a refusal.
-- Start nothing on this host that outlives the round. Long steps run remotely.
+- Start nothing on this host that outlives the round. Long steps run remotely, or on a
+  [local](references/local.md) pool as detached containers.
 - Run one round and return. The scheduler provides the next wakeup: create no timers and touch no
   schedules, and follow the shared skills as they say for a caller that is an automation. A manual round
   without a saved schedule says that no next wakeup is guaranteed.
@@ -123,7 +126,7 @@ Save confirmed facts with source and time, keeping each fact's last successful o
 
 Plan each campaign and pool on its own. For each, pick the first that applies:
 
-1. a stop request or passed deadline;
+1. a stop request (the owner's, or its issue request was [stopped](references/requests.md)) or passed deadline;
 2. cleanup;
 3. reconciling an `unknown`;
 4. the next phase or delivery.
@@ -178,8 +181,8 @@ Admit only in `run`, one campaign at a time, while all of these hold:
    cover the whole campaign.
 6. For a regime candidate, write its schema file holding only its workloads outside the clone, as
    forge-loop-campaign does.
-7. Save phase `admitted`, `bounds.model_usd`, `bounds.deadline`, `pool`, `gpu` and the candidate's
-   `contract_key` in one save. The pool is already started: it was saved with `bounds.node_hours` and
+7. Save phase `admitted`, `bounds.model_usd`, `bounds.deadline`, `pool`, `gpu`, the candidate's
+   `contract_key` and its `issue`, when it has one, in one save. The pool is already started: it was saved with `bounds.node_hours` and
    its allocation intent before allocating, and with its `end` once it started.
 
 ## 4. Execute

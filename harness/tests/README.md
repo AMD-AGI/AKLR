@@ -8,7 +8,7 @@ This directory is reserved for tests of the AKLR skills, the scripts in
 - `remote_gpu/`: the remote-gpu CLI against a fake two-node cluster on this machine, no scheduler,
   ssh or GPU: `python -m pytest harness/tests/remote_gpu`.
 
-- `shepherd/`: persistent round ownership, atomic state snapshots and crash recovery boundaries,
-  CPU only: `python -m pytest harness/tests/shepherd`.
+- `shepherd/`: persistent round ownership, atomic state snapshots, crash recovery boundaries and
+  issue requests, CPU only: `python -m pytest harness/tests/shepherd`.
 
 No CI workflow runs these tests yet.

@@ -22,5 +22,6 @@ def test_fingerprint_follows_what_was_seen_and_not_its_order():
         observation.Observation("main1", ((1, "a"),), "head1", "ready1"),
         observation.Observation("main1", seen.pulls, "head2", "ready1"),
         observation.Observation("main1", seen.pulls, "head1", "ready2"),
+        observation.Observation("main1", seen.pulls, "head1", "ready1", "requests1"),
     ):
         assert other.fingerprint != seen.fingerprint
