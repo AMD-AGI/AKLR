@@ -68,7 +68,7 @@ In addition, a route is hooked only on the SGLang releases it declares, and insi
 
 ## Validation and tests
 
-Validation (`python -m aklr validate`) checks each kernel in two stages:
+Validation (`python -m aklr validate`) checks each kernel with two validators, each run on its own:
 
 - audit: checks the kernel code against the rules, for example that it keeps no state between calls and does not modify read-only inputs.
 - bench: draws several sets of inputs from the contract, and compares the kernel's results with the reference for correctness and with the baseline for performance. After a PR merges, CI writes these results into its JSON files; at runtime, only kernels that passed and are faster than SGLang are used.

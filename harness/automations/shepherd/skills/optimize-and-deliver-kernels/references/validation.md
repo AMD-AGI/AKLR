@@ -21,7 +21,7 @@ commit in as a Git bundle, checked out by hash; the validation container mounts 
 knowledge patch. Fetch main and record it as the validation base; merge the frozen commit into it there.
 A conflict, or a schema file that differs byte for byte from the candidate after the merge, means no PR.
 
-Run `aklr export check`, a targeted `aklr validate --base <validation base> --stages audit,bench`, and the
+Run `aklr export check`, a targeted `aklr validate --base <validation base> --validators audit,bench`, and the
 stress gate with a driver made in the validator: `python harness/scripts/forge_task prepare` from the
 validator clone into `<campaign>/validate`, the frozen `kernel.py` placed in that workspace, then its
 `driver.py --stress`. Never run the worker's driver. Read every target Point with

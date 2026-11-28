@@ -119,7 +119,10 @@ def test_a_full_row_of_selected_slots_may_come_in_any_order(contract_id: str) ->
     def passes(out: list[list[int]]) -> bool:
         outputs = {"out_page_indices": torch.tensor(out, dtype=torch.int32)}
         return (
-            case.contract.reference.check(outputs, {"out_page_indices": expected}, case.request.schema) == {}
+            case.contract.reference.check(
+                outputs, {"out_page_indices": expected}, case.contract_workload.schema
+            )
+            == {}
         )
 
     assert passes([[0, 1, 2, 3], [5, 4, -1, -1]])

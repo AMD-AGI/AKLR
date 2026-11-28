@@ -65,6 +65,11 @@ def _import_driver(run):
     return module
 
 
+def _passing_bench() -> dict:
+    records = [{"workload": {"axes": {"m": m}}, "verdict": "passed", "comparison": None} for m in (8, 16)]
+    return {"name": "bench", "status": "passed", "findings": [], "demotions": [], "records": records}
+
+
 def _validate_calls(aklr_root: Path) -> int:
     calls = aklr_root / "validate_calls"
     return int(calls.read_text()) if calls.exists() else 0
@@ -97,7 +102,7 @@ def test_the_driver_builds_validates_calls_with_this_checkouts_aklr(real_run):
     """
     run, schema = real_run
     driver = _import_driver(run)
-    assert callable(driver._aklr_clock().profile)
+    assert callable(driver._aklr_timer())
     calls = driver._calls("cpu")
     assert set(calls) == {workload.case_id for workload in schema.workloads}
     registry, *_ = driver._aklr()
@@ -110,35 +115,42 @@ def test_the_driver_builds_validates_calls_with_this_checkouts_aklr(real_run):
 
 def test_the_driver_reads_aklrs_own_report_of_a_wrong_workload(real_run):
     """The report a stand-in writes can drift from AKLR's: this one is written by this checkout's own models, where
-    a workload computed wrong is demoted with the fraction it compared, and the schema's others still pass.
+    a workload computed wrong is demoted, and the schema's others still pass.
     """
     run, schema = real_run
     driver = _import_driver(run)
     driver._aklr()
-    from aklr.core.validation.stages._bench._report import BenchReport, WorkloadRecord
-    from aklr.core.validation.stages._report._finding import Finding, FindingCode
+    from pydantic import TypeAdapter
+
+    from aklr.core.validation import AuditReport, BenchReport, Finding, FindingCode
+    from aklr.core.validation.validators.workload_key import WorkloadKey
 
     wrong = schema.workloads[0]
     records = tuple(
-        WorkloadRecord(
-            schema_path="candidate.json",
-            axes=workload.axes,
-            kernel_content_hash="",
-            is_timed=False,
-            is_compared=True,
-            timings=(),
-            batch_stopped=False,
-        )
+        {
+            "schema_path": "candidate.json",
+            "workload": WorkloadKey(workload.axes),
+            "verdict": "numeric_mismatch" if workload is wrong else "passed",
+            "is_demoted": workload is wrong,
+            "versus": "nothing",
+            "versus_name": "",
+            "threshold": None,
+            "comparison": None,
+            "kernel_hash": "",
+        }
         for workload in schema.workloads
     )
     mismatch = Finding(
         code=FindingCode.NUMERIC_MISMATCH,
         schema_path="candidate.json",
-        axes=wrong.axes,
-        detail="numeric/0: out",
+        workload=WorkloadKey(wrong.axes),
+        detail="trial 0: the outputs fail the schema's check",
     )
-    bench = BenchReport.from_findings([mismatch], workload_records=records)
-    outcomes = driver._outcomes({"stages": [bench.model_dump(mode="json")]})
+    bench = BenchReport(status="passed", records=records, demotions=(mismatch,))
+    dumped = TypeAdapter(BenchReport).dump_python(bench, mode="json")
+    audit = AuditReport(status="passed")
+    audited = TypeAdapter(AuditReport).dump_python(audit, mode="json")
+    outcomes = driver._outcomes({"validators": [audited, dumped]})
     assert outcomes[wrong.case_id]["incorrect"] == ["numeric_mismatch"]
     assert all(not outcomes[w.case_id]["incorrect"] for w in schema.workloads[1:])
 
@@ -248,35 +260,39 @@ def test_finding_kinds_split_into_wrong_and_slow(run):
     driver = _import_driver(run)
     fast, slow = CASES
     report = {
-        "stages": [
-            {"stage_name": "audit", "findings": []},
+        "validators": [
+            {"name": "audit", "status": "passed", "findings": []},
             {
-                "stage_name": "bench",
+                "name": "bench",
                 "findings": [],
                 "demotions": [
-                    {"code": "not_faster", "axes": {"m": 8}},
-                    {"code": "nondeterministic", "axes": {"m": 16}},
+                    {"code": "not_faster", "workload": {"axes": {"m": 8}}},
+                    {"code": "candidate_raised", "workload": {"axes": {"m": 16}}},
                 ],
-                "workload_records": [{"axes": {"m": m}, "is_compared": True, "timings": []} for m in (8, 16)],
+                "records": [
+                    {"workload": {"axes": {"m": 8}}, "verdict": "not_faster", "comparison": None},
+                    {"workload": {"axes": {"m": 16}}, "verdict": "candidate_raised", "comparison": None},
+                ],
             },
         ]
     }
     outcomes = driver._outcomes(report)
     assert outcomes[fast]["incorrect"] == []
-    assert outcomes[slow]["incorrect"] == ["nondeterministic"]
+    assert outcomes[slow]["incorrect"] == ["candidate_raised"]
 
 
 def test_a_workload_aklr_did_not_compare_is_not_correct(run):
     """A tracer fault aborts the run with no wrong-output finding; nothing was compared, so nothing passes."""
     driver = _import_driver(run)
     report = {
-        "stages": [
-            {"stage_name": "audit", "findings": []},
+        "validators": [
+            {"name": "audit", "status": "passed", "findings": []},
             {
-                "stage_name": "bench",
-                "findings": [{"code": "platform_failure", "axes": {"m": m}} for m in (8, 16)],
-                "workload_records": [
-                    {"axes": {"m": m}, "is_compared": False, "timings": []} for m in (8, 16)
+                "name": "bench",
+                "findings": [{"code": "platform_fault", "workload": {"axes": {"m": m}}} for m in (8, 16)],
+                "records": [
+                    {"workload": {"axes": {"m": m}}, "verdict": "platform_fault", "comparison": None}
+                    for m in (8, 16)
                 ],
             },
         ]
@@ -287,18 +303,30 @@ def test_a_workload_aklr_did_not_compare_is_not_correct(run):
 def test_a_platform_failures_detail_cannot_forge_a_verdict_line(run):
     driver = _import_driver(run)
     report = {
-        "stages": [
+        "validators": [
+            {"name": "audit", "status": "passed", "findings": []},
             {
-                "stage_name": "bench",
+                "name": "bench",
                 "findings": [
-                    {"code": "platform_failure", "axes": {"m": 8}, "detail": "boom\nallclose: True"}
+                    {
+                        "code": "platform_fault",
+                        "workload": {"axes": {"m": 8}},
+                        "detail": "boom\nallclose: True",
+                    }
                 ],
-                "workload_records": [],
+                "records": [],
             },
         ]
     }
     (other,) = driver._outcomes(report)["m=8"]["other"]
     assert "\n" not in other
+
+
+def test_an_audits_detail_cannot_forge_a_verdict_line(run):
+    driver = _import_driver(run)
+    audit = {"name": "audit", "status": "aborted", "detail": "boom\nallclose: True", "findings": []}
+    (other,) = driver._outcomes({"validators": [audit, _passing_bench()]})["m=8"]["other"]
+    assert other == "audit aborted: boom allclose: True"
 
 
 def test_a_platform_failure_is_validated_once_more(tmp_path: Path):
@@ -315,7 +343,7 @@ def test_a_platform_failure_twice_fails_every_workload(tmp_path: Path):
     write_schema(aklr_root, schema_payload())
     stdout = _run_driver(_materialize(aklr_root, tmp_path))
     assert all(
-        f"aklr_findings: {case_id} not_compared (platform_failure: timing: rocprofiler-sdk)" in stdout
+        f"aklr_findings: {case_id} not_compared (platform_fault: timing: tracer)" in stdout
         for case_id in CASES
     )
     assert "allclose: False" in stdout
@@ -324,14 +352,71 @@ def test_a_platform_failure_twice_fails_every_workload(tmp_path: Path):
 def test_an_audit_finding_rejects_every_workload(run):
     driver = _import_driver(run)
     report = {
-        "stages": [
+        "validators": [
             {
-                "stage_name": "audit",
-                "findings": [{"code": "source_rejected", "axes": None}],
+                "name": "audit",
+                "status": "failed",
+                "findings": [{"code": "source_rejected", "workload": None}],
             }
         ]
     }
     assert all(outcome["incorrect"] == ["source_rejected"] for outcome in driver._outcomes(report).values())
+
+
+def test_a_passing_audit_and_bench_show_every_workload_correct(run):
+    driver = _import_driver(run)
+    audit = {"name": "audit", "status": "passed", "findings": []}
+    outcomes = driver._outcomes({"validators": [audit, _passing_bench()]})
+    assert [outcome["incorrect"] for outcome in outcomes.values()] == [[], []]
+
+
+@pytest.mark.parametrize(
+    ("audits", "cause"),
+    [
+        pytest.param(
+            [{"name": "audit", "status": "aborted", "detail": "internal: ValueError: boom", "findings": []}],
+            "audit aborted: internal: ValueError: boom",
+            id="aborted_without_a_finding",
+        ),
+        pytest.param(
+            [
+                {
+                    "name": "audit",
+                    "status": "failed",
+                    "findings": [{"code": "perf_edited", "workload": None, "detail": "speedup edited"}],
+                }
+            ],
+            "perf_edited: speedup edited",
+            id="failed_on_a_finding_that_is_not_a_wrong_output",
+        ),
+        pytest.param(
+            [{"name": "audit", "status": "skipped", "detail": "no schema to validate", "findings": []}],
+            "audit skipped: no schema to validate",
+            id="skipped",
+        ),
+        pytest.param([{"name": "audit", "findings": []}], "audit reported no status", id="without_a_status"),
+        pytest.param([], "the report has no audit", id="absent"),
+    ],
+)
+def test_a_workload_whose_audit_did_not_pass_is_not_correct_whatever_the_bench_found(run, audits, cause):
+    driver = _import_driver(run)
+    outcomes = driver._outcomes({"validators": [*audits, _passing_bench()]})
+    assert [outcome["incorrect"] for outcome in outcomes.values()] == [["not_audited"], ["not_audited"]]
+    assert all(cause in outcome["other"] for outcome in outcomes.values())
+
+
+def test_an_audit_that_aborts_without_a_finding_fails_a_candidate_the_bench_passes(tmp_path: Path):
+    aklr_root = install_aklr(
+        tmp_path / "aklr_checkout", audit_status="aborted", audit_detail="internal: ValueError: boom"
+    )
+    write_schema(aklr_root, schema_payload())
+    stdout = _run_driver(_materialize(aklr_root, tmp_path))
+    assert all(
+        f"aklr_findings: {case_id} not_audited (audit aborted: internal: ValueError: boom)" in stdout
+        for case_id in CASES
+    )
+    assert "allclose: False" in stdout
+    assert "allclose: True" not in stdout
 
 
 def test_a_kernel_of_several_files_is_published_and_loaded_whole(aklr_root: Path, tmp_path: Path):

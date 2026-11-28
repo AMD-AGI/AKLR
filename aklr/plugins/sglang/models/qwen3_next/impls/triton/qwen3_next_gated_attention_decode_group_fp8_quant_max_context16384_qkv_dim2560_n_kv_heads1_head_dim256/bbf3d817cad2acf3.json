@@ -1,0 +1,242 @@
+{
+  "schema_version": 5,
+  "name": "qwen3_next_gated_attention_decode_group_fp8_quant_max_context16384_qkv_dim2560_n_kv_heads1_head_dim256",
+  "contract_id": "qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
+  "description": "Qwen3-Next full-attention decode on one rank, between qkv_proj and o_proj, one token per row. projected_qkv holds each query head's query then its output gate, then the KV heads' keys, then their values. Q and K are RMS-normalized per head with weight 1 + norm weight and rounded to BF16; each head's first 64 channels take NeoX RoPE at the row's position, from cos_sin_cache's row of 32 cosines then 32 sines, rounded to BF16. Each row writes its K and V, cast to E4M3FN, at its cache_locations slot of key_cache and value_cache; rows sharing a slot leave one of their values there. Query head h then attends, through KV head h // (n_heads // n_kv_heads), the written slots kv_indices[kv_indptr[r]:kv_indptr[r + 1]], at most max_context of them, with scores q . k * scale; the softmax-weighted sum of their values is rounded to BF16, multiplied by sigmoid of the gate and rounded to BF16, then quantized in groups of 128 channels to E4M3FN with scale=max(amax,1e-10)/448. Unwritten slots and all other inputs are preserved.",
+  "op_type": "qwen3_next",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Decode rows: one token each, padding rows included."
+    },
+    "qkv_dim": {
+      "type": "const",
+      "value": 2560,
+      "description": "qkv_proj's output width on this rank."
+    },
+    "n_kv_heads": {
+      "type": "const",
+      "value": 1,
+      "description": "KV heads on this rank."
+    },
+    "head_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "Query, key and value head width."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pools."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the cos/sin table."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Offsets in kv_indptr: n_tokens + 1."
+    },
+    "n_kv_tokens": {
+      "type": "var",
+      "description": "Entries of kv_indices."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 4,
+      "description": "Query heads on this rank."
+    },
+    "n_groups": {
+      "type": "const",
+      "value": 8,
+      "description": "FP8 groups of 128 channels in a row."
+    }
+  },
+  "attrs": {
+    "max_context": 16384
+  },
+  "inputs": {
+    "projected_qkv": {
+      "shape": [
+        "n_tokens",
+        "qkv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "qkv_proj's output: each query head's query then gate, then keys, then values."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Query RMSNorm weight, applied as 1 + weight."
+    },
+    "k_norm_weight": {
+      "shape": [
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Key RMSNorm weight, applied as 1 + weight."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each row's position."
+    },
+    "cos_sin_cache": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per position, the 32 rotary cosines then the 32 sines."
+    },
+    "cache_locations": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's KV pool slot."
+    },
+    "key_cache": {
+      "shape": [
+        "n_slots",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's key pool."
+    },
+    "value_cache": {
+      "shape": [
+        "n_slots",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's value pool."
+    },
+    "kv_indptr": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "bounded_cu_seqlens",
+        "total": "n_kv_tokens",
+        "max_seqlen": 16384
+      },
+      "description": "Where each row's slots start in kv_indices, then where the last row's end."
+    },
+    "kv_indices": {
+      "shape": [
+        "n_kv_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": false
+      },
+      "description": "The pool slots each row attends, row after row."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Q and K RMSNorm epsilon."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "values": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Each query head's gated attention, grouped E4M3FN values."
+    },
+    "scales": {
+      "shape": [
+        "n_tokens",
+        "n_groups"
+      ],
+      "dtype": "float32",
+      "description": "One FP32 scale per row and group of 128 channels."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_slots": 1061120,
+        "n_positions": 262144,
+        "n_offsets": 257,
+        "n_kv_tokens": 1060864
+      },
+      "scalars": {
+        "eps": 9.999999974752427e-07,
+        "scale": 0.0625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}

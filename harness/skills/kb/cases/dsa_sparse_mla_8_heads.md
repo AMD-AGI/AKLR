@@ -257,10 +257,10 @@ On an MI355X, in a checkout where this file is not on the base branch, with FlyD
 python -m aklr validate aklr/plugins/sglang/layers/dsa_backend/impls/flydsl/dsa_sparse_mla_decode_n_heads8_kv_dim576_topk2048/6e2fcc9582a2ebc7.json --base origin/main
 ```
 
-It runs validate's two stages, times the kernel against the baseline and against the file main serves at each
+It runs validate's two validators, times the kernel against the baseline and against the file main serves at each
 Point, and writes `aklr_validation/report.json` and `aklr_validation/report.md` (`aklr/plugins/aiter/README.md` §
 Commands). Once the file is on the base, bench skips it with `--base` set, and without `--base` it is timed
-against the baseline alone (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). On main from
+against the baseline alone (`aklr/core/validation/validators/validation_scope.py`, `of_working_tree`). On main from
 6d7cfec on, the files it is paired with are PR #66's at 32 and 128 tokens and `fbe6ddab5dac5958` at 256. E1's
 setup pairs it with the older files instead: a local base commit without `a9d172eb1a6783bf.json` and
 `04c92e850fb6e62f.json`, those two restored on top, and all three paths passed with `--base` at that commit. The

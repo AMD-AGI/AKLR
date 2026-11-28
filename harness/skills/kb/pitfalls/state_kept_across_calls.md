@@ -7,7 +7,7 @@ flydsl: 0.3.2
 basis: single-observation
 sources:
   - "aklr/plugins/aiter/README.md"
-  - "aklr/core/validation/stages/_bench/_evaluation/_candidate.py:402"
+  - "aklr/core/validation/validators/bench/_measure/_op_bench.py:135"
   - "aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_decode_n_v_heads16_key_dim128_value_dim128_conv_dim3072/caa6bfbe5226d564.json"
 ---
 
@@ -54,9 +54,10 @@ The first two forms keep something derived from an argument across calls; in the
    *(field, E5)*. A serving step brings new tokens, so its state changes on every call. The kernel itself keeps
    nothing.
 
-AKLR's first-capture and post-timing checks overwrite reused input buffers, weights included, through
-`.data.copy_()` (`aklr/plugins/aiter/README.md` § Semantics); that fails form 2. Form 1 recomputes on the new values and
-passes them, and the bench times every participant on one call's tensors (S2), so a form-1 kernel would read as a
+AKLR's bench no longer overwrites a reused input buffer in place: its former first-capture and post-timing checks
+did, weights included, through `.data.copy_()`, which failed form 2. It draws new tensors for each trial
+(`aklr/plugins/aiter/README.md` § Semantics), which a cache keyed on the object misses, so form 2 passes. Form 1 recomputes on
+the new values and passes them, and the bench times every participant on one trial's tensors (S2), so a form-1 kernel would read as a
 cache hit in AKLR's timing too. That last point is read from the code; no CI run of such a kernel is recorded.
 The README's rule that nothing derived from an argument is kept across calls is enforced by audit only for
 `global` and `nonlocal`; review catches the rest (`aklr/plugins/aiter/README.md` § The kernel section and ABI). A form-3
@@ -83,7 +84,7 @@ on state near its fixed point.
   and a flag that guards the MFMAs or the whole body.
 - **A passing correctness check says nothing about form 1**: it computes the right answer on any input that
   changed. Form 2 does too on a new tensor or after a `_version` bump; it fails a check that rewrites a reused
-  input unseen by the cache: through `.data.copy_`, as AKLR's does, or before a graph replay.
+  input unseen by the cache: through `.data.copy_`, as AKLR's bench did before it drew new tensors per trial, or before a graph replay.
 
 ## Fix or workaround
 
@@ -116,5 +117,5 @@ unverified.
 - E5 [2026-11, gfx950 (MI355X), Triton of the sglang 0.5.22 image (no FlyDSL kernel), N=200 rounds, the kernel and the contract's baseline (sglang 0.5.22's GDN decode) alternating with the order swapped on odd rounds, each on its own buffers; before each timed call a 1 GiB write and a GPU spin of at least 300 µs, CUDA events, medians] caa6bfbe5226d564 at its one Point (n_tokens 64, n_slots 127): state replayed in place, kernel 20.8 µs, baseline 49.8 (2.40×); `delta_state` and `conv_state` copied back from the contract's initial draw before every call, kernel 30.8, baseline 49.8 (1.62×); share of the live slots' `delta_state` segments one kernel call stored, from the initial state: 100% at calls 1–4, 83% at 16, 52% at 64, 31% at 200, 20% after 400; `conv_state` 0% from call 4 (Qwen3.5 GDN decode, Gluon)
 - E6 [2026-11, gfx950 (MI355X), Triton of the sglang 0.5.22 image (no FlyDSL kernel), N=1, AKLR CI, stored speedup] caa6bfbe5226d564 at n_tokens 64, n_slots 127: 3.08, kernel 12.9 µs (AMD-AGI/AKLR@e193b1d9, CI run 44081029964)
 - S1 `if b is not cached_weight or version is None or version != cached_version:` repacks, else reuses `packed_b`; a later commit removed the check from all 20, and no kernel committed later reads `._version`
-- S2 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:402: one `call` built from one input set, timed for every participant
+- S2 aklr/core/validation/validators/bench/_measure/_op_bench.py:128: each participant bound to one trial's input set, each timed in one graph on it (:174-182)
 - S3 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_decode_n_v_heads16_key_dim128_value_dim128_conv_dim3072/caa6bfbe5226d564.json#kernel.py:218 `_store_changed_state`: a 64 B segment counts as changed when any of its bits differ, and `buffer_store` writes only those (:222); 64 rows go to `_grouped_fused64` (:405), whose `_advance_state(..., ".wb", 16)` (:377) ends in it (:237); the conv history's stores are masked by change the same way (`_commit_history`, :92-100)

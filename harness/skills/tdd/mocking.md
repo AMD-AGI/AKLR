@@ -32,17 +32,17 @@ Pass external dependencies in rather than creating them internally:
 
 ```python
 # Easy to mock: plan() is handed its target, so the test names one on a machine with no GPU
-class BenchStage:
+class BenchValidator:
     def plan(self, scope, target): ...
 
 
 def test_plan_has_one_entry_per_bench_path(scope):
     target = DeviceTarget.from_names("gfx950", "MI355X")
-    assert len(BenchStage(["cuda:0"]).plan(scope, target)) == len(scope.bench_paths)
+    assert len(BenchValidator(["cuda:0"]).plan(scope, target)) == len(scope.bench_paths)
 
 
 # Hard to mock: plan() asks the driver itself, so the test has to patch the driver query
-class BenchStage:
+class BenchValidator:
     def plan(self, scope):
         target = DeviceTarget.current()
         ...
@@ -51,7 +51,7 @@ class BenchStage:
 def test_plan_has_one_entry_per_bench_path(monkeypatch, scope):
     target = DeviceTarget.from_names("gfx950", "MI355X")
     monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, device=None: target))
-    assert len(BenchStage(["cuda:0"]).plan(scope)) == len(scope.bench_paths)
+    assert len(BenchValidator(["cuda:0"]).plan(scope)) == len(scope.bench_paths)
 ```
 
 **2. Prefer SDK-style interfaces over generic fetchers**
