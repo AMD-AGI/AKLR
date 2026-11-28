@@ -31,13 +31,14 @@ FP8, FP4 = torch.float8_e4m3fn, torch.float4_e2m1fn_x2
 def aiter_picks(monkeypatch):
     """A stand-in aiter whose fused MoE quantizes activations to what the test sets; the
     keyword arguments of each ``resolve_activation_dtype`` call are kept."""
-    picked = SimpleNamespace(dtype=FP8, calls=[], takes_gate_up_interleave=False)
+    picked = SimpleNamespace(dtype=FP8, calls=[], gate_modes=[], takes_gate_up_interleave=False)
     package = ModuleType("aiter")
     package.dtypes = SimpleNamespace(fp8=FP8, fp4x2=FP4)
     module = ModuleType("aiter.fused_moe")
 
     def resolve(quant_type, q_dtype_w, *, activation, gate_mode, M, hidden_dtype, has_a1_scale):
         picked.calls.append({"M": M, "q_dtype_w": q_dtype_w})
+        picked.gate_modes.append(gate_mode)
         return picked.dtype
 
     def resolve_new(
@@ -52,6 +53,7 @@ def aiter_picks(monkeypatch):
         gate_up_interleave=None,
     ):
         picked.calls.append({"M": M, "q_dtype_w": q_dtype_w, "gate_up_interleave": gate_up_interleave})
+        picked.gate_modes.append(gate_mode)
         return picked.dtype
 
     def install(new):
@@ -99,6 +101,14 @@ def test_any_other_activation_keeps_4_bit_activations(aiter_picks):
 def test_situv2_takes_fp8_activations_where_aiter_quantizes_to_fp8(aiter_picks):
     assert mapped(ActivationType.Situv2)["act_quant"] == 8
     assert aiter_picks.calls == [{"M": 5, "q_dtype_w": FP4}]
+
+
+def test_situv2_on_fp8_names_interleaved_gate_and_up_as_the_op_does(aiter_picks):
+    """A caller on aiter from ROCm/aiter#6464 on passes sglang's gate-up interleaved weights as 'interleave': aiter
+    is asked with the caller's word, and the op, whose layout variant holds the row order, takes 'separated'."""
+    kwargs = mapped(ActivationType.Situv2, gate_mode="interleave")
+    assert kwargs["act_quant"] == 8 and kwargs["gate_mode"] == "separated"
+    assert aiter_picks.gate_modes == ["interleave"]
 
 
 @pytest.mark.parametrize("dtype", [FP4, torch.bfloat16], ids=["fp4 unmarked", "bf16"])

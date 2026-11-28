@@ -33,9 +33,14 @@ MODES = ("disabled", "enabled")
 
 
 def switches(framework: str, mode: str) -> dict[str, str]:
-    """AKLR's environment for a mode: disabled turns off AKLR and the framework's plugin."""
-    enabled = mode == "enabled"
-    return {"AKLR_DISABLE": "0" if enabled else "1", PLUGIN_SWITCHES[framework]: "1" if enabled else "0"}
+    """AKLR's environment for a mode: disabled turns off AKLR and the framework's plugin, and leaves AKLR out of
+    aiter's providers; enabled turns the three on (an AITER without aiter.plugin has no providers to join)."""
+    on = "1" if mode == "enabled" else "0"
+    return {
+        "AKLR_DISABLE": "0" if mode == "enabled" else "1",
+        PLUGIN_SWITCHES[framework]: on,
+        "AKLR_AITER_PLUGIN": on,
+    }
 
 
 def pending_results(plan: dict, run_fields: dict) -> dict:

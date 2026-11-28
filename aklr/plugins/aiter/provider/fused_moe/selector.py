@@ -358,6 +358,11 @@ def op_kwargs(
             act_quant = 8
         else:
             return FallbackReason.OUT_OF_CONTRACT
+        # aiter from ROCm/aiter#6464 on reads w1's rows as gate_mode names them. fused_moe's SiTUv2 is
+        # sglang's gate-up interleaved weights (the layout variant holds the row order, the contract's gate_mode
+        # stays 'separated'), which a caller on that aiter passes as 'interleave' (sglang from #51000 on)
+        if attr_value(gate_mode) == "interleave":
+            gate_mode = "separated"
     # fused_moe rounds SwiGLU's activations to fp4 from SWIGLU_BF16_ROWS rows on, aiter from its
     # GPTOSS_SWIGLU_MXFP4_BF16_BOUND: a call they would round differently goes back to aiter
     elif name == "swiglu" and attr_value(gate_mode) == "separated":
