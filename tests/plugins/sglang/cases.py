@@ -311,6 +311,15 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_seq_len": 1024},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's DCP target-verify query shrunk: three heads a token (96 at TP8 under DCP 8) tiled to a
+    # kernel of four (128), the rotated values a column slice of the query projection
+    PointSpec(
+        contract_id="kimi_k3_mla_verify_q@1.0",
+        axes={"n_tokens": 4, "n_kernel_heads": 4, "n_rows": 12},
+        dtypes={"q_nope": "bfloat16", "q_pe": "bfloat16", "q": "float8_e4m3fn"},
+        attrs={},
+        layout_variant_name="strided_rows",
+    ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
     *(

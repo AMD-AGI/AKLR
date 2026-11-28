@@ -1,0 +1,569 @@
+{
+  "schema_version": 5,
+  "name": "mla_query_heads_n_heads96_head_dim576",
+  "contract_id": "mla_query_heads@1.0",
+  "description": "out[t, h, :] = q[t, h mod n_heads, :] for every h < out_heads: the query's heads, then its first ones again, out_heads heads in all, the bytes unchanged (vLLM's q.repeat(1, reps, 1)[:, :out_heads]).",
+  "op_type": "mla_query_heads",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Query rows of the step."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 96,
+      "description": "Heads of the query."
+    },
+    "head_dim": {
+      "type": "const",
+      "value": 576,
+      "description": "Width of a head's row (vLLM's kv_lora_rank + qk_rope_head_dim)."
+    },
+    "n_out_heads": {
+      "type": "const",
+      "value": 128,
+      "description": "Heads of the output."
+    }
+  },
+  "attrs": {
+    "out_heads": 128
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The decode query, one byte an element (vLLM's static fp8 query under an fp8 KV cache)."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "n_out_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "The query with its heads tiled to out_heads."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 15
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 25
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 35
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 40
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 45
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 50
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 55
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 65
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 70
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 75
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 80
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 85
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 90
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 95
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 100
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 105
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 110
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 115
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 125
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 130
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 135
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 140
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 145
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 150
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 155
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 160
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 165
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 170
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 175
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 185
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 190
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 195
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 200
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 205
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 210
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 215
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 220
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 225
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 230
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 235
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 245
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 250
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 255
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 260
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 265
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 270
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 275
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 280
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 285
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 290
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 295
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 300
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 305
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 310
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 315
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 320
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 325
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 330
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 335
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 340
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 345
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 350
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 355
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 360
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 365
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 370
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 375
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 380
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 385
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 390
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 395
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 400
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 405
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 410
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 415
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 420
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 425
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 430
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 435
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 440
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 445
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 450
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 455
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 460
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 465
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 470
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 475
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 480
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.4.2"
+    },
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"The MLA decode query's heads tiled to the decode kernel's head count, in FlyDSL for gfx950:\nout[t, h, :] = q[t, h mod H, :] for h < M, the bytes as they are.\n\nq is (tokens, H, D) contiguous, one byte an element, D a multiple of 16; out (tokens, M, D) contiguous, M > H. One\nthread per 16 bytes of q: it loads them once and stores them at head h, h + H, h + 2 H, ... while below M. Loads and\nstores go through buffer descriptors bound to the tensors' sizes, so the threads past the last 16 bytes read zero\nand store nothing, and so do the copies past M. Compiled per (H, M, D); the token count is an argument.\n\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl.expr import range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\nTHREADS = 256\nPACK = 16  # bytes a thread moves\n\n\n@functools.cache\ndef _build(H, M, D):\n    PPH = D // PACK  # packs a head\n    PPT = H * PPH  # packs a token of q\n    R = -(-M // H)  # copies of a head, the last one partial\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def tile_heads_kernel(\n        q_t, o_t, n_packs: fx.Int32, q_bytes: fx.Int32, o_bytes: fx.Int32\n    ):\n        g = fx.Int32(fx.block_idx.x) * THREADS + fx.thread_idx.x\n        ok = g < n_packs\n        t = g // PPT\n        p = g % PPT\n        h = p // PPH\n        c = p % PPH\n        zi = fx.Int32(0).ir_value()\n        aux = ir.IntegerAttr.get(T.i32, 0)\n        q_rs = rocdl.get_buffer_rsrc(\n            rocdl.make_buffer_ptr(fx.get_iter(q_t), num_records_bytes=q_bytes)\n        )\n        o_rs = rocdl.get_buffer_rsrc(\n            rocdl.make_buffer_ptr(fx.get_iter(o_t), num_records_bytes=o_bytes)\n        )\n        v = rocdl.raw_ptr_buffer_load(\n            T.i32x4,\n            q_rs,\n            fx.Int32(ok.select(g * PACK, q_bytes)).ir_value(),\n            zi,\n            aux=aux,\n        )\n        for j in range_constexpr(R):\n            head = h + j * H\n            off = (ok & (head < M)).select(((t * M + head) * PPH + c) * PACK, o_bytes)\n            rocdl.raw_ptr_buffer_store(v, o_rs, fx.Int32(off).ir_value(), zi, aux=aux)\n\n    @flyc.jit\n    def launch(\n        q_t,\n        o_t,\n        n_packs: fx.Int32,\n        q_bytes: fx.Int32,\n        o_bytes: fx.Int32,\n        n_wg: fx.Int32,\n        stream: fx.Stream,\n    ):\n        tile_heads_kernel(q_t, o_t, n_packs, q_bytes, o_bytes).launch(\n            grid=(n_wg, 1, 1), block=(THREADS, 1, 1), stream=stream\n        )\n\n    return launch\n\n\ndef run(*, q, out_heads, out_dtype, out):\n    n_tokens, n_heads, head_dim = q.shape\n    assert (\n        q.element_size() == 1\n        and head_dim % PACK == 0\n        and q.is_contiguous()\n        and out.is_contiguous()\n    )\n    assert (\n        out.shape == (n_tokens, out_heads, head_dim)\n        and out_heads > n_heads\n        and out.numel() < 2**31\n    )\n    n_packs = q.numel() // PACK\n    _build(n_heads, out_heads, head_dim)(\n        q.view(torch.int32).view(-1),\n        out.view(torch.int32).view(-1),\n        n_packs,\n        q.numel(),\n        out.numel(),\n        -(-n_packs // THREADS),\n        fx.Stream(torch.cuda.current_stream(q.device)),\n    )\n"
+      }
+    ]
+  }
+}

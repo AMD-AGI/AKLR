@@ -3,19 +3,37 @@
 
 from __future__ import annotations
 
+import functools
+import logging
+
 from aklr.core.runtime.dispatch import FallbackReason, api
-from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins.sglang.hook import sglang_route, sglang_version, sglang_version_matches
 from aklr.plugins.sglang.models import moe_blocks
 from aklr.plugins.sglang.models.kimi_k3.contract import (
     KIMI_K3_LATENT_MOE,
     KIMI_K3_MLA_PREFILL_GATE,
     KIMI_K3_MLA_VC_OUTPUT_GATE,
+    KIMI_K3_MLA_VERIFY_Q,
 )
+
+_LOGGER = logging.getLogger(__name__)
+_SEEN: set[str] = set()
+# the sglang releases whose aiter backend the packed verify query was run on
+_PACKED_QUERY_VERSIONS = ("0.5.23",)
+
+
+def _once(reason: str) -> None:
+    """Log each distinct reason a route hands a call back to sglang, once per process."""
+    if reason not in _SEEN:
+        _SEEN.add(reason)
+        _LOGGER.warning("aklr kimi_k3 route falls back: %s", reason)
+
 
 __all__ = [
     "kimi_k3_latent_moe",
     "kimi_k3_mla_prefill_gate",
     "kimi_k3_mla_vc_output_gate",
+    "kimi_k3_mla_verify_q",
 ]
 
 
@@ -37,6 +55,10 @@ def kimi_k3_latent_moe(
 
 @api(KIMI_K3_MLA_VC_OUTPUT_GATE)
 def kimi_k3_mla_vc_output_gate(latent, vc_weight, gate, output=None): ...
+
+
+@api(KIMI_K3_MLA_VERIFY_Q)
+def kimi_k3_mla_verify_q(q_nope, q_pe, q, storage="row_major"): ...
 
 
 @api(KIMI_K3_MLA_PREFILL_GATE)
@@ -181,9 +203,12 @@ def _forward_absorb_rocm_core(
     llama_4_scaling,
     q_nope_unabsorbed=None,
 ):
-    """The absorbed MLA core of a Kimi-K3 layer on a plain attention backend (its last branch):
+    """The absorbed MLA core of a Kimi-K3 layer. On a plain attention backend (its last branch):
     sglang's attention, then the value absorption and the output gate as one op in place of
-    rocm_absorb_v_bmm and the o_proj wrapper's gate, then o_proj."""
+    rocm_absorb_v_bmm and the o_proj wrapper's gate, then o_proj. A DCP target verify on the aiter
+    backend (its second branch): the query packed for the fp8 kernel by one op, the rest sglang's."""
+    if _dcp_verify_core_taken(self, forward_batch, topk_indices, llama_4_scaling, q_nope_unabsorbed):
+        return _dcp_verify_core(self, q_pe, k_pe, q_nope_out, k_nope, forward_batch)
     if _absorb_core_falls_back(self, forward_batch, llama_4_scaling, q_nope_unabsorbed):
         return FallbackReason.OUT_OF_CONTRACT
     import torch
@@ -208,6 +233,198 @@ def _forward_absorb_rocm_core(
         raise RuntimeError(f"kimi_k3_mla_vc_output_gate declined after the gate: {gated}")
     output, _ = self.o_proj(gated)
     return output
+
+
+def _dcp_verify_core_taken(attn, forward_batch, topk_indices, llama_4_scaling, q_nope_unabsorbed) -> bool:
+    """Whether forward_absorb_rocm_core runs its aiter DCP branch for a target verify whose
+    backend takes the asm cp round-robin kernel (it reads no verify window) with a
+    float8_e4m3fn query, without the branches after it that the route leaves to sglang
+    (autotune's dummy run, LoRA on kv_b, the DeepGEMM value absorption, the indexer's top-k
+    hand-over)."""
+    if (
+        not forward_batch.forward_mode.is_target_verify()
+        or attn.dcp_size <= 1
+        or not _packed_query_route_installed()
+    ):
+        return False
+    import torch
+    from sglang.srt.layers.attention import aiter_backend
+    from sglang.srt.layers.logits_processor import get_in_autotune_dummy_run
+    from sglang.srt.models.deepseek_common.attention_forward_methods import forward_mla_rocm
+    from sglang.srt.models.deepseek_common.attention_forward_methods.forward_mha import (
+        resolve_attn_backend,
+    )
+    from sglang.srt.models.deepseek_common.utils import FORWARD_ABSORB_CORE_ATTENTION_BACKENDS
+
+    metadata = getattr(resolve_attn_backend(forward_batch), "forward_metadata", None)
+    checks = (
+        ("attention backend", attn.current_attention_backend in FORWARD_ABSORB_CORE_ATTENTION_BACKENDS),
+        ("not aiter", not forward_mla_rocm._use_aiter),
+        ("not the DCP decode phase", not attn.is_dcp_mla_decode_phase(forward_batch)),
+        ("indexer top-k", topk_indices is not None or attn.next_skip_topk is not None),
+        ("llama 4 scaling", llama_4_scaling is not None),
+        ("unabsorbed query", q_nope_unabsorbed is not None),
+        ("DeepGEMM absorption", attn.use_deep_gemm_bmm),
+        (
+            "LoRA on kv_b",
+            forward_mla_rocm._SGLANG_EXPERIMENTAL_LORA_OPTI or forward_mla_rocm.is_kv_b_lora_active(attn),
+        ),
+        ("autotune's dummy run", get_in_autotune_dummy_run()),
+        ("no asm cp round-robin verify", not getattr(metadata, "use_asm_cprr_verify", False)),
+        # the backend casts the query to its fp8 type, float8_e4m3fn on gfx950
+        ("fp8 type", aiter_backend.fp8_dtype != torch.float8_e4m3fn),
+    )
+    failed = [name for name, bad in checks if bad]
+    if failed:
+        _once(f"DCP target verify left to sglang: {', '.join(failed)}")
+    return not failed
+
+
+@functools.cache
+def _packed_query_route_installed() -> bool:
+    """Whether the installed sglang is one whose backend hands a packed query to the kernel through
+    _forward_verify_asm_cprr below: the core's DCP branch packs the query only there."""
+    return sglang_version_matches(sglang_version(), _PACKED_QUERY_VERSIONS)
+
+
+def _dcp_verify_core(attn, q_pe, k_pe, q_nope_out, k_nope, forward_batch):
+    """forward_absorb_rocm_core's aiter DCP branch for a target verify: the query as the fp8
+    kernel reads it (float8_e4m3fn, at the kernel's head count) from one op, where sglang
+    concatenates it in bf16 and the backend casts and pads it, and which
+    _forward_verify_asm_cprr below hands to the kernel as it is; no verify window, which the
+    asm cp round-robin kernel does not read; then sglang's steps as it runs them, the partials
+    going to the all-to-all's pack as the backend returns them (it takes any strides)."""
+    import torch
+    from sglang.srt.layers.dcp import cp_lse_ag_out_rs_mla, dcp_a2a_lse_reduce
+    from sglang.srt.mem_cache.memory_pool import KVWriteLoc
+    from sglang.srt.model_executor.forward_context import get_token_to_kv_pool
+    from sglang.srt.models.deepseek_common.attention_forward_methods import forward_mla, forward_mla_rocm
+    from sglang.srt.models.deepseek_common.attention_forward_methods.forward_mha import (
+        resolve_attn_backend,
+    )
+    from sglang.srt.runtime_context import get_parallel
+
+    tokens, heads = q_nope_out.shape[0], q_nope_out.shape[1]
+    kernel_heads = resolve_attn_backend(forward_batch).forward_metadata.cprr_kernel_heads or heads
+
+    def decline(reason: str) -> None:
+        _once(
+            f"DCP target verify's query: {reason} at q_nope {tuple(q_nope_out.shape)} {q_nope_out.dtype} "
+            f"strides {q_nope_out.stride()}, q_pe {tuple(q_pe.shape)} {q_pe.dtype} strides "
+            f"{q_pe.stride()}, {kernel_heads} kernel heads"
+        )
+
+    operands = {"q_nope": _head_rows(q_nope_out), "q_pe": _head_rows(q_pe), "storage": "strided_rows"}
+    if operands["q_nope"] is None or operands["q_pe"] is None:
+        decline("heads unevenly apart")
+        return FallbackReason.OUT_OF_CONTRACT
+    q = q_nope_out.new_empty(
+        (tokens, kernel_heads, q_nope_out.shape[2] + q_pe.shape[2]), dtype=torch.float8_e4m3fn
+    )
+    q = kimi_k3_mla_verify_q(**operands, q=q)
+    if isinstance(q, FallbackReason):
+        decline(q.value)
+        return q
+    get_token_to_kv_pool().set_mla_kv_buffer(attn.attn_mqa, KVWriteLoc.for_batch(forward_batch), k_nope, k_pe)
+    attn_output, lse = attn.attn_mqa_for_dcp_decode(q, None, None, forward_batch, save_kv_cache=False)
+    attn_output = attn_output.view(-1, attn.num_local_heads * attn.dcp_size, attn.kv_lora_rank)
+    parallel = get_parallel()
+    base_e = forward_mla.is_mla_dcp_lse_base_on_e(attn.current_attention_backend)
+    if parallel.dcp_comm_backend in ("a2a", "fi_a2a"):
+        attn_output = dcp_a2a_lse_reduce(
+            attn_output,
+            lse,
+            parallel.dcp_group,
+            is_lse_base_on_e=base_e,
+            comm_backend=parallel.dcp_comm_backend,
+        )
+    else:
+        attn_output = cp_lse_ag_out_rs_mla(attn_output, lse, parallel.dcp_group, is_lse_base_on_e=base_e)
+        attn_output = attn_output.transpose(0, 1)
+    attn_output = attn_output.view(-1, attn.num_local_heads, attn.kv_lora_rank)
+    output, _ = attn.o_proj(forward_mla_rocm.rocm_absorb_v_bmm(attn, attn_output))
+    return output
+
+
+def _head_rows(t):
+    """t [tokens, heads, dim] as its (tokens * heads, 1, dim) rows, where a token's heads are as far
+    apart as a token's last head is from the next token's first (a dense tensor, or a column slice of
+    one); else None."""
+    tokens, heads, dim = t.shape
+    if t.stride(2) != 1 or t.stride(1) < dim or t.stride(0) != heads * t.stride(1):
+        return None
+    return t.as_strided((tokens * heads, 1, dim), (t.stride(1), dim, 1))
+
+
+# The verify kernel's two scales, a tensor per (device, value): made once outside a graph capture,
+# so that a captured layer fills none
+_SCALES: dict[tuple, object] = {}
+
+
+def _scale(device, value: float):
+    import torch
+
+    key = (device, float(value))
+    scale = _SCALES.get(key)
+    if scale is None:
+        scale = torch.full((), float(value), dtype=torch.float32, device=device)
+        if not torch.cuda.is_current_stream_capturing():
+            if scale.is_cuda:
+                # filled before it is kept: every stream (a graph capture's too) reads the cached tensor
+                torch.cuda.current_stream(scale.device).synchronize()
+            _SCALES[key] = scale
+    return scale
+
+
+@sglang_route(
+    "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._forward_verify_asm_cprr",
+    versions=_PACKED_QUERY_VERSIONS,
+)
+def _forward_verify_asm_cprr(self, q, layer, k_descale, n_rows):
+    """The backend's DCP target verify on the asm cp round-robin kernel, for the query
+    _dcp_verify_core packed: float8_e4m3fn at the kernel's head count, so it goes to aiter's
+    kernel without the backend's cast and pad_heads, and the two scales are tensors made once.
+    Any other query is the backend's."""
+    import torch
+    from sglang.srt.layers.attention import aiter_backend
+    from sglang.srt.runtime_context import get_parallel
+
+    fm = self.forward_metadata
+    heads = layer.tp_q_head_num
+    kernel_heads = fm.cprr_kernel_heads or heads
+    if q.dtype != torch.float8_e4m3fn or tuple(q.shape) != (n_rows, kernel_heads, layer.qk_head_dim):
+        return FallbackReason.OUT_OF_CONTRACT
+    out = q.new_empty((n_rows, kernel_heads, layer.v_head_dim), dtype=self.input_dtype)
+    _, lse = aiter_backend.mla_decode_fwd(
+        q,
+        self.token_to_kv_pool.get_key_buffer(layer.layer_id).view(-1, 1, 1, layer.qk_head_dim),
+        out,
+        fm.qo_indptr,
+        fm.cprr_kv_indptr,
+        fm.cprr_kv_indices,
+        fm.kv_last_page_len,
+        fm.max_q_len,
+        sm_scale=layer.scaling,
+        work_meta_data=fm.work_metadata,
+        work_indptr=fm.work_indptr,
+        work_info_set=fm.work_info_set,
+        reduce_indptr=fm.reduce_indptr,
+        reduce_final_map=fm.reduce_final_map,
+        reduce_partial_map=fm.reduce_partial_map,
+        q_scale=_scale(q.device, 1.0),
+        kv_scale=_scale(q.device, self._resolve_fp8_kv_scale_float(layer, k_descale)),
+        intra_batch_mode=self.cprr_intra_batch_mode,
+        num_kv_splits=self._kernel_num_kv_splits(),
+        return_lse=True,
+        g_kv_indptr=fm.global_kv_indptr,
+        cp_world_size=self.dcp_world_size,
+        cp_rank=get_parallel().attn_dcp_rank,
+        causal=True,
+    )
+    lse = lse.view(n_rows, kernel_heads)
+    if kernel_heads != heads:
+        out, lse = out[:, :heads, :], lse[:, :heads]
+    return out, lse
 
 
 def _absorb_core_falls_back(attn, forward_batch, llama_4_scaling, q_nope_unabsorbed) -> bool:

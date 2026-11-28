@@ -129,6 +129,14 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="shuffled_16x16",
     ),
+    # the MLA decode query's heads tiled: 12 heads of 32 bytes to 16
+    PointSpec(
+        contract_id="mla_query_heads@1.0",
+        axes={"n_tokens": 3, "n_heads": 12, "head_dim": 32},
+        dtypes={"q": "float8_e4m3fn", "out": "float8_e4m3fn"},
+        attrs={"out_heads": 16},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset({"muse_spark_moe@1.0"})

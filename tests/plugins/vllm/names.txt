@@ -146,5 +146,10 @@ kimi_k3_latent_moe_tail_hidden_size#_latent_size#
 kimi_k3_latent_moe_tail_tp1_hidden_size#_latent_size#
 kimi_k3_latent_moe_tail_tp2_hidden_size#_latent_size#
 kimi_k3_latent_moe_tail_tp4_hidden_size#_latent_size#
+mla_query_heads_n_heads#_head_dim#
+mla_query_heads_o16_n_heads#_head_dim#
+mla_query_heads_o32_n_heads#_head_dim#
+mla_query_heads_o64_n_heads#_head_dim#
+mla_query_heads_o256_n_heads#_head_dim#
 muse_spark_moe_model_dim#_topk#_n_experts#_inter_dim#_global_experts#
 muse_spark_moe_shuffled_16x16_model_dim#_topk#_n_experts#_inter_dim#_global_experts#

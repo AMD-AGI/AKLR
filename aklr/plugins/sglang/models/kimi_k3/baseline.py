@@ -28,6 +28,7 @@ __all__ = [
     "KimiK3LatentMoeBaseline",
     "KimiK3MlaPrefillGateBaseline",
     "KimiK3MlaVcOutputGateBaseline",
+    "KimiK3MlaVerifyQBaseline",
 ]
 
 
@@ -204,3 +205,17 @@ class KimiK3MlaPrefillGateBaseline(OpBaseline):
         if mla_output_gate.covered(x, gate):
             return {"output": mla_output_gate.kimi_k3_mla_output_gate(x, gate)}
         return {"output": x * torch.sigmoid(gate)}
+
+
+class KimiK3MlaVerifyQBaseline(OpBaseline):
+    def baseline(self, *, q_nope, q_pe, q, storage="row_major"):
+        """sglang's steps on its [tokens, heads, .] operands: forward_absorb_rocm_core's cat, then
+        the aiter backend's cast and, where the kernel's head count is larger, its pad_heads
+        (the heads tiled, cut at the count, made dense)."""
+        tokens, kernel_heads = q.shape[0], q.shape[1]
+        heads = q_nope.shape[0] // tokens
+        nope, pe = (t.unflatten(0, (tokens, heads)).squeeze(2) for t in (q_nope, q_pe))
+        result = torch.cat([nope, pe], dim=-1).to(torch.float8_e4m3fn)
+        if kernel_heads != heads:
+            result = result.repeat(1, -(-kernel_heads // heads), 1)[:, :kernel_heads, :].contiguous()
+        return {"q": result}
