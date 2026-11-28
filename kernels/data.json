@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "commit": "93264bda4550ff9da2161b6105d7f57ce32b5427",
- "generated_at": "2026-11-28T06:05:26Z",
+ "generated_at": "2026-11-28T09:00:18Z",
  "contracts": [
   {
    "contract_id": "add_attn_res@1.0",
