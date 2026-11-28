@@ -7,18 +7,22 @@ rounded once to bf16 as the block's gate returns them, which pick the experts, a
 the checkpoint's FP8 scheme quantizes: each expert linear's input (_fp8_input). The MXFP4
 experts' activations stay unquantized: kernels round a block's scale from its maximum in
 different ways (to nearest or up) and sglang's own small-M kernel keeps them bf16, so that
-error is left to the bound."""
+error is left to the bound. With the shared expert fused in, the experts' activations are
+MXFP4 as aiter's per_1x32 fused_moe takes them (fused_moe@1.0's reference)."""
+
+import functools
 
 import torch
 
 from aklr.core.contract.reference import OpReference
-from aklr.core.contract.semantics import rounded_to_bfloat16
-from aklr.plugins.aiter.provider.fused_moe.reference import mxfp4_weight
+from aklr.core.contract.semantics import rounded_to_bfloat16, to_float32
+from aklr.plugins.aiter.provider.fused_moe.reference import _mxfp4, mxfp4_weight
 
 __all__ = [
     "Qwen2MoeFp8ExpertsReference",
     "Qwen2MoeFp8RouterExpertsReference",
     "Qwen2MoeMxfp4MoeReference",
+    "Qwen2MoeMxfp4RouterExpertsReference",
     "Qwen2MoeRouterReference",
 ]
 
@@ -186,4 +190,32 @@ class Qwen2MoeMxfp4MoeReference(OpReference):
             out.index_add_(0, tokens, weights[tokens, slots, None] * routed)
         shared_weight = (x @ shared_gate_weight.float()[0]).sigmoid()
         out = out + shared_weight[:, None] * _silu_mlp(x, shared_w1.float(), shared_w2.float())
+        return {"out": out.to(hidden_states.dtype)}
+
+
+class Qwen2MoeMxfp4RouterExpertsReference(OpReference):
+    def reference(
+        self, *, hidden_states, router_weight, shared_gate_weight, w1, w1_scale, w2, w2_scale, topk, **_
+    ):
+        """The router's experts (_logits, _routed) and the shared one in the slot after them
+        weighed by sigmoid(hidden_states shared_gate_weight^T), each on its MXFP4 weights
+        dequantized per 32 values, both linears' inputs quantized to MXFP4 per 1 x 32 as
+        fused_moe@1.0's reference does (silu(gate) * up rounded to bf16 first). Rounding points:
+        the router's logits, the experts' inputs."""
+        x = hidden_states.float()
+        # e2m1's 8 magnitudes, ascending: byte i holds code i in its low nibble
+        codes = torch.arange(16, dtype=torch.uint8, device=x.device)
+        quantize = functools.partial(_mxfp4, grid=to_float32(codes, "float4_e2m1")[0::2][:8].contiguous())
+        weights, ids = _routed(_logits(hidden_states, router_weight), topk)
+        shared_weight = (x @ shared_gate_weight.float()[0]).sigmoid()
+        ids = torch.cat([ids, torch.full_like(ids[:, :1], router_weight.shape[0])], dim=-1)
+        weights = torch.cat([weights, shared_weight[:, None]], dim=-1)
+        x_mxfp4 = quantize(x)
+        out = torch.zeros_like(x)
+        for e in ids.unique().tolist():
+            tokens, slots = (ids == e).nonzero(as_tuple=True)
+            gate, up = (x_mxfp4[tokens] @ mxfp4_weight(w1[e], w1_scale[e]).T).chunk(2, dim=-1)
+            gated = (torch.nn.functional.silu(gate) * up).to(hidden_states.dtype).float()
+            expert = quantize(gated) @ mxfp4_weight(w2[e], w2_scale[e]).T
+            out.index_add_(0, tokens, weights[tokens, slots, None] * expert)
         return {"out": out.to(hidden_states.dtype)}
