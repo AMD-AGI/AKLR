@@ -76,6 +76,9 @@ class TensorSpec(FrozenModel):
     # inputs only: the kernel may write it in place (a KV cache), and it is compared as an
     # output after the call
     mutable: bool = False
+    # inputs of a ranks contract only: every rank of the group passes the same values (a
+    # tensor-parallel layer's replicated weights and activations), drawn once for the group
+    shared: bool = False
 
     @model_validator(mode="after")
     def _check(self) -> TensorSpec:

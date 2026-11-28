@@ -302,6 +302,10 @@ class OpContract(FrozenModel):
 
     @model_validator(mode="after")
     def _check_ranks(self) -> OpContract:
+        if any(s.shared for s in self.outputs.values()):
+            raise ValueError("shared: an output is each rank's own")
+        if self.ranks is None and any(isinstance(s, TensorSpec) and s.shared for s in self.inputs.values()):
+            raise ValueError("shared: only the inputs of a ranks contract are shared")
         is_group = self.ranks is not None
         if (
             isinstance(self.reference, DistOpReference) != is_group

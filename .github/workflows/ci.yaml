@@ -101,6 +101,7 @@ jobs:
       vllm_image: ${{ steps.stack.outputs.vllm_image }}
       aiter_image: ${{ steps.stack.outputs.aiter_image }}
       aiter: ${{ steps.stack.outputs.aiter }}
+      sgl_amd_mono: ${{ steps.stack.outputs.sgl_amd_mono }}
     steps:
       - name: Report whether GPU jobs run
         run: |
@@ -125,11 +126,13 @@ jobs:
           vllm_image=$(jq -er ".vllm_image | $image" stack.json)
           aiter_image=$(jq -er ".aiter_image | $image" stack.json)
           aiter=$(jq -er '.aiter | select(test("^[0-9a-f]{40}$"))' stack.json)
+          sgl_amd_mono=$(jq -er '.sgl_amd_mono | select(test("^[0-9a-f]{40}$"))' stack.json)
           {
             echo "sglang_image=$sglang_image"
             echo "vllm_image=$vllm_image"
             echo "aiter_image=$aiter_image"
             echo "aiter=$aiter"
+            echo "sgl_amd_mono=$sgl_amd_mono"
           } >> "$GITHUB_OUTPUT"
           echo "🧱 Stack: aiter-test $aiter_image, ROCm/aiter@$aiter; sglang-test $sglang_image; vllm-test $vllm_image" | tee -a "$GITHUB_STEP_SUMMARY"
       - &setup_python
@@ -232,7 +235,7 @@ jobs:
         name: Run unit tests (${{ env.TESTS }}) and validation on a GPU node
         shell: bash .github/scripts/gpu_job.sh {0}
         env:
-          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER PLUGINS AKLR_REFERENCE_CONTRACTS
+          PASS_ENV: GITHUB_JOB TESTS VALIDATE BASE MEASURED_BY_BOT AKLR_BASELINE_AITER AKLR_BASELINE_SGL_AMD_MONO PLUGINS AKLR_REFERENCE_CONTRACTS
           VALIDATE: ${{ needs.code-lint.outputs.has_bench_paths }}
           BASE: ${{ needs.code-lint.outputs.validation_base }}
           MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
@@ -281,6 +284,10 @@ jobs:
           else
             echo '::group::Install AKLR'
             python3 -m pip install -e .
+          fi
+          if [[ -n ${AKLR_BASELINE_SGL_AMD_MONO:-} ]]; then
+            # The commit sgl-amd-mono's ops are timed against, over the image's own copy
+            python3 -m pip install --no-deps "sgl-amd-mono @ git+https://github.com/sgl-project/sgl-amd-mono.git@$AKLR_BASELINE_SGL_AMD_MONO"
           fi
           echo '::endgroup::'
 
@@ -376,6 +383,7 @@ jobs:
       IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
       TESTS: tests/plugins/aiter/provider tests/plugins/sglang
       PLUGINS: --under aklr/plugins/sglang
+      AKLR_BASELINE_SGL_AMD_MONO: ${{ needs.code-lint.outputs.sgl_amd_mono }}
     steps:
       - *checkout_source
       - *gpu_tests

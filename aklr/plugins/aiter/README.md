@@ -112,7 +112,8 @@ aklr/plugins/aiter/
 
 - A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
   at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its
-  own inputs. Its reference is a `DistOpReference`, whose `reference(calls, rank)` takes every rank's call in rank
+  own inputs, but an input declared `shared` (a tensor-parallel layer's replicated weights and activations), which
+  every rank draws alike. Its reference is a `DistOpReference`, whose `reference(calls, rank)` takes every rank's call in rank
   order, each on its rank's device (`cuda:<rank>`), and returns rank `rank`'s outputs. Its baseline is a
   `DistOpBaseline`, whose `profile` starts every rank's call together; its `setup()` runs once each rank's process
   is in the group.
@@ -191,7 +192,8 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
   required input such as a KV cache) lets the kernel write it in place; it is not required to, and the input shares
   no byte with another input. The outputs and the mutable inputs are the op's mutable tensors
   (`OpContract.mutable_tensors`): each is checked against the reference after a call, under its `error_bounds`;
-  every other input must be left unchanged.
+  every other input must be left unchanged. `shared` (only when `true`, on an input of a `ranks` contract) says every
+  rank of the group passes the same values.
 - `storage_shape` is the shape of the bytes the kernel receives: const axes are ints, var axes stay names or
   expressions such as `ceil_div(m, 256) * 256`. A 4-bit dtype packs two values into one stored element along the
   last dimension. For integers, call `storage_shape_of(tensor, point)` on the op's contract; from the json alone,

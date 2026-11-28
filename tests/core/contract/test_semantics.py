@@ -225,3 +225,26 @@ class TestScaleLayouts:
         padding = ones == twos
         assert padding.sum().item() == math.prod(layout.storage_shape(shape)) - math.prod(shape)
         assert (ones[padding] == pad).all()
+
+
+def test_ranks_draw_shared_inputs_alike() -> None:
+    """``row_major_inputs`` of another rank: its shared inputs are rank 0's, the rest its own."""
+    case = OpCase.of("muse_spark_layer@1.0")
+    request = case.request
+
+    def draw(rank: int) -> dict:
+        return semantics.row_major_inputs(
+            request.schema_json,
+            request.workload_json,
+            request.distributions,
+            input_set="numeric/0",
+            device="cpu",
+            rank=rank,
+        )
+
+    first, second = draw(0), draw(1)
+    for name, declaration in request.schema_json["inputs"].items():
+        if not torch.is_tensor(first.get(name)):
+            continue
+        same = torch.equal(first[name].view(torch.uint8), second[name].view(torch.uint8))
+        assert same == bool(declaration.get("shared")), name
