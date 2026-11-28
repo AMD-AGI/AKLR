@@ -119,7 +119,7 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
             "topk_indices": "int32",
             "output": "bfloat16",
         },
-        attrs={},
+        attrs={"native": "triton"},
         layout_variant_name="row_major",
     ),
     # the same shrunk, a new sequence longer than the top-k
@@ -138,7 +138,7 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
             "topk_indices": "int32",
             "output": "bfloat16",
         },
-        attrs={},
+        attrs={"native": "triton"},
         layout_variant_name="row_major",
     ),
     # GLM-5's sparse MLA at TP8 (8 heads) with a short top-k, against tilelang and triton
