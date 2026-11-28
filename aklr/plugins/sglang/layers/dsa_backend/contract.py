@@ -23,6 +23,7 @@ from aklr.core.contract.spec import (
     LayoutVariantsSpec,
     ScalarSpec,
     TensorSpec,
+    attr,
     axis,
     derived_axis,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "DSA_SPARSE_MLA_DECODE",
     "DSA_SPARSE_MLA_PREFILL",
     "DSA_TOPK_TRANSFORM",
+    "NATIVES",
 ]
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -54,6 +56,19 @@ _POOL_BYTES = 2**31 - 2
 _CONTEXT_LIMIT = 2**20 + 4096
 # GLM-5's softmax scale, 1 / sqrt(nope_dim + rope_dim): the default bench's inputs take
 _SM_SCALE = 0.0625
+# The sglang kernel a call replaces, the baseline: the triton DSA backend's (decode:
+# _forward_triton_decode's split-K kernel, prefill: triton_sparse_mla_fwd), or the tilelang DSA
+# backend's tilelang_sparse_fwd (DeepseekSparseAttnBackend._forward_tilelang)
+NATIVES = ("triton", "tilelang")
+_NATIVE = {
+    "native": attr(
+        "The sglang kernel the call replaces, the baseline: the triton DSA backend's or tilelang_sparse_fwd.",
+        *NATIVES,
+        default=NATIVES[0],
+        param_name="native",
+        optional=True,
+    ),
+}
 
 DSA_SPARSE_MLA_DECODE = OpContract(
     contract_id="dsa_sparse_mla_decode@1.0",
@@ -76,6 +91,7 @@ DSA_SPARSE_MLA_DECODE = OpContract(
             f"kv_dim - {ROPE_DIM}",
         ),
     },
+    attrs=_NATIVE,
     constraints=(
         "kv_lora_rank % 128 == 0",
         # distinct top-k entries, -1 among them
@@ -140,6 +156,7 @@ DSA_SPARSE_MLA_PREFILL = OpContract(
     ),
     op_type="dsa_backend",
     axes=DSA_SPARSE_MLA_DECODE.axes,
+    attrs=_NATIVE,
     constraints=DSA_SPARSE_MLA_DECODE.constraints,
     inputs={
         **DSA_SPARSE_MLA_DECODE.inputs,

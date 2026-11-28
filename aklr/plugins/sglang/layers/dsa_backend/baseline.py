@@ -13,11 +13,22 @@ from aklr.plugins.sglang.layers.dsa_backend.reference import ROPE_DIM
 __all__ = ["DsaSparseMlaDecodeBaseline", "DsaSparseMlaPrefillBaseline", "DsaTopkTransformBaseline"]
 
 
+def _tilelang(q, kv_cache, topk_indices, sm_scale):
+    """Native "tilelang": tilelang_sparse_fwd as DeepseekSparseAttnBackend._forward_tilelang calls it."""
+    from aklr.plugins.sglang.layers.sparse_mla.baseline import SparseMlaVerifyBaseline
+
+    return SparseMlaVerifyBaseline().baseline(
+        q=q, kv_cache=kv_cache, topk_indices=topk_indices, sm_scale=sm_scale, native="tilelang"
+    )
+
+
 class DsaSparseMlaDecodeBaseline(OpBaseline):
-    def baseline(self, *, q, kv_cache, topk_indices, sm_scale, output=None):
-        """triton_sparse_mla_decode_splitk as _forward_triton_decode calls it: q as its latent
+    def baseline(self, *, q, kv_cache, topk_indices, sm_scale, native="triton", output=None):
+        """Native "tilelang": _tilelang. Native "triton": triton_sparse_mla_decode_splitk as _forward_triton_decode calls it: q as its latent
         and RoPE views, the pool as [rows, 1, kv_dim], the top-k as [tokens, 1, topk]; its
         split-K workspace grows per stream and is kept (the backend's is too)."""
+        if native == "tilelang":
+            return _tilelang(q, kv_cache, topk_indices, sm_scale)
         from sglang.kernels.ops.attention.dsa.triton_sparse_mla_decode import (
             triton_sparse_mla_decode_splitk,
         )
@@ -36,8 +47,11 @@ class DsaSparseMlaDecodeBaseline(OpBaseline):
 
 
 class DsaSparseMlaPrefillBaseline(OpBaseline):
-    def baseline(self, *, q, kv_cache, topk_indices, sm_scale, output=None):
-        """triton_sparse_mla_fwd as forward_extend calls it (sparse prefill: max_topk_length > 512)."""
+    def baseline(self, *, q, kv_cache, topk_indices, sm_scale, native="triton", output=None):
+        """Native "tilelang": _tilelang. Native "triton": triton_sparse_mla_fwd as forward_extend calls it
+        (sparse prefill: max_topk_length > 512)."""
+        if native == "tilelang":
+            return _tilelang(q, kv_cache, topk_indices, sm_scale)
         from sglang.kernels.ops.attention.dsa.triton_sparse_mla import triton_sparse_mla_fwd
 
         latent = q.shape[-1] - ROPE_DIM

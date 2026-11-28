@@ -11,18 +11,18 @@ from aklr.plugins.sglang.layers.dsa_backend.contract import (
     DSA_TOPK_TRANSFORM,
 )
 
-__all__ = ["dsa_sparse_mla_decode", "dsa_sparse_mla_prefill", "dsa_topk_transform"]
+__all__ = ["dcp_size", "dsa_sparse_mla_decode", "dsa_sparse_mla_prefill", "dsa_topk_transform"]
 
 # sglang's short-sequence path in triton_sparse_mla_fwd
 _SGLANG_SHORT_TOPK = 512
 
 
 @api(DSA_SPARSE_MLA_DECODE)
-def dsa_sparse_mla_decode(q, kv_cache, topk_indices, sm_scale): ...
+def dsa_sparse_mla_decode(q, kv_cache, topk_indices, sm_scale, native="triton"): ...
 
 
 @api(DSA_SPARSE_MLA_PREFILL)
-def dsa_sparse_mla_prefill(q, kv_cache, topk_indices, sm_scale): ...
+def dsa_sparse_mla_prefill(q, kv_cache, topk_indices, sm_scale, native="triton"): ...
 
 
 @api(DSA_TOPK_TRANSFORM)
@@ -41,7 +41,7 @@ def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_tabl
     q = _whole_query(q_nope, q_rope)
     # speculative decoding's draft steps are decodes too, a query per sequence over its own
     # top-k; a decode context parallel rank holds every dcp_size-th slot under global indices
-    if q is None or self.dcp_size > 1:
+    if q is None or dcp_size(self) > 1:
         return FallbackReason.OUT_OF_CONTRACT
     return dsa_sparse_mla_decode(
         q=q,
@@ -103,6 +103,16 @@ def _triton_sparse_mla_fwd(
     from aklr.plugins.sglang.layers.sparse_mla.api import triton_sparse_mla_verify
 
     return triton_sparse_mla_verify(q, kv, indices, sm_scale, max_topk_length)
+
+
+def dcp_size(backend):
+    """The DSA backend's decode context parallel ranks: its dcp_size, or attn_dcp_size, as sglang
+    0.5.23.dev20261120 names it; 1 for a backend with neither."""
+    for name in ("dcp_size", "attn_dcp_size"):
+        size = getattr(backend, name, None)
+        if size is not None:
+            return size
+    return 1
 
 
 def _is_new_sequences(tokens):
