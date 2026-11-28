@@ -14,9 +14,11 @@ from tests.plugins.sglang.cases import SMALL_POINTS
 
 
 @pytest.mark.gfx950
-@pytest.mark.parametrize("rows", [1, 2, 4, 8])
+@pytest.mark.parametrize(
+    ("rows", "bias_dtype"),
+    [(row, "bfloat16") for row in (1, 2, 4, 8)] + [(row, "float32") for row in (1, 2, 4, 8, *range(9, 17))],
+)
 @pytest.mark.parametrize("inter_dim", [256, 512], ids=["tp8", "tp4"])
-@pytest.mark.parametrize("bias_dtype", ["bfloat16", "float32"])
 def test_glm_fp8_decode_rows_match_reference(rows, inter_dim, bias_dtype, builder_registry):
     point = next(
         p
@@ -52,3 +54,29 @@ def test_glm_fp8_decode_rows_match_reference(rows, inter_dim, bias_dtype, builde
     torch.cuda.synchronize()
     compared = case.compare({"out": call["out"]}, arguments)
     assert compared == {}, compared
+
+
+@pytest.mark.parametrize("rows", range(9, 17))
+@pytest.mark.parametrize("inter_dim", [256, 512], ids=["tp8", "tp4"])
+def test_glm_fp8_decode_range_has_executable_fp32_workload(rows, inter_dim):
+    """Partly filled decode batches retain native FP32 routing and kernel coverage."""
+    point = next(
+        p
+        for p in SMALL_POINTS
+        if p.contract_id == "deepseek_v2_fp8_moe@1.0" and p.attrs["num_expert_group"] == 1
+    )
+    point = point.model_copy(
+        update={
+            "axes": point.axes
+            | {"n_tokens": rows, "model_dim": 6144, "n_routed": 256, "inter_dim": inter_dim},
+            "dtypes": point.dtypes | {"correction_bias": "float32"},
+        }
+    )
+    schemas, errors = ContractRegistry.default().read_schemas("aklr.plugins.sglang.models.deepseek_v2")
+    assert errors == []
+    assert any(
+        schema.name == DEEPSEEK_V2_FP8_MOE.name_at(point)
+        and schema.kernel.sources
+        and any(workload.axes["n_tokens"] == rows for workload in schema.workloads)
+        for _, schema in schemas
+    ), "GLM FP32 decode batch has no executable workload"
