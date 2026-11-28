@@ -18,7 +18,7 @@ from packaging.version import Version
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.core.runtime.dispatch._trace import trace
 
-__all__ = ["install", "sglang_route", "sglang_version", "sglang_version_matches"]
+__all__ = ["install", "install_warm_up", "sglang_route", "sglang_version", "sglang_version_matches"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +90,17 @@ def install() -> None:
         f"; not {', '.join(untested)}, outside their version policy" if untested else "",
         f"; not {', '.join(absent)}" if absent else "",
     )
+
+
+def install_warm_up() -> None:
+    """After a runner's graphs are captured, build the GEMM kernels a prefill reaches (``warmup``), on the sglang
+    releases that was tested on."""
+    from sglang.srt.plugins.hook_registry import HookRegistry, HookType
+
+    from aklr.plugins.sglang import warmup
+
+    if sglang_version() in warmup.VERSIONS:
+        HookRegistry.register(warmup.TARGET, warmup.after_graphs, HookType.AFTER)
 
 
 def _around(route: Callable, target: str) -> Callable:

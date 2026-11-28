@@ -129,6 +129,72 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="shuffled_16x16",
     ),
+    # Kimi-K3's KDA speculative decode shrunk to two heads: two sequences of three tokens (the one after the accepted
+    # token, two drafts)
+    PointSpec(
+        contract_id="kimi_k3_kda_decode_spec@1.0",
+        axes={"n_seqs": 2, "n_tokens": 6, "n_slots": 9, "n_heads": 2, "head_dim": 128},
+        dtypes={
+            "qkv": "bfloat16",
+            "raw_g": "bfloat16",
+            "raw_beta": "bfloat16",
+            "a_log": "float32",
+            "g_bias": "float32",
+            "state_cache": "float32",
+            "state_indices": "int32",
+            "num_accepted_tokens": "int32",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="strided_rows",
+    ),
+    # Kimi-K3's KDA prefill shrunk to two heads: two sequences in vLLM's paged state cache
+    PointSpec(
+        contract_id="kimi_k3_kda_prefill@1.0",
+        axes={"n_tokens": 70, "n_seqs": 2, "n_offsets": 3, "n_slots": 3, "n_heads": 2, "head_dim": 128},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "raw_g": "bfloat16",
+            "raw_beta": "bfloat16",
+            "a_log": "float32",
+            "g_bias": "float32",
+            "state_cache": "float32",
+            "state_indices": "int32",
+            "has_initial_state": "bool",
+            "cu_seqlens": "int32",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="strided_rows",
+    ),
+    # and with a snapshot mid-prefill, as vLLM takes under prefix caching: one sequence, so that the drawn point (0,
+    # or 64 tokens in) is one vLLM asks for
+    PointSpec(
+        contract_id="kimi_k3_kda_prefill_checkpoint@1.0",
+        axes={"n_tokens": 70, "n_seqs": 1, "n_offsets": 2, "n_slots": 3, "n_heads": 2, "head_dim": 128},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "raw_g": "bfloat16",
+            "raw_beta": "bfloat16",
+            "a_log": "float32",
+            "g_bias": "float32",
+            "state_cache": "float32",
+            "state_indices": "int32",
+            "has_initial_state": "bool",
+            "cu_seqlens": "int32",
+            "checkpoint_chunks": "int32",
+            "checkpoint_state": "float32",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="strided_rows",
+    ),
 )
 # whose baseline runs only on gfx950
-GFX950_CONTRACT_IDS = frozenset({"muse_spark_moe@1.0"})
+GFX950_CONTRACT_IDS = frozenset(
+    {"muse_spark_moe@1.0", "kimi_k3_kda_prefill@1.0", "kimi_k3_kda_prefill_checkpoint@1.0"}
+)

@@ -16,6 +16,8 @@ from aklr.plugins.vllm.models.muse_spark import api as muse_spark
 A, B, BIAS = torch.zeros(16, 8), torch.zeros(4, 8), torch.zeros(4)
 ROUTES = {
     "wv_split_krc": (utils, lambda: utils._wv_split_krc(A, B, 80, BIAS)),
+    # vLLM's wvSplitK takes the weight first: aiter's GEMM takes the rows first
+    "wv_split_k": (utils, lambda: utils._wv_split_k(B, A, 80, BIAS)),
     "muse_spark_linear": (
         muse_spark,
         lambda: muse_spark._torch_linear(None, SimpleNamespace(weight=B), A, BIAS),
