@@ -57,7 +57,7 @@ from aklr.core.validation.stages._report._markdown import one_line
 from aklr.core.validation.stages.stage import StageStatus
 
 # a committed gfx950/MI355X schema, rewritten under tmp_path with a stored speedup
-_SCHEMA = "aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n512_k4096/b88f9602c806937b.json"
+_SCHEMA = "aklr/plugins/aiter/provider/gemm/impls/flydsl/gemm_n1536_k7168/17eecb89414d56ed.json"
 _TRITON_SCHEMA = "aklr/plugins/aiter/provider/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/4a159c69e56742a3.json"
 _PLATFORM = dict.fromkeys(PlatformRecord.model_fields, "unknown") | {
     "arch": "gfx950",
