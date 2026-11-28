@@ -12,25 +12,29 @@ from aklr.plugins.sglang.models.deepseek_v4_hc_boundary.contract import (
 
 __all__ = ["deepseek_v4_hc_boundary", "deepseek_v4_hc_boundary_post"]
 
-# Columns of every copy one program owns. sglang slices 64 (_HC_BOUNDARY_BLOCK_K) and reads the count
-# back from part_sq.shape[0], so the slicing is AKLR's to choose: at decode rows 80 programs of 2 warps
-# leave the machine idle (the 2 MiB projection read at 303 GB/s, 4% of the device), and a narrower slice
-# fills it: 16 columns, 320 programs, is 1.3-1.6x on MI355X. The op's schemas carry the count as n_slices.
-NARROW_SLICE_WIDTH, WIDE_SLICE_WIDTH, NARROW_MAX_ROWS = 16, 64, 48
+# Columns of every copy one program owns, by row count. sglang slices 64 and reads the count back
+# from part_sq.shape[0], so the slicing is AKLR's to choose -- but the norm launch that follows
+# reduces every slice, so what has to be minimised is the pair, not the boundary. Measured on MI355X
+# (work_tp4/pair_{nopost,post}.log, the pair against sglang's own pair):
+#
+#   rows            6      12      48     192     384
+#   32 columns   1.14x   1.14x   1.04x   0.96x   1.02x
+#   64 columns   1.08x   1.09x   1.09x   1.12x   1.04x
+#   128 columns  0.89x   0.89x   0.90x   1.01x   1.15x
+#
+# (with a pending post; without one the same widths win, at 1.07x / 1.07x / 1.00x.) Tuning the
+# boundary alone picks 16 columns everywhere and loses the step: it is 1.3-1.6x on its own and up to
+# 0.89x on the pair.
+# 128 columns only with a pending post: without one the boundary has too little work to fill that
+# few programs (0.67-0.93x on its own past 256 rows), and a width the op then declines would leave
+# sglang's own kernel running on it.
+_SLICE_WIDTHS = ((24, 32), (256, 64), (1 << 30, 128))
 
 
 def slice_width(n_rows: int, has_post: bool) -> int:
-    """16 columns (320 programs for DeepSeek-V4.1) for a pending post up to NARROW_MAX_ROWS rows,
-    sglang's 64 otherwise.
-
-    The count is AKLR's to choose -- sglang reads it back from part_sq.shape[0] -- but the norm that
-    reduces the partials walks every slice, so a narrower one only pays where the boundary itself has
-    enough work. With a pending post it is 1.52x at 6 rows, 1.46x at 12 and 1.36x at 24 (aklr validate,
-    cold graph replay, MI355X), and end to end at TP4 concurrency 32 the op carries +2.7% of
-    throughput. Without a post -- only TP4 at the rows its fused all-reduce covers, so concurrency 1 --
-    the boundary is 1.15x alone but the step loses 1.2%, so sglang's width stays. Past
-    NARROW_MAX_ROWS the rows already fill the machine (0.89x at 192)."""
-    return NARROW_SLICE_WIDTH if has_post and n_rows <= NARROW_MAX_ROWS else WIDE_SLICE_WIDTH
+    """The hidden columns one program owns at this row count."""
+    width = next(width for limit, width in _SLICE_WIDTHS if n_rows <= limit)
+    return width if has_post else min(width, 64)
 
 
 @api(DEEPSEEK_V4_HC_BOUNDARY)
@@ -48,8 +52,8 @@ def _hc_boundary_partials(
     x, residual, post_in, comb_in, pre_prev, hc_fn, residual_out, y, *, hc_mult, prefill=None
 ):
     """DeepSeek-V4's mHC boundary below sglang's prefill rows, with the previous pre's collapse, as one op call into
-    sglang's residual_out and y; the partials keep sglang's 64-column slices, so the norm launch that reduces them
-    is sglang's own. The gfx950 prefill kernel's rows and the boundary without a collapse stay on sglang."""
+    sglang's residual_out and y; the partials are sliced by ``slice_width``, which the norm launch that
+    reduces them reads back from their shape. The gfx950 prefill kernel's rows and the boundary without a collapse stay on sglang."""
     import torch
     from sglang.kernels.ops.layernorm import mhc_boundary_hip as hip
 
