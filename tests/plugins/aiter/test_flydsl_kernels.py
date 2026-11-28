@@ -4,10 +4,10 @@
 
 import pytest
 import torch
+from aklr.plugins.aiter.mla.reference import Fp8PagedMqaLogitsReference
 
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.runtime.builder import BuilderRegistry
-from aklr.plugins.aiter.mla.reference import Fp8PagedMqaLogitsReference
 
 _MQA_SCHEMA = "fp8_paged_mqa_logits_page_size64_n_heads32"
 
