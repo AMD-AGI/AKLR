@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import functools
 import importlib
+import logging
 
 import torch
 
@@ -13,9 +14,21 @@ from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.layers.kda_triton.contract import (
     KIMI_K3_SGL_KDA_PREFILL,
     KIMI_K3_SGL_KDA_PREFILL_TRACK,
+    KIMI_K3_SGL_KDA_VERIFY,
 )
 
-__all__ = ["kimi_k3_sgl_kda_prefill", "kimi_k3_sgl_kda_prefill_track"]
+__all__ = ["kimi_k3_sgl_kda_prefill", "kimi_k3_sgl_kda_prefill_track", "kimi_k3_sgl_kda_verify"]
+
+_LOGGER = logging.getLogger(__name__)
+_SEEN: set[str] = set()
+
+
+def _once(reason: str) -> None:
+    """Log each distinct reason the verify route hands a call back to sglang, once per process."""
+    if reason not in _SEEN:
+        _SEEN.add(reason)
+        _LOGGER.warning("aklr kda verify route falls back: %s", reason)
+
 
 _TRITON_KDA = "sglang.srt.layers.attention.linear.kernels.kda_triton.TritonKDAKernel"
 
@@ -208,3 +221,139 @@ def _extend(
         return result
     out = result.unsqueeze(0)
     return (out, None) if return_intermediate_states else out
+
+
+@api(KIMI_K3_SGL_KDA_VERIFY)
+def kimi_k3_sgl_kda_verify(
+    mixed_qkv,
+    conv_weight,
+    conv_state,
+    cache_indices,
+    conv_window,
+    window_indices,
+    a,
+    b,
+    a_log,
+    dt_bias,
+    ssm_state,
+    ring_v,
+    ring_k,
+    ring_g,
+    ring_beta,
+    storage="row_major",
+    scale=128**-0.5,
+    lower_bound=None,
+    softplus_beta=None,
+    softplus_threshold=None,
+    output=None,
+): ...
+
+
+@sglang_route(
+    "sglang.srt.layers.attention.linear.kda_backend.KDAAttnBackend._forward_target_verify",
+    versions=("0.5.23",),
+)
+def _forward_target_verify(self, layer, forward_batch, mixed_qkv, a, b):
+    """sglang 0.5.23's chain verify under --enable-linear-replayssm-spec: on gfx950 its fused
+    kernel takes no ring, so the convolution and the gated delta rule run as separate kernels
+    (the Triton verify kernel's, also where the nv_cutedsl backend falls to it off CUDA); the op
+    takes the same pools as they are stored and the projections where they are. Trees, ragged
+    windows, the per-step snapshot mode, a convolution bias, the other verify kernels and
+    projections laid out otherwise stay on sglang."""
+    from sglang.srt.layers.attention.linear import kda_backend, utils
+
+    fm = self.forward_metadata
+    dispatcher = self.kernel_dispatcher
+    cache = self.req_to_token_pool.mamba2_layer_cache(layer.layer_id)
+    spec = forward_batch.spec_info
+    steps, seq_len = spec.draft_token_num, mixed_qkv.shape[0]
+    heads, dim = layer.num_v_heads, layer.head_k_dim
+    checks = (
+        ("no ReplaySSM ring", getattr(cache, "replayssm_rawv", None) is None),
+        ("per-step state snapshots", getattr(cache, "intermediate_ssm", None) is not None),
+        ("ragged verify layout", spec.ragged_verify_layout is not None),
+        (
+            "tree verify",
+            fm.retrieve_next_token is not None
+            or fm.retrieve_next_sibling is not None
+            or fm.retrieve_parent_token is not None,
+        ),
+        ("convolution bias", layer.bias is not None),
+        ("fused accept state", getattr(self, "accept_lens_pool", None) is not None),
+        # the unfused chain is the Triton kernel's, which the nv_cutedsl backend also falls to off CUDA
+        (
+            "verify kernel",
+            type(dispatcher.verify_kernel).__name__ != "TritonKDAKernel"
+            or (dispatcher.verify_backend.is_nv_cutedsl() and kda_backend.is_cuda()),
+        ),
+        (f"{seq_len} tokens in chains of {steps}", seq_len % steps != 0),
+        ("head counts", (layer.num_q_heads, layer.num_k_heads) != (heads, heads)),
+        ("head sizes", (layer.head_q_dim, layer.head_v_dim) != (dim, dim)),
+        (
+            f"convolution input of {tuple(mixed_qkv.shape)}",
+            mixed_qkv.dim() != 2 or mixed_qkv.shape[1] != 3 * heads * dim,
+        ),
+        ("convolution channels not dense", mixed_qkv.stride(-1) != 1),
+        (f"gate of {tuple(a.shape)}", a.numel() != seq_len * heads * dim),
+        ("gate not dense", not a.is_contiguous()),
+        ("beta's heads not dense", b.stride(-1) != 1),
+        (f"beta of {tuple(b.shape)}", b.numel() != seq_len * heads),
+        ("A_log", layer.A_log.numel() != heads),
+        ("dt_bias", layer.dt_bias.numel() != heads * dim),
+    )
+    failed = [name for name, bad in checks if bad]
+    if failed:
+        _once(", ".join(failed))
+        return FallbackReason.OUT_OF_CONTRACT
+    requests = seq_len // steps
+    slots = fm.mamba_cache_indices
+    # sglang's select_verify_intermediate_state_indices, its mask computed only where it is read
+    lines = self.verify_intermediate_state_indices
+    if utils.pp_spec_stable_rows_enabled():
+        lines = utils.select_verify_intermediate_state_indices(
+            lines,
+            forward_batch.req_pool_indices,
+            slots[: fm.query_start_loc.shape[0] - 1] >= 0,
+            self.req_to_token_pool.size,
+        )
+    arguments = {
+        # sglang's projections where they are: the convolution input and beta rows of its fused projections'
+        # outputs (a dense tensor is such rows too), the gate dense
+        "storage": "strided_rows",
+        "mixed_qkv": mixed_qkv.unflatten(-1, (3 * heads, dim)),
+        "a": a.reshape(seq_len, heads, dim),
+        "b": b.reshape(seq_len, heads).unsqueeze(-1),
+        "conv_weight": layer.conv_weights,
+        "conv_state": cache.conv[0],
+        "cache_indices": slots[:requests],
+        "conv_window": cache.intermediate_conv_window[0],
+        "window_indices": lines[:requests],
+        "a_log": layer.A_log.reshape(heads),
+        "dt_bias": layer.dt_bias.reshape(heads, dim),
+        "ssm_state": cache.temporal,
+        "ring_v": cache.replayssm_rawv,
+        "ring_k": cache.replayssm_rawk,
+        "ring_g": cache.replayssm_g,
+        "ring_beta": cache.replayssm_beta,
+        "scale": dim**-0.5,
+        **(
+            {"lower_bound": layer.lower_bound}
+            if layer.lower_bound is not None
+            else {"softplus_beta": 1.0, "softplus_threshold": 20.0}
+        ),
+    }
+    output = kimi_k3_sgl_kda_verify(**arguments)
+    if isinstance(output, FallbackReason):
+        _once(_with_shapes(output, arguments))
+        return output
+    return output.view(1, seq_len, heads, dim)
+
+
+def _with_shapes(reason, arguments) -> str:
+    """The op's reason with each tensor's shape and dtype, for the log."""
+    tensors = ", ".join(
+        f"{n} {tuple(t.shape)} {str(t.dtype).rpartition('.')[2]}"
+        for n, t in arguments.items()
+        if isinstance(t, torch.Tensor)
+    )
+    return f"{reason.value}: {tensors}"

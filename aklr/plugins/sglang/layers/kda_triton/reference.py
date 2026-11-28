@@ -9,12 +9,14 @@ each a step."""
 import torch
 
 from aklr.core.contract.reference import OpReference
+from aklr.plugins.sglang.layers.kda_backend_hip.reference import KdaChainVerifyRingReference
 
 __all__ = [
     "L2_NORM_EPS",
     "TRACK_CHUNK",
     "KimiK3SglKdaPrefillReference",
     "KimiK3SglKdaPrefillTrackReference",
+    "KimiK3SglKdaVerifyReference",
 ]
 
 # x / sqrt(sum(x**2) + eps): fla's l2norm_fwd, chunk_kda's in-kernel norm
@@ -126,3 +128,12 @@ class KimiK3SglKdaPrefillTrackReference(OpReference):
         out, cache, snapshot = _walk(qkv, raw_g, raw_beta, a_log, g_bias, state_cache, state_indices, cu_seqlens,
                                      scale, lower_bound, track_chunk_idx, track_state)  # fmt: skip
         return {"out": out, "state_cache": cache, "track_state": snapshot}
+
+
+class KimiK3SglKdaVerifyReference(OpReference):
+    def reference(self, *, mixed_qkv, b, **operands):
+        """The chain verify in ring mode from its math (kda_chain_verify_ring's reference), on the projections'
+        rows: the convolution input (n_tokens, 3 heads x dim), beta (n_tokens, heads)."""
+        return KdaChainVerifyRingReference().reference(
+            mixed_qkv=mixed_qkv.flatten(1), b=b.flatten(1), **operands
+        )

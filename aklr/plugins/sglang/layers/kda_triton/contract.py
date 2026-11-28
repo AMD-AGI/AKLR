@@ -38,20 +38,24 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
+from aklr.plugins.sglang.layers.kda_backend_hip.contract import KDA_CHAIN_VERIFY_RING
 from aklr.plugins.sglang.layers.kda_triton.baseline import (
     KimiK3SglKdaPrefillBaseline,
     KimiK3SglKdaPrefillTrackBaseline,
+    KimiK3SglKdaVerifyBaseline,
 )
 from aklr.plugins.sglang.layers.kda_triton.reference import (
     TRACK_CHUNK,
     KimiK3SglKdaPrefillReference,
     KimiK3SglKdaPrefillTrackReference,
+    KimiK3SglKdaVerifyReference,
 )
 
 __all__ = [
     "CONTRACTS",
     "KIMI_K3_SGL_KDA_PREFILL",
     "KIMI_K3_SGL_KDA_PREFILL_TRACK",
+    "KIMI_K3_SGL_KDA_VERIFY",
 ]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
@@ -291,4 +295,79 @@ def _with_track(contract: OpContract) -> OpContract:
 
 KIMI_K3_SGL_KDA_PREFILL_TRACK = _with_track(KIMI_K3_SGL_KDA_PREFILL)
 
-CONTRACTS = (KIMI_K3_SGL_KDA_PREFILL, KIMI_K3_SGL_KDA_PREFILL_TRACK)
+
+def _verify(ring: OpContract) -> OpContract:
+    """sglang 0.5.23's chain verify in ReplaySSM ring mode: kda_chain_verify_ring's computation (the
+    contract of sglang 0.5.24's kda_verify_gfx950) on the operands KDAAttnBackend._forward_target_verify
+    holds, the convolution input and beta as the rows of sglang's wider projections, against what 0.5.23
+    runs for it on gfx950 (the convolution, then the Triton verify kernel)."""
+    axes = {}
+    for name, spec in ring.axes.items():
+        if name == "conv_dim":
+            axes["conv_heads"] = derived_axis(
+                "Convolution heads: every query head, then every key head, then every value head.",
+                "3 * n_heads",
+            )
+        axes[name] = spec
+    inputs = dict(ring.inputs)
+    inputs["mixed_qkv"] = ring.inputs["mixed_qkv"].model_copy(
+        update={
+            "description": (
+                "Each token's convolution input, a head a row of 128 channels: every query head, then every key "
+                "head, then every value head; a request's tokens are consecutive, in chain order. In sglang a "
+                "column slice of its fused in-projection: a token's rows are dense, the tokens apart by more."
+            ),
+            "shape": ("n_tokens", "conv_heads", 128),
+        }
+    )
+    inputs["b"] = ring.inputs["b"].model_copy(
+        update={
+            "description": (
+                "Beta's input; a unit last dim, so that its rows may be apart by more than a row (a column "
+                "slice of sglang's [f_a | b] projection)."
+            ),
+            "shape": ("n_tokens", "n_heads", 1),
+        }
+    )
+    opening = "Kimi-K3's KDA chain verify in ReplaySSM ring mode."
+    # sglang's causal_conv1d_update, the baseline, and the reference sum the taps in FP32, which the ring
+    # contract's words do not say
+    exact = "SiLU of the exact sum of the four inputs ending at it times conv_weight[c], oldest first,"
+    in_fp32 = (
+        "SiLU of the sum of the four inputs ending at it times conv_weight[c], each product and partial "
+        "sum rounded to FP32, oldest first (as sglang's causal_conv1d_update sums them),"
+    )
+    if not ring.description.startswith(opening) or ring.description.count(exact) != 1:
+        raise ValueError("kda_chain_verify_ring's description reads otherwise")
+    description = (
+        opening.removesuffix(".")
+        + ", as sglang 0.5.23's KDA backend runs a target verify of dense chains on its Triton verify "
+        "kernel. Token t's convolution input is mixed_qkv[t]'s heads end to end, its beta input b[t, :, 0]."
+        + ring.description.removeprefix(opening).replace(exact, in_fp32)
+    )
+    fields = {name: getattr(ring, name) for name in type(ring).model_fields}
+    fields.update(
+        contract_id="kimi_k3_sgl_kda_verify@1.0",
+        op_type="kda_triton",
+        description=description,
+        axes=axes,
+        inputs=inputs,
+        layout_variants=LayoutVariantsSpec(
+            by_name={
+                "row_major": LayoutVariant(detect_facts=_storage_facts("row_major")),
+                # sglang's: the convolution input and beta as rows of its fused projections' outputs
+                "strided_rows": LayoutVariant(
+                    layouts={"mixed_qkv": StridedRows(), "b": StridedRows()},
+                    detect_facts=_storage_facts("strided_rows"),
+                ),
+            }
+        ),
+        reference=KimiK3SglKdaVerifyReference(),
+        baseline=KimiK3SglKdaVerifyBaseline(),
+    )
+    return OpContract(**fields)
+
+
+KIMI_K3_SGL_KDA_VERIFY = _verify(KDA_CHAIN_VERIFY_RING)
+
+CONTRACTS = (KIMI_K3_SGL_KDA_PREFILL, KIMI_K3_SGL_KDA_PREFILL_TRACK, KIMI_K3_SGL_KDA_VERIFY)
