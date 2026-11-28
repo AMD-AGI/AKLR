@@ -1,0 +1,416 @@
+{
+  "schema_version": 5,
+  "name": "dsa_indexer_writer_prepare_shuffled_16x16_model_dim6144_q_lora_rank2048_n_heads32",
+  "contract_id": "dsa_indexer_writer_prepare@1.0",
+  "description": "sglang's DSA indexer before its scores on one rank in the fused fp8 writer's format (Indexer._aiter_fused_fp8_prepare_and_store on HIP: no Hadamard transform). With wq_b_scale and wk_scale, wq_b and wk are fp8 at those scales per 128 x 128 block and q_lora and x are quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448 before they are projected; bf16 weights take no scales. Each query head is a head of q_lora wq_b^T rounded to bf16, its first 64 values turned by RoPE in interleaved pairs (2i, 2i + 1) by cos_cache and sin_cache at the token's position, each turned value rounded to bf16, and quantized to q_fp8 at a scale of 2^ceil(log2(max(amax, 1e-10) / 448)); its head weight is bf16(x weights_proj^T) times that scale times float32(128^-0.5 n_heads^-0.5). Each token's key is the LayerNorm of bf16(x wk^T) (float32 k_norm_weight and k_norm_bias, k_norm_eps) rounded to bf16, turned as the query, and stored into index_k_cache at its out_cache_loc slot (none for a negative slot) as fp8 values at a scale of 2^ceil(log2(max(amax, 0.0001) / 448)) and that scale in fp32.",
+  "op_type": "dsa_indexer",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden states' width: wk's and weights_proj's input."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the rotary tables."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the index-K cache."
+    },
+    "q_lora_rank": {
+      "type": "const",
+      "value": 2048,
+      "description": "q_lora's width: wq_b's input."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Indexer heads."
+    },
+    "index_cols": {
+      "type": "const",
+      "value": 4096,
+      "description": "wq_b's rows: the heads side by side."
+    },
+    "model_groups": {
+      "type": "const",
+      "value": 48,
+      "description": "128-wide groups of model_dim."
+    },
+    "q_groups": {
+      "type": "const",
+      "value": 16,
+      "description": "128-wide groups of q_lora_rank."
+    }
+  },
+  "attrs": {
+    "has_wq_b_scale": true,
+    "has_wk_scale": true
+  },
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden states, the layer's input."
+    },
+    "q_lora": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query latent after q_a_layernorm: wq_b's input."
+    },
+    "wq_b": {
+      "shape": [
+        "index_cols",
+        "q_lora_rank"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 2048
+      },
+      "description": "wq_b: the query heads' projection, each head's rows in turn."
+    },
+    "wk": {
+      "shape": [
+        128,
+        "model_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "wk: the key's projection."
+    },
+    "weights_proj": {
+      "shape": [
+        "n_heads",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "weights_proj: each head's weight, a row per head."
+    },
+    "k_norm_weight": {
+      "shape": [128],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's (LayerNorm) weight, float32 as the writer reads it."
+    },
+    "k_norm_bias": {
+      "shape": [128],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's bias, float32."
+    },
+    "cos_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary cosines, a row per position and a column per RoPE pair."
+    },
+    "sin_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary sines, as cos_cache."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's position: its row of the rotary tables."
+    },
+    "out_cache_loc": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "64 * n_pages - 1",
+        "distinct": true
+      },
+      "description": "Each token's slot of the index-K cache (page slot // 64, key slot % 64), distinct but for sglang's graph padding rows, which all write slot 0, a slot no sequence reads."
+    },
+    "index_k_cache": {
+      "shape": [
+        "n_pages",
+        64,
+        132
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": 6,
+        "log2_hi": 8
+      },
+      "description": "This layer's index-K cache, as sglang views it: pages of 64 keys, their 128 fp8 values in 16 x 16 tiles (16 keys by 16 values) and then their fp32 scales, each page's bytes compared as fp8 values. The tokens' keys are stored into it."
+    },
+    "k_norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "k_norm's epsilon."
+    },
+    "wq_b_scale": {
+      "shape": [
+        "n_heads",
+        "q_groups"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "wq_b's dequant scale per 128 x 128 block (its weight_scale_inv): a row per head."
+    },
+    "wk_scale": {
+      "shape": [
+        1,
+        "model_groups"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "wk's dequant scale per 128 x 128 block (its weight_scale_inv)."
+    }
+  },
+  "outputs": {
+    "q_fp8": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        128
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Each token's query heads, turned, in fp8 at their scales."
+    },
+    "head_weights": {
+      "shape": [
+        "n_tokens",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Each token's head weights, each with its head's fp8 scale folded in."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 20,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 28,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 40,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 44,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "shuffled_16x16": {
+        "layouts": {
+          "wq_b": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "wk": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "wq_b.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "wk.is_shuffled",
+            "expected_value": true
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"DSA indexer preparation for GLM-5.x on gfx950 in sglang's fused fp8 writer format.\n\nProjects each token's query heads (q_lora wq_b^T), key (x wk^T) and head gates (x\nweights_proj^T) in Gluon tiles, the activations quantized per 128 values to fp8 against the\nfp8 block-scaled weights (row-major or preshuffled in 16 x 16 tiles); then the key's LayerNorm\n(fp32 weight and bias) and RoPE on its first 64 values in interleaved pairs, each rounded to\nbf16, quantized to fp8 at a power-of-two scale and stored with that fp32 scale into its\npreshuffled index-K page (rows whose slot is negative store nothing); each query head turned\nalike, quantized to fp8, its head weight bf16(gate) * scale * weights_scale.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.constexpr_function\ndef _pow2(n):\n    return 1 << (int(n) - 1).bit_length()\n\n\n@gluon.jit\ndef _load(P, off, mask, other, BUFFER: gl.constexpr):\n    if BUFFER:\n        return gl.amd.cdna4.buffer_load(P, off, mask, other)\n    return gl.load(P + off, mask, other)\n\n\n@gluon.jit\ndef _store(v, P, off, mask, BUFFER: gl.constexpr):\n    if BUFFER:\n        gl.amd.cdna4.buffer_store(v, P, off, mask)\n    else:\n        gl.store(P + off, v, mask)\n\n\n@gluon.jit\ndef _quantize_activation(x):\n    x = x.to(gl.float32)\n    scale = gl.maximum(gl.max(gl.abs(x), 1), 1e-10) * (1.0 / 448.0)\n    return ((x * gl.div_rn(1.0, scale)[:, None]).to(gl.float8e4nv), scale)\n\n\n@gluon.jit\ndef _weight_offsets(n, k, K: gl.constexpr, SW: gl.constexpr, PACKED: gl.constexpr):\n    if PACKED:\n        return n // 16 * (K // 32) * 512 + k // 32 * 512 + k // 16 % 2 * 256 + n % 16 * 16 + k % 16\n    return n * SW + k\n\n\n@gluon.jit\ndef _partial(X, W, S, P, task, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, SX: gl.constexpr, SW: gl.constexpr, PACKED: gl.constexpr, BUNDLE: gl.constexpr, BN: gl.constexpr, LOCAL: gl.constexpr, BUFFER: gl.constexpr, COMPACT: gl.constexpr=False, WIDE_GLOBAL_TASK: gl.constexpr=True):\n    FP8: gl.constexpr = S is not None\n    PARTS: gl.constexpr = gl.cdiv(K, 128 * BUNDLE)\n    if WIDE_GLOBAL_TASK and not BUFFER:\n        task = task.to(gl.int64)\n    part = task % PARTS\n    tile = task // PARTS\n    col = tile % gl.cdiv(N, BN) * BN\n    row = tile // gl.cdiv(N, BN) * 16\n    AM: gl.constexpr = M if COMPACT and FP8 and (M < 16) else 16\n    expanded: gl.constexpr = gl.BlockedLayout([1, 1, 2 * AM], [1, AM, 64 // AM], [1, 1, 1], [2, 1, 0])\n    la: gl.constexpr = gl.BlockedLayout([1, 2 * AM], [AM, 64 // AM], [1, 1], [1, 0]) if COMPACT and FP8 else gl.BlockedLayout([1, 32], [16, 4], [1, 1], [0, 1]) if FP8 else gl.BlockedLayout([1, 4], [4, 16], [1, 1], [1, 0])\n    lb: gl.constexpr = gl.BlockedLayout([32, 1], [4, 16], [1, 1], [1, 0]) if FP8 else gl.BlockedLayout([4, 1], [16, 4], [1, 1], [0, 1])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 128 if FP8 else 32], True, [1, 1])\n    kw: gl.constexpr = 32 if FP8 else 8\n    rm = row + gl.arange(0, AM, gl.SliceLayout(1, la))\n    ak = gl.arange(0, 128, gl.SliceLayout(0, la))\n    bk = gl.arange(0, 128, gl.SliceLayout(1, lb))\n    cn = col + gl.arange(0, BN, gl.SliceLayout(0, lb))\n    mr = row + gl.arange(0, 16, gl.SliceLayout(1, mma))\n    nr = col + gl.arange(0, BN, gl.SliceLayout(0, mma))\n    zero = gl.zeros((16, BN), gl.float32, mma)\n    value = zero\n    for offset in gl.static_range(BUNDLE):\n        group = part * BUNDLE + offset\n        ka, kb = (group * 128 + ak, group * 128 + bk)\n        if K % (128 * BUNDLE) == 0:\n            if M % 16 == 0 or (COMPACT and FP8):\n                a = _load(X, rm[:, None] * SX + ka[None, :], None, None, BUFFER)\n            else:\n                a = _load(X, rm[:, None] * SX + ka[None, :], rm[:, None] < M, 0.0, BUFFER)\n        else:\n            a = _load(X, rm[:, None] * SX + ka[None, :], (rm[:, None] < M) & (ka[None, :] < K), 0.0, BUFFER)\n        if FP8:\n            a, scale_a = _quantize_activation(a)\n            if AM < 16:\n                ae = gl.convert_layout(a, gl.SliceLayout(0, expanded))[None, :, :]\n                se = gl.convert_layout(scale_a, gl.SliceLayout(0, gl.SliceLayout(2, expanded)))[None, :]\n                a = gl.reshape(gl.broadcast(ae, gl.full((16 // AM, AM, 128), 0, a.dtype, ae.type.layout))[0], (16, 128))\n                scale_a = gl.reshape(gl.broadcast(se, gl.full((16 // AM, AM), 0, scale_a.dtype, se.type.layout))[0], (16,))\n        bw = _weight_offsets(cn[None, :], kb[:, None], K, SW, PACKED and FP8)\n        if N % BN == 0 and K % (128 * BUNDLE) == 0:\n            b = _load(W, bw, None, None, BUFFER)\n        else:\n            b = _load(W, bw, (cn[None, :] < N) & (kb[:, None] < K), 0.0, BUFFER)\n        a = gl.convert_layout(a, gl.DotOperandLayout(0, mma, kw))\n        b = gl.convert_layout(b, gl.DotOperandLayout(1, mma, kw))\n        if FP8:\n            dot = gl.amd.cdna4.mfma_scaled(a, None, 'e4m3', b, None, 'e4m3', zero)\n            sa = gl.convert_layout(scale_a, gl.SliceLayout(1, mma))\n            if N % BN == 0 and K % (128 * BUNDLE) == 0:\n                sw = _load(S, nr // 128 * gl.cdiv(K, 128) + group, None, None, BUFFER)\n            else:\n                sw = _load(S, nr // 128 * gl.cdiv(K, 128) + group, (nr < N) & (group < gl.cdiv(K, 128)), 0.0, BUFFER)\n            value += dot * sa[:, None] * sw[None, :]\n        else:\n            value = gl.amd.cdna4.mfma(a, b, value)\n    if LOCAL:\n        dst = mr[:, None] * N * PARTS + nr[None, :] // 128 * PARTS * 128 + part * 128 + nr[None, :] % 128\n    else:\n        dst = part * M * N + mr[:, None] * N + nr[None, :]\n    _store(value, P, dst, (mr[:, None] < M) & (nr[None, :] < N), BUFFER)\n\n\n@gluon.jit\ndef _projections(X, QL, WK, WQ, WG, SK, SQ, KP, QP, GP, M: gl.constexpr, K: gl.constexpr, QK: gl.constexpr, HEADS: gl.constexpr, SX: gl.constexpr, SL: gl.constexpr, SWK: gl.constexpr, SWQ: gl.constexpr, SWG: gl.constexpr, PACKED: gl.constexpr, KPG: gl.constexpr, QPG: gl.constexpr, GPG: gl.constexpr, KN: gl.constexpr, QN: gl.constexpr, BUFFER: gl.constexpr, COMPACT: gl.constexpr, WIDE_GLOBAL_TASK: gl.constexpr, QUERY_FIRST: gl.constexpr):\n    task = gl.program_id(0)\n    KT: gl.constexpr = gl.cdiv(M, 16) * gl.cdiv(128, KN) * gl.cdiv(K, 128 * KPG)\n    QT: gl.constexpr = gl.cdiv(M, 16) * gl.cdiv(HEADS * 128, QN) * gl.cdiv(QK, 128 * QPG)\n    if QUERY_FIRST:\n        if task < QT:\n            _partial(QL, WQ, SQ, QP, task, M, HEADS * 128, QK, SL, SWQ, PACKED, QPG, QN, True, BUFFER, COMPACT, WIDE_GLOBAL_TASK)\n        elif task < QT + KT:\n            _partial(X, WK, SK, KP, task - QT, M, 128, K, SX, SWK, PACKED, KPG, KN, True, BUFFER, COMPACT, WIDE_GLOBAL_TASK)\n        else:\n            _partial(X, WG, None, GP, task - KT - QT, M, HEADS, K, SX, SWG, False, GPG, 32, False, BUFFER, WIDE_GLOBAL_TASK=WIDE_GLOBAL_TASK)\n    else:\n        if task < KT:\n            _partial(X, WK, SK, KP, task, M, 128, K, SX, SWK, PACKED, KPG, KN, True, BUFFER, COMPACT, WIDE_GLOBAL_TASK)\n        elif task < KT + QT:\n            _partial(QL, WQ, SQ, QP, task - KT, M, HEADS * 128, QK, SL, SWQ, PACKED, QPG, QN, True, BUFFER, COMPACT, WIDE_GLOBAL_TASK)\n        else:\n            _partial(X, WG, None, GP, task - KT - QT, M, HEADS, K, SX, SWG, False, GPG, 32, False, BUFFER, WIDE_GLOBAL_TASK=WIDE_GLOBAL_TASK)\n\n\n@gluon.jit\ndef _merge(P, row, head, HEADS: gl.constexpr, PARTS: gl.constexpr, VECTOR: gl.constexpr, BUFFER: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1, VECTOR], [VECTOR // 2, 128 // VECTOR], [1, 1], [1, 0])\n    p = gl.arange(0, _pow2(PARTS), gl.SliceLayout(1, layout))\n    d = gl.arange(0, 128, gl.SliceLayout(0, layout))\n    off = (row * HEADS + head) * PARTS * 128 + p[:, None] * 128 + d[None, :]\n    x = gl.sum(_load(P, off, p[:, None] < PARTS, 0.0, BUFFER), 0)\n    return gl.convert_layout(x, gl.BlockedLayout([2], [64], [1], [0])).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _rotary(Cos, Sin, Positions, row, SCOS: gl.constexpr, SSIN: gl.constexpr, n_positions, BUFFER: gl.constexpr):\n    pair = gl.arange(0, 64, gl.BlockedLayout([1], [64], [1], [0]))\n    pos = gl.minimum(gl.maximum(gl.load(Positions + row), 0), n_positions - 1)\n    if BUFFER:\n        pos = pos.to(gl.int32)\n    c = _load(Cos, pos * SCOS + pair, pair < 32, 1.0, BUFFER).to(gl.float32)\n    s = _load(Sin, pos * SSIN + pair, pair < 32, 0.0, BUFFER).to(gl.float32)\n    return (c, s)\n\n\n@gluon.jit\ndef _rope(x, c, s):\n    lo, hi = gl.split(gl.reshape(x, (64, 2)))\n    c = gl.convert_layout(c, lo.type.layout)\n    s = gl.convert_layout(s, lo.type.layout)\n    pair = gl.arange(0, 64, lo.type.layout)\n    rlo = gl.where(pair < 32, lo * c - hi * s, lo).to(gl.bfloat16).to(gl.float32)\n    rhi = gl.where(pair < 32, hi * c + lo * s, hi).to(gl.bfloat16).to(gl.float32)\n    x = gl.reshape(gl.join(rlo, rhi), (128,))\n    return gl.convert_layout(x, gl.BlockedLayout([2], [64], [1], [0]))\n\n\n@gluon.jit\ndef _key_finish(P, Gamma, Beta, Cos, Sin, Positions, Slots, Cache, row, n_positions, KG: gl.constexpr, SCOS: gl.constexpr, SSIN: gl.constexpr, EPS: gl.constexpr, PAGE: gl.constexpr, BUFFER: gl.constexpr):\n    raw_slot = gl.load(Slots + row)\n    if raw_slot >= 0:\n        x = _merge(P, row, 0, 1, KG, 2, BUFFER)\n        d = gl.arange(0, 128, x.type.layout)\n        c, s = _rotary(Cos, Sin, Positions, row, SCOS, SSIN, n_positions, BUFFER)\n        slot = raw_slot.to(gl.int32 if BUFFER else gl.int64)\n        gamma = _load(Gamma, d, None, None, BUFFER)\n        beta = _load(Beta, d, None, None, BUFFER)\n        delta = x - gl.sum(x, 0) * (1.0 / 128.0)\n        inv = gl.rsqrt(gl.sum(delta * delta, 0) * (1.0 / 128.0) + EPS)\n        x = (delta * inv * gamma + beta).to(gl.bfloat16).to(gl.float32)\n        x = _rope(x, c, s)\n        scale = gl.exp2(gl.ceil(gl.log2(gl.maximum(gl.max(gl.abs(x), 0), 0.0001) / 448.0)))\n        q = (x * gl.div_rn(1.0, scale)).to(gl.float8e4nv)\n        d = gl.arange(0, 128, q.type.layout)\n        page, offset = (slot // PAGE, slot % PAGE)\n        dst = page * PAGE * 132 + offset // 16 * 2048 + d // 16 * 256 + offset % 16 * 16 + d % 16\n        _store(q.to(gl.uint8, bitcast=True), Cache, dst, None, BUFFER)\n        si = gl.arange(0, 1, gl.BlockedLayout([1], [64], [1], [0]))\n        sp = page * PAGE * 33 + PAGE * 32 + offset\n        _store(scale, gl.cast(Cache, gl.pointer_type(gl.float32)), sp + si, None, BUFFER)\n\n\n@gluon.jit\ndef _query_finish(QP, GP, Cos, Sin, Positions, Out, Weights, row, head, n_positions, M: gl.constexpr, HEADS: gl.constexpr, QG: gl.constexpr, GG: gl.constexpr, SCOS: gl.constexpr, SSIN: gl.constexpr, WSCALE: gl.constexpr, BUFFER: gl.constexpr):\n    p = gl.arange(0, _pow2(GG), gl.BlockedLayout([1], [64], [1], [0]))\n    gate = gl.sum(_load(GP, p * M * HEADS + row * HEADS + head, p < GG, 0.0, BUFFER), 0)\n    gate = gate.to(gl.bfloat16).to(gl.float32)\n    x = _merge(QP, row, head, HEADS, QG, 2, BUFFER)\n    c, s = _rotary(Cos, Sin, Positions, row, SCOS, SSIN, n_positions, BUFFER)\n    x = _rope(x, c, s)\n    scale = gl.exp2(gl.ceil(gl.log2(gl.maximum(gl.max(gl.abs(x), 0), 1e-10) * (1.0 / 448.0))))\n    q = (x * gl.div_rn(1.0, scale)).to(gl.float8e4nv)\n    d = gl.arange(0, 128, q.type.layout)\n    _store(q, Out, (row * HEADS + head) * 128 + d, None, BUFFER)\n    gl.store(Weights + row * HEADS + head, gate * scale * WSCALE)\n\n\n@gluon.jit\ndef _finish(KP, QP, GP, Gamma, Beta, Cos, Sin, Positions, Slots, Cache, Out, Weights, n_positions, M: gl.constexpr, HEADS: gl.constexpr, KG: gl.constexpr, QG: gl.constexpr, GG: gl.constexpr, SCOS: gl.constexpr, SSIN: gl.constexpr, EPS: gl.constexpr, PAGE: gl.constexpr, WSCALE: gl.constexpr, BUFFER: gl.constexpr, KEY_FIRST: gl.constexpr):\n    row = gl.program_id(0)\n    head = gl.program_id(1)\n    if not BUFFER:\n        row, head = (row.to(gl.int64), head.to(gl.int64))\n    key_head: gl.constexpr = 0 if KEY_FIRST else HEADS\n    if head == key_head:\n        _key_finish(KP, Gamma, Beta, Cos, Sin, Positions, Slots, Cache, row, n_positions, KG, SCOS, SSIN, EPS, PAGE, BUFFER)\n    else:\n        _query_finish(QP, GP, Cos, Sin, Positions, Out, Weights, row, head - 1 if KEY_FIRST else head, n_positions, M, HEADS, QG, GG, SCOS, SSIN, WSCALE, BUFFER)\n\n\ndef _config(m):\n    \"\"\"(kpg, qpg, qn, gpg, kn, compact, wide_task, query_first, key_first) per row count.\"\"\"\n    if m == 16:\n        return 4, 4, 32, 2, 32, True, False, False, True\n    if m in (1, 2):\n        return 2, 1, 128, 1, 16, True, True, False, False\n    if m == 4:\n        return 2, 2, 64, 1, 16, True, True, True, False\n    if m == 8:\n        return 2, 2, 64, 1, 16, True, True, False, False\n    return 2, 2, 64, 1, 16, False, True, False, False\n\n\ndef indexer_prepare_writer(x, q_lora, wq, wk, wgate, k_gamma, k_beta, cos, sin, positions, slots, cache, *, eps, wq_scales, wk_scales, weight_preshuffled, out, weights):\n    m, k = x.shape\n    qk, heads = (q_lora.shape[1], wgate.shape[0])\n    kpg, qpg, qn, gpg, kn, compact, wide, query_first, key_first = _config(m)\n    kg, qg, gg = (triton.cdiv(k, 128 * kpg), triton.cdiv(qk, 128 * qpg), triton.cdiv(k, 128 * gpg))\n    buffer = all(t.stride(0) * t.shape[0] * t.element_size() < 1 << 31 for t in (x, q_lora, wq, wk, wgate, cos, sin, cache))\n    buffer = buffer and max(m * kg * 128 * 4, m * heads * qg * 128 * 4, m * heads * gg * 4) < 1 << 31\n    kp = torch.empty((m, kg, 128), dtype=torch.float32, device=x.device)\n    qp = torch.empty((m, heads, qg, 128), dtype=torch.float32, device=x.device)\n    gp = torch.empty((gg, m, heads), dtype=torch.float32, device=x.device)\n    tasks = triton.cdiv(m, 16) * ((128 // kn) * kg + triton.cdiv(heads * 128, qn) * qg + triton.cdiv(heads, 32) * gg)\n    _projections[tasks,](x, q_lora, wk, wq, wgate, wk_scales, wq_scales, kp, qp, gp, m, k, qk, heads, x.stride(0), q_lora.stride(0), wk.stride(0), wq.stride(0), wgate.stride(0), weight_preshuffled, kpg, qpg, gpg, kn, qn, buffer, compact, wide, query_first, num_warps=1, enable_fp_fusion=True)\n    # the writer's weights_scale: softmax_scale * n_heads^-0.5 in float32\n    weights_scale = 128**-0.5 * heads**-0.5\n    _finish[m, heads + 1](kp, qp, gp, k_gamma, k_beta, cos, sin, positions, slots, cache, out, weights, cos.shape[0], m, heads, kg, qg, gg, cos.stride(0), sin.stride(0), eps, cache.shape[1], weights_scale, buffer, key_first, num_warps=1, enable_fp_fusion=False)\n\n\ndef run(\n    *,\n    x,\n    q_lora,\n    wq_b,\n    wk,\n    weights_proj,\n    k_norm_weight,\n    k_norm_bias,\n    cos_cache,\n    sin_cache,\n    positions,\n    out_cache_loc,\n    index_k_cache,\n    k_norm_eps,\n    wq_b_scale,\n    wk_scale,\n    q_fp8,\n    head_weights,\n):\n    \"\"\"Writes q_fp8 and head_weights and stores the keys: indexer_prepare_writer on sglang's\n    tensors, the index-K pages as their bytes.\"\"\"\n    indexer_prepare_writer(\n        x,\n        q_lora,\n        wq_b,\n        wk,\n        weights_proj,\n        k_norm_weight,\n        k_norm_bias,\n        cos_cache,\n        sin_cache,\n        positions,\n        out_cache_loc,\n        index_k_cache.view(torch.uint8),\n        eps=k_norm_eps,\n        wq_scales=wq_b_scale,\n        wk_scales=wk_scale,\n        weight_preshuffled=getattr(wq_b, \"is_shuffled\", False),\n        out=q_fp8,\n        weights=head_weights,\n    )\n"
+      }
+    ]
+  }
+}

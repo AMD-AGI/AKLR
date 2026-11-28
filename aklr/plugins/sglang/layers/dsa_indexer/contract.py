@@ -14,36 +14,43 @@ from aklr.core.contract.semantics import (
     IntRangeDistribution,
     LecunNormalDistribution,
     LogUniformDistribution,
+    Preshuffle,
     SqnrBound,
     ToleranceBound,
 )
 from aklr.core.contract.spec import (
     DTypeSpec,
+    LayoutFact,
     LayoutVariant,
     LayoutVariantsSpec,
     ScalarSpec,
     TensorSpec,
+    attr,
     axis,
     derived_axis,
 )
 from aklr.plugins.sglang.layers.dsa_indexer.baseline import (
     DsaIndexerKeyPrepareBaseline,
     DsaIndexerPrepareBaseline,
+    DsaIndexerWriterPrepareBaseline,
 )
 from aklr.plugins.sglang.layers.dsa_indexer.reference import (
     FP8_MAX,
     HEAD_DIM,
     PAGE_SIZE,
+    Q_SCALE_FLOOR,
     ROPE_DIM,
     SCALE_FLOOR,
     DsaIndexerKeyPrepareReference,
     DsaIndexerPrepareReference,
+    DsaIndexerWriterPrepareReference,
 )
 
 __all__ = [
     "CONTRACTS",
     "DSA_INDEXER_KEY_PREPARE",
     "DSA_INDEXER_PREPARE",
+    "DSA_INDEXER_WRITER_PREPARE",
 ]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
@@ -268,4 +275,160 @@ DSA_INDEXER_KEY_PREPARE = OpContract(
     baseline=DsaIndexerKeyPrepareBaseline(),
 )
 
-CONTRACTS = (DSA_INDEXER_PREPARE, DSA_INDEXER_KEY_PREPARE)
+# The writer format's weights: fp8 at a dequant scale per 128 x 128 block (sglang's block-fp8
+# linears), or bf16 without scales. It keeps the bounds above: at GLM-5.3's shapes (4 to 48
+# tokens, 4 input sets each) sglang's writer and a fused kernel reach at most 0.006 of the query
+# bound, 0.001 of the weights' and 0.31 of the cache's, while references broken on purpose (the
+# Hadamard transform applied, no or NeoX RoPE, the position one off, a scale not a power of two)
+# fail all three and keys not preshuffled fail the cache's.
+_WEIGHT = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN, DType.BFLOAT16))
+_BLOCK_SCALE = LogUniformDistribution(log2_lo=-3, log2_hi=0)
+
+
+def _writer_facts(shuffled: bool) -> tuple[LayoutFact, ...]:
+    return tuple(
+        LayoutFact(location="tensor_attr", name=f"{w}.is_shuffled", expected_value=shuffled)
+        for w in ("wq_b", "wk")
+    )
+
+
+DSA_INDEXER_WRITER_PREPARE = OpContract(
+    contract_id="dsa_indexer_writer_prepare@1.0",
+    description=(
+        "sglang's DSA indexer before its scores on one rank in the fused fp8 writer's format "
+        "(Indexer._aiter_fused_fp8_prepare_and_store on HIP: no Hadamard transform). With "
+        "wq_b_scale and wk_scale, wq_b and wk are fp8 at those scales per 128 x 128 block and "
+        "q_lora and x are quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448 before "
+        "they are projected; bf16 weights take no scales. Each query head is a head of q_lora "
+        "wq_b^T rounded to bf16, its first "
+        f"{ROPE_DIM} values turned by RoPE in interleaved pairs (2i, 2i + 1) by cos_cache and "
+        "sin_cache at the token's position, each turned value rounded to bf16, and quantized to "
+        f"q_fp8 at a scale of 2^ceil(log2(max(amax, {Q_SCALE_FLOOR}) / {FP8_MAX:g})); its head "
+        "weight is bf16(x weights_proj^T) times that scale times float32("
+        f"{HEAD_DIM}^-0.5 n_heads^-0.5). Each token's key is the LayerNorm of bf16(x wk^T) "
+        "(float32 k_norm_weight and k_norm_bias, k_norm_eps) rounded to bf16, turned as the "
+        "query, and stored into index_k_cache at its out_cache_loc slot (none for a negative "
+        f"slot) as fp8 values at a scale of 2^ceil(log2(max(amax, {SCALE_FLOOR}) / {FP8_MAX:g})) "
+        "and that scale in fp32."
+    ),
+    op_type="dsa_indexer",
+    axes={
+        "n_tokens": _KEY_AXES["n_tokens"],
+        "model_dim": axis(
+            "The hidden states' width: wk's and weights_proj's input.", 128, 16384, multiple_of=128
+        ),
+        "n_positions": _KEY_AXES["n_positions"],
+        "n_pages": _KEY_AXES["n_pages"],
+        "q_lora_rank": axis("q_lora's width: wq_b's input.", 128, 16384, multiple_of=128),
+        "n_heads": axis("Indexer heads.", 1, 128),
+        "index_cols": derived_axis("wq_b's rows: the heads side by side.", f"n_heads * {HEAD_DIM}"),
+        "model_groups": derived_axis("128-wide groups of model_dim.", "model_dim // 128"),
+        "q_groups": derived_axis("128-wide groups of q_lora_rank.", "q_lora_rank // 128"),
+    },
+    attrs={
+        "has_wq_b_scale": attr(
+            "Whether wq_b_scale is passed: wq_b in fp8.", True, False, abbrev="wq_b_scale"
+        ),
+        "has_wk_scale": attr("Whether wk_scale is passed: wk in fp8.", True, False, abbrev="wk_scale"),
+    },
+    constraints=(
+        *_KEY_CONSTRAINTS,
+        "wk.dtype == wq_b.dtype",
+        "has_wq_b_scale == (wq_b.dtype == 'float8_e4m3fn')",
+        "has_wk_scale == has_wq_b_scale",
+    ),
+    inputs={
+        "x": _KEY_INPUTS["x"],
+        "q_lora": TensorSpec(
+            description="Each token's query latent after q_a_layernorm: wq_b's input.",
+            shape=("n_tokens", "q_lora_rank"),
+            dtype=_BF16,
+            distribution=_FINITE,
+        ),
+        "wq_b": TensorSpec(
+            description="wq_b: the query heads' projection, each head's rows in turn.",
+            shape=("index_cols", "q_lora_rank"),
+            dtype=_WEIGHT,
+            distribution=LecunNormalDistribution(fan_in="q_lora_rank"),
+            lifetime="weight",
+        ),
+        "wk": TensorSpec(
+            description="wk: the key's projection.",
+            shape=(HEAD_DIM, "model_dim"),
+            dtype=DTypeSpec(same_as_tensor="wq_b"),
+            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            lifetime="weight",
+        ),
+        "weights_proj": TensorSpec(
+            description="weights_proj: each head's weight, a row per head.",
+            shape=("n_heads", "model_dim"),
+            dtype=_BF16,
+            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            lifetime="weight",
+        ),
+        "k_norm_weight": TensorSpec(
+            description="k_norm's (LayerNorm) weight, float32 as the writer reads it.",
+            shape=(HEAD_DIM,),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+            distribution=_FINITE,
+            lifetime="weight",
+        ),
+        "k_norm_bias": TensorSpec(
+            description="k_norm's bias, float32.",
+            shape=(HEAD_DIM,),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+            distribution=_FINITE,
+            lifetime="weight",
+        ),
+        **{
+            n: _KEY_INPUTS[n]
+            for n in ("cos_cache", "sin_cache", "positions", "out_cache_loc", "index_k_cache")
+        },
+        "k_norm_eps": _KEY_INPUTS["k_norm_eps"],
+        "wq_b_scale": TensorSpec(
+            description="wq_b's dequant scale per 128 x 128 block (its weight_scale_inv): a row per head.",
+            shape=("n_heads", "q_groups"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+            present_when="has_wq_b_scale",
+            distribution=_BLOCK_SCALE,
+            lifetime="weight",
+        ),
+        "wk_scale": TensorSpec(
+            description="wk's dequant scale per 128 x 128 block (its weight_scale_inv).",
+            shape=(1, "model_groups"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+            present_when="has_wk_scale",
+            distribution=_BLOCK_SCALE,
+            lifetime="weight",
+        ),
+    },
+    outputs={
+        "q_fp8": TensorSpec(
+            description="Each token's query heads, turned, in fp8 at their scales.",
+            shape=("n_tokens", "n_heads", HEAD_DIM),
+            dtype=_FP8,
+            error_bounds=_QUERY_BOUND,
+        ),
+        "head_weights": TensorSpec(
+            description="Each token's head weights, each with its head's fp8 scale folded in.",
+            shape=("n_tokens", "n_heads"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+            error_bounds=_WEIGHTS_BOUND,
+        ),
+    },
+    # row-major, or as sglang holds block-fp8 weights for aiter's preshuffled GEMM on gfx950:
+    # shuffle_weight's 16 x 16 tiles, the scales as the checkpoint stores them
+    layout_variants=LayoutVariantsSpec(
+        by_name={
+            "row_major": LayoutVariant(detect_facts=_writer_facts(False)),
+            "shuffled_16x16": LayoutVariant(
+                layouts={"wq_b": Preshuffle(tile=(16, 16)), "wk": Preshuffle(tile=(16, 16))},
+                detect_facts=_writer_facts(True),
+            ),
+        }
+    ),
+    reference=DsaIndexerWriterPrepareReference(),
+    baseline=DsaIndexerWriterPrepareBaseline(),
+)
+
+CONTRACTS = (DSA_INDEXER_PREPARE, DSA_INDEXER_KEY_PREPARE, DSA_INDEXER_WRITER_PREPARE)

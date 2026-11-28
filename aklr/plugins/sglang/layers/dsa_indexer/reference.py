@@ -11,6 +11,10 @@ rounds it, the roundings every correct kernel makes:
 - a head weight times n_heads^-0.5, to bf16;
 - the fp8 values at their power-of-two scale, to fp8.
 
+The fused fp8 writer's format (DsaIndexerWriterPrepareReference) has no Hadamard transform,
+leaves a head weight unrounded and, with block-fp8 weights, takes the projections' inputs in fp8
+per 128-wide group (_block_fp8_project).
+
 A kernel that sums a projection in another order still rounds a few values to the next bf16,
 and wherever a row's amax then crosses a power of two times 448, its fp8 scale is twice or half
 the reference's and its fp8 values half or twice. The outputs are therefore bounded by SQNR,
@@ -24,10 +28,12 @@ __all__ = [
     "FP8_MAX",
     "HEAD_DIM",
     "PAGE_SIZE",
+    "Q_SCALE_FLOOR",
     "ROPE_DIM",
     "SCALE_FLOOR",
     "DsaIndexerKeyPrepareReference",
     "DsaIndexerPrepareReference",
+    "DsaIndexerWriterPrepareReference",
 ]
 
 # An indexer head and key: the Hadamard transform's length and the cache's 128 bytes a key
@@ -39,6 +45,8 @@ PAGE_SIZE = 64
 # A key's or head's fp8 scale: 2 ** ceil(log2(max(amax, SCALE_FLOOR) / FP8_MAX))
 SCALE_FLOOR = 1e-4
 FP8_MAX = 448.0
+# The writer format's query head floor (its key keeps SCALE_FLOOR)
+Q_SCALE_FLOOR = 1e-10
 
 # a page: PAGE_SIZE keys of HEAD_DIM fp8 values in 16 x 16 tiles, then their fp32 scales
 _TILE = 16
@@ -68,20 +76,24 @@ def _hadamard(v):
     return v
 
 
-def _rotate(v, cos, sin):
+def _turn(v, cos, sin):
     """RoPE on the first ROPE_DIM values in interleaved pairs (2i, 2i + 1), each turned value
-    rounded to bf16, then the Hadamard transform times HEAD_DIM^-0.5, rounded to bf16. ``v`` is
-    [..., HEAD_DIM] bf16 values in float32; cos and sin [..., ROPE_DIM // 2], broadcast."""
+    rounded to bf16. ``v`` is [..., HEAD_DIM] bf16 values in float32; cos and sin
+    [..., ROPE_DIM // 2], broadcast."""
     pairs = v[..., :ROPE_DIM].reshape(*v.shape[:-1], ROPE_DIM // 2, 2)
     even, odd = pairs[..., 0], pairs[..., 1]
     turned = torch.stack((_bf16(even * cos - odd * sin), _bf16(odd * cos + even * sin)), dim=-1)
-    v = torch.cat((turned.reshape(*v.shape[:-1], ROPE_DIM), v[..., ROPE_DIM:]), dim=-1)
-    return _bf16(_hadamard(v) * HEAD_DIM**-0.5)
+    return torch.cat((turned.reshape(*v.shape[:-1], ROPE_DIM), v[..., ROPE_DIM:]), dim=-1)
 
 
-def _scales(v):
-    """Each row's fp8 scale: 2^ceil(log2(max(amax, SCALE_FLOOR) / FP8_MAX)), exact."""
-    ratio = v.abs().amax(-1).clamp(min=SCALE_FLOOR) / FP8_MAX
+def _rotate(v, cos, sin):
+    """_turn, then the Hadamard transform times HEAD_DIM^-0.5, rounded to bf16."""
+    return _bf16(_hadamard(_turn(v, cos, sin)) * HEAD_DIM**-0.5)
+
+
+def _scales(v, floor=SCALE_FLOOR):
+    """Each row's fp8 scale: 2^ceil(log2(max(amax, floor) / FP8_MAX)), exact."""
+    ratio = v.abs().amax(-1).clamp(min=floor) / FP8_MAX
     mantissa, exponent = torch.frexp(ratio)
     # ratio = mantissa * 2^exponent, mantissa in [0.5, 1): a power of two is mantissa 0.5
     return torch.ldexp(torch.ones_like(ratio), exponent - (mantissa == 0.5).to(exponent.dtype))
@@ -93,13 +105,17 @@ def _rotary(positions, cos_cache, sin_cache):
     return cos_cache[positions].float(), sin_cache[positions].float()
 
 
+def _normalized(k, k_norm_weight, k_norm_bias, k_norm_eps):
+    """k_norm's LayerNorm of the bf16 keys ``k``, rounded to bf16."""
+    mean = k.mean(-1, keepdim=True)
+    variance = (k - mean).square().mean(-1, keepdim=True)
+    return _bf16((k - mean) / torch.sqrt(variance + k_norm_eps) * k_norm_weight.float() + k_norm_bias.float())
+
+
 def _keys(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, cos, sin):
     """(keys [n_tokens, HEAD_DIM], their scales [n_tokens]): the turned, transformed bf16
     keys in float32, and their fp8 scales."""
-    k = _project(x.float(), wk.float())
-    mean = k.mean(-1, keepdim=True)
-    variance = (k - mean).square().mean(-1, keepdim=True)
-    k = _bf16((k - mean) / torch.sqrt(variance + k_norm_eps) * k_norm_weight.float() + k_norm_bias.float())
+    k = _normalized(_project(x.float(), wk.float()), k_norm_weight, k_norm_bias, k_norm_eps)
     k = _rotate(k, cos, sin)
     return k, _scales(k)
 
@@ -223,4 +239,63 @@ class DsaIndexerKeyPrepareReference(_IndexKCacheReference):
             "no_values": torch.zeros(0, device=cache.device),
             "index_k_cache": cache,
             "written_slots": out_cache_loc,
+        }
+
+
+def _block_fp8_project(a, w, w_scale):
+    """a w^T with ``a`` [tokens, k] quantized per 128-wide group of k as aiter's per-1x128
+    quantization does it (fp8 e4m3fn codes at max(amax, 1e-10) / 448, the codes a * (1 /
+    scale) in float32), times the fp8 ``w`` and its scale per 128 x 128 block ``w_scale``,
+    rounded to bf16."""
+    groups = a.float().unflatten(-1, (-1, 128))
+    scale = groups.abs().amax(-1, keepdim=True).clamp(min=1e-10) * (1.0 / FP8_MAX)
+    codes = (groups * (1.0 / scale)).clamp(-FP8_MAX, FP8_MAX).to(torch.float8_e4m3fn).float()
+    blocks = w_scale.float().repeat_interleave(128, 0)[: w.shape[0]].repeat_interleave(128, 1)
+    return _bf16((codes * scale).flatten(-2) @ (w.float() * blocks).mT)
+
+
+class DsaIndexerWriterPrepareReference(_IndexKCacheReference):
+    def reference(
+        self,
+        *,
+        x,
+        q_lora,
+        wq_b,
+        wk,
+        weights_proj,
+        k_norm_weight,
+        k_norm_bias,
+        cos_cache,
+        sin_cache,
+        positions,
+        out_cache_loc,
+        index_k_cache,
+        k_norm_eps,
+        wq_b_scale=None,
+        wk_scale=None,
+        **_,
+    ):
+        """The writer's format: each query head bf16(q_lora wq_b^T), turned, over its scale;
+        head_weights bf16(x weights_proj^T) * that scale * float32(HEAD_DIM^-0.5 n_heads^-0.5);
+        each key LayerNorm(bf16(x wk^T)), turned, stored at its slot unless the slot is
+        negative; the written slots, for check."""
+        n_heads = weights_proj.shape[0]
+        if wq_b_scale is None:
+            q = _project(q_lora.float(), wq_b.float())
+            k = _project(x.float(), wk.float())
+        else:
+            q = _block_fp8_project(q_lora, wq_b, wq_b_scale)
+            k = _block_fp8_project(x, wk, wk_scale)
+        cos, sin = _rotary(positions, cos_cache, sin_cache)
+        keys = _turn(_normalized(k, k_norm_weight, k_norm_bias, k_norm_eps), cos, sin)
+        q = _turn(q.reshape(-1, n_heads, HEAD_DIM), cos[:, None], sin[:, None])
+        q_scales = _scales(q, Q_SCALE_FLOOR)
+        weights_scale = torch.tensor(HEAD_DIM**-0.5 * n_heads**-0.5, dtype=torch.float32)
+        written = out_cache_loc >= 0
+        slots = out_cache_loc[written]
+        return {
+            "q_fp8": (q / q_scales[..., None]).to(torch.float8_e4m3fn),
+            "head_weights": _project(x.float(), weights_proj.float()) * q_scales * weights_scale.to(q.device),
+            "index_k_cache": _stored_cache(index_k_cache, slots, keys[written], _scales(keys)[written]),
+            "written_slots": slots,
         }

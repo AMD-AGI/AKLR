@@ -3,8 +3,9 @@
 
 """What sglang 0.5.23 runs on HIP (SGLANG_USE_AITER=1, aiter's preshuffled index-K pages) for
 the indexer's preparation in Indexer.forward_cuda's standard path (_get_q_k_bf16, act_quant,
-_store_index_k_cache, _get_logits_head_gate) and in _forward_cuda_k_only (_get_k_bf16,
-_store_index_k_cache), call for call."""
+_store_index_k_cache, _get_logits_head_gate), in _forward_cuda_k_only (_get_k_bf16,
+_store_index_k_cache) and in _aiter_fused_fp8_prepare_and_store (the fused fp8 writer), call
+for call."""
 
 import functools
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ import torch
 from aklr.core.contract.baseline import OpBaseline
 from aklr.plugins.sglang.layers.dsa_indexer.reference import HEAD_DIM, PAGE_SIZE, ROPE_DIM
 
-__all__ = ["DsaIndexerKeyPrepareBaseline", "DsaIndexerPrepareBaseline"]
+__all__ = ["DsaIndexerKeyPrepareBaseline", "DsaIndexerPrepareBaseline", "DsaIndexerWriterPrepareBaseline"]
 
 # Indexer's quantization: block_size and scale_fmt as deepseek_v2 builds it
 _QUANT_BLOCK = 128
@@ -170,3 +171,74 @@ class DsaIndexerKeyPrepareBaseline(OpBaseline):
             if no_values is None
             else no_values
         }
+
+
+def _writer_linear(x, weight, weight_scale):
+    """wq_b or wk as ReplicatedLinear applies it: Fp8LinearMethod's aiter_w8a8_block_fp8_linear
+    (aiter's per-1x128 quantization, then its block-scale GEMM) on block-fp8 weights, else
+    _linear."""
+    if weight_scale is None:
+        return _linear(x, weight)
+    from sglang.srt.layers.quantization import fp8_utils
+
+    return fp8_utils.aiter_w8a8_block_fp8_linear(x, weight, [128, 128], weight_scale)
+
+
+class DsaIndexerWriterPrepareBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        x,
+        q_lora,
+        wq_b,
+        wk,
+        weights_proj,
+        k_norm_weight,
+        k_norm_bias,
+        cos_cache,
+        sin_cache,
+        positions,
+        out_cache_loc,
+        index_k_cache,
+        k_norm_eps=1e-6,
+        wq_b_scale=None,
+        wk_scale=None,
+        q_fp8=None,
+        head_weights=None,
+    ):
+        """_aiter_fused_fp8_prepare_and_store: wq_b, wk and weights_proj (bf16 in, bf16 out), then
+        aiter's fused writer (indexer_qk_rope_quant_and_cache through aiter_fused_fp8_qk_write),
+        padded rows' queries computed too."""
+        from sglang.kernels.ops.attention.dsa.fp8_fused_writer_hip import aiter_fused_fp8_qk_write
+
+        _check_aiter_path()
+        n_heads = weights_proj.shape[0]
+        query = _writer_linear(q_lora, wq_b, wq_b_scale).view(-1, n_heads, HEAD_DIM)
+        key = _writer_linear(x, wk, wk_scale)
+        weights_raw = _linear(x, weights_proj)
+        if q_fp8 is None:
+            q_fp8 = torch.empty_like(query, dtype=index_k_cache.dtype)
+        if head_weights is None:
+            head_weights = torch.empty_like(weights_raw, dtype=torch.float32)
+        aiter_fused_fp8_qk_write(
+            query,
+            q_fp8,
+            weights_raw,
+            head_weights,
+            key,
+            index_k_cache,
+            out_cache_loc,
+            k_norm_weight,
+            k_norm_bias,
+            positions,
+            cos_cache,
+            sin_cache,
+            k_norm_eps,
+            _QUANT_BLOCK,
+            _SCALE_FMT,
+            HEAD_DIM**-0.5 * n_heads**-0.5,
+            preshuffle=True,
+            is_neox=False,
+            compute_all_q_rope=True,
+        )
+        return {"q_fp8": q_fp8, "head_weights": head_weights}

@@ -228,6 +228,39 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # the fused fp8 writer's format, shrunk as dsa_indexer_prepare's: block-fp8 wq_b and wk
+    # preshuffled as sglang holds them for aiter's GEMM
+    PointSpec(
+        contract_id="dsa_indexer_writer_prepare@1.0",
+        axes={
+            "n_tokens": 4,
+            "model_dim": 256,
+            "n_positions": 64,
+            "n_pages": 1,
+            "q_lora_rank": 256,
+            "n_heads": 16,
+        },
+        dtypes={
+            "x": "bfloat16",
+            "q_lora": "bfloat16",
+            "wq_b": "float8_e4m3fn",
+            "wk": "float8_e4m3fn",
+            "weights_proj": "bfloat16",
+            "k_norm_weight": "float32",
+            "k_norm_bias": "float32",
+            "cos_cache": "bfloat16",
+            "sin_cache": "bfloat16",
+            "positions": "int64",
+            "out_cache_loc": "int64",
+            "index_k_cache": "float8_e4m3fn",
+            "wq_b_scale": "float32",
+            "wk_scale": "float32",
+            "q_fp8": "float8_e4m3fn",
+            "head_weights": "float32",
+        },
+        attrs={"has_wq_b_scale": True, "has_wk_scale": True},
+        layout_variant_name="shuffled_16x16",
+    ),
     # the DSA indexer's top-k over a short pool: two sequences, rows above and below topk
     PointSpec(
         contract_id="dsa_topk_transform@1.0",
@@ -918,6 +951,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "deepseek_v2_mxfp4_moe@1.0",
         "dsa_indexer_key_prepare@1.0",
         "dsa_indexer_prepare@1.0",
+        "dsa_indexer_writer_prepare@1.0",
         "dsa_sparse_mla_decode@1.0",
         "dsa_sparse_mla_prefill@1.0",
         "dsa_topk_transform@1.0",
