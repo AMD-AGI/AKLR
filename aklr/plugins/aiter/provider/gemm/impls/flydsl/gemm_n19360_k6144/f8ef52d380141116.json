@@ -1,0 +1,270 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n19360_k6144",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 19360,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 6144,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 3
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 6
+      }
+    },
+    {
+      "axes": {
+        "m": 7
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 10
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 14
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 18
+      }
+    },
+    {
+      "axes": {
+        "m": 20
+      }
+    },
+    {
+      "axes": {
+        "m": 22
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 26
+      }
+    },
+    {
+      "axes": {
+        "m": 28
+      }
+    },
+    {
+      "axes": {
+        "m": 30
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 36
+      }
+    },
+    {
+      "axes": {
+        "m": 42
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 60
+      }
+    },
+    {
+      "axes": {
+        "m": 72
+      }
+    },
+    {
+      "axes": {
+        "m": 84
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "m": 108
+      }
+    },
+    {
+      "axes": {
+        "m": 120
+      }
+    },
+    {
+      "axes": {
+        "m": 132
+      }
+    },
+    {
+      "axes": {
+        "m": 144
+      }
+    },
+    {
+      "axes": {
+        "m": 156
+      }
+    },
+    {
+      "axes": {
+        "m": 168
+      }
+    },
+    {
+      "axes": {
+        "m": 180
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.4.0"
+    },
+    "author": "RuibinCheung",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL bf16 GEMM out = a @ b^T for small m: each workgroup owns a strip of output columns over the full K and\nstreams its A and B tiles through LDS DMA rings; the waves of a workgroup split every K tile and their partials are\nsummed in fixed wave order in LDS before one rounding. A call outside what the strip serves (other dtypes, shapes,\nlayouts, m above its largest bound, a bias) raises ValueError.\"\"\"\n\nimport functools\nimport types\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl.expr import arith, const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n_N = 19360\n_K = 6144\n\n# m bound -> (BLOCK_K, A_STAGES, B_STAGES, WK, WM): WK waves split each K tile, WM waves split the rows\n_STRIP = types.MappingProxyType(\n    {\n        32: (128, 5, 5, 4, 1),\n        48: (128, 4, 4, 4, 1),\n        64: (128, 3, 3, 4, 1),\n        96: (128, 3, 4, 2, 2),\n        192: (128, 2, 3, 2, 2),\n    }\n)\n\n_OOB = 0x7FFFFFC0  # byte offset past every buffer: a buffer access there is dropped\n_A_POL = \"sc0\"\n_B_POL = \"sc0 nt\"\n_TILE_N = 80\n_GRID = _N // _TILE_N\n_XCD_BITS = 3  # workgroup ids are dealt round-robin over 1 << _XCD_BITS XCDs\n_WARP = 64\n_VMCNT_LIMIT = 63\n_LDS_LIMIT = 160 * 1024\n_BF16_BYTES = 2\n_F32_BYTES = 4\n_CHUNK = 16  # bytes one lane moves per DMA and per MFMA fragment read\n_MFMA = 16  # rows and columns of one MFMA tile\n_MFMA_K = 32\n_C_PAD = 4  # f32 pad per row of the partial sums in LDS\n\n\ndef _rsrc(tensor, num_records_bytes):\n    buf = rocdl.make_buffer_tensor(tensor, max_size=False, num_records_bytes=num_records_bytes)\n    return fx.arith.unwrap(rocdl.get_buffer_rsrc(fx.get_iter(buf)))\n\n\ndef _lds_ptr(addr_i64):\n    v = fx.arith.unwrap(addr_i64)\n    return llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr<3>\"), v).result\n\n\ndef _gep(base_ptr, static_byte_offset):\n    base_ptr = fx.arith.unwrap(base_ptr)\n    i8 = ir.IntegerType.get_signless(8)\n    return llvm.GEPOp(base_ptr.type, base_ptr, [], [int(static_byte_offset)], i8, None).result\n\n\ndef _dma(rsrc, lds_ptr, goff, pol):\n    # gfx9 needs one wait state between an M0 write and the LDS DMA that reads it; LLVM cannot insert it inside asm\n    llvm.InlineAsmOp(\n        None,\n        [lds_ptr, goff, rsrc],\n        f\"s_mov_b32 m0, $0\\n\\ts_nop 0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen {pol} lds\",\n        \"s,v,s\",\n        has_side_effects=True,\n    )\n\n\ndef _barrier(vmcnt, lds=False):\n    \"\"\"Wait for this wave's DMAs down to ``vmcnt``, and with ``lds`` for all its LDS reads and writes, then meet the\n    other waves. A barrier after which other waves read what this wave wrote to LDS, or write where its LDS reads\n    may still be in flight, needs ``lds``.\"\"\"\n    lgkm = \" lgkmcnt(0)\" if lds else \"\"\n    llvm.InlineAsmOp(None, [], f\"s_waitcnt vmcnt({vmcnt}){lgkm}\\n\\ts_barrier\", \"\", has_side_effects=True)\n\n\ndef _lds_load(addr_i64, ty, alignment=_CHUNK):\n    return llvm.LoadOp(ty, _lds_ptr(addr_i64), alignment=alignment).result\n\n\ndef _lds_at(base, off):\n    return base + fx.Int64(arith.index_cast(T.i64, fx.Index(off)))\n\n\ndef _schedule_stage(wait, wk_steps, m_steps, nj):\n    for _ in range_constexpr(wait):\n        rocdl.sched_vmem(1)\n    for _ in range_constexpr(wk_steps):\n        rocdl.sched_dsrd(nj + m_steps)\n        rocdl.sched_mfma(m_steps * nj)\n    rocdl.sched_barrier(0)\n\n\ndef _ring_waits(A_ST, B_ST, K_LOOPS, AW, BW):\n    \"\"\"The vmcnt each iteration waits at: the fewest DMAs any wave issued after the later of A(t), B(t). Iteration\n    i issues A(i + A_ST - 1) then B(i + B_ST - 1), each only if inside K; the prologue runs i < 0.\"\"\"\n    seq = []\n    for i in range(-(B_ST - 1), K_LOOPS):\n        if 0 <= i + A_ST - 1 < K_LOOPS:\n            seq.append((\"A\", i + A_ST - 1, AW))\n        if 0 <= i + B_ST - 1 < K_LOOPS:\n            seq.append((\"B\", i + B_ST - 1, BW))\n    pos = {(kind, t): n for n, (kind, t, _) in enumerate(seq)}\n    waits = []\n    for t in range(K_LOOPS):\n        issued_before_t = sum(1 for kind, kt, _ in seq if (kt - (A_ST if kind == \"A\" else B_ST) + 1) < t)\n        last = max(pos[(\"A\", t)], pos[(\"B\", t)])\n        waits.append(sum(c for _, _, c in seq[last + 1 : issued_before_t]))\n    return waits\n\n\n@functools.cache\ndef _launcher(m):\n    if not 1 <= m <= max(_STRIP):\n        return None\n    return _build_strip(m, *_STRIP[min(b for b in _STRIP if m <= b)])\n\n\ndef _build_strip(m, BLOCK_K, A_ST, B_ST, WK, WM):\n    WAVES = WK * WM\n    BT = WAVES * _WARP\n    ROW_BYTES = BLOCK_K * _BF16_BYTES\n    KB16 = ROW_BYTES // _CHUNK\n    TILE_M = -(-m // (_MFMA * WM)) * (_MFMA * WM)\n    WROWS = TILE_M // WM\n    NJ = _TILE_N // _MFMA\n    assert _GRID * _TILE_N == _N and NJ * _MFMA == _TILE_N\n    assert 2 <= A_ST <= B_ST\n    # chunks each operand's stage carries, in whole waves: A only up to row m\n    A_CH = min(TILE_M * KB16, -(-m * KB16 // _WARP) * _WARP)\n    B_CH = _TILE_N * KB16\n    assert B_CH % _WARP == 0\n    A_CNT = -(-A_CH // BT)\n    B_CNT = -(-B_CH // BT)\n    A_TAIL = (A_CH - (A_CNT - 1) * BT) // _WARP\n    B_TAIL = (B_CH - (B_CNT - 1) * BT) // _WARP\n    # the fewest DMAs any wave issues per stage: a wave that issues more waits stricter\n    AW = A_CNT - (A_TAIL < WAVES)\n    BW = B_CNT - (B_TAIL < WAVES)\n    K_LOOPS = _K // BLOCK_K\n    assert K_LOOPS * BLOCK_K == _K and K_LOOPS >= B_ST\n    WAITS = _ring_waits(A_ST, B_ST, K_LOOPS, AW, BW)\n    MAIN = K_LOOPS - (B_ST - 1)\n    assert len(set(WAITS[:MAIN])) == 1 and max(WAITS) < _VMCNT_LIMIT\n    K_SLICE = BLOCK_K // WK\n    WK_STEPS = K_SLICE // _MFMA_K\n    assert WK_STEPS >= 1 and WK_STEPS * _MFMA_K == K_SLICE\n    M_STEPS = WROWS // _MFMA\n    A_STAGE = A_CH * _CHUNK\n    B_STAGE = B_CH * _CHUNK\n    assert A_STAGE >= m * ROW_BYTES\n    # equal depths interleave A and B stages in one ring; a deeper B ring follows the A ring. MFMA A rows past\n    # an A slot (rows >= m, never stored) read the bytes after it: in one ring, the stage's own B rows. In separate\n    # rings those bytes are another stage's, whose DMA may be in flight, so there such a row reads the stored row\n    # A_BACK rows before it (whole swizzle periods: every lane keeps its LDS bank)\n    A_ROWS = A_STAGE // ROW_BYTES\n    if A_ST == B_ST:\n        A_STRIDE = B_STRIDE = A_STAGE + B_STAGE\n        B_OFF = A_STAGE\n        A_BACK = 0\n    else:\n        A_STRIDE, B_STRIDE, B_OFF = A_STAGE, B_STAGE, A_ST * A_STAGE\n        A_BACK = -(-(TILE_M - A_ROWS) // KB16) * KB16\n    assert TILE_M * ROW_BYTES <= A_STAGE + B_STAGE and A_BACK <= A_ROWS\n    C_STRIDE = _TILE_N + _C_PAD\n    ACC = _MFMA * _MFMA // _WARP\n    SCR_BYTES = WK * TILE_M * C_STRIDE * _F32_BYTES\n    LDS_BYTES = max(B_OFF + (B_ST - 1) * B_STRIDE + B_STAGE, SCR_BYTES)\n    assert LDS_BYTES <= _LDS_LIMIT\n    OUT_ELEMS = TILE_M * _TILE_N\n    OUT_PASSES = -(-OUT_ELEMS // BT)\n\n    @fx.struct\n    class SharedStorage:\n        buf: fx.Array[fx.BFloat16, LDS_BYTES // _BF16_BYTES, _CHUNK]\n\n    @flyc.kernel(known_block_size=[BT, 1, 1])\n    def gemm_n19360_k6144_strip(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor):\n        lds = fx.SharedAllocator().allocate(SharedStorage)\n        lds_base = fx.Int64(fx.ptrtoint(lds.buf.peek().ptr))\n        tid = fx.thread_idx.x\n        wid = tid // _WARP\n        lane = tid % _WARP\n        bid = fx.Int32(fx.block_idx.x)\n        a_rsrc = _rsrc(A, m * _K * _BF16_BYTES)\n        b_rsrc = _rsrc(B, _N * _K * _BF16_BYTES)\n        c_rsrc = _rsrc(C, m * _N * _BF16_BYTES)\n        n_off = bid * _TILE_N\n\n        warp_off = rocdl.readfirstlane(T.i64, arith.index_cast(T.i64, fx.Index(wid) * (_WARP * _CHUNK)))\n        wid_s = fx.Int32(rocdl.readfirstlane(T.i32, fx.arith.unwrap(wid)))\n\n        def global_offsets(cnt, row0):\n            offs = []\n            for i in range_constexpr(cnt):\n                g = BT * i + tid\n                row = g // KB16\n                ch = (g % KB16) ^ (row % KB16)\n                offs.append((row0 + fx.Int32(row)) * (_K * _BF16_BYTES) + fx.Int32(ch) * _CHUNK)\n            return offs\n\n        a_goff = global_offsets(A_CNT, 0)\n        b_goff = global_offsets(B_CNT, n_off)\n\n        # staggered K start: workgroups dispatched together (one per XCD) start on the same K tile,\n        # successive dispatch rounds on successive tiles, so the B stream does not camp in lockstep\n        kstart = (bid >> fx.Int32(_XCD_BITS)) % fx.Int32(K_LOOPS)\n\n        def slot_base(slot, stride, off):\n            return lds_base + fx.Int64(arith.index_cast(T.i64, fx.Index(slot) * stride + off))\n\n        def issue(kt, slot, stride, off, goff, cnt, tail, rsrc, pol):\n            kk = kt + kstart\n            kk = (kk >= fx.Int32(K_LOOPS)).select(kk - fx.Int32(K_LOOPS), kk)\n            k_bytes = fx.Int32(kk) * fx.Int32(ROW_BYTES)\n            base = _lds_ptr(slot_base(slot, stride, off) + fx.Int64(warp_off))\n            for i in range_constexpr(cnt):\n                p = _gep(base, static_byte_offset=i * BT * _CHUNK)\n                if const_expr(i == cnt - 1 and tail < WAVES):\n                    if wid_s < fx.Int32(tail):\n                        _dma(rsrc, p, (goff[i] + k_bytes).ir_value(), pol)\n                else:\n                    _dma(rsrc, p, (goff[i] + k_bytes).ir_value(), pol)\n\n        def issue_a(kt, slot):\n            issue(kt, slot, A_STRIDE, 0, a_goff, A_CNT, A_TAIL, a_rsrc, _A_POL)\n\n        def issue_b(kt, slot):\n            issue(kt, slot, B_STRIDE, B_OFF, b_goff, B_CNT, B_TAIL, b_rsrc, _B_POL)\n\n        def swizzled(r, chunk):\n            return r * ROW_BYTES + (chunk ^ (r % KB16)) * _CHUNK\n\n        lrow = lane % _MFMA\n        lk = lane // _MFMA\n        wk = wid // WM\n        wm = wid % WM\n        b_roff = []\n        a_roff = []\n        for kk in range_constexpr(WK_STEPS):\n            chunk = wk * (K_SLICE * _BF16_BYTES // _CHUNK) + kk * (_MFMA_K * _BF16_BYTES // _CHUNK) + lk\n            bo = []\n            for j in range_constexpr(NJ):\n                bo.append(swizzled(j * _MFMA + lrow, chunk))\n            b_roff.append(bo)\n            ao = []\n            for mi in range_constexpr(M_STEPS):\n                r = wm * WROWS + mi * _MFMA + lrow\n                if const_expr(A_BACK and (WM - 1) * WROWS + (mi + 1) * _MFMA > A_ROWS):\n                    r = (r < A_ROWS).select(r, r - A_BACK)\n                ao.append(swizzled(r, chunk))\n            a_roff.append(ao)\n\n        acc_ty = T.vec(ACC, T.f32)\n        frag_ty = T.vec(_CHUNK // _BF16_BYTES, T.bf16)\n\n        def compute(ca, cb, accs):\n            a_base = slot_base(ca, A_STRIDE, 0)\n            b_base = slot_base(cb, B_STRIDE, B_OFF)\n            new = list(accs)\n            for kk in range_constexpr(WK_STEPS):\n                bfs = [_lds_load(_lds_at(b_base, off), frag_ty) for off in b_roff[kk]]\n                afs = [_lds_load(_lds_at(a_base, off), frag_ty) for off in a_roff[kk]]\n                rocdl.sched_barrier(0)\n                for mi in range_constexpr(M_STEPS):\n                    for j in range_constexpr(NJ):\n                        new[mi * NJ + j] = rocdl.mfma_f32_16x16x32_bf16(\n                            acc_ty, [afs[mi], bfs[j], new[mi * NJ + j], 0, 0, 0]\n                        )\n            return new\n\n        accs = [arith.constant_vector(0.0, acc_ty)] * (M_STEPS * NJ)\n        for i in range_constexpr(-(B_ST - 1), 0):\n            if const_expr(i + A_ST - 1 >= 0):\n                issue_a(fx.Int32(i + A_ST - 1), i + A_ST - 1)\n            issue_b(fx.Int32(i + B_ST - 1), i + B_ST - 1)\n        rocdl.sched_barrier(0)\n\n        NS = 1 if A_ST == B_ST else 2  # interleaved A and B stages share one carried slot index\n        init_state = [fx.Int32(0)] + [arith.constant(0, index=True)] * NS + accs\n        for _, state in range(0, MAIN, 1, init=init_state):\n            k_off = state[0]\n            ca = fx.Index(state[1])\n            cb = fx.Index(state[NS])\n            cs = state[1 + NS :]\n            _barrier(WAITS[0])\n            issue_a(k_off + fx.Int32(A_ST - 1), (ca + A_ST - 1) % A_ST)\n            issue_b(k_off + fx.Int32(B_ST - 1), (cb + B_ST - 1) % B_ST)\n            cs_new = compute(ca, cb, cs)\n            _schedule_stage(AW + BW, WK_STEPS, M_STEPS, NJ)\n            nxt = [k_off + fx.Int32(1), (ca + 1) % A_ST]\n            if const_expr(NS == 2):\n                nxt.append((cb + 1) % B_ST)\n            results = yield nxt + cs_new\n        ca = fx.Index(results[1])\n        cb = fx.Index(results[NS])\n        accs = results[1 + NS :]\n        for t in range_constexpr(MAIN, K_LOOPS):\n            _barrier(WAITS[t])\n            if const_expr(t + A_ST - 1 < K_LOOPS):\n                issue_a(fx.Int32(t + A_ST - 1), (ca + A_ST - 1) % A_ST)\n            accs = compute(ca, cb, accs)\n            ca = (ca + 1) % A_ST\n            cb = (cb + 1) % B_ST\n\n        # the partial sums below overwrite the operand rings: every wave's ring reads must have landed\n        _barrier(0, lds=True)\n        for mi in range_constexpr(M_STEPS):\n            for j in range_constexpr(NJ):\n                val = fx.Vector(accs[mi * NJ + j])\n                for i in range_constexpr(ACC):\n                    row = wm * WROWS + mi * _MFMA + lk * ACC + i\n                    off = ((wk * TILE_M + row) * C_STRIDE + j * _MFMA + lrow) * _F32_BYTES\n                    llvm.StoreOp(val[i].ir_value(), _lds_ptr(_lds_at(lds_base, off)), alignment=_F32_BYTES)\n        _barrier(0, lds=True)\n        # fixed-order sum over the K waves, one bf16 element per thread and pass\n        for p in range_constexpr(OUT_PASSES):\n            e = tid + p * BT\n            orow = e // _TILE_N\n            ocol = e % _TILE_N\n            tot = None\n            for w in range_constexpr(WK):\n                off = ((fx.Index(w * TILE_M) + fx.Index(orow)) * C_STRIDE + fx.Index(ocol)) * _F32_BYTES\n                v = fx.Float32(_lds_load(_lds_at(lds_base, off), T.f32, alignment=_F32_BYTES))\n                tot = v if tot is None else tot + v\n            ok = fx.Int32(orow) < fx.Int32(m)\n            if const_expr(OUT_ELEMS % BT != 0):\n                ok = ok & (fx.Int32(e) < fx.Int32(OUT_ELEMS))\n            c_off = ok.select(\n                fx.Int32((fx.Int32(orow) * _N + n_off + fx.Int32(ocol)) * _BF16_BYTES), fx.Int32(_OOB)\n            )\n            rocdl_d.RawPtrBufferStoreOp(\n                tot.to(fx.BFloat16).ir_value(), c_rsrc, c_off.ir_value(), arith.constant(0, type=T.i32)\n            )\n\n    @flyc.jit\n    def launch(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, stream: fx.Stream):\n        gemm_n19360_k6144_strip(A, B, C).launch(grid=(_GRID, 1, 1), block=(BT, 1, 1), stream=stream)\n\n    return launch\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    if not trans_b or bias is not None:\n        raise ValueError(\"gemm_n19360_k6144 serves trans_b without a bias only\")\n    if out_dtype not in (None, torch.bfloat16) or not all(\n        t.dtype == torch.bfloat16 and t.is_contiguous() for t in (a, b, out)\n    ):\n        raise ValueError(\"gemm_n19360_k6144 serves contiguous bf16 a, b and out only\")\n    if a.dim() != 2 or a.shape[1] != _K or tuple(b.shape) != (_N, _K) or tuple(out.shape) != (a.shape[0], _N):\n        raise ValueError(f\"gemm_n19360_k6144 serves a (m, {_K}), b ({_N}, {_K}), out (m, {_N}) only\")\n    launch = _launcher(a.shape[0])\n    if launch is None:\n        raise ValueError(f\"gemm_n19360_k6144 serves 1 <= m <= {max(_STRIP)}, got m = {a.shape[0]}\")\n    launch(a, b, out, stream=fx.Stream(torch.cuda.current_stream(a.device)))\n"
+      }
+    ]
+  }
+}
