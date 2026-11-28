@@ -42,12 +42,17 @@ class _GraphRule(IsaRule):
         if check is None:
             raise RuntimeError(f"volta did not run its check of {self.check}")
         aborted = f"; the run aborted at {run.abort}" if run.abort else ""
-        if check.status == "FAIL" and check.witnesses:
-            status, witness = self.rejection(check)
-            return self.concluded(status, witness + aborted)
+        status, witness = "", ""
+        if check.status == "FAIL":
+            status, witness = self.rejection(check) if check.witnesses else ("rejected", "")
+            witness = witness or f"volta failed {self.check} without a witness"
+            if status == "rejected":
+                return self.concluded(status, witness + aborted)
         stopped = self.stopped(run)
         if stopped:
             return self.concluded("rejected", stopped)
+        if status:
+            return self.concluded(status, witness + aborted)
         if run.incomplete:
             return self.concluded("unchecked", run.incomplete)
         if check.status == "UNKNOWN":
@@ -81,6 +86,8 @@ class _LdsRaceRule(_GraphRule):
             f" between `{events[0]}` and `{events[1]}`"
         )
         if self._only_duplicate_loads(check):
+            if check.omitted:
+                return "rejected", f"{witness}; volta omitted {check.omitted} more conflicts"
             return "unchecked", f"duplicate-load (ptx_verifier#48): {witness}"
         return "rejected", witness
 

@@ -222,6 +222,36 @@ def test_a_load_to_lds_two_waves_repeat_is_unchecked_and_not_a_race(tmp_path, vo
     assert _details(report)["lds_race"].startswith("duplicate-load (ptx_verifier#48): WriteWrite conflict")
 
 
+def test_an_lds_race_the_run_stopped_at_rejects_even_beside_a_duplicate_load(tmp_path, volta):
+    abort = (
+        "wave 0 aborted at instruction 7: LDS race at 0x0: wave 0 lanes 0 and 32 both write it"
+        " at instruction 7, in no specified order"
+    )
+    report = _verify(
+        tmp_path, _Extractor(tmp_path, _log({"memory-conflict freedom": _DUPLICATE_LOAD}, abort))
+    )
+    assert report.status == "failed"
+    assert _statuses(report)["lds_race"] == "rejected"
+    assert _details(report)["lds_race"] == abort.partition("aborted at ")[2]
+
+
+def test_a_failed_check_volta_lists_no_witness_for_is_rejected(tmp_path, volta):
+    failed = {"memory-conflict freedom": "", "barrier epochs (named barriers)": ""}
+    report = _verify(tmp_path, _Extractor(tmp_path, _log(failed)))
+    assert report.status == "failed"
+    statuses = _statuses(report)
+    assert statuses["lds_race"] == statuses["barrier_epoch"] == "rejected"
+    assert _details(report)["lds_race"] == "volta failed memory-conflict freedom without a witness"
+
+
+def test_duplicate_loads_volta_lists_only_some_of_are_not_exempt(tmp_path, volta):
+    truncated = _DUPLICATE_LOAD + "      ... (2 more)\n"
+    report = _verify(tmp_path, _Extractor(tmp_path, _log({"memory-conflict freedom": truncated})))
+    assert report.status == "failed"
+    assert _statuses(report)["lds_race"] == "rejected"
+    assert _details(report)["lds_race"].endswith("; volta omitted 2 more conflicts")
+
+
 def test_a_barrier_generation_not_separated_from_the_next_rejects_the_barrier_rule(tmp_path, volta):
     failed = {"barrier epochs (named barriers)": _BARRIER}
     report = _verify(tmp_path, _Extractor(tmp_path, _log(failed)))

@@ -32,6 +32,7 @@ _EVENT: Final = re.compile(r"^\s+e\d+\s+(?:t\d+|async op \d+|generation \d+)\s+(
 class VoltaCheck:
     status: str
     witnesses: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    omitted: int = 0
 
 
 @dataclass(frozen=True)
@@ -184,10 +185,18 @@ class Volta:
     @staticmethod
     def _check(status: str, listed: str) -> VoltaCheck:
         witnesses: list[tuple[str, list[str]]] = []
+        omitted = 0
         for line in listed.splitlines():
             event = _EVENT.match(line)
+            more = re.fullmatch(r"\s+\.\.\. \((\d+) more\)", line)
             if event is not None and witnesses:
                 witnesses[-1][1].append(" ".join(event[1].split()))
-            elif re.fullmatch(r"\s+\.\.\. \(\d+ more\)", line) is None:
+            elif more is not None:
+                omitted += int(more[1])
+            else:
                 witnesses.append((line.strip(), []))
-        return VoltaCheck(status=status, witnesses=tuple((text, tuple(events)) for text, events in witnesses))
+        return VoltaCheck(
+            status=status,
+            witnesses=tuple((text, tuple(events)) for text, events in witnesses),
+            omitted=omitted,
+        )
