@@ -221,8 +221,11 @@ class FlyDSLBuilder(PythonBuilder):
         return True
 
     def build(self, schema: OpContract) -> Runnable:
-        """PythonBuilder's build, the launch cache FlyDSL 0.5 dropped put back first (``aklr.core.jit.flydsl_cache``)."""
-        flydsl_cache.install()
+        """Install the launch cache for this FlyDSL version before loading the kernel."""
+        if not flydsl_cache.install() and RuntimeEnv().is_flydsl_fastcall_enabled:
+            from aklr.core.runtime.builder.flydsl_fastcall import install
+
+            install(KERNEL_PACKAGE_PREFIX)
         return super().build(schema)
 
 
