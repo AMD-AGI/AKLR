@@ -301,6 +301,8 @@ DECLINED = [
     *[("fused_moe", {field: 1}) for field in EP_FIELDS],
     ("fused_moe", {"quant_type_a": QuantType.per_1x32.value}),
     ("fused_moe", {"quant_dtype_a": FP8}),
+    ("fused_moe", {"gate_mode": "interleave", "quant_dtype_a": FP4}),
+    ("fused_moe", {"gate_mode": "interleave", "intermediate_pad": 128}),
     ("fused_moe", {"quant_dtype_a2": FP8}),
     ("fused_moe", {"herd_topk": 8}),
     # AKLR's order of the top-k sums is not fixed
@@ -317,6 +319,12 @@ DECLINED = [
 )
 def test_a_call_outside_aklrs_contract_is_declined_before_aklr_is_asked(aklr_serves, op, changes):
     assert _select(op, **changes) is None
+
+
+def test_interleave_takes_the_fp8_activations_a_caller_names_with_their_padded_intermediate(aklr_serves):
+    """sglang names fp8 for DeepSeek-V4.1's FP4 experts, whose loader pads the intermediate with zeros."""
+    kernel, _ = _select("fused_moe", gate_mode="interleave", quant_dtype_a=FP8, intermediate_pad=64)
+    assert kernel is KERNEL
 
 
 def test_situv2_is_declined_where_aiter_keeps_its_activations_in_bf16(aklr_serves):
