@@ -12,6 +12,8 @@ A plugin has three parts:
 - Ops: each made of a contract, a reference, a baseline and kernels, written as `aklr/plugins/aiter/README.md` says.
 - Routes: code that replaces a framework function and hands the call to an op; when the op does not take the call, it falls back to the framework's original implementation.
 
+The SGLang plugin also has monokernels, which replace a model's whole decode step (Rules for monokernels).
+
 ```
 aklr/plugins/
 ├── sglang/                   the SGLang plugin
@@ -24,7 +26,8 @@ aklr/plugins/
 │   │       ├── reference.py  reference implementation written from the math, used to verify kernel correctness
 │   │       ├── baseline.py   SGLang's original implementation, the baseline for kernel performance
 │   │       └── impls/        kernel implementations, one JSON file per kernel
-│   └── layers/               mirrors SGLang's srt/layers/, with the same layout
+│   ├── layers/               mirrors SGLang's srt/layers/, with the same layout
+│   └── monokernels/          specs for SGLang's --enable-amd-monokernel, one package per model: spec.py and its layer ops
 ├── vllm/                     the vLLM plugin (AKLR_VLLM_PLUGIN=1)
 │   ├── __init__.py           entry: hooks the routes in each worker once its device is bound
 │   ├── hook.py               @vllm_route wraps the function a vLLM function looks up at run time
@@ -66,6 +69,22 @@ In addition, a route is hooked only on the SGLang releases it declares, and insi
 - Import `sglang` only inside functions: environments without SGLang import `api.py` too.
 - A plugin package's name is its op's `op_type` and must be unique across `aklr/plugins`.
 
+## Rules for monokernels
+
+A monokernel runs a model's whole decode step as AKLR kernels, one launch per decoder layer, through SGLang's `--enable-amd-monokernel` instead of routes. Each model has one package under `sglang/monokernels/` (`glm53/`: GLM-5.3 FP8).
+
+- On only when all hold:
+  - `--enable-amd-monokernel` is passed;
+  - `AKLR_SGLANG_PLUGIN=1` (the routes' switch too), and not `AKLR_DISABLE=1`;
+  - the SGLang release is one the spec lists in `SPECS` (`monokernels/__init__.py`);
+  - SGLang does not load sgl-amd-mono too;
+  - AKLR serves the layer's op: a validated kernel measured faster than SGLang.
+- sgl-amd-mono: SGLang runs one monokernel plugin. With both loaded, `--enable-amd-monokernel` on a model AKLR covers stops start-up and asks for one: `SGLANG_PLUGINS=aklr` or `SGLANG_PLUGINS=sgl_amd_mono`. SGLang's ROCm images ship sgl-amd-mono, so AKLR's monokernels need `SGLANG_PLUGINS=aklr` there.
+- Package: the files of any op package (`contract.py`, `reference.py`, `baseline.py`, `api.py`, `impls/`), plus `spec.py` (the `MonoSpec`) and, for a model with an MTP draft, `draft.py`.
+- No route, no patch: where the spec interface does not reach (the LM head, the draft's steps), the spec wraps methods of the model object it builds.
+- Fallback: a setup the spec cannot run stops start-up with the reason; prefill, and a layer at a batch size no kernel serves, run SGLang's code. Within a step, a layer launch that falls back raises (a captured CUDA graph cannot fall back); the head, the embedding and the draft entry fall back to SGLang's code.
+- Imports: a monokernel package may import public names from `layers/` and `models/`, never the reverse.
+
 ## Validation and tests
 
 Validation (`python -m aklr validate`) checks each kernel in two stages:
@@ -79,10 +98,11 @@ Unit tests:
 
 - The small inputs in `tests/plugins/sglang/cases.py` feed the shared tests in `tests/plugins/aiter`.
 - `tests/plugins/sglang/test_hook.py` covers hooking, version checks, fallback, and exiting the process when start-up fails, and automatically checks every route: its target exists, has the same parameters, and is not replaced by another route.
+- `tests/plugins/sglang/test_monokernels.py` covers when the monokernel specs register, and checks them against the installed SGLang.
 
 ## Enabling the plugin and upgrading SGLang
 
-With AKLR installed, SGLang loads the plugin at start-up; routes are hooked only when `AKLR_SGLANG_PLUGIN=1`. `AKLR_DISABLE=<contract id,...>` disables the listed ops; `AKLR_DISABLE=1` disables AKLR entirely.
+With AKLR installed, SGLang loads the plugin at start-up; `AKLR_SGLANG_PLUGIN=1` hooks the routes and registers the monokernel specs, which also need `--enable-amd-monokernel`. `AKLR_DISABLE=<contract id,...>` disables the listed ops; `AKLR_DISABLE=1` disables AKLR entirely.
 
 To see which routes and ops a run actually reaches, set `AKLR_TRACE=plugin` (the vLLM and sglang routes), `AKLR_TRACE=op` (every op dispatch, including the ops aiter calls) or `AKLR_TRACE=all` (both). Each process logs each distinct call once, served or fallen back:
 
@@ -100,6 +120,6 @@ A CUDA graph replay runs no Python and logs nothing: the graph replays the kerne
 
 Only official SGLang releases are supported, and the development build a model's image ships (Kimi-K3.1-Pro's `0.5.24.dev809`): a route declared only for such builds is tested on that image, not on CI's release. To upgrade:
 
-1. Install the new release and run `test_hook.py`. It lists the routes whose parameters changed or that do not declare the new release yet.
-2. Adapt each route, and check it by running the model (step 7 of the plugin tutorial).
-3. Add the new release to each route's `versions`.
+1. Install the new release and run `test_hook.py` and `test_monokernels.py`: they list the routes and specs to adapt.
+2. Adapt each, and check it by running the model (step 7 of the plugin tutorial; a spec with `--enable-amd-monokernel`).
+3. Add the new release to each route's `versions`, and to each spec's releases in `monokernels.SPECS`.

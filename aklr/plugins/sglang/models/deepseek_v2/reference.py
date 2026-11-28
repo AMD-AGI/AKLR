@@ -4,7 +4,7 @@
 """What the contracts say, in torch, in fp32: every input decoded to fp32 and nothing rounded or
 quantized in between but what a contract rounds: the router's logits, in the dtype sglang's
 MoEGate returns them in, and in deepseek_v2_fp8_moe each fp8 linear's input, as the checkpoint's
-FP8 scheme quantizes it (_fp8_linear)."""
+FP8 scheme quantizes it (fp8_linear)."""
 
 import torch
 
@@ -12,7 +12,7 @@ from aklr.core.contract.reference import OpReference
 from aklr.core.contract.semantics import rounded_to_bfloat16
 from aklr.plugins.aiter.provider.fused_moe.reference import mxfp4_weight
 
-__all__ = ["DeepseekV2Fp8MoeReference", "DeepseekV2Mxfp4MoeReference"]
+__all__ = ["DeepseekV2Fp8MoeReference", "DeepseekV2Mxfp4MoeReference", "fp8_linear"]
 
 _FP8_BLOCK = 128
 
@@ -103,7 +103,7 @@ def _grouped_routed(logits, bias, topk, num_expert_group, topk_group, renormaliz
     return ids, weights * routed_scaling_factor
 
 
-def _fp8_linear(x, weight, scale):
+def fp8_linear(x, weight, scale):
     """x weight^T of an fp8 weight [n, k] with its scale per 128 x 128 block, x taken as the
     checkpoint's FP8 scheme quantizes it (sglang's fp8 MoE on aiter, per_128x128): in bf16,
     then each 1 x 128 group in fp8 at a scale of its amax / 448."""
@@ -139,7 +139,7 @@ class DeepseekV2Fp8MoeReference(OpReference):
         """On hidden_states, each token's routed experts (_grouped_routed) and the shared one
         (the last slot) at weight 1, both linears of each expert an fp8 one. Rounding points:
         the router's logits round to hidden_states' dtype, bf16; each linear's input rounds to
-        bf16, then to fp8 per 1 x 128 group (_fp8_linear)."""
+        bf16, then to fp8 per 1 x 128 group (fp8_linear)."""
         x = hidden_states.float()
         logits = rounded_to_bfloat16(x @ router_weight.float().T)
         ids, weights = _grouped_routed(
@@ -154,7 +154,7 @@ class DeepseekV2Fp8MoeReference(OpReference):
         ids, weights = _with_shared_slot(ids, weights, router_weight.shape[0])
 
         def mlp(rows, e):
-            gate, up = _fp8_linear(rows, w1[e].float(), w1_scale[e].float()).chunk(2, dim=-1)
-            return _fp8_linear(torch.nn.functional.silu(gate) * up, w2[e].float(), w2_scale[e].float())
+            gate, up = fp8_linear(rows, w1[e].float(), w1_scale[e].float()).chunk(2, dim=-1)
+            return fp8_linear(torch.nn.functional.silu(gate) * up, w2[e].float(), w2_scale[e].float())
 
         return {"out": _experts(x, ids, weights, mlp).to(hidden_states.dtype)}

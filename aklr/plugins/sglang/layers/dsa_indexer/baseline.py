@@ -14,7 +14,7 @@ import torch
 from aklr.core.contract.baseline import OpBaseline
 from aklr.plugins.sglang.layers.dsa_indexer.reference import HEAD_DIM, PAGE_SIZE, ROPE_DIM
 
-__all__ = ["DsaIndexerKeyPrepareBaseline", "DsaIndexerPrepareBaseline"]
+__all__ = ["DsaIndexerKeyPrepareBaseline", "DsaIndexerPrepareBaseline", "replicated_linear"]
 
 # Indexer's quantization: block_size and scale_fmt as deepseek_v2 builds it
 _QUANT_BLOCK = 128
@@ -29,7 +29,7 @@ def _check_aiter_path():
         raise RuntimeError("sglang's aiter path is off: SGLANG_USE_AITER=1 on HIP")
 
 
-def _linear(x, weight):
+def replicated_linear(x, weight):
     """ReplicatedLinear's UnquantizedLinearMethod.apply on aiter: aiter's triton gemm_a16w16
     for the decode shapes _prefer_triton_a16w16 takes, else tgemm.mm."""
     from sglang.srt.layers.quantization import unquant
@@ -77,7 +77,7 @@ def _rotate_activation(x):
 def _key(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, positions, cos_cache, sin_cache, query=None):
     """The bf16 key, and the query when given (_get_q_k_bf16), else with a dummy query's RoPE
     (_get_k_bf16): wk, k_norm, RoPE on both in place, the Hadamard transform on each."""
-    key = _layer_norm(_linear(x, wk), k_norm_weight, k_norm_bias, k_norm_eps)
+    key = _layer_norm(replicated_linear(x, wk), k_norm_weight, k_norm_bias, k_norm_eps)
     k_rope = key[..., :ROPE_DIM]
     q_rope = torch.empty_like(k_rope) if query is None else query[..., :ROPE_DIM]
     _rope(positions, q_rope, k_rope, cos_cache, sin_cache)
@@ -135,13 +135,13 @@ class DsaIndexerPrepareBaseline(OpBaseline):
 
         _check_aiter_path()
         n_heads = weights_proj.shape[0]
-        query = _linear(q_lora, wq_b).view(-1, n_heads, HEAD_DIM)
+        query = replicated_linear(q_lora, wq_b).view(-1, n_heads, HEAD_DIM)
         key, query = _key(
             x, wk, k_norm_weight, k_norm_bias, k_norm_eps, positions, cos_cache, sin_cache, query
         )
         quantized, q_scale = act_quant(query, _QUANT_BLOCK, _SCALE_FMT)
         _store(key, index_k_cache, out_cache_loc)
-        weights = _head_gate()(_linear(x, weights_proj), q_scale, n_heads**-0.5, HEAD_DIM**-0.5)
+        weights = _head_gate()(replicated_linear(x, weights_proj), q_scale, n_heads**-0.5, HEAD_DIM**-0.5)
         return {"q_fp8": quantized, "head_weights": weights.squeeze(-1)}
 
 

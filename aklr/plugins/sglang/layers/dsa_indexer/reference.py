@@ -28,6 +28,12 @@ __all__ = [
     "SCALE_FLOOR",
     "DsaIndexerKeyPrepareReference",
     "DsaIndexerPrepareReference",
+    "fp8_scales",
+    "k_norm",
+    "key_columns",
+    "restated_scale_steps",
+    "rope_hadamard",
+    "stored_index_cache",
 ]
 
 # An indexer head and key: the Hadamard transform's length and the cache's 128 bytes a key
@@ -68,7 +74,7 @@ def _hadamard(v):
     return v
 
 
-def _rotate(v, cos, sin):
+def rope_hadamard(v, cos, sin):
     """RoPE on the first ROPE_DIM values in interleaved pairs (2i, 2i + 1), each turned value
     rounded to bf16, then the Hadamard transform times HEAD_DIM^-0.5, rounded to bf16. ``v`` is
     [..., HEAD_DIM] bf16 values in float32; cos and sin [..., ROPE_DIM // 2], broadcast."""
@@ -79,9 +85,9 @@ def _rotate(v, cos, sin):
     return _bf16(_hadamard(v) * HEAD_DIM**-0.5)
 
 
-def _scales(v):
-    """Each row's fp8 scale: 2^ceil(log2(max(amax, SCALE_FLOOR) / FP8_MAX)), exact."""
-    ratio = v.abs().amax(-1).clamp(min=SCALE_FLOOR) / FP8_MAX
+def fp8_scales(v, floor=SCALE_FLOOR):
+    """Each row's fp8 scale: 2^ceil(log2(max(amax, floor) / FP8_MAX)), exact."""
+    ratio = v.abs().amax(-1).clamp(min=floor) / FP8_MAX
     mantissa, exponent = torch.frexp(ratio)
     # ratio = mantissa * 2^exponent, mantissa in [0.5, 1): a power of two is mantissa 0.5
     return torch.ldexp(torch.ones_like(ratio), exponent - (mantissa == 0.5).to(exponent.dtype))
@@ -93,18 +99,22 @@ def _rotary(positions, cos_cache, sin_cache):
     return cos_cache[positions].float(), sin_cache[positions].float()
 
 
+def k_norm(k, weight, bias, eps):
+    """The indexer's k_norm, a LayerNorm, on float32 keys, rounded to bf16."""
+    mean = k.mean(-1, keepdim=True)
+    variance = (k - mean).square().mean(-1, keepdim=True)
+    return _bf16((k - mean) / torch.sqrt(variance + eps) * weight.float() + bias.float())
+
+
 def _keys(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, cos, sin):
     """(keys [n_tokens, HEAD_DIM], their scales [n_tokens]): the turned, transformed bf16
     keys in float32, and their fp8 scales."""
-    k = _project(x.float(), wk.float())
-    mean = k.mean(-1, keepdim=True)
-    variance = (k - mean).square().mean(-1, keepdim=True)
-    k = _bf16((k - mean) / torch.sqrt(variance + k_norm_eps) * k_norm_weight.float() + k_norm_bias.float())
-    k = _rotate(k, cos, sin)
-    return k, _scales(k)
+    k = k_norm(_project(x.float(), wk.float()), k_norm_weight, k_norm_bias, k_norm_eps)
+    k = rope_hadamard(k, cos, sin)
+    return k, fp8_scales(k)
 
 
-def _key_columns(slots):
+def key_columns(slots):
     """(page [n, 1], value columns [n, HEAD_DIM], scale columns [n, 4]) of each slot's key in a
     page's bytes."""
     slots = slots.long()
@@ -118,23 +128,23 @@ def _key_columns(slots):
     return page[:, None], values, scales
 
 
-def _stored_cache(index_k_cache, out_cache_loc, keys, scales):
+def stored_index_cache(index_k_cache, out_cache_loc, keys, scales):
     """index_k_cache after the call: each token's fp8 values (keys / scale) and the bytes of its
     fp32 scale at its slot."""
     pages = index_k_cache.float().reshape(-1, _PAGE_BYTES).clone()
-    page, value_columns, scale_columns = _key_columns(out_cache_loc)
+    page, value_columns, scale_columns = key_columns(out_cache_loc)
     pages[page, value_columns] = keys / scales[:, None]
     pages[page, scale_columns] = scales[:, None].view(torch.uint8).view(torch.float8_e4m3fn).float()
     return pages.reshape(index_k_cache.shape).to(torch.float8_e4m3fn)
 
 
-def _restated_scale_steps(cache, expected, slots):
+def restated_scale_steps(cache, expected, slots):
     """``cache`` with each key at ``slots`` whose fp32 scale is twice or half ``expected``'s
     restated at ``expected``'s scale: its fp8 values times that ratio (exact but in fp8's
     subnormals, a power of two moving only the exponent) and its scale bytes ``expected``'s."""
     pages = cache.view(torch.uint8).reshape(-1, _PAGE_BYTES)
     expected_pages = expected.view(torch.uint8).reshape(-1, _PAGE_BYTES)
-    page, value_columns, scale_columns = _key_columns(slots)
+    page, value_columns, scale_columns = key_columns(slots)
     ratio = (
         pages[page, scale_columns].contiguous().view(torch.float32)
         / expected_pages[page, scale_columns].contiguous().view(torch.float32)
@@ -156,7 +166,7 @@ class _IndexKCacheReference(OpReference):
         values half or twice, stands for the reference's key: a kernel that sums a projection in
         another order rounds a few values to the next bf16, and a key's amax can then cross a power
         of two times 448. Any other scale or value still differs."""
-        cache = _restated_scale_steps(
+        cache = restated_scale_steps(
             outputs["index_k_cache"], expected["index_k_cache"], expected["written_slots"]
         )
         return super().check({**outputs, "index_k_cache": cache}, expected, schema)
@@ -188,13 +198,13 @@ class DsaIndexerPrepareReference(_IndexKCacheReference):
         cos, sin = _rotary(positions, cos_cache, sin_cache)
         keys, key_scales = _keys(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, cos, sin)
         q = _project(q_lora.float(), wq_b.float()).reshape(-1, n_heads, HEAD_DIM)
-        q = _rotate(q, cos[:, None], sin[:, None])
-        q_scales = _scales(q)
+        q = rope_hadamard(q, cos[:, None], sin[:, None])
+        q_scales = fp8_scales(q)
         gate = _bf16(_project(x.float(), weights_proj.float()) * n_heads**-0.5)
         return {
             "q_fp8": (q / q_scales[..., None]).to(torch.float8_e4m3fn),
             "head_weights": gate * q_scales * HEAD_DIM**-0.5,
-            "index_k_cache": _stored_cache(index_k_cache, out_cache_loc, keys, key_scales),
+            "index_k_cache": stored_index_cache(index_k_cache, out_cache_loc, keys, key_scales),
             "written_slots": out_cache_loc,
         }
 
@@ -218,7 +228,7 @@ class DsaIndexerKeyPrepareReference(_IndexKCacheReference):
         """Nothing, the keys stored at their slots, and the slots, for check."""
         cos, sin = _rotary(positions, cos_cache, sin_cache)
         keys, key_scales = _keys(x, wk, k_norm_weight, k_norm_bias, k_norm_eps, cos, sin)
-        cache = _stored_cache(index_k_cache, out_cache_loc, keys, key_scales)
+        cache = stored_index_cache(index_k_cache, out_cache_loc, keys, key_scales)
         return {
             "no_values": torch.zeros(0, device=cache.device),
             "index_k_cache": cache,

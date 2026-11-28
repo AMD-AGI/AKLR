@@ -10,7 +10,7 @@ import importlib
 from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import RuntimeEnv
 from aklr.core.runtime.dispatch import register_sglang_plugin
-from aklr.plugins.sglang import hook
+from aklr.plugins.sglang import hook, monokernels
 
 __all__ = ["register"]
 
@@ -33,6 +33,8 @@ def _register() -> None:
         enable("AKLR sglang plugin, AKLR_AITER_PLUGIN=1")
     if env.is_all_disabled or not env.is_sglang_plugin_enabled:
         return
+    # inert unless a server passes --enable-amd-monokernel
+    monokernels.register_specs()
     # imports this package's api modules, which declare its routes, and its other routes
     for package in op_packages():
         if package.startswith(f"{__name__}."):

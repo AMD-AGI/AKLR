@@ -273,6 +273,7 @@ def register_calls(monkeypatch):
     """What register() did, in order."""
     calls = []
     monkeypatch.setattr(plugin, "register_sglang_plugin", lambda: calls.append("aklr starts"))
+    monkeypatch.setattr(plugin.monokernels, "register_specs", lambda: calls.append("monokernel specs"))
     monkeypatch.setattr(
         plugin, "op_packages", lambda: ("aklr.plugins.aiter.provider.gemm", "aklr.plugins.sglang.x.y")
     )
@@ -282,7 +283,7 @@ def register_calls(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "env, hooked",
+    "env, on",
     [
         ({}, False),
         ({ENV_SGLANG_PLUGIN: "0"}, False),
@@ -290,20 +291,14 @@ def register_calls(monkeypatch):
         ({ENV_SGLANG_PLUGIN: "1", ENV_DISABLE: "1"}, False),
     ],
 )
-def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
-    """The layer routes hook only with AKLR_SGLANG_PLUGIN=1, and not with AKLR_DISABLE=1."""
+def test_only_1_turns_on_the_routes_and_the_monokernel_specs(monkeypatch, register_calls, env, on):
+    """AKLR_SGLANG_PLUGIN=1 turns on all the plugin does in sglang, the layer routes and the
+    monokernel specs alike, and AKLR_DISABLE=1 turns both off."""
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = (
-        [
-            "aklr.plugins.sglang.x.y.api",
-            "install",
-        ]
-        if hooked
-        else []
-    )
-    assert register_calls == ["aklr starts", *routes]
+    expected = ["monokernel specs", "aklr.plugins.sglang.x.y.api", "install"] if on else []
+    assert register_calls == ["aklr starts", *expected]
 
 
 def test_any_other_switch_value_ends_the_process(monkeypatch, register_calls):
