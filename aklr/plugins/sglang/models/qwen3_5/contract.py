@@ -4,7 +4,6 @@ full-attention layers' gated decode attention over their FP8 KV cache."""
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
-    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
     BoundedCuSeqlensDistribution,
     CuSeqlensDistribution,
@@ -340,8 +339,10 @@ GDN_DECODE = OpContract(
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 # The FP8 pools' bytes that the kernels' 32-bit offsets address: larger pools stay on sglang.
 _POOL_BYTES = 2**31
-# A cache slot a correct kernel writes may round its BF16 key one FP8 step away
-_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=0.125 + 2**-3)
+# A cache slot a correct kernel writes may round its BF16 key one FP8 step away, and a key element
+# of RoPE's 2-4 magnitude may round one BF16 ulp (2**-6) away before its rotation, which moves a
+# cancelling rotated element near zero by up to 2**-6 * |cos| (cos and sin draw N(0, 1))
+_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-5, relative_tolerance=0.125 + 2**-3)
 _ATTENTION_TEXT = (
     "Qwen3.5 full-attention decode on one rank, between qkv_proj and o_proj, one token "
     "per row. projected_qkv holds each query head's query then its output gate, then "
@@ -389,6 +390,7 @@ GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
         "n_kv_tokens >= n_tokens",
         "n_slots >= n_tokens",
         f"n_slots * n_kv_heads * head_dim < {_POOL_BYTES}",
+        "n_positions >= 3",
     ),
     inputs={
         "projected_qkv": _tensor(
@@ -402,7 +404,9 @@ GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
             "Each row's temporal, height and width positions.",
             (3, "n_tokens"),
             _INT64,
-            distribution=IntRangeDistribution(lo=0, hi="n_positions - 1"),
+            # sglang serves positions up to rows - 3, and its fused mRoPE (the Baseline's) reads
+            # 160 floats past a temporal position's row
+            distribution=IntRangeDistribution(lo=0, hi="n_positions - 3"),
         ),
         "cos_sin_cache": _tensor(
             "Per position, the 32 rotary cosines then the 32 sines.", ("n_positions", ROTARY_DIM), _FP32
@@ -462,7 +466,10 @@ GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
     # Points, with scales up to 30% off. The bounds sit some 6-7 dB under that, twice sglang's
     # error; kernels wrong on purpose (no gate, sequential mRoPE sections, no Q norm, a
     # 128**-0.5 scale, 240 for E4M3FNUZ) stay under 9 dB (values) and 10 dB (scales) at those
-    # Points, at most 16.4 and 16.8 dB on the small one.
+    # Points, at most 16.4 and 16.8 dB on the small one. On rows past 16384 tokens the kernels
+    # round Q to E4M3, as sglang does: over 1042 draws at 131072 tokens their scales and sglang's
+    # come to 13.4 dB at worst (5th percentile 26.8-28.6 dB), so scales take 12 dB;
+    # values stay at 22.7 dB and up there.
     outputs={
         "values": TensorSpec(
             description="Each query head's gated attention, grouped E4M3FN values.",
@@ -474,7 +481,7 @@ GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
             description="One FP32 scale per row and group of 128 channels.",
             shape=("n_tokens", "n_groups"),
             dtype=_FP32,
-            error_bounds=ATTENTION_FP8_SNR,
+            error_bounds=SqnrBound(min_sqnr_db=12.0),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
@@ -509,6 +516,7 @@ GATED_ATTENTION_DECODE = OpContract(
         "n_slots >= n_tokens",
         # the pool elements that the kernels' 32-bit offsets address
         f"n_slots * n_kv_heads * head_dim < {2**32}",
+        "n_positions >= 3",
     ),
     inputs=_FP8_ATTENTION.inputs,
     # sglang's own decode is lossier than the reference (see the FP8 op): aiter's
@@ -566,6 +574,7 @@ _PREFILL_ATTENTION_CONSTRAINTS = (
     "n_tokens >= n_starts + max_seq_len - 2",
     "n_tokens <= (n_starts - 1) * max_seq_len",
     "n_slots >= n_tokens",
+    "n_positions >= 3",
 )
 _PREFILL_ATTENTION_ATTRS = {
     "max_seq_len": attr(
@@ -588,8 +597,9 @@ _PREFILL_ATTENTION_ATTRS = {
     ),
 }
 # Over thousands of rows a key's BF16 norm and RoPE, one ulp from the reference's, can round two
-# FP8 steps away; a wrong slot or an unrotated key is still far past this bound.
-_PREFILL_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-8, relative_tolerance=0.25 + 2**-3)
+# FP8 steps away, near zero as the decode ops' bound; a wrong slot or an unrotated key is still far
+# past this bound.
+_PREFILL_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-5, relative_tolerance=0.25 + 2**-3)
 _PREFILL_ATTENTION_INPUTS = {
     **{
         n: _FP8_ATTENTION.inputs[n]
