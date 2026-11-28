@@ -25,16 +25,17 @@ __all__ = ["deepseek_v4_hc_boundary", "deepseek_v4_hc_boundary_post"]
 # (with a pending post; without one the same widths win, at 1.07x / 1.07x / 1.00x.) Tuning the
 # boundary alone picks 16 columns everywhere and loses the step: it is 1.3-1.6x on its own and up to
 # 0.89x on the pair.
-# 128 columns only with a pending post: without one the boundary has too little work to fill that
-# few programs (0.67-0.93x on its own past 256 rows), and a width the op then declines would leave
-# sglang's own kernel running on it.
-_SLICE_WIDTHS = ((24, 32), (256, 64), (1 << 30, 128))
+#
+# 128 columns is not used although the table shows it ahead at 384 rows: that is the one row count
+# it was measured at, and a concurrency-32 verify batch runs from 6 to 384 rows. With a tier for it,
+# the online point lost 0.4% of throughput while its ITL kept the 2.4% the decode gained; on its own
+# the boundary is 0.92-1.00x at 448-512 rows. 64 columns is ahead at every row count measured.
+_SLICE_WIDTHS = ((24, 32), (1 << 30, 64))
 
 
-def slice_width(n_rows: int, has_post: bool) -> int:
+def slice_width(n_rows: int) -> int:
     """The hidden columns one program owns at this row count."""
-    width = next(width for limit, width in _SLICE_WIDTHS if n_rows <= limit)
-    return width if has_post else min(width, 64)
+    return next(width for limit, width in _SLICE_WIDTHS if n_rows <= limit)
 
 
 @api(DEEPSEEK_V4_HC_BOUNDARY)
@@ -65,12 +66,12 @@ def _hc_boundary_partials(
         or pre_prev is None
         or y is None
         or m == 0
-        or h % slice_width(m, has_post)
+        or h % slice_width(m)
         or not residual.is_contiguous()
         or (has_post and not x.is_contiguous())
     ):
         return FallbackReason.OUT_OF_CONTRACT
-    slices, mix = h // slice_width(m, has_post), hc_fn.shape[0]
+    slices, mix = h // slice_width(m), hc_fn.shape[0]
     part_mix = torch.empty((slices, m, mix), dtype=torch.float32, device=residual.device)
     part_sq = torch.empty((slices, m), dtype=torch.float32, device=residual.device)
     if has_post:
