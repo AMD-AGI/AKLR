@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What kimi_k3_latent_moe's contract says, in torch, in fp32: every input decoded to fp32 and
-nothing rounded or quantized in between but what the contract rounds."""
+"""What the Kimi-K3 contracts say, in torch, in fp32: every input decoded to fp32 and nothing
+rounded or quantized in between but what the contract rounds."""
 
 import torch
 
@@ -11,6 +11,7 @@ from aklr.core.contract.semantics import rounded_to_bfloat16
 from aklr.plugins.aiter.provider.fused_moe.reference import mxfp4_weight, mxfp8
 
 __all__ = [
+    "KimiK3KdaVerifyReference",
     "KimiK3LatentMoeReference",
     "KimiK3MlaPrefillGateReference",
     "KimiK3MlaVcOutputGateReference",
@@ -86,3 +87,82 @@ class KimiK3MlaPrefillGateReference(OpReference):
             attention[start:end] = torch.einsum("hqk,khd->qhd", weights, v[start:end])
         output = rounded_to_bfloat16(attention).flatten(1) * rounded_to_bfloat16(torch.sigmoid(gate.float()))
         return {"output": output.to(dtype)}
+
+
+class KimiK3KdaVerifyReference(OpReference):
+    def reference(
+        self,
+        *,
+        projected_qkvg,
+        projected_bfa,
+        f_b_weight,
+        conv_weight,
+        a_log,
+        dt_bias,
+        norm_weight,
+        conv_state,
+        kda_state,
+        conv_windows,
+        ring_raw_v,
+        ring_raw_k,
+        ring_gate,
+        ring_beta,
+        cache_indices,
+        window_indices,
+        lower_bound,
+        eps,
+        scale,
+        **_,
+    ):
+        """normalized, then the mutable inputs as the call leaves them: conv_state, conv_windows
+        and the four rings. Rounding points: each convolution output (what the rings hold),
+        forget and the core before its norm round to bf16."""
+        qkvg, bfa = projected_qkvg.float(), projected_bfa.float()
+        steps = qkvg.shape[1]
+        heads, dim, rank = kda_state.shape[1], kda_state.shape[2], f_b_weight.shape[1]
+        width = heads * dim
+        slots, rows = cache_indices.long(), window_indices.long()
+        conv, windows = conv_state.float(), conv_windows.float()
+        rings = {
+            "ring_raw_v": ring_raw_v,
+            "ring_raw_k": ring_raw_k,
+            "ring_gate": ring_gate,
+            "ring_beta": ring_beta,
+        }
+        written = {n: t.float() for n, t in rings.items()}
+
+        raw = torch.cat((conv[slots], qkvg[..., : 3 * width]), dim=1)
+        taps = conv_weight.float()
+        z = sum(raw[:, j : j + steps] * taps[:, j] for j in range(4))
+        convolved = rounded_to_bfloat16(torch.nn.functional.silu(z))
+        for t in range(steps):
+            windows[rows, t] = raw[:, t + 1 : t + 4]
+        conv[slots] = raw[:, steps:]
+        q, k, v = (x.unflatten(-1, (heads, dim)) for x in convolved.split(width, dim=-1))
+
+        forget = rounded_to_bfloat16(bfa[..., :rank] @ f_b_weight.float().T).unflatten(-1, (heads, dim))
+        magnitude = torch.exp(a_log.float())[:, None]
+        gate = lower_bound * torch.sigmoid(magnitude * (forget + dt_bias.float().view(heads, dim)))
+        beta = torch.sigmoid(bfa[..., rank : rank + heads])
+        for name, value in (("ring_raw_v", v), ("ring_raw_k", k), ("ring_gate", gate), ("ring_beta", beta)):
+            written[name][slots, :, :steps] = value.transpose(1, 2)
+
+        q = q * torch.rsqrt(q.square().sum(-1, keepdim=True) + 1e-6) * scale
+        k = k * torch.rsqrt(k.square().sum(-1, keepdim=True) + 1e-6)
+        state = kda_state.float()[slots]
+        core = torch.empty_like(v)
+        for t in range(steps):
+            state = state * torch.exp(gate[:, t, :, None, :])
+            update = (v[:, t] - (state * k[:, t, :, None, :]).sum(-1)) * beta[:, t, :, None]
+            state = state + update[..., None] * k[:, t, :, None, :]
+            core[:, t] = (state * q[:, t, :, None, :]).sum(-1)
+        core = rounded_to_bfloat16(core)
+        g = qkvg[..., 3 * width :].unflatten(-1, (heads, dim))
+        normalized = core * torch.rsqrt(core.square().mean(-1, keepdim=True) + eps)
+        normalized = normalized * norm_weight.float() * torch.sigmoid(g)
+        return {
+            "normalized": normalized.to(projected_qkvg.dtype),
+            "conv_state": conv.to(conv_state.dtype),
+            "conv_windows": windows.to(conv_windows.dtype),
+            **{n: written[n].to(t.dtype) for n, t in rings.items()},
+        }

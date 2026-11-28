@@ -14,6 +14,10 @@ kimi_k3_mla_vc_output_gate: rocm_absorb_v_bmm's bf16 torch.bmm into a (tokens, h
 buffer, flattened, then the o_proj wrapper's fused mla_output_gate (x * sigmoid(gate) where it
 does not cover the shapes).
 
+kimi_k3_kda_verify: KDAAttnBackend._forward_target_verify on HIP with ReplaySSM rings and a
+static dense chain, between kimi_k3_tiny_gemm's f_b projection and o_norm: the conv update
+writing the conv windows, then the triton recurrence writing the rings.
+
 kimi_k3_mla_prefill_gate: forward_extend's extend_attention_fwd on a zero prefix, which casts
 Q, K and V to FP8 for Kimi-K3's shapes on gfx950 (SGLANG_TRITON_FP8_PREFILL_ATTN, on by
 default), then the fused output gate."""
@@ -25,6 +29,7 @@ import torch
 from aklr.core.contract.baseline import OpBaseline
 
 __all__ = [
+    "KimiK3KdaVerifyBaseline",
     "KimiK3LatentMoeBaseline",
     "KimiK3MlaPrefillGateBaseline",
     "KimiK3MlaVcOutputGateBaseline",
@@ -204,3 +209,103 @@ class KimiK3MlaPrefillGateBaseline(OpBaseline):
         if mla_output_gate.covered(x, gate):
             return {"output": mla_output_gate.kimi_k3_mla_output_gate(x, gate)}
         return {"output": x * torch.sigmoid(gate)}
+
+
+class KimiK3KdaVerifyBaseline(OpBaseline):
+    def baseline(
+        self,
+        *,
+        projected_qkvg,
+        projected_bfa,
+        f_b_weight,
+        conv_weight,
+        a_log,
+        dt_bias,
+        norm_weight,
+        conv_state,
+        kda_state,
+        conv_windows,
+        ring_raw_v,
+        ring_raw_k,
+        ring_gate,
+        ring_beta,
+        cache_indices,
+        window_indices,
+        lower_bound=-5.0,
+        eps=1e-5,
+        scale=128**-0.5,
+        normalized=None,
+    ):
+        """sglang's chain from the f_b GEMM to o_norm's output, as KimiK3DeltaAttention.forward
+        and _forward_target_verify run it."""
+        from sglang.kernels.ops.attention.fla.fused_norm_gate import rms_norm_gated
+
+        try:  # sglang 0.5.23 moved it from fla to linear
+            from sglang.kernels.ops.attention.linear.fused_sigmoid_gating_recurrent import (
+                fused_sigmoid_gating_delta_rule_update,
+            )
+        except ImportError:
+            from sglang.kernels.ops.attention.fla.fused_sigmoid_gating_recurrent import (
+                fused_sigmoid_gating_delta_rule_update,
+            )
+        from sglang.kernels.ops.gemm import kimi_k3_tiny_gemm
+        from sglang.kernels.ops.mamba.causal_conv1d_triton import causal_conv1d_update
+
+        requests, steps, _ = projected_qkvg.shape
+        heads, dim = kda_state.shape[1], kda_state.shape[2]
+        rank = f_b_weight.shape[1]
+        width = heads * dim
+        qkvg, bfa = projected_qkvg.flatten(0, 1), projected_bfa.flatten(0, 1)
+        mixed, g = qkvg.split((3 * width, width), dim=-1)
+        forget = kimi_k3_tiny_gemm(bfa[..., :rank], f_b_weight).unflatten(-1, (-1, dim)).unsqueeze(0)
+        beta = bfa[..., rank : rank + heads].unsqueeze(0)
+        mixed = causal_conv1d_update(
+            mixed.view(requests, steps, -1).transpose(1, 2),
+            conv_state.transpose(-1, -2),
+            conv_weight,
+            None,
+            activation="silu",
+            conv_state_indices=cache_indices,
+            intermediate_conv_window=conv_windows.transpose(-1, -2),
+            intermediate_state_indices=window_indices,
+        )
+        q, k, v = (
+            x.unflatten(-1, (-1, dim)).unsqueeze(0)
+            for x in mixed.transpose(1, 2).reshape(requests * steps, -1).split(width, dim=-1)
+        )
+        query_start_loc = _verify_starts(requests, steps, qkvg.device)
+        core = fused_sigmoid_gating_delta_rule_update(
+            A_log=a_log,
+            dt_bias=dt_bias,
+            q=q,
+            k=k,
+            v=v,
+            a=forget,
+            b=beta,
+            softplus_beta=1.0,
+            softplus_threshold=20.0,
+            initial_state_source=kda_state,
+            initial_state_indices=cache_indices,
+            scale=scale,
+            cu_seqlens=query_start_loc,
+            use_qk_l2norm_in_kernel=True,
+            is_kda=True,
+            disable_state_update=True,
+            intermediate_states_buffer=None,
+            intermediate_state_indices=window_indices,
+            cache_steps=steps,
+            lower_bound=lower_bound,
+            cache_ring=True,
+            replayssm_rawv=ring_raw_v,
+            replayssm_rawk=ring_raw_k,
+            replayssm_g=ring_gate,
+            replayssm_beta=ring_beta,
+        )
+        out = rms_norm_gated(core, g.unflatten(-1, (-1, dim)), norm_weight, None, "sigmoid", eps=eps)
+        return {"normalized": out.view(requests, steps, heads, dim)}
+
+
+@functools.cache
+def _verify_starts(requests, steps, device):
+    """The verify batch's query_start_loc, which sglang keeps in its graph buffers."""
+    return torch.arange(0, (requests + 1) * steps, steps, dtype=torch.int32, device=device)

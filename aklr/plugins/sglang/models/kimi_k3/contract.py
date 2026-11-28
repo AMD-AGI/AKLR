@@ -2,8 +2,9 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """Kimi-K3's layers on one rank of its TP group: the MoE from hidden_states to the two partial
-sums its fused front path all-reduces, and the MLA layers' value absorption and prefill
-attention, each with the output gate.
+sums its fused front path all-reduces, the MLA layers' value absorption and prefill
+attention, each with the output gate, and the KDA layers' speculative verify between their
+input projections and o_proj.
 
 A model is a scenario: Kimi-K3 at TP8 is model_dim 7168, latent_dim 3584, n_routed 896, topk
 16, inter_dim 384 and shared_inter_dim 768, and 12 MLA heads."""
@@ -20,9 +21,11 @@ from aklr.core.contract.semantics import (
     FiniteDistribution,
     GateUpInterleavedScales,
     GateUpInterleavedWeight,
+    IntRangeDistribution,
     LecunNormalDistribution,
     LogUniformDistribution,
     SqnrBound,
+    ToleranceBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -38,11 +41,13 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 from aklr.plugins.sglang.models.kimi_k3.baseline import (
+    KimiK3KdaVerifyBaseline,
     KimiK3LatentMoeBaseline,
     KimiK3MlaPrefillGateBaseline,
     KimiK3MlaVcOutputGateBaseline,
 )
 from aklr.plugins.sglang.models.kimi_k3.reference import (
+    KimiK3KdaVerifyReference,
     KimiK3LatentMoeReference,
     KimiK3MlaPrefillGateReference,
     KimiK3MlaVcOutputGateReference,
@@ -50,12 +55,15 @@ from aklr.plugins.sglang.models.kimi_k3.reference import (
 
 __all__ = [
     "CONTRACTS",
+    "KIMI_K3_KDA_VERIFY",
     "KIMI_K3_LATENT_MOE",
     "KIMI_K3_MLA_PREFILL_GATE",
     "KIMI_K3_MLA_VC_OUTPUT_GATE",
 ]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
+_FP32 = DTypeSpec(any_of=(DType.FLOAT32,))
+_INT32 = DTypeSpec(any_of=(DType.INT32,))
 _MXFP4 = DTypeSpec(any_of=(DType.FLOAT4_E2M1,))
 _E8M0 = DTypeSpec(any_of=(DType.FLOAT8_E8M0,))
 
@@ -350,4 +358,184 @@ KIMI_K3_MLA_PREFILL_GATE = OpContract(
     baseline=KimiK3MlaPrefillGateBaseline(),
 )
 
-CONTRACTS = (KIMI_K3_LATENT_MOE, KIMI_K3_MLA_VC_OUTPUT_GATE, KIMI_K3_MLA_PREFILL_GATE)
+
+def _tensor(description, shape, dtype, *, mutable=False, bound=None, distribution=None, weight=False):
+    return TensorSpec(
+        description=description,
+        shape=shape,
+        dtype=dtype,
+        distribution=distribution or FiniteDistribution(),
+        mutable=mutable,
+        error_bounds=() if bound is None else bound,
+        lifetime="weight" if weight else "per_call",
+    )
+
+
+_EXACT = ToleranceBound(absolute_tolerance=0, relative_tolerance=0)
+# a convolution output a correct kernel sums in another order may round to the neighbouring
+# BF16 value
+_CONV_ROUNDING = ToleranceBound(absolute_tolerance=1e-6, relative_tolerance=2**-7)
+
+KIMI_K3_KDA_VERIFY = OpContract(
+    contract_id="kimi_k3_kda_verify@1.0",
+    description=(
+        "Kimi-K3 KDA speculative verify on one rank, between the input projections and o_proj: "
+        "each request verifies a chain of tokens_per_request rows from its distinct state slot "
+        "cache_indices[r], whose committed kda_state it reads and never writes. Each row's Q, K "
+        "and V channels take the width-four SiLU causal convolution over the slot's three-row "
+        "history then the request's rows, the four products of BF16 inputs and FP32 taps summed "
+        "in FP32, the SiLU rounded to BF16. conv_windows row window_indices[r], step t, holds "
+        "the three raw rows ending at row t; the slot's conv_state becomes the last three raw "
+        "rows. forget = f_a f_b_weight^T rounded to BF16, f_a the first gate_rank columns of "
+        "projected_bfa; gate = lower_bound * sigmoid(exp(a_log) * (forget + dt_bias)) per key "
+        "channel; beta = sigmoid of the head's column after f_a. Step t writes the slot's "
+        "ReplaySSM rings at position t: the convolved V, the convolved K before its L2 norm, "
+        "gate and beta. Q and K are L2-normalized with 1e-6 under the root and Q multiplied by "
+        "scale; from the slot's [value, key] state each step decays the keys by exp(gate), adds "
+        "beta * (v - S k) k^T and reads S q, rounded to BF16. That core is RMS-normalized with "
+        "eps, times norm_weight and the sigmoid of the row's G columns, and rounded to BF16. "
+        "Unwritten ring and window positions, other slots and all other inputs are preserved."
+    ),
+    op_type="kimi_k3",
+    axes={
+        "n_requests": axis("Verified requests.", 1, 256, is_var=True),
+        "tokens_per_request": axis("Verify rows per request: the draft block plus one.", 1, 64),
+        "n_slots": axis("State slots of the pools.", 1, 65536, is_var=True, any_size=True),
+        "n_window_rows": axis("Rows of the conv window scratch.", 1, 65536, is_var=True, any_size=True),
+        "window_steps": axis("Steps of a conv window scratch row.", 1, 64),
+        "ring_len": axis("Positions of a ReplaySSM ring.", 1, 64),
+        "n_heads": axis("KDA heads on this rank.", 1, 64),
+        "head_dim": axis("Key and value head width.", 128, 128),
+        "gate_rank": axis("Columns of f_a.", 16, 256, multiple_of=16),
+        "bfa_dim": axis("projected_bfa columns: f_a, beta, padding.", 17, 512),
+        "width": derived_axis("Heads times their width.", "n_heads * head_dim"),
+        "conv_dim": derived_axis("Q, K and V channels.", "3 * width"),
+        "projection_dim": derived_axis("Q, K, V and G columns.", "4 * width"),
+    },
+    constraints=(
+        "tokens_per_request <= window_steps",
+        "tokens_per_request <= ring_len",
+        "n_requests <= n_slots",
+        "n_requests <= n_window_rows",
+        "bfa_dim >= gate_rank + n_heads",
+    ),
+    inputs={
+        "projected_qkvg": _tensor(
+            "Each request's rows of the Q, K, V and G projection, heads in order.",
+            ("n_requests", "tokens_per_request", "projection_dim"),
+            _BF16,
+        ),
+        "projected_bfa": _tensor(
+            "Each request's rows of the f_a then beta projection.",
+            ("n_requests", "tokens_per_request", "bfa_dim"),
+            _BF16,
+        ),
+        "f_b_weight": _tensor(
+            "The forget gate's second projection.",
+            ("width", "gate_rank"),
+            _BF16,
+            distribution=LecunNormalDistribution(fan_in="gate_rank"),
+            weight=True,
+        ),
+        "conv_weight": _tensor(
+            "Four causal convolution taps per channel, oldest first.",
+            ("conv_dim", 4),
+            _FP32,
+            distribution=LecunNormalDistribution(fan_in=4),
+            weight=True,
+        ),
+        "a_log": _tensor("Log gate magnitude per head.", ("n_heads",), _FP32, weight=True),
+        "dt_bias": _tensor("Gate bias per key channel.", ("width",), _FP32, weight=True),
+        "norm_weight": _tensor("Gated RMSNorm weight.", ("head_dim",), _BF16, weight=True),
+        "conv_state": _tensor(
+            "Each slot's last three raw rows, oldest first.",
+            ("n_slots", 3, "conv_dim"),
+            _BF16,
+            mutable=True,
+            bound=_EXACT,
+        ),
+        "kda_state": _tensor(
+            "Each slot's committed recurrent matrices, value dimension first.",
+            ("n_slots", "n_heads", "head_dim", "head_dim"),
+            _FP32,
+        ),
+        "conv_windows": _tensor(
+            "Per scratch row and step, the three raw rows ending at that step.",
+            ("n_window_rows", "window_steps", 3, "conv_dim"),
+            _BF16,
+            mutable=True,
+            bound=_EXACT,
+        ),
+        "ring_raw_v": _tensor(
+            "Per slot, head and step, the convolved V.",
+            ("n_slots", "n_heads", "ring_len", "head_dim"),
+            _BF16,
+            mutable=True,
+            bound=_CONV_ROUNDING,
+        ),
+        "ring_raw_k": _tensor(
+            "Per slot, head and step, the convolved K before its L2 norm.",
+            ("n_slots", "n_heads", "ring_len", "head_dim"),
+            _BF16,
+            mutable=True,
+            bound=_CONV_ROUNDING,
+        ),
+        "ring_gate": _tensor(
+            "Per slot, head and step, the gate of each key channel.",
+            ("n_slots", "n_heads", "ring_len", "head_dim"),
+            _FP32,
+            mutable=True,
+            # a forget value a correct kernel rounds to the neighbouring BF16 value moves its
+            # gate by up to a few percent of the gate's range; the rest are float32 roundings
+            bound=SqnrBound(min_sqnr_db=40.0),
+        ),
+        "ring_beta": _tensor(
+            "Per slot, head and step, beta.",
+            ("n_slots", "n_heads", "ring_len"),
+            _FP32,
+            mutable=True,
+            bound=ToleranceBound(absolute_tolerance=1e-6, relative_tolerance=1e-6),
+        ),
+        "cache_indices": _tensor(
+            "Each request's distinct state slot.",
+            ("n_requests",),
+            _INT32,
+            distribution=IntRangeDistribution(lo=0, hi="n_slots - 1", distinct=True),
+        ),
+        "window_indices": _tensor(
+            "Each request's distinct conv window scratch row.",
+            ("n_requests",),
+            _INT32,
+            distribution=IntRangeDistribution(lo=0, hi="n_window_rows - 1", distinct=True),
+        ),
+        "lower_bound": ScalarSpec(
+            description="The gate's lower bound.", dtype=DType.FLOAT32, values=(-5.0,), default=-5.0
+        ),
+        "eps": ScalarSpec(
+            description="Gated RMSNorm epsilon.",
+            dtype=DType.FLOAT32,
+            interval=(9.999999747378752e-06, 1e-5),
+            default=1e-5,
+        ),
+        "scale": ScalarSpec(
+            description="Query scale.",
+            dtype=DType.FLOAT32,
+            interval=(0.0883883461356163, 128**-0.5),
+            default=128**-0.5,
+        ),
+    },
+    outputs={
+        "normalized": TensorSpec(
+            description="o_proj's input: the gated normalized core per row and head.",
+            shape=("n_requests", "tokens_per_request", "n_heads", "head_dim"),
+            dtype=_BF16,
+            error_bounds=ToleranceBound(absolute_tolerance=0.005, relative_tolerance=0.02 + 2**-7),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BITWISE),
+    reference=KimiK3KdaVerifyReference(),
+    baseline=KimiK3KdaVerifyBaseline(),
+)
+
+CONTRACTS = (KIMI_K3_LATENT_MOE, KIMI_K3_MLA_VC_OUTPUT_GATE, KIMI_K3_MLA_PREFILL_GATE, KIMI_K3_KDA_VERIFY)
