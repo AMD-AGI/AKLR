@@ -14,7 +14,10 @@
 - CI 会测量每个 workload，把相对 baseline 的加速比写进 kernel 文件。
 - 一个 kernel 文件至少有一个 workload 结果正确、且快 5% 或以上，才能合入。否则 validation 报
   `no_qualifying_workload`，不通过。
-- 运行时，AKLR 只在快 5% 或以上的 workload 上使用这个 kernel，其他 workload 运行原来的代码。
+- 运行时，精确 workload key 必须达到 `AKLR_MIN_SPEEDUP`（默认 1.05）才能使用 kernel。
+- 仅在 `any_size` 轴上不同的 workload 共用一个 key：至少一个达到门槛，且没有记录为精度失败的
+  workload，这个 schema 就可服务该 key 覆盖的所有合法轴值，包括已测但低于速度门槛的兄弟 workload。
+  其他兄弟 workload 没有独立的速度底线。
 - baseline 写在算子的 `baseline.py` 里。`aklr/plugins/aiter/` 下的算子，baseline 通常是 AITER 的算子；插件算子的 baseline 是
   SGLang 或 vLLM 原来的代码。
 

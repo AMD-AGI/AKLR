@@ -219,7 +219,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/plugins/ait
 
 PR 合入后，CI 在 main 上再测一遍，由机器人在 `aklr-perf/main` 分支上开（或更新）一个 PR，把测量结果写进文件。**这个 PR 合入后**，推理时才会用上你的 kernel。
 
-推理时，一次调用同时满足下面几条，才会运行你的 kernel：推理引擎打开了 AKLR 插件，调用才会到达 api（见 `aklr/plugins/README.md`）；机器符合 `targets` 和 `requires`；调用的形状是文件里的某个 workload；这个 workload 的 `accuracy` 不是 `failed`；`speedup` 不低于 `AKLR_MIN_SPEEDUP`（默认 1.05）。否则 api 返回 `FallbackReason`，推理引擎运行自己的代码：
+推理时，一次调用同时满足下面几条，才会运行你的 kernel：推理引擎打开了 AKLR 插件，调用才会到达 api（见 `aklr/plugins/README.md`）；机器符合 `targets` 和 `requires`；调用在 contract 范围内匹配一个 workload key；该 schema 和 key 至少有一个 workload 精度通过且达到 `AKLR_MIN_SPEEDUP`（默认 1.05）；共享 key 内没有精度失败的 workload。精确 key 按单个 workload 判定；只在 `any_size` 轴上不同的 workload 共用一个 key，所以一个达标 workload 可以覆盖该 key 的所有合法轴值，即使另一个已测兄弟 workload 低于速度门槛。否则 api 返回 `FallbackReason`，推理引擎运行自己的代码：
 
 | `FallbackReason` | 原因 |
 |---|---|
@@ -228,8 +228,8 @@ PR 合入后，CI 在 main 上再测一遍，由机器人在 `aklr-perf/main` �
 | `out_of_contract` | 这次调用超出了 contract 定义的范围 |
 | `no_workload` | 这个形状不在任何 schema 的 workload 里 |
 | `not_measured` | 还没有测量结果 |
-| `inaccurate` | 测量结果是 `failed` |
-| `not_qualified` | 测过、也对，但 `speedup` 不到 `AKLR_MIN_SPEEDUP` |
+| `inaccurate` | 匹配 key 中有 workload 被记录为精度失败 |
+| `not_qualified` | 匹配 key 中没有 workload 达到 `AKLR_MIN_SPEEDUP` |
 | `not_warmed` | 正在录制 CUDA graph，而这个形状之前没有在录制之外运行过 |
 
 ## 6. 新建一个算子

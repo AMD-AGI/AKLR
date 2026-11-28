@@ -31,7 +31,7 @@ is the Point's number of requests.
 - Points: batch 1, 2, 4, …, 256, each with 4 to 8 of eight recorded pool sizes (105428–123163 pages), and batch
   1, 16 and 64 with a 262,144-page pool (2.2 GB, one Point per body), every one with 4097-page tables (262,208
   logits per request): 61 Points. `n_pages`, `max_blocks` and `max_seq_len` are `any_size`: a batch's Points,
-  if each of them qualifies, serve every pool size and table width within the contract's bounds.
+  if one of them qualifies and none failed, serve every pool size and table width within the contract's bounds.
 - Compare: `determinism: bounded`, logits within an SQNR of 30 dB of the reference
   (`SqnrBound`, `aklr/plugins/aiter/provider/mla/contract.py`).
 - Yardstick: `Fp8PagedMqaLogitsBaseline` (`aklr/plugins/aiter/provider/mla/baseline.py`), aiter's
@@ -136,8 +136,9 @@ calls the compiled object with raw addresses, the form that section recommends f
 The file is the only kernel of its schema name, so the yardstick at every Point is aiter's kernel as
 `baseline.py` calls it. `speedup` is a one-sided lower bound of aiter / kernel time over CUDA-graph replays with a
 1 GiB cache flush before each call, read at 16 rounds and, where a threshold is still undecided, again at 32, each
-look at α = 0.025 (`aklr/core/validation/stages/_measure.py`, measurement profile 19); a Point is served from 1.05
-(`AKLR_MIN_SPEEDUP`).
+look at α = 0.025 (`aklr/core/validation/stages/_measure.py`, measurement profile 19). This schema omits its
+`any_size` axes from the dispatch key: one workload at `AKLR_MIN_SPEEDUP` (1.05) and no failed accuracy
+admit the shared key, including other pool sizes measured below that bar.
 
 This file's CI runs and the predecessor repository's runs of E1 and E2 used FlyDSL 0.3.2, not the FlyDSL of their
 CI image (`../pitfalls/measured_a_different_build.md`).
@@ -175,7 +176,8 @@ measurement is the one dispatch reads.
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
 `AKLR_DISABLE=fp8_paged_mqa_logits@1.0` drops this kernel and also the 32-head HIP one GLM-5.x's indexer takes
-(`aklr/plugins/aiter/provider/mla/impls/hip/fp8_paged_mqa_logits_page_size64_n_heads32/`). A Point CI measures below 1.05 stops being served without a rollback, as the batch-1 Points can. Roll
+(`aklr/plugins/aiter/provider/mla/impls/hip/fp8_paged_mqa_logits_page_size64_n_heads32/`). A slow measurement alone does not withdraw this shared key while a sibling qualifies and none fails
+accuracy. Remove the kernel file or disable the op to withdraw it. Roll
 back for a wrong result CI does not catch: a consumer that reads logits past a request's last page, a process that
 calls the kernel on two devices or two streams at batch ≥ 64, or a FlyDSL or LLVM upgrade.
 
