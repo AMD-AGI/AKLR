@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.23 runs on gfx950 for kimi_k3_mla_decode: TritonAttnBackend.forward_decode's
+"""What sglang 0.5.23 runs on gfx950 for mla_decode: TritonAttnBackend.forward_decode's
 decode_attention_fwd as a decode CUDA graph bakes it: Lean from 8 rows on (lean_capture_policy),
 else the grouped split-K kernel at the splits get_num_kv_splits picks, with the backend's
 buffers (allocated once per device, as the backend holds them, the uneven-batch flag
@@ -13,7 +13,7 @@ import torch
 
 from aklr.core.contract.baseline import OpBaseline
 
-__all__ = ["KimiK3MlaDecodeBaseline"]
+__all__ = ["MlaDecodeBaseline"]
 
 
 @functools.cache
@@ -42,7 +42,7 @@ def _decode_buffers(device, n_heads, rows):
     return cores, max_splits, logits, lse, lean, zeros(1, dtype=torch.int32)
 
 
-class KimiK3MlaDecodeBaseline(OpBaseline):
+class MlaDecodeBaseline(OpBaseline):
     def baseline(self, *, q, kv_cache, kv_indptr, kv_indices, sm_scale=192**-0.5, output=None):
         """decode_attention_fwd with forward_decode's arguments for a decode CUDA graph."""
         import triton

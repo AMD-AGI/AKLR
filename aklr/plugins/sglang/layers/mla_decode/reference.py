@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What kimi_k3_mla_decode's contract says, in torch, in fp32."""
+"""What mla_decode's contract says, in torch, in fp32."""
 
 import torch
 
 from aklr.core.contract.reference import OpReference
 
-__all__ = ["KimiK3MlaDecodeReference"]
+__all__ = ["MlaDecodeReference"]
 
 
-class KimiK3MlaDecodeReference(OpReference):
+class MlaDecodeReference(OpReference):
     def reference(self, *, q, kv_cache, kv_indptr, kv_indices, sm_scale, **_):
         """Each row's softmax over its slots of q . row * sm_scale, applied to the rows' first
         512 values; no rounding point but the output's."""

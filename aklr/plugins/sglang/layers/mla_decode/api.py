@@ -5,13 +5,13 @@ from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
-from aklr.plugins.sglang.layers.mla_decode.contract import KIMI_K3_MLA_DECODE
+from aklr.plugins.sglang.layers.mla_decode.contract import MLA_DECODE
 
-__all__ = ["kimi_k3_mla_decode"]
+__all__ = ["mla_decode"]
 
 
-@api(KIMI_K3_MLA_DECODE)
-def kimi_k3_mla_decode(q, kv_cache, kv_indptr, kv_indices, sm_scale=192**-0.5, output=None): ...
+@api(MLA_DECODE)
+def mla_decode(q, kv_cache, kv_indptr, kv_indices, sm_scale=192**-0.5, output=None): ...
 
 
 @sglang_route(
@@ -46,7 +46,7 @@ def _forward_decode(
         "kv_indices": metadata.kv_indices,
         "sm_scale": layer.scaling,
     }
-    reason = kimi_k3_mla_decode.fallback_reason(**arguments)
+    reason = mla_decode.fallback_reason(**arguments)
     if reason is not None:
         return reason
     if save_kv_cache:
@@ -54,7 +54,7 @@ def _forward_decode(
 
         loc = KVWriteLoc.for_batch(forward_batch, swa_loc=metadata.swa_out_cache_loc)
         self.token_to_kv_pool.set_kv_buffer(layer, loc, k, v)
-    output = kimi_k3_mla_decode(**arguments)
+    output = mla_decode(**arguments)
     if isinstance(output, FallbackReason):
-        raise RuntimeError(f"kimi_k3_mla_decode declined after its KV write: {output}")
+        raise RuntimeError(f"mla_decode declined after its KV write: {output}")
     return output.view(-1, layer.tp_q_head_num * layer.v_head_dim)

@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""sglang's TritonAttnBackend.forward_decode on one rank: Kimi-K3's absorbed MLA decode."""
+"""sglang's TritonAttnBackend.forward_decode on one rank: an absorbed MLA decode."""
 
 from __future__ import annotations
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
     CuSeqlensDistribution,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
-    SqnrBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
@@ -24,18 +24,18 @@ from aklr.core.contract.spec import (
     TensorSpec,
     axis,
 )
-from aklr.plugins.sglang.layers.mla_decode.baseline import KimiK3MlaDecodeBaseline
-from aklr.plugins.sglang.layers.mla_decode.reference import KimiK3MlaDecodeReference
+from aklr.plugins.sglang.layers.mla_decode.baseline import MlaDecodeBaseline
+from aklr.plugins.sglang.layers.mla_decode.reference import MlaDecodeReference
 
-__all__ = ["CONTRACTS", "KIMI_K3_MLA_DECODE"]
+__all__ = ["CONTRACTS", "MLA_DECODE"]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 
-KIMI_K3_MLA_DECODE = OpContract(
-    contract_id="kimi_k3_mla_decode@1.0",
+MLA_DECODE = OpContract(
+    contract_id="mla_decode@1.0",
     description=(
-        "sglang's TritonAttnBackend.forward_decode for Kimi-K3's MLA layers past its KV write, "
+        "sglang's TritonAttnBackend.forward_decode for an absorbed MLA layer past its KV write, "
         "one query per sequence: each query head attends the slots "
         "kv_indices[kv_indptr[r]:kv_indptr[r + 1]] of the latent cache (page size 1, no RoPE), "
         "scores q . row * sm_scale over all 576 values, and output is the softmax-weighted sum "
@@ -77,7 +77,7 @@ KIMI_K3_MLA_DECODE = OpContract(
             distribution=IntRangeDistribution(lo=0, hi="n_slots - 1"),
         ),
         "sm_scale": ScalarSpec(
-            description="Multiplies every score: Kimi-K3's 192**-0.5.",
+            description="Multiplies every score: 192**-0.5 for a 128 + 64 query head.",
             dtype=DType.FLOAT32,
             interval=_POSITIVE_FLOAT32,
             default=192**-0.5,
@@ -88,13 +88,15 @@ KIMI_K3_MLA_DECODE = OpContract(
             description="Each head's softmax-weighted sum of the slots' first 512 values.",
             shape=("n_seqs", "n_heads", 512),
             dtype=DTypeSpec(same_as_tensor="q"),
-            error_bounds=SqnrBound(min_sqnr_db=30.0),
+            # sglang's own kernel, which rounds q and the softmax weights to fp8, comes to about
+            # 27-29 dB on the schema's workloads
+            error_bounds=ATTENTION_FP8_SNR,
         )
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
-    reference=KimiK3MlaDecodeReference(),
-    baseline=KimiK3MlaDecodeBaseline(),
+    reference=MlaDecodeReference(),
+    baseline=MlaDecodeBaseline(),
 )
 
-CONTRACTS = (KIMI_K3_MLA_DECODE,)
+CONTRACTS = (MLA_DECODE,)
