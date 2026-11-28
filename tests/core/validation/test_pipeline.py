@@ -1235,3 +1235,75 @@ def test_two_runs_differ_only_by_their_bytes():
     assert (
         find_nondeterminism(first, {"out": second}) == "0.25 of an output's elements differ from numeric/0's"
     )
+
+
+def test_pipeline_persists_bench_before_interrupted_e2e(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aklr.core.validation.stages._e2e import E2eReport
+    from aklr.core.validation.stages.stage import PipelineStage
+
+    schema = ContractRegistry.default().parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
+    path = tmp_path / _SCHEMA
+    path.parent.mkdir(parents=True)
+    path.write_text(schema.schema_text())
+    out = tmp_path / "report"
+    scope = ValidationScope(tmp_path, "head", None, (path,), (path,))
+    monkeypatch.setattr(PlatformRecord, "current", classmethod(lambda cls: PlatformRecord(**_PLATFORM)))
+
+    class Bench(_FixedBench):
+        def run(self, scope, earlier):
+            return BenchReport.from_findings(
+                [],
+                workload_records=tuple(
+                    _workload(w.axes, 123.0, True).model_copy(update={"baseline": None})
+                    for w in schema.workloads
+                ),
+            )
+
+    class InterruptedE2e(PipelineStage[E2eReport]):
+        name = "e2e"
+        report_type = E2eReport
+
+        def run(self, scope, earlier):
+            saved = json.loads((out / "report.json").read_text())
+            assert [s["status"] for s in saved["stages"]] == ["passed", "passed", "aborted"]
+            assert (out / "schemas" / _SCHEMA).is_file()
+            raise KeyboardInterrupt("simulated job termination")
+
+    with pytest.raises(KeyboardInterrupt, match="simulated"):
+        Pipeline([_FixedAudit("passed"), Bench("passed"), InterruptedE2e()]).run(scope, out=out)
+    assert (out / "schemas" / _SCHEMA).is_file()
+    assert "aborted (e2e)" in (out / "report.md").read_text()
+
+
+@pytest.mark.parametrize("timed", [True, False], ids=["baseline_timed", "baseline_not_timed"])
+def test_report_exports_the_defined_baseline_that_was_timed(tmp_path: Path, timed: bool) -> None:
+    path = Path(_SCHEMA)
+    schema = ContractRegistry.default().parse_schema(path.read_bytes(), _SCHEMA)
+    record = _workload(schema.workloads[0].axes, 1.2, True)
+    if not timed:
+        record = record.model_copy(update={"timings": ()})
+    report = PipelineReport(
+        head_sha="head",
+        base_sha=None,
+        measurement_profile={},
+        platform=PlatformRecord(**_PLATFORM),
+        schema_paths=(_SCHEMA,),
+        bench_paths=(_SCHEMA,),
+        stages=(BenchReport.from_findings([], workload_records=(record,)),),
+    )
+    scope = ValidationScope(Path.cwd(), "head", None, (path,), (path,))
+    report.write_baselines(scope, tmp_path)
+    files = list(tmp_path.rglob("*.json"))
+    if not timed:
+        assert files == []
+        return
+    assert len(files) == 1
+    data = json.loads(files[0].read_text())
+    assert data["workloads"][0]["axes"] == schema.workloads[0].axes
+    source = data["sources"][0]["content"]
+    assert "from aklr.plugins.aiter.provider.gemm.baseline import GemmBaseline" in source
+    namespace = {}
+    exec(source, namespace)
+    assert callable(namespace["run"])
