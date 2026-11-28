@@ -91,7 +91,7 @@
       "distribution": {
         "kind": "int_range",
         "lo": 0,
-        "hi": "n_positions - 1",
+        "hi": "n_positions - 3",
         "distinct": false
       },
       "description": "Each row's temporal, height and width positions."
