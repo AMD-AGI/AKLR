@@ -115,7 +115,8 @@ aklr/plugins/aiter/
   rank's inputs on its own device and calls with its own. Its reference is a `DistOpReference`, whose
   `reference(calls, rank)` takes every rank's call in rank order, all on the calling rank's device, and returns rank
   `rank`'s outputs. Its baseline is a `DistOpBaseline`, whose `profile` starts every rank's call together; its
-  `setup()` runs once each rank's process is in the group. The group size is the op type's `OpBench`, a subclass in
+  `setup()` runs once each rank's process is in the group. The group size is the contract's `ranks` at the
+  workload; an op type that runs differently (`mega_moe`) has its own `OpBench`, a subclass in
   `aklr/core/validation/validators/bench/_custom/<op_type>.py`, not part of the op package.
 
 - `<language>` equals the schema's `kernel.language` (`flydsl`, `hip`, `hsaco` or `triton`, `Language` in

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from aklr.core.common import Registrable
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.validation.validators.bench._measure._built_kernel import BuiltKernel
+from aklr.core.validation.validators.bench._measure._contract_workload import ContractWorkload
 from aklr.core.validation.validators.bench._measure._input_sampler import InputSampler
 from aklr.core.validation.validators.bench._measure._output_check import OutputCheck
 from aklr.core.validation.validators.bench._measure._profile import MeasurementProfile
@@ -47,7 +48,7 @@ class OpBench(Registrable):
 
     @classmethod
     def ranks(cls, schema: Schema) -> int:
-        return 1
+        return ContractWorkload.of(schema, schema.workloads[0].axes).ranks
 
     @classmethod
     def isolate(cls, schema: Schema) -> bool:

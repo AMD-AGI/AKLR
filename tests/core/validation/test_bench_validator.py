@@ -85,6 +85,14 @@ def _group_schema(ep_size: int) -> OpContract:
     return case.contract.narrow(point, workloads=[case.contract.workload_for(point, {})], kernel=_kernel())
 
 
+def _tp_schema(tp_size: int) -> OpContract:
+    """A latent-MoE tail schema of one workload, on a tensor-parallel group of tp_size ranks: an op type with no
+    bench of its own."""
+    case = OpCase.of("kimi_k3_latent_moe_tail@1.0")
+    point = case.point.model_copy(update={"attrs": case.point.attrs | {"tp_size": tp_size}})
+    return case.contract.narrow(point, workloads=[case.contract.workload_for(point, {})], kernel=_kernel())
+
+
 def _timed(ratio: float) -> dict:
     """A task's result for a workload whose opponent took ratio times its Candidate's time on one trial."""
     return {"candidate_ms": [1.0], "opponent_ms": [ratio]}
@@ -377,6 +385,12 @@ class TestTasks:
         ((_, _, options),) = tasks.submitted
         assert (options["resource_request"].count, options["runner"]) == (4, "disposable")
 
+    def test_a_group_op_without_a_bench_of_its_own_runs_on_its_contracts_ranks(self, repo: _Repo) -> None:
+        tasks = _Tasks()
+        repo.run(tasks, None, repo.write(_tp_schema(8), "2"))
+        ((_, _, options),) = tasks.submitted
+        assert (options["resource_request"].count, options["runner"]) == (8, "disposable")
+
     def test_a_task_has_its_build_and_per_workload_budgets(self, repo: _Repo) -> None:
         tasks = _Tasks()
         repo.run(tasks, None, repo.write(_schema(n=3), "2"))
@@ -572,6 +586,13 @@ def test_a_mega_moe_task_runs_on_ep_size_ranks_in_fresh_processes(ep_size: int) 
     schema = _group_schema(ep_size)
     bench = OpBench.for_op(schema.op_type)
     assert (bench.ranks(schema), bench.isolate(schema)) == (ep_size, True)
+
+
+@pytest.mark.parametrize("tp_size", [1, 8])
+def test_a_contracts_ranks_are_its_benchs_unless_the_op_type_registers_its_own(tp_size: int) -> None:
+    schema = _tp_schema(tp_size)
+    bench = OpBench.for_op(schema.op_type)
+    assert (bench.ranks(schema), bench.isolate(schema)) == (tp_size, tp_size > 1)
 
 
 def test_a_trial_draws_its_workloads_own_scalars() -> None:
