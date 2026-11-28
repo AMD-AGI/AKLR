@@ -174,7 +174,7 @@ PYTHONPATH=. python ~/make_gemm_schema.py ~/gemm_kernel
 
 ## 4. 本地验证
 
-验证有两个 validator，各自独立运行，互不依赖对方的结果：audit 检查文件格式、和 contract 是否一致、第 3 步的规则，不需要 GPU；bench 在 GPU 上检查对不对、快不快。先只跑 audit：
+验证有三个 validator，各自独立运行，互不依赖其他的结果：audit 检查文件格式、和 contract 是否一致、第 3 步的规则，不需要 GPU；bench 在 GPU 上检查对不对、快不快；verify 编译每个 FlyDSL、Triton/Gluon、HIP 和 hsaco kernel，用 Volta 在编译出的 ISA 里找 LDS 竞争、barrier 误用、读取未完成的 load 和越界访问。先只跑 audit：
 
 ```bash
 python -m aklr validate --validators audit aklr/plugins/aiter/provider/gemm/impls/triton/gemm_n1024_k4096/<uuid>.json

@@ -11,13 +11,15 @@ from aklr.core.validation import (
     BenchValidator,
     Validator,
     ValidatorReport,
+    VerifyReport,
+    VerifyValidator,
 )
 
 
 @pytest.mark.parametrize(
     ("name", "validator"),
-    [("audit", AuditValidator), ("bench", BenchValidator)],
-    ids=["audit", "bench"],
+    [("audit", AuditValidator), ("bench", BenchValidator), ("verify", VerifyValidator)],
+    ids=["audit", "bench", "verify"],
 )
 def test_a_named_validator_is_registered_and_carries_its_name(name, validator):
     assert Validator.resolve(name) is validator
@@ -29,15 +31,19 @@ def test_a_validator_declared_without_a_name_is_not_registered_and_keeps_its_own
         name = "unnamed"
 
     assert Unnamed.name == "unnamed"
-    assert Validator.names() == ("audit", "bench")
-    with pytest.raises(ValueError, match="unknown Validator: 'unnamed'; available: audit, bench"):
+    assert Validator.names() == ("audit", "bench", "verify")
+    with pytest.raises(ValueError, match="unknown Validator: 'unnamed'; available: audit, bench, verify"):
         Validator.resolve("unnamed")
 
 
 @pytest.mark.parametrize(
     ("validator", "report_type"),
-    [(AuditValidator(), AuditReport), (BenchValidator(["cuda:0"]), BenchReport)],
-    ids=["audit", "bench"],
+    [
+        (AuditValidator(), AuditReport),
+        (BenchValidator(["cuda:0"]), BenchReport),
+        (VerifyValidator(), VerifyReport),
+    ],
+    ids=["audit", "bench", "verify"],
 )
 def test_a_validator_reports_in_the_report_type_registered_under_its_name(validator, report_type):
     assert ValidatorReport.resolve(validator.name) is report_type
@@ -45,7 +51,7 @@ def test_a_validator_reports_in_the_report_type_registered_under_its_name(valida
 
 
 def test_a_report_is_named_by_its_registration_and_written_with_that_name():
-    assert ValidatorReport.names() == ("audit", "bench")
+    assert ValidatorReport.names() == ("audit", "bench", "verify")
     report = BenchReport.skipped("no schema to validate")
     assert report.name == "bench"
     written = TypeAdapter(BenchReport).dump_python(report, mode="json")

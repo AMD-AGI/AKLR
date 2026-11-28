@@ -36,13 +36,16 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 
 - Top level: `head_sha`, `base_sha`, `platform`, `schema_paths`, `bench_paths`, `validators`.
 - `validators[]`, one entry per validator the command named, in the order written, has `name`
-  (`audit`, `bench`), `status`, `findings[]` (`code`, `schema_path`,
+  (`audit`, `bench`, `verify`), `status`, `findings[]` (`code`, `schema_path`,
   `workload`, `detail`; `workload` is the workload's key, `{"axes": {"M": 4}}`, or null); the bench
   validator adds `demotions[]`, `records[]`, `profile` (the measurement profile: trials, graph budget,
   the clamp), `protocol` (its digest, with the timer's sources: results under another protocol are
   not comparable), `bars` (Entry, Retain), `evaluations` (what is written back, by schema path and
   the workload key's text, `M=4`: the workload with its `speedup`, `accuracy` and `microseconds`)
-  and `skipped_schemas` (by schema path, the `kernel.requires` this environment misses).
+  and `skipped_schemas` (by schema path, the `kernel.requires` this environment misses); the verify
+  validator adds `path_records[]` (`schema_path`, `workload`, `kernel`, and `verdicts[]`: each
+  rule's `status`, `proved`, `rejected` or `unchecked`, with its `detail`), `rules` (each rule's
+  number) and `tools` (the Volta build).
 - Each validator runs whatever the others report: a failed audit does not skip the bench, so one
   run can list both (`report.md`'s first line: `failed (audit), aborted (bench)`). Exit 1 when any
   validator failed, else 3 when any aborted, else 0. `skipped` means the run had no schema.

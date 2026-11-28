@@ -45,6 +45,7 @@ class FindingCode(StrEnum):
     SCHEMA_INVALID = "schema_invalid", Fault.CANDIDATE, Outcome.NOT_MEASURED
     SOURCE_REJECTED = "source_rejected", Fault.CANDIDATE, Outcome.NOT_MEASURED
     PERF_EDITED = "perf_edited", Fault.CANDIDATE, Outcome.NOT_MEASURED
+    ISA_REJECTED = "isa_rejected", Fault.CANDIDATE, Outcome.NOT_MEASURED
     BUILD_FAILED = "build_failed", Fault.CANDIDATE, Outcome.ACCURACY_FAILED
     TASK_CRASHED = "task_crashed", Fault.CANDIDATE, Outcome.ACCURACY_FAILED
     TASK_TIMEOUT = "task_timeout", Fault.CANDIDATE, Outcome.ACCURACY_FAILED

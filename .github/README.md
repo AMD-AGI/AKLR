@@ -82,7 +82,7 @@ For reference: [aklr/plugins/aiter/README.md](../aklr/plugins/aiter/README.md) (
 
 ```bash
 pytest tests                                                # unit tests
-python -m aklr validate --validators audit,bench --devices 0-7  # full validation
+python -m aklr validate --devices 0-7                           # full validation: audit, bench, verify
 ```
 
 ## Contributing

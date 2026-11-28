@@ -16,9 +16,10 @@ from aklr.core.validation.validators.report._markdown import (
 )
 from aklr.core.validation.validators.validation_scope import ValidationScope
 from aklr.core.validation.validators.validator import Progress, Validator, ValidatorReport
+from aklr.core.validation.validators.verify import VerifyReport, VerifyValidator
 
 __all__ = [
     "AuditReport", "AuditValidator", "BenchReport", "BenchValidator", "Block", "OpBench", "Fault", "Finding",
     "FindingCode", "Heading", "Outcome", "Paragraph", "Progress", "Table", "ValidationScope", "Validator",
-    "ValidatorReport", "escape",
+    "ValidatorReport", "VerifyReport", "VerifyValidator", "escape",
 ]  # fmt: skip
