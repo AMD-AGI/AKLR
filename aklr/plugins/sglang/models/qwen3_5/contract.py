@@ -11,11 +11,13 @@ from aklr.core.contract.semantics import (
     FiniteDistribution,
     IntRangeDistribution,
     SqnrBound,
+    StridedRows,
     ToleranceBound,
 )
 from aklr.core.contract.spec import (
     CompareSpec,
     DTypeSpec,
+    LayoutFact,
     LayoutVariant,
     LayoutVariantsSpec,
     ScalarSpec,
@@ -33,6 +35,9 @@ from aklr.plugins.sglang.models.qwen3_5.baseline import (
     GdnDecodeGroupFp8QuantBaseline,
     GdnPrefillBaseline,
     GdnPrefillGroupFp8QuantBaseline,
+    GdnVerifyBaseline,
+    GdnVerifyGroupFp8QuantBaseline,
+    GdnVerifyTokenFp8QuantBaseline,
 )
 from aklr.plugins.sglang.models.qwen3_5.reference import (
     ROTARY_DIM,
@@ -42,6 +47,9 @@ from aklr.plugins.sglang.models.qwen3_5.reference import (
     GdnDecodeReference,
     GdnPrefillGroupFp8QuantReference,
     GdnPrefillReference,
+    GdnVerifyGroupFp8QuantReference,
+    GdnVerifyReference,
+    GdnVerifyTokenFp8QuantReference,
 )
 
 __all__ = [
@@ -54,6 +62,9 @@ __all__ = [
     "GDN_DECODE_GROUP_FP8_QUANT",
     "GDN_PREFILL",
     "GDN_PREFILL_GROUP_FP8_QUANT",
+    "GDN_VERIFY",
+    "GDN_VERIFY_GROUP_FP8_QUANT",
+    "GDN_VERIFY_TOKEN_FP8_QUANT",
 ]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
@@ -336,6 +347,171 @@ GDN_DECODE = OpContract(
     baseline=GdnDecodeBaseline(),
 )
 
+# Speculative verify of a draft chain: draft_tokens rows per request, the recurrence's state after
+# each draft token kept for sglang's commit, which scatters the accepted step's back after the call.
+_VERIFY_AXES = {
+    "n_sequences": axis("Verified requests, padding requests included.", 1, 256, is_var=True),
+    "n_tokens": axis("Draft tokens of all requests, request by request.", 1, 2048, is_var=True),
+    "n_inter_rows": axis(
+        "Rows of the per-request intermediate buffers.", 1, 2048, is_var=True, any_size=True
+    ),
+    "inter_steps": axis("Steps each intermediate state row holds.", 1, 16, is_var=True, any_size=True),
+    "n_slots": _PREFILL.axes["n_slots"],
+    "n_v_heads": axis("Value heads on this rank.", 1, 32),
+    "key_dim": _PREFILL.axes["key_dim"],
+    "value_dim": _PREFILL.axes["value_dim"],
+    "conv_dim": axis("Convolution channels.", 160, 6144),
+    **{n: _PREFILL.axes[n] for n in ("value_width", "n_k_heads", "projection_dim", "gate_dim")},
+}
+_VERIFY_CONSTRAINTS = (
+    "conv_dim > value_width",
+    "(conv_dim - value_width) % (2 * key_dim) == 0",
+    "n_k_heads >= 1",
+    "n_k_heads <= 8",
+    "n_v_heads % n_k_heads == 0",
+    "n_tokens == draft_tokens * n_sequences",
+    "inter_steps >= draft_tokens",
+    "n_inter_rows >= n_sequences",
+    "n_sequences <= n_slots",
+)
+# the state pools hold BF16 (sglang's SGLANG_MAMBA_SSM_DTYPE) or FP32; the intermediate states the same
+_STATE = DTypeSpec(any_of=(DType.BFLOAT16, DType.FLOAT32))
+_VERIFY_INPUTS = {
+    **{n: _PREFILL.inputs[n] for n in ("projected_qkvz", "projected_ba", "conv_state")},
+    "delta_state": _tensor(
+        "Recurrent matrices before the draft tokens, value dimension first.",
+        ("n_slots", "n_v_heads", "value_dim", "key_dim"),
+        _STATE,
+    ),
+    "cache_indices": _tensor(
+        "Each request's distinct state slot, or -1 for a padding request.",
+        ("n_sequences",),
+        _INT32,
+        # drawn live: sglang's own chain, the baseline, sizes its padding requests (CUDA graph
+        # padding) by query_start_loc, which the ops do not take
+        distribution=IntRangeDistribution(lo=0, hi="n_slots - 1", distinct=True),
+    ),
+    "inter_indices": _tensor(
+        "Each request's distinct row of the intermediate buffers.",
+        ("n_sequences",),
+        _INT32,
+        distribution=IntRangeDistribution(lo=0, hi="n_inter_rows - 1", distinct=True),
+    ),
+    "inter_ssm": _tensor(
+        "Recurrent matrix after each draft token, value dimension first.",
+        ("n_inter_rows", "inter_steps", "n_v_heads", "value_dim", "key_dim"),
+        DTypeSpec(same_as_tensor="delta_state"),
+        mutable=True,
+        # as decode's state: a Q/K/V channel one BF16 ulp away moves a step by 2**-8 of it
+        bound=ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2),
+    ),
+    "inter_conv": _tensor(
+        "Convolution inputs from the history's second token through the last draft token.",
+        ("n_inter_rows", "conv_dim", 6),
+        _BF16,
+        mutable=True,
+        bound=ToleranceBound(absolute_tolerance=0, relative_tolerance=0),
+    ),
+    **{n: _PREFILL.inputs[n] for n in ("conv_weight", "a_log", "dt_bias", "norm_weight", "scale", "eps")},
+}
+_VERIFY_ATTRS = {
+    "draft_tokens": attr("Draft tokens per request.", 4, default=4, param_name="draft_tokens"),
+}
+_VERIFY_TEXT = (
+    "Qwen3.5 GDN speculative verify of draft chains: draft_tokens rows per request, request by request, "
+    "from Q/K/V/Z and B/A projections whose rows may lie apart. A request whose cache index is -1 is "
+    "padding: it reads and changes no state or buffer row, and its core output is zero. Every other "
+    "request uses its distinct slot and its distinct inter_indices row r. Its convolution window is "
+    "the slot's three-token history followed by its rows' Q/K/V channels; draft token t convolves "
+    "window positions t..t+3 with width four, each tap's product rounded to BF16 and the four summed "
+    "in FP32, oldest first, and its SiLU is rounded to BF16. inter_conv[r] becomes window positions "
+    "1..6, and conv_state's slot the last three draft tokens' channels. Q and K are L2-normalized in "
+    "FP32 and Q multiplied by scale. Starting from the slot's delta_state in FP32, which does not "
+    "change, each draft token applies the gated delta rule with FP32 beta=sigmoid(b) and decay "
+    "exp(-exp(a_log) softplus(a + dt_bias)) in [value,key] order, keeping the state in FP32 across "
+    "the chain; inter_ssm[r, t] is the state after token t in inter_ssm's dtype, and the core output "
+    "is rounded to BF16. Other inter_ssm steps and rows are left alone. The core is gated "
+    "RMS-normalized with norm_weight and SiLU of the row's Z, then rounded to BF16"
+)
+_VERIFY_LAYOUTS = LayoutVariantsSpec(
+    by_name={
+        "row_major": LayoutVariant(
+            detect_facts=(LayoutFact(location="arg", name="projection_storage", expected_value="row_major"),)
+        ),
+        # up to 64 rows, sglang hands column slices of one packed projection's output
+        "strided_rows": LayoutVariant(
+            layouts={"projected_qkvz": StridedRows(), "projected_ba": StridedRows()},
+            detect_facts=(
+                LayoutFact(location="arg", name="projection_storage", expected_value="strided_rows"),
+            ),
+        ),
+    }
+)
+
+GDN_VERIFY_GROUP_FP8_QUANT = OpContract(
+    contract_id="gdn_verify_group_fp8_quant@1.0",
+    op_type="qwen3_5",
+    description=(
+        f"{_VERIFY_TEXT} and quantized per value head to E4M3FN, with scale=max(amax,1e-10)/448. "
+        "Unindexed state slots and all other inputs are preserved."
+    ),
+    axes=_VERIFY_AXES,
+    attrs=_VERIFY_ATTRS,
+    constraints=_VERIFY_CONSTRAINTS,
+    inputs=_VERIFY_INPUTS,
+    outputs={n: _PREFILL.outputs[n] for n in ("values", "scales")},
+    layout_variants=_VERIFY_LAYOUTS,
+    compare=CompareSpec(determinism="bitwise"),
+    reference=GdnVerifyGroupFp8QuantReference(),
+    baseline=GdnVerifyGroupFp8QuantBaseline(),
+)
+
+GDN_VERIFY_TOKEN_FP8_QUANT = OpContract(
+    contract_id="gdn_verify_token_fp8_quant@1.0",
+    op_type="qwen3_5",
+    description=(
+        f"{_VERIFY_TEXT} and quantized per row to E4M3FN over all its value heads, with "
+        "scale=max(amax,1e-10)/448, the values multiplied by 1/scale. Unindexed state slots and all "
+        "other inputs are preserved."
+    ),
+    axes=_VERIFY_AXES,
+    attrs=_VERIFY_ATTRS,
+    constraints=_VERIFY_CONSTRAINTS,
+    inputs=_VERIFY_INPUTS,
+    outputs={
+        "values": TensorSpec(
+            description="Per-row E4M3FN values.",
+            shape=("n_tokens", "value_width"),
+            dtype=_FP8,
+            error_bounds=_PREFILL.outputs["values"].error_bounds,
+        ),
+        "scales": TensorSpec(
+            description="One FP32 scale per row.",
+            shape=("n_tokens", 1),
+            dtype=_FP32,
+            error_bounds=_PREFILL.outputs["scales"].error_bounds,
+        ),
+    },
+    layout_variants=_VERIFY_LAYOUTS,
+    compare=CompareSpec(determinism="bitwise"),
+    reference=GdnVerifyTokenFp8QuantReference(),
+    baseline=GdnVerifyTokenFp8QuantBaseline(),
+)
+
+GDN_VERIFY = OpContract(
+    contract_id="gdn_verify@1.0",
+    op_type="qwen3_5",
+    description=f"{_VERIFY_TEXT}. Unindexed state slots and all other inputs are preserved.",
+    axes=_VERIFY_AXES,
+    attrs=_VERIFY_ATTRS,
+    constraints=_VERIFY_CONSTRAINTS,
+    inputs=_VERIFY_INPUTS,
+    outputs={"normalized": _PREFILL.outputs["normalized"]},
+    layout_variants=_VERIFY_LAYOUTS,
+    compare=CompareSpec(determinism="bitwise"),
+    reference=GdnVerifyReference(),
+    baseline=GdnVerifyBaseline(),
+)
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 # The FP8 pools' bytes that the kernels' 32-bit offsets address: larger pools stay on sglang.
 _POOL_BYTES = 2**31
@@ -680,6 +856,9 @@ CONTRACTS = (
     GDN_PREFILL,
     GDN_DECODE_GROUP_FP8_QUANT,
     GDN_DECODE,
+    GDN_VERIFY_GROUP_FP8_QUANT,
+    GDN_VERIFY_TOKEN_FP8_QUANT,
+    GDN_VERIFY,
     GATED_ATTENTION_DECODE_GROUP_FP8_QUANT,
     GATED_ATTENTION_DECODE,
     GATED_ATTENTION_PREFILL_GROUP_FP8_QUANT,

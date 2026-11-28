@@ -1,0 +1,319 @@
+{
+  "schema_version": 5,
+  "name": "gdn_verify_strided_rows_n_v_heads32_key_dim128_value_dim128_conv_dim6144",
+  "contract_id": "gdn_verify@1.0",
+  "description": "Qwen3.5 GDN speculative verify of draft chains: draft_tokens rows per request, request by request, from Q/K/V/Z and B/A projections whose rows may lie apart. A request whose cache index is -1 is padding: it reads and changes no state or buffer row, and its core output is zero. Every other request uses its distinct slot and its distinct inter_indices row r. Its convolution window is the slot's three-token history followed by its rows' Q/K/V channels; draft token t convolves window positions t..t+3 with width four, each tap's product rounded to BF16 and the four summed in FP32, oldest first, and its SiLU is rounded to BF16. inter_conv[r] becomes window positions 1..6, and conv_state's slot the last three draft tokens' channels. Q and K are L2-normalized in FP32 and Q multiplied by scale. Starting from the slot's delta_state in FP32, which does not change, each draft token applies the gated delta rule with FP32 beta=sigmoid(b) and decay exp(-exp(a_log) softplus(a + dt_bias)) in [value,key] order, keeping the state in FP32 across the chain; inter_ssm[r, t] is the state after token t in inter_ssm's dtype, and the core output is rounded to BF16. Other inter_ssm steps and rows are left alone. The core is gated RMS-normalized with norm_weight and SiLU of the row's Z, then rounded to BF16. Unindexed state slots and all other inputs are preserved.",
+  "op_type": "qwen3_5",
+  "axes": {
+    "n_sequences": {
+      "type": "var",
+      "description": "Verified requests, padding requests included."
+    },
+    "n_tokens": {
+      "type": "var",
+      "description": "Draft tokens of all requests, request by request."
+    },
+    "n_inter_rows": {
+      "type": "var",
+      "description": "Rows of the per-request intermediate buffers."
+    },
+    "inter_steps": {
+      "type": "var",
+      "description": "Steps each intermediate state row holds."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Allocated state slots."
+    },
+    "n_v_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Value heads on this rank."
+    },
+    "key_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Key head width."
+    },
+    "value_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "FP8 group and value-head width."
+    },
+    "conv_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "Convolution channels."
+    },
+    "value_width": {
+      "type": "const",
+      "value": 4096,
+      "description": "Total value width."
+    },
+    "n_k_heads": {
+      "type": "const",
+      "value": 8,
+      "description": "Key heads on this rank."
+    },
+    "projection_dim": {
+      "type": "const",
+      "value": 10240,
+      "description": "Q/K/V/Z projection width."
+    },
+    "gate_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "B/A projection width."
+    }
+  },
+  "attrs": {
+    "draft_tokens": 4
+  },
+  "inputs": {
+    "projected_qkvz": {
+      "shape": [
+        "n_tokens",
+        "projection_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Contiguous Q, K, V, Z columns."
+    },
+    "projected_ba": {
+      "shape": [
+        "n_tokens",
+        "gate_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Contiguous B then A columns."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "conv_dim",
+        3
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live three-token convolution histories."
+    },
+    "delta_state": {
+      "shape": [
+        "n_slots",
+        "n_v_heads",
+        "value_dim",
+        "key_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Recurrent matrices before the draft tokens, value dimension first."
+    },
+    "cache_indices": {
+      "shape": [
+        "n_sequences"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each request's distinct state slot, or -1 for a padding request."
+    },
+    "inter_indices": {
+      "shape": [
+        "n_sequences"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_inter_rows - 1",
+        "distinct": true
+      },
+      "description": "Each request's distinct row of the intermediate buffers."
+    },
+    "inter_ssm": {
+      "shape": [
+        "n_inter_rows",
+        "inter_steps",
+        "n_v_heads",
+        "value_dim",
+        "key_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Recurrent matrix after each draft token, value dimension first."
+    },
+    "inter_conv": {
+      "shape": [
+        "n_inter_rows",
+        "conv_dim",
+        6
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Convolution inputs from the history's second token through the last draft token."
+    },
+    "conv_weight": {
+      "shape": [
+        "conv_dim",
+        4
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Four causal convolution taps."
+    },
+    "a_log": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Log decay magnitude."
+    },
+    "dt_bias": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate bias."
+    },
+    "norm_weight": {
+      "shape": [
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gated RMSNorm weights."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Query scale."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Gated RMSNorm epsilon."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads",
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Gated normalized BF16 values."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_sequences": 12,
+        "n_tokens": 48,
+        "n_inter_rows": 65,
+        "inter_steps": 4,
+        "n_slots": 456
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_sequences": 14,
+        "n_tokens": 56,
+        "n_inter_rows": 65,
+        "inter_steps": 4,
+        "n_slots": 456
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_sequences": 16,
+        "n_tokens": 64,
+        "n_inter_rows": 65,
+        "inter_steps": 4,
+        "n_slots": 456
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "strided_rows": {
+        "layouts": {
+          "projected_qkvz": {
+            "kind": "strided_rows"
+          },
+          "projected_ba": {
+            "kind": "strided_rows"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "projection_storage",
+            "expected_value": "strided_rows"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "determinism": "bitwise"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Qwen3.5 GDN speculative verify of draft chains (4 tokens a request) for MI355X (gfx950), two launches.\n\nLaunch 1, one program per (request, value head, tile of value rows): the request's causal conv window\n[history; x0..x3] with SiLU (BF16), the key head's q/k L2 norms, the gates, then the four-step delta rule\non an FP32 state held in registers; after each step the state goes to the intermediate buffer (rounded to\nits dtype) and the BF16 core to scratch. The deduplicated conv window is written once per channel and the\noutput gate silu(z) to scratch. Padding requests (slot -1) touch no state and give a zero core.\nLaunch 2: per row, the gated RMSNorm of every head and the output tail; per (request, channel block), the\nconv history roll, after every launch-1 reader of the old history.\n\"\"\"\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\nSTEPS = 4\n\n\n@gluon.jit\ndef _bf16_product(a, b):\n    return (a.to(gl.float32) * b.to(gl.float32)).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _silu_bf16(acc):\n    return (acc / (1.0 + gl.exp(-acc))).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _load_window(QKVZ, qkvz_stride, Hist, Weight, token0, slot, c, C: gl.constexpr):\n    \"\"\"History taps h0..h2, the four inputs x0..x3 and the conv weights w0..w3 of channels c.\"\"\"\n    hb = Hist + slot.to(gl.int64) * (C * 3) + c * 3\n    xr = QKVZ + token0.to(gl.int64) * qkvz_stride + c\n    return (gl.load(hb), gl.load(hb + 1), gl.load(hb + 2),\n            gl.load(xr), gl.load(xr + qkvz_stride), gl.load(xr + 2 * qkvz_stride), gl.load(xr + 3 * qkvz_stride),\n            gl.load(Weight + c * 4), gl.load(Weight + c * 4 + 1), gl.load(Weight + c * 4 + 2),\n            gl.load(Weight + c * 4 + 3))\n\n\n@gluon.jit\ndef _store_window(InterConv, row, c, win, C: gl.constexpr):\n    \"\"\"InterConv[row, c, :] = [h1, h2, x0, x1, x2, x3].\"\"\"\n    _, h1, h2, x0, x1, x2, x3, _, _, _, _ = win\n    ib = InterConv + row.to(gl.int64) * (C * 6) + c * 6\n    gl.store(ib, h1)\n    gl.store(ib + 1, h2)\n    gl.store(ib + 2, x0)\n    gl.store(ib + 3, x1)\n    gl.store(ib + 4, x2)\n    gl.store(ib + 5, x3)\n\n\n@gluon.jit\ndef _conv4(win):\n    \"\"\"SiLU(conv) of the four draft tokens as FP32 holding BF16: each tap's product rounds to BF16\n    before the FP32 sum, oldest tap first.\"\"\"\n    h0, h1, h2, x0, x1, x2, x3, w0, w1, w2, w3 = win\n    o0 = _silu_bf16(_bf16_product(h0, w0) + _bf16_product(h1, w1) + _bf16_product(h2, w2) + _bf16_product(x0, w3))\n    o1 = _silu_bf16(_bf16_product(h1, w0) + _bf16_product(h2, w1) + _bf16_product(x0, w2) + _bf16_product(x1, w3))\n    o2 = _silu_bf16(_bf16_product(h2, w0) + _bf16_product(x0, w1) + _bf16_product(x1, w2) + _bf16_product(x2, w3))\n    o3 = _silu_bf16(_bf16_product(x0, w0) + _bf16_product(x1, w1) + _bf16_product(x2, w2) + _bf16_product(x3, w3))\n    return o0, o1, o2, o3\n\n\n@gluon.jit\ndef _normalize_qk(o, isq, scale):\n    \"\"\"q (isq) and k halves of a flat [q | k] times 1/sqrt(sum x^2 + 1e-6); q then times scale.\"\"\"\n    sq = o * o\n    rq = 1.0 / gl.sqrt(gl.sum(gl.where(isq, sq, 0.0), 0) + 1e-6)\n    rk = 1.0 / gl.sqrt(gl.sum(gl.where(isq, 0.0, sq), 0) + 1e-6)\n    n = o * gl.where(isq, rq, rk)\n    return gl.where(isq, n * scale, n)\n\n\n@gluon.jit\ndef _gates(a, b, alog, bias):\n    \"\"\"exp(g) and beta of one step: g = -exp(A_log) softplus(a + dt_bias), beta = sigmoid(b), in FP32.\"\"\"\n    x = a.to(gl.float32) + bias\n    softplus = gl.where(x <= 20.0, gl.log(1.0 + gl.exp(x)), x)\n    g = -gl.exp(alog) * softplus\n    return gl.exp(g), 1.0 / (1.0 + gl.exp(-b.to(gl.float32)))\n\n\n@gluon.jit\ndef _step(h, q, k, v, decay, beta):\n    \"\"\"One delta-rule step on the FP32 state h [BV, K].\"\"\"\n    h = h * decay\n    v = v - gl.sum(h * k[None, :], 1)\n    v = v * beta\n    h = h + v[:, None] * k[None, :]\n    o = gl.sum(h * q[None, :], 1)\n    return h, o\n\n\n@gluon.jit\ndef _conv_recur(\n    QKVZ, BA, Hist, State, Inter, InterConv, CacheIdx, InterIdx, Weight, ALog, DTBias, Core, Gate,\n    scale, qkvz_stride, ba_stride, inter_row_stride,\n    KH: gl.constexpr, VH: gl.constexpr, DK: gl.constexpr, STEPS: gl.constexpr, BV: gl.constexpr,\n    W: gl.constexpr,\n):\n    gl.static_assert(STEPS == 4)\n    gl.static_assert(BV % (4 * W) == 0)\n    NT: gl.constexpr = DK // BV\n    C: gl.constexpr = 2 * KH * DK + VH * DK\n    pid = gl.program_id(0)\n    tile = pid % NT\n    head = (pid // NT) % VH\n    req = pid // (NT * VH)\n    khead = head // (VH // KH)\n    # 8 keys a lane (16-byte BF16 state accesses), 16 lanes a row: S k and S q reduce inside a wave\n    layout: gl.constexpr = gl.BlockedLayout([BV // (4 * W), 8], [4, 16], [W, 1], [1, 0])\n    rv = tile * BV + gl.arange(0, BV, gl.SliceLayout(1, layout))\n    ck = gl.arange(0, DK, gl.SliceLayout(0, layout))\n    token0 = req * STEPS\n    slot = gl.load(CacheIdx + req)\n    if slot >= 0:\n        # every global load first: the stores below may alias them as far as the compiler knows\n        row = gl.load(InterIdx + req)\n        sbase = State + (slot.to(gl.int64) * VH + head) * (DK * DK)\n        offs = rv[:, None] * DK + ck[None, :]\n        h = gl.amd.cdna4.buffer_load(sbase, offs, cache=\".cg\").to(gl.float32)\n        alog = gl.load(ALog + head)\n        bias = gl.load(DTBias + head).to(gl.float32)\n        bar = BA + token0.to(gl.int64) * ba_stride + head\n        b0 = gl.load(bar)\n        b1 = gl.load(bar + ba_stride)\n        b2 = gl.load(bar + 2 * ba_stride)\n        b3 = gl.load(bar + 3 * ba_stride)\n        a0 = gl.load(bar + VH)\n        a1 = gl.load(bar + ba_stride + VH)\n        a2 = gl.load(bar + 2 * ba_stride + VH)\n        a3 = gl.load(bar + 3 * ba_stride + VH)\n        # the key head's [q | k] channels over all lanes once, and this tile's v channels\n        QKW: gl.constexpr = max(2 * DK // (64 * W), 1)\n        cl: gl.constexpr = gl.BlockedLayout([QKW], [64], [W], [0])\n        j = gl.arange(0, 2 * DK, cl)\n        isq = j < DK\n        cqk = gl.where(isq, khead * DK + j, KH * DK + khead * DK + j - DK)\n        wqk = _load_window(QKVZ, qkvz_stride, Hist, Weight, token0, slot, cqk, C)\n        VW: gl.constexpr = max(BV // (64 * W), 1)\n        vl: gl.constexpr = gl.BlockedLayout([VW], [64], [W], [0])\n        cvt = tile * BV + gl.arange(0, BV, vl)\n        cv = 2 * KH * DK + head * DK + cvt\n        wv = _load_window(QKVZ, qkvz_stride, Hist, Weight, token0, slot, cv, C)\n        zr = QKVZ + token0.to(gl.int64) * qkvz_stride + C + head * DK + cvt\n        z0 = gl.load(zr)\n        z1 = gl.load(zr + qkvz_stride)\n        z2 = gl.load(zr + 2 * qkvz_stride)\n        z3 = gl.load(zr + 3 * qkvz_stride)\n        d0, e0 = _gates(a0, b0, alog, bias)\n        d1, e1 = _gates(a1, b1, alog, bias)\n        d2, e2 = _gates(a2, b2, alog, bias)\n        d3, e3 = _gates(a3, b3, alog, bias)\n        # publish q, k and v through LDS in the state's slice layouts\n        sl: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [0])\n        o0, o1, o2, o3 = _conv4(wqk)\n        qk_s = gl.allocate_shared_memory(gl.float32, (2 * STEPS * DK,), sl)\n        qk_s.slice(0, 2 * DK).store(_normalize_qk(o0, isq, scale))\n        qk_s.slice(2 * DK, 2 * DK).store(_normalize_qk(o1, isq, scale))\n        qk_s.slice(4 * DK, 2 * DK).store(_normalize_qk(o2, isq, scale))\n        qk_s.slice(6 * DK, 2 * DK).store(_normalize_qk(o3, isq, scale))\n        p0, p1, p2, p3 = _conv4(wv)\n        v_s = gl.allocate_shared_memory(gl.float32, (4 * BV,), sl)\n        v_s.slice(0, BV).store(p0)\n        v_s.slice(BV, BV).store(p1)\n        v_s.slice(2 * BV, BV).store(p2)\n        v_s.slice(3 * BV, BV).store(p3)\n        # deduplicated conv window: one writer per key head for q/k, each tile for its v channels\n        if ((head % (VH // KH)) == 0) & (tile == 0):\n            _store_window(InterConv, row, cqk, wqk, C)\n        _store_window(InterConv, row, cv, wv, C)\n        qsl: gl.constexpr = gl.SliceLayout(0, layout)\n        vsl: gl.constexpr = gl.SliceLayout(1, layout)\n        ibase = Inter + row.to(gl.int64) * inter_row_stride + head * (DK * DK)\n        STEP: gl.constexpr = VH * DK * DK\n        cbase = Core + (token0.to(gl.int64) * VH + head) * DK + rv\n        decays = (d0, d1, d2, d3)\n        betas = (e0, e1, e2, e3)\n        for t in gl.static_range(STEPS):\n            q = qk_s.slice(2 * t * DK, DK).load(qsl)\n            k = qk_s.slice(2 * t * DK + DK, DK).load(qsl)\n            v = v_s.slice(t * BV, BV).load(vsl)\n            h, o = _step(h, q, k, v, decays[t], betas[t])\n            gl.store(cbase + t * VH * DK, o.to(gl.bfloat16))\n            gl.amd.cdna4.buffer_store(h.to(Inter.dtype.element_ty), ibase + t * STEP, offs, cache=\".cs\")\n        goff = (token0.to(gl.int64) * VH + head) * DK + cvt\n        zs = (z0, z1, z2, z3)\n        for t in gl.static_range(STEPS):\n            z = zs[t].to(gl.float32)\n            gl.store(Gate + goff + t * VH * DK, z * (1.0 / (1.0 + gl.exp(-z))))\n    else:\n        zero = gl.full((BV,), 0, gl.bfloat16, gl.SliceLayout(1, layout))\n        coff = (token0.to(gl.int64) * VH + head) * DK + rv\n        for t in gl.static_range(STEPS):\n            gl.store(Core + coff + t * VH * DK, zero)\n            gl.store(Gate + coff + t * VH * DK, zero.to(gl.float32))\n\n\n@gluon.jit\ndef _finish(\n    QKVZ, Hist, CacheIdx, Core, Gate, NormW, Out, Scales, eps, qkvz_stride, M,\n    KH: gl.constexpr, VH: gl.constexpr, DK: gl.constexpr, STEPS: gl.constexpr,\n    TAIL: gl.constexpr, CB: gl.constexpr, W: gl.constexpr,\n):\n    \"\"\"Programs [0, M): a row's gated RMSNorm and tail (0 per-head FP8, 1 per-row FP8, 2 BF16);\n    the rest: one (request, CB channels) history roll each.\"\"\"\n    C: gl.constexpr = 2 * KH * DK + VH * DK\n    pid = gl.program_id(0)\n    if pid < M:\n        token = pid\n        layout: gl.constexpr = gl.BlockedLayout([1, 2], [1, 64], [W, 1], [1, 0])\n        hh = gl.arange(0, VH, gl.SliceLayout(1, layout))\n        cc = gl.arange(0, DK, gl.SliceLayout(0, layout))\n        offs = hh[:, None] * DK + cc[None, :]\n        core = gl.load(Core + token.to(gl.int64) * (VH * DK) + offs).to(gl.float32)\n        gate = gl.load(Gate + token.to(gl.int64) * (VH * DK) + offs)\n        w = gl.load(NormW + cc).to(gl.float32)\n        var = gl.sum(core * core, 1) / DK\n        rstd = gl.rsqrt(var + eps)\n        y = core * rstd[:, None]\n        y = y * w[None, :]\n        y = y * gate\n        ob = token.to(gl.int64) * (VH * DK)\n        if TAIL == 2:\n            gl.store(Out + ob + offs, y.to(gl.bfloat16))\n        elif TAIL == 1:\n            y = y.to(gl.bfloat16).to(gl.float32)\n            s = gl.maximum(gl.max(gl.max(gl.abs(y), 1), 0), 1e-10) / 448.0\n            qv = gl.minimum(gl.maximum(y * (1.0 / s), -448.0), 448.0)\n            gl.store(Out + ob + offs, qv.to(Out.dtype.element_ty))\n            gl.store(Scales + token, s)\n        else:\n            y = y.to(gl.bfloat16).to(gl.float32)\n            mag = gl.where(y == y, gl.abs(y), 0.0)\n            gs = gl.maximum(gl.max(mag, 1), 1e-10) * (1.0 / 448.0)\n            inv = 1.0 / gs\n            qv = gl.minimum(gl.maximum(y * inv[:, None], -448.0), 448.0)\n            gl.store(Out + ob + offs, qv.to(Out.dtype.element_ty))\n            gl.store(Scales + token.to(gl.int64) * VH + hh, gs)\n    else:\n        NCB: gl.constexpr = C // CB\n        rest = pid - M\n        req = rest // NCB\n        cb = rest % NCB\n        slot = gl.load(CacheIdx + req)\n        if slot >= 0:\n            rl: gl.constexpr = gl.BlockedLayout([1, 4], [64, 1], [W, 1], [1, 0])\n            c = cb * CB + gl.arange(0, CB, gl.SliceLayout(1, rl))\n            tap = gl.arange(0, 4, gl.SliceLayout(0, rl))\n            xr = QKVZ + (req * STEPS).to(gl.int64) * qkvz_stride + c\n            x1 = gl.load(xr + qkvz_stride)\n            x2 = gl.load(xr + 2 * qkvz_stride)\n            x3 = gl.load(xr + 3 * qkvz_stride)\n            new = gl.where(tap[None, :] == 0, x1[:, None], gl.where(tap[None, :] == 1, x2[:, None], x3[:, None]))\n            hb = Hist + slot.to(gl.int64) * (C * 3)\n            gl.store(hb + c[:, None] * 3 + tap[None, :], new, tap[None, :] < 3)\n\n\ndef gdn_verify(\n    projected_qkvz, projected_ba, conv_state, delta_state, cache_indices, inter_indices, inter_ssm, inter_conv,\n    conv_weight, a_log, dt_bias, norm_weight, scale, eps, tail, out, scales,\n):\n    \"\"\"tail 0: out [M, VH*128] E4M3FN, scales [M, VH]; 1: out as 0, scales [M, 1]; 2: out [M, VH, 128] BF16.\"\"\"\n    rows = projected_qkvz.shape[0]\n    requests = cache_indices.shape[0]\n    _, heads, value_dim, key_dim = delta_state.shape\n    channels = conv_state.shape[1]\n    key_heads = (channels - heads * key_dim) // (2 * key_dim)\n    device = projected_qkvz.device\n    # value rows a program: split heads while few (request, head) pairs fill the GPU, whole halves above\n    tile = 32 if requests * heads <= 64 else 64\n    core = torch.empty((rows, heads, value_dim), device=device, dtype=torch.bfloat16)\n    gate = torch.empty((rows, heads, value_dim), device=device, dtype=torch.float32)\n    _conv_recur[(requests * heads * (value_dim // tile),)](\n        projected_qkvz, projected_ba, conv_state, delta_state, inter_ssm, inter_conv, cache_indices,\n        inter_indices, conv_weight, a_log, dt_bias, core, gate,\n        scale, projected_qkvz.stride(0), projected_ba.stride(0), inter_ssm.stride(0),\n        key_heads, heads, key_dim, STEPS, tile, 4, num_warps=4,\n    )\n    block = 512\n    _finish[(rows + requests * (channels // block),)](\n        projected_qkvz, conv_state, cache_indices, core, gate, norm_weight, out, core if scales is None else scales,\n        eps, projected_qkvz.stride(0), rows,\n        key_heads, heads, key_dim, STEPS, tail, block, 8, num_warps=8,\n    )\n\n\ndef run(\n    *, projected_qkvz, projected_ba, conv_state, delta_state, cache_indices, inter_indices, inter_ssm, inter_conv,\n    conv_weight, a_log, dt_bias, norm_weight, scale, eps, draft_tokens, projection_storage, normalized,\n):\n    gdn_verify(\n        projected_qkvz, projected_ba, conv_state, delta_state, cache_indices, inter_indices, inter_ssm, inter_conv,\n        conv_weight, a_log, dt_bias, norm_weight, scale, eps, 2, normalized, None,\n    )\n"
+      }
+    ]
+  }
+}
