@@ -8,7 +8,7 @@ through [pre-commit](https://pre-commit.com/) and are enforced in CI.
 Set up once after cloning:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements/lint.txt
 pre-commit install
 ```
 
@@ -27,7 +27,7 @@ ruff format .        # format code
 ```
 
 Ruff rules live in `pyproject.toml`; tool versions are pinned in `.pre-commit-config.yaml` and
-`requirements.txt`.
+`requirements/lint.txt`.
 
 Style checks do not replace operator correctness tests or performance
 qualification. Follow the workflows in [harness/README.md](harness/README.md)

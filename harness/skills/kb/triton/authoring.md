@@ -464,7 +464,7 @@ print(k.metadata.shared, k.asm["amdgcn"].count("v_mfma_f32_16x16x32_bf16"))    #
 python -m aklr validate --base origin/main --validators audit,bench --devices 0 <schema.json>
 ```
 
-`--validators` is `audit` or `audit,bench`; `--devices` takes `0-7` or `0,2,5`; the report goes to
+`--validators` is any of `audit`, `bench` and `verify`, comma-separated (verify checks FlyDSL kernels only); `--devices` takes `0-7` or `0,2,5`; the report goes to
 `aklr_validation/report.md` and `aklr_validation/report.json` unless `--out` says otherwise (S39). `--validators audit`
 alone needs no GPU. Without `--base` a file is timed against the baseline alone, at the retain threshold; with
 `--base origin/main`, a copy of a kernel the base serves at the Point is timed against that serving file

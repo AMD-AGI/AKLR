@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
+
+
+from __future__ import annotations
+
+import contextlib
+import ctypes
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final
+
+from pydantic import ValidationError
+
+import aklr
+from aklr.core.contract.spec import FrozenModel, axes_text
+from aklr.core.platform.toolchain import unmet_requirement
+from aklr.core.validation.validators.verify._extractors import IsaExtractor
+
+if TYPE_CHECKING:
+    from aklr.core.contract.op import OpContract
+
+__all__ = [
+    "PR_SET_PDEATHSIG",
+    "STARTUP_TIMEOUT_SECONDS",
+    "WORKLOAD_TIMEOUT_SECONDS",
+    "Extraction",
+]
+
+MANIFEST: Final = "extractions.jsonl"
+PR_SET_PDEATHSIG: Final = 1
+STARTUP_TIMEOUT_SECONDS: Final = 300.0
+WORKLOAD_TIMEOUT_SECONDS: Final = 300
+
+
+class Extraction(FrozenModel):
+    schema_path: str
+    axes: dict[str, int]
+    kernel: str | None = None
+    isa_path: str | None = None
+    launch: dict[str, Any] | None = None
+    failure: str = ""
+
+    @classmethod
+    def of_schema(
+        cls,
+        root: Path,
+        schema_path: str,
+        schema: OpContract,
+        directory: Path,
+        first: int,
+        count: int,
+        device: str | None,
+    ) -> list[Extraction]:
+        workloads = schema.workloads[first : first + count]
+        (directory / MANIFEST).unlink(missing_ok=True)
+        kernel = schema.kernel
+        extractor = IsaExtractor.resolve(kernel.language) if kernel.language in IsaExtractor.names() else None
+        unmet = unmet_requirement(kernel.requires)
+        crash = ""
+        target = IsaExtractor.target(kernel)
+        if extractor is None:
+            crash = f"no extractor for {kernel.language}"
+        elif unmet is not None:
+            crash = f"requires: {unmet}"
+        elif target is None:
+            crash = "target: the kernel names no architecture to extract its ISA for"
+        else:
+            directory.mkdir(parents=True, exist_ok=True)
+            python_path = os.pathsep.join(
+                [str(Path(aklr.__file__).resolve().parents[1]), *filter(None, [os.environ.get("PYTHONPATH")])]
+            )
+            environment = extractor.environment(target.arch, directory) | {"PYTHONPATH": python_path}
+            if device is not None:
+                environment |= {"HIP_VISIBLE_DEVICES": device, "CUDA_VISIBLE_DEVICES": device}
+            run = f"from {extractor.__module__} import {extractor.__name__} as extractor"
+            run += "; import sys; extractor(*sys.argv[1:]).extract_workloads()"
+            argv = [sys.executable, "-c", run, str(root / schema_path), schema_path, str(directory)]
+            argv += [str(first), str(count)]
+            timeout = STARTUP_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(workloads)
+            with (directory / "extractor.log").open("w", encoding="utf-8") as log:
+                extracting = subprocess.Popen(
+                    argv,
+                    env=os.environ | environment,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    preexec_fn=lambda: ctypes.CDLL(None).prctl(PR_SET_PDEATHSIG, signal.SIGKILL),
+                )
+                try:
+                    extracting.wait(timeout)
+                except subprocess.TimeoutExpired:
+                    crash = f"extract: the extractor ran {timeout:.0f} s"
+                finally:
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(extracting.pid, signal.SIGKILL)
+                    extracting.wait()
+            if not crash and extracting.returncode:
+                logged = (directory / "extractor.log").read_text(encoding="utf-8").strip().splitlines()
+                crash = (
+                    f"extract: the extractor exited {extracting.returncode}: {(logged or ['no message'])[-1]}"
+                )
+        manifest = directory / MANIFEST
+        lines = manifest.read_text(encoding="utf-8").splitlines() if manifest.is_file() else []
+        extractions = []
+        for line in filter(None, lines):
+            with contextlib.suppress(ValidationError):
+                extractions.append(cls.model_validate_json(line))
+        extracted = {axes_text(c.axes) for c in extractions}
+        return extractions + [
+            cls(
+                schema_path=schema_path,
+                axes=w.axes,
+                failure=crash or "extract: the extractor reported nothing",
+            )
+            for w in workloads
+            if axes_text(w.axes) not in extracted
+        ]

@@ -46,7 +46,7 @@ def test_empty_validation_skips_every_validator(empty_repo):
     output = empty_repo / "report"
     options = ["--num-trials", "5", "--isolate", "fused_moe", "--isolate", "mla"]
     assert main(["--devices", "0", "--out", str(output), *options]) == 0
-    assert _statuses(output) == [("audit", "skipped"), ("bench", "skipped")]
+    assert _statuses(output) == [("audit", "skipped"), ("bench", "skipped"), ("verify", "skipped")]
 
 
 @pytest.mark.parametrize(
@@ -54,6 +54,7 @@ def test_empty_validation_skips_every_validator(empty_repo):
     [
         pytest.param("audit", ["audit"], id="audit_alone"),
         pytest.param("bench", ["bench"], id="bench_alone"),
+        pytest.param("verify", ["verify"], id="verify_alone"),
         pytest.param("bench,audit", ["bench", "audit"], id="in_the_order_written"),
     ],
 )
@@ -66,9 +67,11 @@ def test_the_command_runs_exactly_the_validators_named(empty_repo, names, ran):
 @pytest.mark.parametrize(
     ("names", "message"),
     [
-        pytest.param("audit,lint", "unknown Validator: 'lint'; available: audit, bench", id="unknown"),
+        pytest.param(
+            "audit,lint", "unknown Validator: 'lint'; available: audit, bench, verify", id="unknown"
+        ),
         pytest.param("audit,audit", "validator 'audit' is named twice", id="repeated"),
-        pytest.param("", "unknown Validator: ''; available: audit, bench", id="empty"),
+        pytest.param("", "unknown Validator: ''; available: audit, bench, verify", id="empty"),
     ],
 )
 def test_a_name_that_is_unknown_or_repeated_is_a_usage_error(empty_repo, capsys, names, message):
@@ -77,3 +80,10 @@ def test_a_name_that_is_unknown_or_repeated_is_a_usage_error(empty_repo, capsys,
     assert exit_info.value.code == 2
     assert message in capsys.readouterr().err
     assert not (empty_repo / "report").exists()
+
+
+def test_verify_runs_without_a_device(empty_repo, monkeypatch):
+    monkeypatch.setattr("torch.cuda.device_count", lambda: 0)
+    output = empty_repo / "report"
+    assert main(["--validators", "audit,verify", "--out", str(output)]) == 0
+    assert _statuses(output) == [("audit", "skipped"), ("verify", "skipped")]
