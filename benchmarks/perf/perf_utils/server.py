@@ -45,6 +45,8 @@ INFRA_ENV = (
     "FLYDSL_AUTOTUNE_CACHE_DIR",
     "TRITON_CACHE_DIR",
     "AKLR_KERNEL_CACHE_DIR",
+    # The SaFE pod turns this off: the image's default binds CPUs the pod lacks.
+    "SGLANG_SET_CPU_AFFINITY",
 )
 
 

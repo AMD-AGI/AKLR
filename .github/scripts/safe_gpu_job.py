@@ -34,7 +34,9 @@ class Deployment:
 
     def __init__(self):
         env = os.environ
-        self.name = f"aklr-{env['GITHUB_RUN_ID']}-{env['GITHUB_RUN_ATTEMPT']}-{env['GITHUB_JOB']}"
+        # SAFE_JOB_NAME tells a matrix job's legs apart: they share GITHUB_JOB.
+        job = env.get("SAFE_JOB_NAME") or env["GITHUB_JOB"]
+        self.name = f"aklr-{env['GITHUB_RUN_ID']}-{env['GITHUB_RUN_ATTEMPT']}-{job}"
         fetch = ["curl", "-fsSL", "--retry", "3", "--proto", "=https", "--proto-redir", "=https"]
         certs = subprocess.check_output([*fetch, *self.CA_URLS], text=True)
         self.http = build_opener(HTTPSHandler(context=ssl.create_default_context(cadata=certs)))
@@ -69,6 +71,13 @@ class Deployment:
         source = base64.b64encode(Path(__file__).read_bytes()).decode()
         command = f'f=$(mktemp) && echo {source} | base64 -d > "$f" && exec python3 "$f" pod'
         passed = {name: env[name] for name in env.get("PASS_ENV", "").split() if name in env}
+        # off: no workspace volume (ci.yaml); readonly: /shared_nfs read-only, e.g. the e2e weights.
+        storage = env.get("SAFE_WORKSPACE_STORAGE", "off")
+        if storage not in {"off", "readonly"}:
+            raise ValueError(f"SAFE_WORKSPACE_STORAGE must be off or readonly, not {storage!r}")
+        limit = env.get("SAFE_TIMEOUT_MINUTES", "480")
+        if not limit.isdigit() or int(limit) <= 0:
+            raise ValueError(f"SAFE_TIMEOUT_MINUTES must be a positive number of minutes, not {limit!r}")
         payload = dict(
             workloadId=self.name,
             displayName=self.name,
@@ -76,12 +85,13 @@ class Deployment:
             groupVersionKind={"kind": "Deployment", "version": "v1"},
             resources=[self.RESOURCES],
             images=[env["IMAGE"]],
-            useWorkspaceStorage=False,
+            useWorkspaceStorage=storage != "off",
+            workspaceStorageReadOnly=storage == "readonly",
             entryPoints=[base64.b64encode(command.encode()).decode()],
             priority={"medium": 1, "high": 2}[env["AKLR_GPU_PRIORITY"]],
             # SaFE counts from the dispatch, the wait for a node included, and the pod limits the
             # tests itself: this only stops a Deployment no job deleted, at the job's own limit.
-            timeout=480 * 60,
+            timeout=int(limit) * 60,
             # The unit tests leave the GPUs idle for longer than the workspace lets a workload be.
             lowUtilizationExempt=True,
             env=dict(
@@ -90,6 +100,8 @@ class Deployment:
                 AKLR_REPO=f"{env['GITHUB_SERVER_URL']}/{env['GITHUB_REPOSITORY']}",
                 AKLR_COMMIT=env["GITHUB_SHA"],
                 AKLR_SCRIPT=base64.b64encode(script.encode()).decode(),
+                # The pod has RESOURCES' 96 CPUs, SGLang binds each GPU to its share of the node's.
+                SGLANG_SET_CPU_AFFINITY="0",
             ),
         )
         self.api("POST", payload=payload)

@@ -219,6 +219,9 @@ def test_a_labeled_pr_from_this_repository_starts_the_workflow():
     gate = workflow["jobs"]["plan"]["if"]
     assert "github.event.pull_request.head.repo.full_name == github.repository" in gate
     assert gate.count("'ci:e2e-perf-mi355x'") == 2
+    assert "github.event.label.name == 'ci:priority-high'" in gate
+    assert "github.event.label.name == 'ci:priority-high'" in workflow["concurrency"]["group"]
+    assert "'ci:priority-high') && 'high'" in workflow["env"]["AKLR_GPU_PRIORITY"]
     assert workflow["jobs"]["plan"]["permissions"] == {"contents": "read", "pull-requests": "read"}
     steps = workflow["jobs"]["plan"]["steps"]
     comments = next(

@@ -8,6 +8,7 @@ import sys
 
 COMMANDS = {
     "plan": ("e2e_perf.plan", "main"),
+    "inspect-images": ("e2e_perf.registry", "main"),
     "sweep": ("e2e_perf.sweep", "main"),
     "report": ("e2e_perf.report", "main"),
     "publish": ("e2e_perf.publish", "main"),
