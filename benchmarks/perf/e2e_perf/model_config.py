@@ -15,6 +15,9 @@ APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parents[2]
 DEFAULT_CONFIG = APP_DIR / "e2e.yaml"
 PLUGIN_SWITCHES = {"sglang": "AKLR_SGLANG_PLUGIN", "vllm": "AKLR_VLLM_PLUGIN"}
+# The AITER a recipe's two modes serve on: the image's own (the default), or stack.json's, installed over it, which
+# has the aiter.plugin through which AKLR serves AITER's ops.
+AITER_SOURCES = ("image", "stack")
 TP_FLAGS = ("--tp", "--tp-size", "--tensor-parallel-size", "-tp")
 WORKLOAD_INTS = ("isl", "osl", "num_prompts_per_conc")
 
@@ -146,4 +149,6 @@ def load_recipe(group: dict, root: Path = APP_DIR / "recipes") -> dict:
         raise ConfigError(f"{path}: gpus must equal the one tensor-parallel size in the launch command")
     if gpus > group["hardware"]["gpu_count"]:
         raise ConfigError(f"{path}: gpus {gpus} exceeds the target's {group['hardware']['gpu_count']}")
+    if recipe.get("aiter", "image") not in AITER_SOURCES:
+        raise ConfigError(f"{path}: aiter must be one of {', '.join(AITER_SOURCES)}")
     return recipe

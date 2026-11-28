@@ -454,6 +454,28 @@ def test_frameworks_are_a_separate_layer(case):
         plan.select_runs(config, models="second", frameworks="sglang")
 
 
+def test_a_framework_entry_may_run_on_the_stacks_aiter(case):
+    """aiter: stack names stack.json's AITER in the run's framework identity, so that the sweep installs it and
+    turns AKLR's aiter provider on with the plugin; the default, the image's own, is left out of the identity."""
+    frameworks = case.definition["models"]["first"]["targets"]["mi355x"]["frameworks"]
+    frameworks["vllm"]["aiter"] = "stack"
+    case.write_config()
+    vllm = case.definition_of(framework_id="vllm")
+    assert vllm["framework"] == {"id": "vllm", "aiter": "stack"}
+    assert sc.build_run(case.recipe(framework_id="vllm"), vllm)["framework"] == {
+        "id": "vllm",
+        "aiter": "stack",
+    }
+    assert case.definition_of()["framework"] == {"id": "sglang"}
+    frameworks["vllm"]["aiter"] = "image"
+    case.write_config()
+    assert case.definition_of(framework_id="vllm")["framework"] == {"id": "vllm"}
+    frameworks["vllm"]["aiter"] = "main"
+    case.write_config()
+    with pytest.raises(plan.ConfigError, match="frameworks.vllm.aiter must be one of image, stack"):
+        case.definition_of(framework_id="vllm")
+
+
 def test_framework_ids_and_flags_are_validated(case):
     frameworks = case.definition["models"]["first"]["targets"]["mi355x"]["frameworks"]
     frameworks["vllm"]["enabled"] = False

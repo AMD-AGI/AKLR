@@ -241,6 +241,7 @@ models:
 | `models.<id>.advisory_env` | 模型级补充环境，覆盖同名全局值。若与 recipe 文件 `launch.env` 中已设置的变量同名，会报冲突；设备变量由 `plan` 生成 |
 | `models.<id>.targets.<target-id>.advisory_env` | target 级补充环境，覆盖同名模型级和全局值；同样不允许与 recipe 文件 `launch.env` 冲突 |
 | `...frameworks.<framework>.advisory_env` | 框架级补充环境，覆盖以上各级同名值。不要在这里设置 AKLR plugin 开关，执行器会按模式设置。冲突规则相同 |
+| `...frameworks.<framework>.aiter` | 两种模式所用的 AITER：`image`（默认）为服务镜像自带的版本；`stack` 为 `stack.json` 固定的 commit，安装时覆盖镜像自带的版本。`stack` 带有 `aiter.plugin` 接口，执行器会同时按模式设置 `AKLR_AITER_PLUGIN`，使 enabled 模式下 AITER 的算子由 AKLR 的 kernel 提供 |
 
 `weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像由 plan 从 [`stack.json`](../../../stack.json) 读取对应框架的 CI 镜像，见 3.2 节。
 

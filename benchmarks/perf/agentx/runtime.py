@@ -421,9 +421,11 @@ def main(argv: list[str] | None = None) -> int:
         measurements = {}
         for planned in points:
             point = copy.deepcopy(planned)
-            point["launch"]["env"].update(
-                {switch: "1" if mode == "enabled" else "0", "AKLR_DISABLE": "0" if mode == "enabled" else "1"}
-            )
+            on = "1" if mode == "enabled" else "0"
+            point["launch"]["env"].update({switch: on, "AKLR_DISABLE": "0" if mode == "enabled" else "1"})
+            if serving["framework"].get("aiter") == "stack":
+                # stack.json's AITER has aiter.plugin: the enabled mode joins its providers, the disabled one stays out
+                point["launch"]["env"]["AKLR_AITER_PLUGIN"] = on
             measurement = {
                 "environment_policy": ENVIRONMENT_POLICY,
                 "server_image_env_sha256": execution["server_environment"]["defaults_sha256"],
