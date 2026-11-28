@@ -16,8 +16,7 @@ from tests.plugins.sglang.cases import SMALL_POINTS
 @pytest.mark.gfx950
 @pytest.mark.parametrize(
     ("rows", "bias_dtype"),
-    [(row, "bfloat16") for row in (1, 2, 4, 8)]
-    + [(row, "float32") for row in (1, 2, 4, 8, *range(9, 17))],
+    [(row, "bfloat16") for row in (1, 2, 4, 8)] + [(row, "float32") for row in (1, 2, 4, 8, *range(9, 17))],
 )
 @pytest.mark.parametrize("inter_dim", [256, 512], ids=["tp8", "tp4"])
 def test_glm_fp8_decode_rows_match_reference(rows, inter_dim, bias_dtype, builder_registry):
