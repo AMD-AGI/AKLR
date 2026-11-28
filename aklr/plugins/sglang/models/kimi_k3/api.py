@@ -10,12 +10,16 @@ from aklr.plugins.sglang.models.kimi_k3.contract import (
     KIMI_K3_LATENT_MOE,
     KIMI_K3_MLA_PREFILL_GATE,
     KIMI_K3_MLA_VC_OUTPUT_GATE,
+    KIMI_K3_MOE_FRONT_GEMM,
+    KIMI_K3_ROUTED_MOE_MXFP8,
 )
 
 __all__ = [
     "kimi_k3_latent_moe",
     "kimi_k3_mla_prefill_gate",
     "kimi_k3_mla_vc_output_gate",
+    "kimi_k3_moe_front_gemm",
+    "kimi_k3_routed_moe_mxfp8",
 ]
 
 
@@ -30,6 +34,7 @@ def kimi_k3_latent_moe(
     w2_scale,
     shared_w2,
     topk=16,
+    front_fp32=False,
     latent=None,
     shared=None,
 ): ...
@@ -37,6 +42,104 @@ def kimi_k3_latent_moe(
 
 @api(KIMI_K3_MLA_VC_OUTPUT_GATE)
 def kimi_k3_mla_vc_output_gate(latent, vc_weight, gate, output=None): ...
+
+
+@api(KIMI_K3_ROUTED_MOE_MXFP8)
+def kimi_k3_routed_moe_mxfp8(
+    a,
+    a_scale,
+    topk_ids,
+    topk_weights,
+    w1,
+    w1_scale,
+    w2,
+    w2_scale,
+    beta,
+    linear_beta,
+    out_dtype=None,
+    out=None,
+): ...
+
+
+# sglang's own gfx950 kernels (python/sglang/kernels/jit/csrc/moe/k3_a8w4_gfx950.cuh), which Kimi-K3.1's MoE
+# runs from 2048 tokens (KimiK3MoEHipMixin._run_a8w4)
+@sglang_route("sglang.kernels.ops.moe.k3_a8w4_gfx950.k3_a8w4_moe", versions=("0.5.24.dev809",))
+def _k3_a8w4_moe(
+    hidden_states,
+    topk_ids,
+    topk_weights,
+    w13,
+    w13_scale,
+    w2,
+    w2_scale,
+    *,
+    beta,
+    linear_beta,
+    out=None,
+    a_mx=None,
+):
+    """The experts on the input the row-sharded front gathered in MXFP8 (a_mx: e4m3 rows and their
+    e8m0 scales, as uint8; hidden_states then only gives the shape). A bf16 input, which the
+    experts would quantize themselves, stays on sglang. The weights and their scales arrive as
+    uint8 in the only layout k3_a8w4_moe reads, aiter's gate-up-interleaved preshuffle
+    (shuffle_weight_a16w4 / shuffle_scale_a16w4, the scales 2-D): viewed as MXFP4 and e8m0, the
+    weights marked shuffled. The output is bf16; a row-strided ``out`` gets the op's own output."""
+    import torch
+
+    if a_mx is None:
+        return FallbackReason.OUT_OF_CONTRACT
+    a, a_scale = a_mx
+    w1, w2 = w13.view(torch.float4_e2m1fn_x2), w2.view(torch.float4_e2m1fn_x2)
+    w1.is_shuffled = w2.is_shuffled = True
+    is_strided = out is not None and not out.is_contiguous()
+    result = kimi_k3_routed_moe_mxfp8(
+        a=a.view(torch.float8_e4m3fn),
+        a_scale=a_scale.view(torch.float8_e8m0fnu),
+        topk_ids=topk_ids,
+        topk_weights=topk_weights,
+        w1=w1,
+        w1_scale=w13_scale.view(torch.float8_e8m0fnu),
+        w2=w2,
+        w2_scale=w2_scale.view(torch.float8_e8m0fnu),
+        beta=float(beta),
+        linear_beta=float(linear_beta),
+        out_dtype=torch.bfloat16,
+        out=None if is_strided else out,
+    )
+    if isinstance(result, FallbackReason) or not is_strided:
+        return result
+    return out.copy_(result)
+
+
+@api(KIMI_K3_MOE_FRONT_GEMM)
+def kimi_k3_moe_front_gemm(x, weight, out_dtype=None, out=None): ...
+
+
+# KimiK3MoE._fused_front off an fp32 front calls _k3_bf16_gemm(hidden_states, _front_w, out_dtype=torch.float32)
+@sglang_route("sglang.srt.models.kimi_k3._k3_bf16_gemm", versions=("0.5.24.dev809",))
+def _k3_bf16_gemm(x, weight, out=None, out_dtype=None):
+    """Kimi-K3.1's MoE front to fp32 where sglang runs it on torch: sglang's own ROCm routing first, as
+    _k3_bf16_gemm tries it (aiter's FlyDSL tile into the fp32 output it allocates, k3_bf16_gemm_hip), and only
+    where that declines the op, in place of torch.mm(x, weight.t(), out=out, out_dtype=torch.float32). A bf16
+    output, an output given (the shared experts' down) and the cutedsl backend stay sglang's."""
+    import torch
+
+    if (
+        out is not None
+        or out_dtype != torch.float32
+        or x.dtype != torch.bfloat16
+        or weight.dtype != torch.bfloat16
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    from sglang.srt.layers.quantization.unquant import get_bf16_gemm_backend
+    from sglang.srt.models import kimi_k3
+
+    if get_bf16_gemm_backend().is_cutedsl():
+        return FallbackReason.OUT_OF_CONTRACT
+    out = torch.empty((x.shape[0], weight.shape[0]), dtype=torch.float32, device=x.device)
+    if kimi_k3._is_hip and (hip_out := kimi_k3.k3_bf16_gemm_hip(x, weight, out)) is not None:
+        return hip_out
+    return kimi_k3_moe_front_gemm(x=x, weight=weight, out_dtype=torch.float32, out=out)
 
 
 @api(KIMI_K3_MLA_PREFILL_GATE)
@@ -81,18 +184,92 @@ def _forward_fused(self, hidden_states, *, prefix_sum):
     return kimi_k3._add3(up, buf[latent_numel:].view(num_tokens, hidden_size), prefix_sum, prefetch_bc=True)
 
 
-def _latent_moe_falls_back(moe) -> bool:
-    """Whether ``moe`` runs other than as kimi_k3_latent_moe takes it: the bf16 fused front of
-    [shared gate_up | router | latent down], sigmoid routing with a bias over every expert, no
-    scaling, SiTU 4 / 25 experts of MXFP4 weights on aiter's a8w4 path, a bf16 shared down
-    projection, and the single all-reduce of both partial sums."""
+@sglang_route(
+    "sglang.srt.models.kimi_k3_amd.moe.KimiK3MoEHipMixin._forward_fused_hip", versions=("0.5.24.dev809",)
+)
+def _forward_fused_hip(self, hidden_states, *, prefix_sum):
+    """Kimi-K3.1's MoE on sglang 0.5.24's ROCm path, to which KimiK3MoE._forward_fused hands every
+    call: the fp32 front, routing, routed and shared experts as one op writing both partial sums
+    into the buffer sglang all-reduces; then sglang's all-reduce and the tail it takes after it, by
+    its own methods: the column-parallel tail that runs the next layer's attention read, the fused
+    latent tail, or the latent norm, up projection and tail add. A batch of sglang's own A8W4
+    experts (from 2048 tokens) or of its column-split or row-sharded tails stays with sglang."""
+    from sglang.srt.models.kimi_k3_amd import moe as hip_moe
+
+    num_tokens, hidden_size = hidden_states.shape
+    a8w4_from = self._a8w4_moe_min_tokens
+    if (
+        (a8w4_from is not None and num_tokens >= a8w4_from)
+        or (num_tokens >= hip_moe._UP_PROJ_COLUMN_SPLIT_MIN_TOKENS and self._prefill_up_proj_cols is not None)
+        or self._row_sharded_tail_eligible(num_tokens, prefix_sum is not None)
+        or moe_blocks.runtime_falls_back()
+        or _latent_moe_falls_back(self, front_fp32=True)
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    experts = self.experts
+    operands = {
+        "hidden_states": hidden_states,
+        "front_weight": self._front_w,
+        "correction_bias": self.gate.e_score_correction_bias,
+        "w1": experts.w13_weight,
+        "w1_scale": experts.w13_weight_scale,
+        "w2": experts.w2_weight,
+        "w2_scale": experts.w2_weight_scale,
+        "shared_w2": self.shared_experts.down_proj.weight,
+        "topk": self.topk.topk_config.top_k,
+        "front_fp32": True,
+    }
+    # asked first, so that a call AKLR does not serve allocates no symmetric buffer
+    reason = kimi_k3_latent_moe.fallback_reason(**operands)
+    if reason is not None:
+        return reason
+    from sglang.srt.models import kimi_k3
+
+    latent_dim = self.moe_hidden_size
+    latent_numel = num_tokens * latent_dim
+    with hip_moe.use_symmetric_memory(
+        hip_moe.get_parallel().tp_group, disabled=not hip_moe.is_allocation_symmetric()
+    ):
+        buf = hidden_states.new_empty(latent_numel + num_tokens * hidden_size)
+    out = kimi_k3_latent_moe(
+        **operands,
+        latent=buf[:latent_numel].view(num_tokens, latent_dim),
+        shared=buf[latent_numel:].view(num_tokens, hidden_size),
+    )
+    if isinstance(out, FallbackReason):
+        return out
+    buf = self._reduce_latent_and_shared(buf)
+    latent = buf[:latent_numel].view(num_tokens, latent_dim)
+    shared = buf[latent_numel:].view(num_tokens, hidden_size)
+    if self.next_attn_read is not None:
+        stream = self._column_tail_and_next_read(latent, shared, prefix_sum)
+        if stream is not None:
+            return stream
+    up_weight = self.routed_expert_up_proj.weight
+    if self._fused_latent_tail_eligible and hip_moe.kimi_k3_latent_tail_hip.supports_latent_tail(
+        latent, up_weight, shared, prefix_sum
+    ):
+        norm = self.routed_expert_norm
+        return hip_moe.kimi_k3_latent_tail_hip.k3_latent_tail(
+            latent, norm.weight, norm.variance_epsilon, up_weight, shared, prefix_sum
+        )
+    up, _ = self.routed_expert_up_proj(self._latent_norm(latent))
+    return kimi_k3._add3(up, shared, prefix_sum, prefetch_bc=True)
+
+
+def _latent_moe_falls_back(moe, *, front_fp32: bool = False) -> bool:
+    """Whether ``moe`` runs other than as kimi_k3_latent_moe takes it: the fused front of
+    [shared gate_up | router | latent down], in bf16, or in fp32 with ``front_fp32``, sigmoid
+    routing with a bias over every expert, no scaling, SiTU 4 / 25 experts of MXFP4 weights on
+    aiter's a8w4 path, a bf16 shared down projection, and the single all-reduce of both partial
+    sums."""
     from sglang.srt.layers.communication import k3_ar_fusion
     from sglang.srt.runtime_context import get_parallel
 
     experts, shared = moe.experts, moe.shared_experts
     return (
         not moe._eligible_for_fused_front
-        or moe._front_fp32
+        or moe._front_fp32 != front_fp32
         or moe._front_w is None
         or tuple(moe._front_sizes)
         != (2 * shared.down_proj.weight.shape[1], experts.num_experts, moe.moe_hidden_size)

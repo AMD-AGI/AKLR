@@ -2,8 +2,9 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """Kimi-K3's layers on one rank of its TP group: the MoE from hidden_states to the two partial
-sums its fused front path all-reduces, and the MLA layers' value absorption and prefill
-attention, each with the output gate.
+sums its fused front path all-reduces, Kimi-K3.1's routed experts on the MXFP8 input sglang's
+row-sharded front gathers and its fp32 MoE front where sglang runs that GEMM on torch, and the MLA
+layers' value absorption and prefill attention, each with the output gate.
 
 A model is a scenario: Kimi-K3 at TP8 is model_dim 7168, latent_dim 3584, n_routed 896, topk
 16, inter_dim 384 and shared_inter_dim 768, and 12 MLA heads."""
@@ -14,12 +15,14 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     ATTENTION_FP8_SNR,
     DTYPE_TRAITS,
+    GEMM_FP16_SNR,
     MOE_MXFP8_SNR,
     BoundedCuSeqlensDistribution,
     DType,
     FiniteDistribution,
     GateUpInterleavedScales,
     GateUpInterleavedWeight,
+    IntRangeDistribution,
     LecunNormalDistribution,
     LogUniformDistribution,
     SqnrBound,
@@ -41,11 +44,15 @@ from aklr.plugins.sglang.models.kimi_k3.baseline import (
     KimiK3LatentMoeBaseline,
     KimiK3MlaPrefillGateBaseline,
     KimiK3MlaVcOutputGateBaseline,
+    KimiK3MoeFrontGemmBaseline,
+    KimiK3RoutedMoeMxfp8Baseline,
 )
 from aklr.plugins.sglang.models.kimi_k3.reference import (
     KimiK3LatentMoeReference,
     KimiK3MlaPrefillGateReference,
     KimiK3MlaVcOutputGateReference,
+    KimiK3MoeFrontGemmReference,
+    KimiK3RoutedMoeMxfp8Reference,
 )
 
 __all__ = [
@@ -53,6 +60,8 @@ __all__ = [
     "KIMI_K3_LATENT_MOE",
     "KIMI_K3_MLA_PREFILL_GATE",
     "KIMI_K3_MLA_VC_OUTPUT_GATE",
+    "KIMI_K3_MOE_FRONT_GEMM",
+    "KIMI_K3_ROUTED_MOE_MXFP8",
 ]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
@@ -126,7 +135,20 @@ KIMI_K3_LATENT_MOE = OpContract(
         "latent_blocks": derived_axis("w1 scale columns.", "latent_dim // 32"),
         "inter_blocks": derived_axis("w2 scale columns.", "inter_dim // 32"),
     },
-    attrs={"topk": attr("Routed experts per token.", 16, param_name="topk")},
+    attrs={
+        "topk": attr("Routed experts per token.", 16, param_name="topk"),
+        # sglang 0.5.24's ROCm front on aiter (KimiK3MoE._front_fp32): the router picks experts from exact
+        # logits, which a bf16 front would round, and the shared experts' SiTU reads its fp32 gate and up
+        "front_fp32": attr(
+            "Whether the front stays fp32 but for the latent input: the router's logits and the shared "
+            "experts' gate and up unrounded, the latent input z rounded to bf16.",
+            False,
+            True,
+            default=False,
+            param_name="front_fp32",
+            optional=True,
+        ),
+    },
     constraints=("topk <= n_routed",),
     inputs={
         "hidden_states": TensorSpec(
@@ -207,6 +229,158 @@ KIMI_K3_LATENT_MOE = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
     reference=KimiK3LatentMoeReference(),
     baseline=KimiK3LatentMoeBaseline(),
+)
+
+
+def _situ_beta(description: str) -> ScalarSpec:
+    return ScalarSpec(
+        description=description,
+        dtype=DType.FLOAT32,
+        interval=(2.0**-126, DTYPE_TRAITS["float32"].largest_finite_value),
+    )
+
+
+# Kimi-K3.1's prefill on sglang 0.5.24.dev809: from 2048 tokens its MoE runs sglang's own gfx950 A8W4
+# experts, and the row-sharded front (SGLANG_ENABLE_ROCM_K3_ROW_SHARDED_ROUTED_FRONT=1) hands them the
+# gathered input already through quant_mxfp8; fused_moe's bf16 input does not describe that call
+KIMI_K3_ROUTED_MOE_MXFP8 = OpContract(
+    contract_id="kimi_k3_routed_moe_mxfp8@1.0",
+    description=(
+        "sglang's k3_a8w4_moe on an input already through its quant_mxfp8, as Kimi-K3's row-sharded front hands it "
+        "the gathered rows (a_mx): each token through its topk routed experts, down(situv2(gate(x), up(x))) of their "
+        "MXFP4 weights on x = a * a_scale (one e8m0 scale per 1 x 32 of a row, rows in token order), the gated "
+        "product rounded to bf16 and then to MXFP8 before the down projection, weighed by its routing weight in "
+        "stage 2 and summed. situv2(g, u) = beta tanh(g / beta) sigmoid(g) * linear_beta tanh(u / linear_beta)"
+    ),
+    op_type="kimi_k3",
+    axes={
+        "n_tokens": axis("Tokens in this call.", 1, 65536, is_var=True),
+        "latent_dim": axis("The routed experts' hidden size.", 256, 16384, multiple_of=256),
+        "n_routed": axis("Routed experts.", 1, 1024),
+        "topk": axis("Routed experts per token.", 1, 32),
+        "inter_dim": axis("Routed expert intermediate size on this rank.", 128, 16384, multiple_of=128),
+        "gate_up_rows": derived_axis("w1 rows: gate and up concatenated.", "2 * inter_dim"),
+        "latent_blocks": derived_axis("a_scale and w1 scale columns.", "latent_dim // 32"),
+        "inter_blocks": derived_axis("w2 scale columns.", "inter_dim // 32"),
+    },
+    constraints=("topk <= n_routed",),
+    inputs={
+        "a": TensorSpec(
+            description="The routed input's MXFP8 elements, one row a token.",
+            shape=("n_tokens", "latent_dim"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
+            distribution=FiniteDistribution(),
+        ),
+        "a_scale": TensorSpec(
+            description="a's e8m0 scale per 1 x 32 block, rows in token order (quant_mxfp8's, not sorted).",
+            shape=("n_tokens", "latent_blocks"),
+            dtype=_E8M0,
+            # about what an activation of unit magnitude takes: its block maximum over e4m3's 448
+            distribution=LogUniformDistribution(log2_lo="-10", log2_hi="-5"),
+        ),
+        "topk_ids": TensorSpec(
+            description="Chosen experts per token, distinct within a row.",
+            shape=("n_tokens", "topk"),
+            dtype=DTypeSpec(any_of=(DType.INT32,)),
+            distribution=IntRangeDistribution(lo="0", hi="n_routed - 1", distinct=True),
+        ),
+        "topk_weights": TensorSpec(
+            description="Routing weight of each chosen expert.",
+            shape=("n_tokens", "topk"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+            distribution=FiniteDistribution(),
+        ),
+        "w1": TensorSpec(
+            description="Gate-up projection per routed expert: gate rows, then up rows.",
+            shape=("n_routed", "gate_up_rows", "latent_dim"),
+            dtype=_MXFP4,
+            distribution=FiniteDistribution(),
+            lifetime="weight",
+        ),
+        "w1_scale": TensorSpec(
+            description="Per 1 x 32 block of w1.",
+            shape=("n_routed", "gate_up_rows", "latent_blocks"),
+            dtype=_E8M0,
+            distribution=_e8m0_scales("latent_dim"),
+            lifetime="weight",
+        ),
+        "w2": TensorSpec(
+            description="Down projection per routed expert.",
+            shape=("n_routed", "latent_dim", "inter_dim"),
+            dtype=_MXFP4,
+            distribution=FiniteDistribution(),
+            lifetime="weight",
+        ),
+        "w2_scale": TensorSpec(
+            description="Per 1 x 32 block of w2.",
+            shape=("n_routed", "latent_dim", "inter_blocks"),
+            dtype=_E8M0,
+            distribution=_e8m0_scales("inter_dim"),
+            lifetime="weight",
+        ),
+        "beta": _situ_beta("SiTUv2 gate saturation."),
+        "linear_beta": _situ_beta("SiTUv2 up saturation."),
+    },
+    outputs={
+        "out": TensorSpec(
+            description="The routed experts' weighed sum, in the latent space.",
+            shape=("n_tokens", "latent_dim"),
+            dtype=_BF16.model_copy(update={"param_name": "out_dtype"}),
+            # past 1024 tokens the kernel stores each route's down row as MXFP6 (e2m3, 1 x 64) before the sum,
+            # which the reference keeps fp32: 30.5 dB from that alone (K3.1's shape, CPU)
+            error_bounds=MOE_MXFP8_SNR,
+        )
+    },
+    layout_variants=_LAYOUTS,
+    # stage 2 sums the routes in any order
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+    reference=KimiK3RoutedMoeMxfp8Reference(),
+    baseline=KimiK3RoutedMoeMxfp8Baseline(),
+)
+
+# Kimi-K3.1's MoE front on sglang 0.5.24.dev809 (KimiK3MoE._fused_front off an fp32 front): _k3_bf16_gemm offers it
+# to aiter's FlyDSL tile first (k3_bf16_gemm_hip), and where aiter declines (always at 129-512 rows) runs torch.mm.
+# Not gemm@1.0, whose baseline is aiter's gemm_a16w16: this op is the torch call, which a route takes only there.
+KIMI_K3_MOE_FRONT_GEMM = OpContract(
+    contract_id="kimi_k3_moe_front_gemm@1.0",
+    description=(
+        "Kimi-K3's merged MoE front in fp32 where sglang's _k3_bf16_gemm runs it on torch: out = x @ weight.T, "
+        "weight the [shared gate_up | router | latent down] rows of bf16 values, as torch.mm(x, weight.t(), "
+        "out=out, out_dtype=torch.float32)"
+    ),
+    op_type="kimi_k3",
+    axes={
+        "m": axis("Tokens in this call.", 1, 65536, is_var=True),
+        "n": axis("Front columns: 2 shared_inter_dim + n_routed + latent_dim.", 16, 65536, multiple_of=16),
+        "k": axis("Hidden size.", 256, 16384, multiple_of=256),
+    },
+    inputs={
+        "x": TensorSpec(
+            description="hidden_states, one row a token.",
+            shape=("m", "k"),
+            dtype=_BF16,
+            distribution=FiniteDistribution(),
+        ),
+        "weight": TensorSpec(
+            description="The merged front weight (KimiK3MoE._front_w), one row an output column.",
+            shape=("n", "k"),
+            dtype=_BF16,
+            distribution=FiniteDistribution(),
+            lifetime="weight",
+        ),
+    },
+    outputs={
+        "out": TensorSpec(
+            description="x @ weight.T in fp32: the shared experts' gate_up, the router's logits, the latent input.",
+            shape=("m", "n"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,), default=DType.FLOAT32, param_name="out_dtype"),
+            # gemm@1.0's bound for an output wider than bf16
+            error_bounds=GEMM_FP16_SNR,
+        )
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    reference=KimiK3MoeFrontGemmReference(),
+    baseline=KimiK3MoeFrontGemmBaseline(),
 )
 
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
@@ -350,4 +524,10 @@ KIMI_K3_MLA_PREFILL_GATE = OpContract(
     baseline=KimiK3MlaPrefillGateBaseline(),
 )
 
-CONTRACTS = (KIMI_K3_LATENT_MOE, KIMI_K3_MLA_VC_OUTPUT_GATE, KIMI_K3_MLA_PREFILL_GATE)
+CONTRACTS = (
+    KIMI_K3_LATENT_MOE,
+    KIMI_K3_ROUTED_MOE_MXFP8,
+    KIMI_K3_MOE_FRONT_GEMM,
+    KIMI_K3_MLA_VC_OUTPUT_GATE,
+    KIMI_K3_MLA_PREFILL_GATE,
+)

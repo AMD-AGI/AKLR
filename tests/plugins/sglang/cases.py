@@ -178,6 +178,22 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"native": "triton"},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3.1's sparse MLA prefill on its fp8_ds_mla pool shrunk: a few heads, a short top-k over a small
+    # pool
+    PointSpec(
+        contract_id="dsa_sparse_mla_fp8_ds_prefill@1.0",
+        axes={"n_tokens": 4, "n_heads": 4, "topk": 64, "n_slots": 512},
+        dtypes={
+            "q_nope": "bfloat16",
+            "q_rope": "bfloat16",
+            "kv_cache": "uint8",
+            "indices": "int32",
+            "output": "bfloat16",
+            "lse": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # GLM-5.2's DSA indexer shrunk: 16 heads (32 on GLM-5.2) and narrow projections, its
     # 128-value heads and keys, 64-value RoPE part and one index-K page as sglang holds them on
     # aiter
@@ -273,8 +289,36 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
             "latent": "bfloat16",
             "shared": "bfloat16",
         },
-        attrs={"topk": 16},
+        attrs={"topk": 16, "front_fp32": False},
         layout_variant_name="gate_up_interleaved",
+    ),
+    # Kimi-K3.1's routed experts on the MXFP8 input its row-sharded front hands k3_a8w4_moe, shrunk to
+    # 32 experts of latent size 512: the smallest sglang's kernels take (hidden a multiple of 512, inter
+    # 384 or 512, top-16)
+    PointSpec(
+        contract_id="kimi_k3_routed_moe_mxfp8@1.0",
+        axes={"n_tokens": 4, "latent_dim": 512, "n_routed": 32, "topk": 16, "inter_dim": 384},
+        dtypes={
+            "a": "float8_e4m3fn",
+            "a_scale": "float8_e8m0",
+            "topk_ids": "int32",
+            "topk_weights": "float32",
+            "w1": "float4_e2m1",
+            "w1_scale": "float8_e8m0",
+            "w2": "float4_e2m1",
+            "w2_scale": "float8_e8m0",
+            "out": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="gate_up_interleaved",
+    ),
+    # Kimi-K3.1's fp32 MoE front where sglang runs it on torch, shrunk to 64 front columns over a 256-wide hidden
+    PointSpec(
+        contract_id="kimi_k3_moe_front_gemm@1.0",
+        axes={"m": 4, "n": 64, "k": 256},
+        dtypes={"x": "bfloat16", "weight": "bfloat16", "out": "float32"},
+        attrs={},
+        layout_variant_name="row_major",
     ),
     # Kimi-K3's MLA decode: two heads over a small latent cache
     PointSpec(
@@ -919,6 +963,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "dsa_indexer_key_prepare@1.0",
         "dsa_indexer_prepare@1.0",
         "dsa_sparse_mla_decode@1.0",
+        "dsa_sparse_mla_fp8_ds_prefill@1.0",
         "dsa_sparse_mla_prefill@1.0",
         "dsa_topk_transform@1.0",
         "gdn_prefill_group_fp8_quant@1.0",
@@ -927,6 +972,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "kimi_k3_mla_decode@1.0",
         "kimi_k3_mla_prefill_gate@1.0",
         "kimi_k3_mla_vc_output_gate@1.0",
+        "kimi_k3_routed_moe_mxfp8@1.0",
         "minimax_m2_fp8_moe@1.0",
         "minimax_m2_mxfp4_moe@1.0",
         "qwen2_moe_fp8_experts@1.0",

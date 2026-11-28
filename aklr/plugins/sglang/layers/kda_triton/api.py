@@ -122,15 +122,15 @@ def _storage(b):
 
 @functools.cache
 def _sglang_hip_prefill() -> bool:
-    """Whether sglang runs its own HIP KDA prefill (0.5.23's kda_gfx950_prefill, on by default on gfx950, off with
-    SGLANG_ROCM_KDA_HIP_PREFILL=0), which its TritonKDAKernel.extend tries before chunk_kda: then every call stays with
-    sglang, since the op is timed against chunk_kda, not against it."""
+    """Whether sglang runs its own HIP KDA prefill (kda_gfx950_prefill from 0.5.23 on, on by default on gfx950, off
+    with SGLANG_ROCM_KDA_HIP_PREFILL=0), which its TritonKDAKernel.extend tries before chunk_kda: then every call stays
+    with sglang, since the op is timed against chunk_kda, not against it."""
     kda_triton = importlib.import_module(_TRITON_KDA.rpartition(".")[0])
     hip = getattr(kda_triton, "kda_gfx950_prefill", None)
     return hip is not None and bool(hip.available())
 
 
-@sglang_route(f"{_TRITON_KDA}.extend", versions=("0.5.22", "0.5.23"))
+@sglang_route(f"{_TRITON_KDA}.extend", versions=("0.5.22", "0.5.23", "0.5.24.dev809"))
 def _extend(
     self,
     q,

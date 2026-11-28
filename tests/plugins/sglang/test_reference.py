@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import math
+
 import pytest
+import torch
 
 from tests.op_case import OpCase
 from tests.plugins.sglang import cases
@@ -66,3 +69,34 @@ def test_index_k_cache_key_at_twice_the_scale_stands_for_the_reference(contract_
     assert passes(stored_at(2.0, 0.5))
     assert not passes(stored_at(4.0, 0.25))
     assert not passes(stored_at(2.0, 1.0))
+
+
+def test_sparse_mla_fp8_ds_prefill_reads_no_key_at_minus_one() -> None:
+    """dsa_sparse_mla_fp8_ds_prefill: a token whose one key stands beside -1s attends that key alone, as one whose
+    entries all name it does, its sum of exp(score) topk times smaller; a token of -1s only gets 0 and -inf."""
+    case = OpCase.of("dsa_sparse_mla_fp8_ds_prefill@1.0")
+    args = case.inputs()
+    topk = args["indices"].shape[1]
+    alone, repeated, empty = (args["indices"].clone() for _ in range(3))
+    alone[0, 1:] = -1
+    repeated[0, :] = alone[0, 0]
+    empty[0, :] = -1
+    outputs = [case.reference_outputs({**args, "indices": i}) for i in (alone, repeated, empty)]
+    assert torch.allclose(outputs[0]["output"][0], outputs[1]["output"][0])
+    assert torch.allclose(outputs[1]["lse"][0] - outputs[0]["lse"][0], torch.tensor(math.log(topk)))
+    assert bool((outputs[2]["output"][0] == 0).all()) and bool((outputs[2]["lse"][0] == -math.inf).all())
+
+
+def test_latent_moe_front_fp32_rounds_the_latent_input_alone() -> None:
+    """kimi_k3_latent_moe at front_fp32 (sglang 0.5.24's ROCm front): the router's logits and the shared experts' gate
+    and up stay fp32. On one-hot rows the front is front_weight's bf16 values, the same either way; on any other
+    rows the shared experts read other values than off the bf16 front."""
+    case = OpCase.of("kimi_k3_latent_moe@1.0")
+    fp32 = OpCase(case.point.model_copy(update={"attrs": {**case.point.attrs, "front_fp32": True}}))
+    args = case.inputs()
+    one_hot = torch.zeros_like(args["hidden_states"])
+    one_hot[torch.arange(one_hot.shape[0]), torch.arange(one_hot.shape[0])] = 1
+    rows = {**args, "hidden_states": one_hot}
+    for name, value in case.reference_outputs(rows).items():
+        assert torch.equal(value, fp32.reference_outputs(rows)[name]), name
+    assert not torch.equal(case.reference_outputs(args)["shared"], fp32.reference_outputs(args)["shared"])
