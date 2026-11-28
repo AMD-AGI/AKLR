@@ -31,6 +31,11 @@ mkdir /aklr
 tar -C /src --exclude='./.git' -cf - . | tar -C /aklr -xf -
 printf 'gitdir: %s\n' "$SOURCE_GIT_DIR" > /aklr/.git
 cd /aklr
+# the recipe's setup (pinned package installs into the image), before AKLR's, in both modes' one container
+python3 -c 'import json, sys; sys.stdout.writelines(f"{c}\n" for c in json.load(open("/e2e/plan.json"))["recipe"].get("setup", []))' > /tmp/e2e-setup.sh
+if [ -s /tmp/e2e-setup.sh ]; then
+  (cd /tmp && PIP_CACHE_DIR=/e2e/cache/pip bash -euxo pipefail /tmp/e2e-setup.sh) 2>&1 | tee /e2e/out/setup.log
+fi
 scripts/install_aklr.sh /e2e/cache "$E2E_FRAMEWORK" 2>&1 | tee /e2e/out/install.log
 set -a; . /e2e/cache/aklr.env; set +a
 cd benchmarks/perf

@@ -146,4 +146,7 @@ def load_recipe(group: dict, root: Path = APP_DIR / "recipes") -> dict:
         raise ConfigError(f"{path}: gpus must equal the one tensor-parallel size in the launch command")
     if gpus > group["hardware"]["gpu_count"]:
         raise ConfigError(f"{path}: gpus {gpus} exceeds the target's {group['hardware']['gpu_count']}")
+    setup = recipe.get("setup", [])
+    if not isinstance(setup, list) or not all(isinstance(line, str) and line.strip() for line in setup):
+        raise ConfigError(f"{path}: setup must be a list of shell commands")
     return recipe
