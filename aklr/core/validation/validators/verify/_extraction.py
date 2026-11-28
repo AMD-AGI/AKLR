@@ -61,18 +61,19 @@ class Extraction(FrozenModel):
         extractor = IsaExtractor.resolve(kernel.language) if kernel.language in IsaExtractor.names() else None
         unmet = unmet_requirement(kernel.requires)
         crash = ""
+        target = IsaExtractor.target(kernel)
         if extractor is None:
             crash = f"no extractor for {kernel.language}"
         elif unmet is not None:
             crash = f"requires: {unmet}"
+        elif target is None:
+            crash = "target: the kernel names no architecture to extract its ISA for"
         else:
             directory.mkdir(parents=True, exist_ok=True)
             python_path = os.pathsep.join(
                 [str(Path(aklr.__file__).resolve().parents[1]), *filter(None, [os.environ.get("PYTHONPATH")])]
             )
-            environment = extractor.environment(kernel.targets[0].arch, directory) | {
-                "PYTHONPATH": python_path
-            }
+            environment = extractor.environment(target.arch, directory) | {"PYTHONPATH": python_path}
             if device is not None:
                 environment |= {"HIP_VISIBLE_DEVICES": device, "CUDA_VISIBLE_DEVICES": device}
             run = f"from {extractor.__module__} import {extractor.__name__} as extractor"

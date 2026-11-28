@@ -8,6 +8,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from aklr.core.contract.op import OpContract
+from aklr.core.platform.device import DeviceTarget
 from aklr.core.validation import ValidationScope, VerifyReport, VerifyValidator
 from aklr.core.validation.report import PlatformRecord
 from aklr.core.validation.validators.verify import Extraction
@@ -403,6 +404,21 @@ def test_a_launch_volta_cannot_run_is_unchecked(tmp_path, volta):
     }
 
 
+def test_an_invalid_schema_is_reported_and_the_others_still_verified(tmp_path, volta):
+    invalid = tmp_path / "aklr/plugins/aiter/provider/gemm/impls/flydsl/broken/0000000000000000.json"
+    invalid.parent.mkdir(parents=True)
+    invalid.write_text("{}", encoding="utf-8")
+    path = tmp_path / "aklr/plugins/aiter/provider/gemm/impls/flydsl/valid/0000000000000000.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(_schema().schema_text(), encoding="utf-8")
+    scope = ValidationScope(tmp_path, "1" * 40, None, (invalid, path), (invalid, path))
+    report = VerifyValidator(extractor=_Extractor(tmp_path, _log())).run(scope, _PLATFORM)
+    (finding,) = report.findings
+    assert finding.code == "schema_invalid"
+    assert finding.schema_path == scope.relative_path(invalid)
+    assert _statuses(report) == dict.fromkeys(_RULES, "proved")
+
+
 def test_without_volta_every_rule_is_unchecked(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
     report = _verify(tmp_path, _Extractor(tmp_path, _log()))
@@ -577,6 +593,17 @@ def test_a_kernel_whose_isa_cannot_be_extracted_names_the_extraction_and_its_log
     assert extraction.kernel is None
     assert extraction.failure.startswith("extract: ")
     assert (tmp_path / "extracted" / "extractor.log").is_file()
+
+
+def test_a_kernel_targeting_only_hardware_is_extracted_for_no_architecture(tmp_path):
+    schema = OpCase.of("gemm@1.0").schema()
+    schema = schema.model_copy(
+        update={"kernel": schema.kernel.model_copy(update={"targets": (DeviceTarget(hardware="MI355X"),)})}
+    )
+    schema_path = f"aklr/plugins/aiter/provider/gemm/impls/flydsl/{schema.name}/{0:0>16}.json"
+    (extraction,) = Extraction.of_schema(tmp_path, schema_path, schema, tmp_path / "extracted", 0, 1, None)
+    assert extraction.kernel is None
+    assert extraction.failure == "target: the kernel names no architecture to extract its ISA for"
 
 
 @pytest.mark.gpu

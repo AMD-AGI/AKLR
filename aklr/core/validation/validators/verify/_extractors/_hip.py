@@ -99,7 +99,7 @@ class HipIsaExtractor(IsaExtractor, name="hip"):
     def _install(self, schema: OpContract) -> None:
         from aklr.core.platform.device import DeviceTarget
 
-        target = DeviceTarget(arch=schema.kernel.targets[0].arch, hardware=schema.kernel.targets[0].hardware)
+        target = self.target(schema.kernel)
         DeviceTarget.current = classmethod(lambda cls, device=None: target)
         self._arch = target.arch
 

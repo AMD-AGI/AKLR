@@ -50,10 +50,21 @@ class VerifyValidator(Validator, name="verify"):
     def run(self, scope: ValidationScope, platform: PlatformRecord) -> VerifyReport:
         directory = Path(tempfile.mkdtemp(prefix="aklr_verify_"))
         registry = ContractRegistry.default()
-        schemas = {}
+        schemas, invalid = {}, []
         for path in scope.bench_paths:
             schema_path = scope.relative_path(path)
-            schema = registry.parse_schema(path.read_bytes(), schema_path)
+            try:
+                schema = registry.parse_schema(path.read_bytes(), schema_path)
+            except ValueError as error:
+                invalid.append(
+                    Finding(
+                        code=FindingCode.SCHEMA_INVALID,
+                        schema_path=schema_path,
+                        workload=None,
+                        detail=str(error),
+                    )
+                )
+                continue
             if schema.kernel.sources:
                 schemas[schema_path] = schema
         self.progress.write(
@@ -116,7 +127,7 @@ class VerifyValidator(Validator, name="verify"):
                 raise
         shutil.rmtree(directory, ignore_errors=True)
         numbers = {rule.name: rule.number for rule in ISA_RULES}
-        findings = [
+        findings = invalid + [
             Finding(
                 code=FindingCode.ISA_REJECTED,
                 schema_path=record.schema_path,

@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from aklr.core.contract.op import OpContract
+    from aklr.core.contract.spec import KernelSpec
+    from aklr.core.platform.device import DeviceTarget
     from aklr.core.runtime.builder import Runnable
 
 __all__ = ["IsaExtractor"]
@@ -39,6 +41,10 @@ class IsaExtractor(Registrable):
     @staticmethod
     def environment(arch: str, directory: Path) -> dict[str, str]:
         return {"OMP_NUM_THREADS": "1"}
+
+    @staticmethod
+    def target(kernel: KernelSpec) -> DeviceTarget | None:
+        return next((target for target in kernel.targets or () if target.arch is not None), None)
 
     def _install(self, schema: OpContract) -> None:
         raise NotImplementedError

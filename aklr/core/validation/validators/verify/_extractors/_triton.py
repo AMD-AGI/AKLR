@@ -41,7 +41,7 @@ class TritonIsaExtractor(IsaExtractor, name="triton"):
     def _install(self, schema: OpContract) -> None:
         from triton.compiler.compiler import CompiledKernel
 
-        self._arch = schema.kernel.targets[0].arch
+        self._arch = self.target(schema.kernel).arch
         recorded = self._recorded
 
         def run(kernel: Any) -> Any:
