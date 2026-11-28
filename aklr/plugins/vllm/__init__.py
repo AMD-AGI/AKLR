@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aklr.core.contract.locate import op_packages
-from aklr.core.platform.env import RuntimeEnv
+from aklr.core.platform.env import ENV_AITER_PLUGIN, RuntimeEnv
 from aklr.core.runtime import _vllm_hook_registry as _hooks
 from aklr.core.runtime.dispatch._vllm import _register_runtime_hook
 from aklr.plugins.vllm import hook
@@ -42,6 +42,9 @@ def register() -> None:
 def _register() -> None:
     # Validate switches before changing any framework bindings.
     env = RuntimeEnv()
+    if env.is_aiter_plugin_capture_only:
+        # the sglang plugin's: it enables AKLR around sglang's decode CUDA graph captures
+        raise ValueError(f"{ENV_AITER_PLUGIN}=capture: the vllm plugin has no capture-only mode; use 1 or 0")
     if env.is_aiter_plugin_enabled and not env.is_all_disabled:
         from aklr.plugins.aiter.provider import enable
 

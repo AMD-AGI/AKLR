@@ -27,14 +27,21 @@ def register() -> None:
 def _register() -> None:
     register_sglang_plugin()
     env = RuntimeEnv()
-    if env.is_aiter_plugin_enabled and not env.is_all_disabled:
+    capture_only = env.is_aiter_plugin_capture_only and not env.is_all_disabled
+    if capture_only:
+        from aklr.plugins.aiter.provider import disable
+
+        # aiter asks AKLR only in the decode graph captures the route this module declares wraps
+        disable(importlib.import_module(f"{__name__}.aiter_capture").SOURCE)
+    elif env.is_aiter_plugin_enabled and not env.is_all_disabled:
         from aklr.plugins.aiter.provider import enable
 
         enable("AKLR sglang plugin, AKLR_AITER_PLUGIN=1")
-    if env.is_all_disabled or not env.is_sglang_plugin_enabled:
-        return
-    # imports this package's api modules, which declare its routes, and its other routes
-    for package in op_packages():
-        if package.startswith(f"{__name__}."):
-            importlib.import_module(f"{package}.api")
-    hook.install()
+    layer_routes = not env.is_all_disabled and env.is_sglang_plugin_enabled
+    if layer_routes:
+        # imports this package's api modules, which declare its routes, and its other routes
+        for package in op_packages():
+            if package.startswith(f"{__name__}."):
+                importlib.import_module(f"{package}.api")
+    if layer_routes or capture_only:
+        hook.install()

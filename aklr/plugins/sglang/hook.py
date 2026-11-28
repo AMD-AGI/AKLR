@@ -25,21 +25,27 @@ _LOGGER = logging.getLogger(__name__)
 _ROUTES: list[tuple[str, tuple[str, ...], Callable]] = []
 # routes that run even where Dynamo compiles their caller, outside its graph
 _EAGER: set[Callable] = set()
+# routes that wrap their target: called with sglang's function first, they return the call's result
+_WRAPPING: set[Callable] = set()
 
 
 def sglang_route(
-    target: str, *, versions: tuple[str, ...], eager: bool = False
+    target: str, *, versions: tuple[str, ...], eager: bool = False, wraps: bool = False
 ) -> Callable[[Callable], Callable]:
     """Declare that sglang's ``target`` reaches AKLR ops through this function, on the sglang
     versions matching ``versions`` (exact releases or PEP 440 ranges). Outside that policy,
     sglang runs its own code. A range admits future versions without claiming they were tested. Where Dynamo
     compiles the caller, a route hands the call to sglang, unless ``eager``: one whose target's own
-    code cannot run what another route set up then runs outside the compiled graph."""
+    code cannot run what another route set up then runs outside the compiled graph. A ``wraps`` route
+    does not replace sglang's function but runs it: it takes it as its first argument, then the call's,
+    and returns the call's result."""
 
     def declare(route: Callable) -> Callable:
         _ROUTES.append((target, versions, route))
         if eager:
             _EAGER.add(route)
+        if wraps:
+            _WRAPPING.add(route)
         return route
 
     return declare
@@ -96,8 +102,11 @@ def _around(route: Callable, target: str) -> Callable:
     route_name = f"{route.__module__}.{route.__qualname__}"
 
     def serve(orig, args, kwargs):
-        result = route(*args, **kwargs)
-        fallback = result if isinstance(result, FallbackReason) else None
+        if route in _WRAPPING:
+            result, fallback = route(orig, *args, **kwargs), None
+        else:
+            result = route(*args, **kwargs)
+            fallback = result if isinstance(result, FallbackReason) else None
         if (tracer := trace()) is not None and tracer.is_plugin:
             tracer.plugin("sglang", target, route_name, fallback)
         return orig(*args, **kwargs) if fallback is not None else result

@@ -7,7 +7,8 @@ Before each call of an op aiter routes, aiter asks the enabled providers whether
 one answers from AKLR's dispatch table without running anything, and declines whatever AKLR has no
 qualified kernel for, so aiter runs its own. aiter finds it through the ``aiter.plugins`` entry point
 but asks it only once it is enabled: :func:`enable` does that, called by the sglang and vLLM plugins
-under ``AKLR_AITER_PLUGIN=1`` and by any other host itself.
+under ``AKLR_AITER_PLUGIN=1`` and by any other host itself; under ``AKLR_AITER_PLUGIN=capture`` the sglang
+plugin enables it only around sglang's decode CUDA graph captures, and :func:`disable` takes it out again.
 
 The op families are the packages of this one (``../README.md``); a family's ``selector.py`` registers
 the selectors of the aiter ops it serves."""
@@ -22,7 +23,7 @@ from typing import Any
 
 from aklr.plugins.aiter.provider._base import NAME, SELECTORS, declining, is_declining, ready
 
-__all__ = ["NAME", "Provider", "declining", "enable", "provider"]
+__all__ = ["NAME", "Provider", "declining", "disable", "enable", "provider"]
 
 _LOGGER = logging.getLogger("aklr.plugins.aiter")
 
@@ -60,4 +61,16 @@ def enable(source: str = "AKLR") -> bool:
         return False
     enabled = [name for name in plugin.status()["enabled"] if name != NAME]
     plugin.configure(source=source, enable=[NAME, *enabled])
+    return True
+
+
+def disable(source: str = "AKLR") -> bool:
+    """Have aiter stop asking AKLR, keeping the other providers enabled in their order; ``False``
+    when this aiter has no plugin interface. AKLR stays registered: :func:`enable` asks it again."""
+    try:
+        from aiter import plugin
+    except ImportError:
+        return False
+    enabled = [name for name in plugin.status()["enabled"] if name != NAME]
+    plugin.configure(source=source, enable=enabled)
     return True
