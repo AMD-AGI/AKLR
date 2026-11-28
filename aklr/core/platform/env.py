@@ -75,11 +75,14 @@ class RuntimeEnv:
         if plugin not in ("0", "1"):
             raise ValueError(f"{ENV_VLLM_PLUGIN}={plugin!r}: expected '1' or '0'")
         self.is_vllm_plugin_enabled = plugin == "1"
-        # AKLR_AITER_PLUGIN: "1" enables AKLR among the providers aiter asks for its routed ops
+        # AKLR_AITER_PLUGIN: "1" enables AKLR among the providers aiter asks for its routed ops;
+        # "capture" makes it a provider aiter asks only while sglang captures a decode CUDA graph, so
+        # that eager forwards skip aiter's routing
         plugin = os.environ.get(ENV_AITER_PLUGIN) or "0"
-        if plugin not in ("0", "1"):
-            raise ValueError(f"{ENV_AITER_PLUGIN}={plugin!r}: expected '1' or '0'")
-        self.is_aiter_plugin_enabled = plugin == "1"
+        if plugin not in ("0", "1", "capture"):
+            raise ValueError(f"{ENV_AITER_PLUGIN}={plugin!r}: expected '1', 'capture' or '0'")
+        self.is_aiter_plugin_enabled = plugin in ("1", "capture")
+        self.is_aiter_plugin_capture_only = plugin == "capture"
         self.trace_mode = trace_mode()
         self.export_dir = Path(os.environ.get(ENV_EXPORT_DIR) or DEFAULT_EXPORT_DIR).absolute()
         # AKLR_MIN_SPEEDUP: least speedup over aiter to serve; <= 0 also serves unmeasured

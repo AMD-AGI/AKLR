@@ -592,10 +592,16 @@ def test_a_process_aklr_cannot_start_in_declines_every_call(monkeypatch, aklr_se
     assert provider.provider.select(SimpleNamespace(name="no_such_op", version=1), (), {}) is None
 
 
-@pytest.mark.parametrize(("value", "enabled"), [("", False), ("0", False), ("1", True)])
-def test_aklr_aiter_plugin_switch(monkeypatch, value, enabled):
+@pytest.mark.parametrize(
+    ("value", "enabled", "capture_only"),
+    [("", False, False), ("0", False, False), ("1", True, False), ("capture", True, True)],
+)
+def test_aklr_aiter_plugin_switch(monkeypatch, value, enabled, capture_only):
+    """With "capture" AKLR is aiter's provider, asked only while the framework captures a decode graph."""
     monkeypatch.setenv(ENV_AITER_PLUGIN, value)
-    assert RuntimeEnv().is_aiter_plugin_enabled is enabled
+    env = RuntimeEnv()
+    assert env.is_aiter_plugin_enabled is enabled
+    assert env.is_aiter_plugin_capture_only is capture_only
 
 
 def test_a_bad_aklr_aiter_plugin_value_raises(monkeypatch):
@@ -604,33 +610,18 @@ def test_a_bad_aklr_aiter_plugin_value_raises(monkeypatch):
         RuntimeEnv()
 
 
-class _EntryPoint:
-    def __init__(self, name, target):
-        self.name, self.target = name, target
-
-    def load(self):
-        return self.target
-
-
-@pytest.fixture
-def aiter_plugin(monkeypatch):
-    """aiter's plugin interface with AKLR and one other provider installed."""
-    plugin = pytest.importorskip("aiter.plugin")
-    plugin._reset_for_testing()
-    other = SimpleNamespace(
-        name="other", api_versions={plugin.API_VERSION}, op_versions={}, select=lambda *a: None
-    )
-    entry_points = (_EntryPoint("aklr", provider.provider), _EntryPoint("other", other))
-    monkeypatch.setattr(plugin, "_entry_points", lambda: entry_points)
-    monkeypatch.setattr(provider, "ready", lambda: True)
-    yield plugin
-    plugin._reset_for_testing()
-
-
 def test_enable_asks_aklr_first_and_keeps_the_providers_enabled(aiter_plugin):
     aiter_plugin.configure(source="framework", enable=["other"])
     assert provider.enable("test") is True
     assert aiter_plugin.status()["enabled"] == ("aklr", "other")
+
+
+def test_disable_leaves_aklr_out_and_keeps_the_others_in_order(aiter_plugin):
+    aiter_plugin.configure(source="framework", enable=["aklr", "other"])
+    assert provider.disable("test") is True
+    assert aiter_plugin.status()["enabled"] == ("other",)
+    assert provider.disable("test") is True
+    assert aiter_plugin.status()["enabled"] == ("other",)
 
 
 def test_aiter_routes_a_call_aklr_serves_to_aklrs_kernel(monkeypatch, aiter_plugin):

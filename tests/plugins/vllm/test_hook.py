@@ -16,7 +16,7 @@ import pytest
 import torch
 
 import aklr.plugins.vllm as plugin
-from aklr.core.platform.env import ENV_DISABLE, ENV_TRACE, ENV_VLLM_PLUGIN
+from aklr.core.platform.env import ENV_AITER_PLUGIN, ENV_DISABLE, ENV_TRACE, ENV_VLLM_PLUGIN
 from aklr.core.runtime._vllm_hook_registry import HookRegistry, HookSpec, HookType
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
 from aklr.plugins.vllm import hook
@@ -486,3 +486,13 @@ def test_any_other_switch_value_ends_the_process(monkeypatch, worker):
     monkeypatch.setenv(ENV_VLLM_PLUGIN, "true")
     with pytest.raises(SystemExit, match=ENV_VLLM_PLUGIN):
         plugin.register()
+
+
+def test_capture_only_aiter_routing_ends_the_process(monkeypatch, aiter_plugin):
+    """AKLR_AITER_PLUGIN=capture is the sglang plugin's (its decode graph captures): vLLM's plugin neither
+    enables AKLR for every call nor leaves it off silently."""
+    monkeypatch.setenv(ENV_AITER_PLUGIN, "capture")
+    aiter_plugin.configure(source="framework", enable=["other"])
+    with pytest.raises(SystemExit, match="AKLR_AITER_PLUGIN=capture"):
+        plugin.register()
+    assert aiter_plugin.status()["enabled"] == ("other",)
