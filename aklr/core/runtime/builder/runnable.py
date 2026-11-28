@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -63,7 +64,21 @@ class Runnable:
         self._cleaner = cleaner
 
     def __call__(self, **call: Any) -> Any:
-        return self._callable(**call)
+        torch = sys.modules.get("torch")
+        if torch is None:
+            return self._callable(**call)
+        device = next(
+            (
+                value.device
+                for value in call.values()
+                if isinstance(value, torch.Tensor) and value.device.type == "cuda"
+            ),
+            None,
+        )
+        if device is None:
+            return self._callable(**call)
+        with torch.cuda.device(device):
+            return self._callable(**call)
 
     def cleanup(self) -> None:
         """Run the cleaner once (the kernel's package leaves ``sys.modules``); safe to call more than once."""
