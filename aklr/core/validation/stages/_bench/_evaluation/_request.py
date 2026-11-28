@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple
 from aklr.core.contract import semantics
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.spec import PointSpec, ScalarSpec, WorkloadSpec, axes_text
+from aklr.core.validation import traffic
 from aklr.core.validation.stages._measure import Threshold, Versus
 from aklr.core.validation.stages._report._finding import FindingCode
 
@@ -85,6 +86,8 @@ class TrialRequest:
     # the least published speedup over the baseline dispatch serves; 0: whatever is measured
     min_speedup: float
     incumbent: OpContract | None
+    # the recorded call (validation.traffic) whose requests the inputs carry; None: drawn as declared
+    recorded: dict[str, Any] | None = None
 
     @classmethod
     def of_workload(
@@ -97,9 +100,11 @@ class TrialRequest:
         thresholds: dict[Versus, Threshold],
         incumbent: OpContract | None,
         min_speedup: float = 0,
+        sample: traffic.Sample | None = None,
     ) -> TrialRequest:
-        """The request of ``schema``'s ``workload``."""
-        point = schema.point_with_contract_id(workload.axes, contract.contract_id)
+        """The request of ``schema``'s ``workload``, on ``sample`` (``traffic.samples``; None: drawn)."""
+        label, axes, recorded = sample or traffic.Sample("", workload.axes, None)
+        point = schema.point_with_contract_id(axes, contract.contract_id)
         contract.check_point(point)
         workload_axes_text = axes_text(workload.axes)
         # the whole json the semantics read (the file holds the values at the Point)
@@ -111,13 +116,14 @@ class TrialRequest:
             contract=contract,
             workload=workload,
             point=point,
-            axes_text=workload_axes_text,
+            axes_text=workload_axes_text + label,
             schema_json=schema_json,
-            workload_json=workloads_json[workload_axes_text],
+            workload_json={**workloads_json[workload_axes_text], "axes": axes},
             distributions=schema.distributions_at(point),
             thresholds=thresholds,
             min_speedup=min_speedup,
             incumbent=incumbent,
+            recorded=recorded,
         )
 
     @property
@@ -192,14 +198,25 @@ class TrialRequest:
         return self.contract.ranks_at(self.point)
 
     def compose_inputs(self, step: Step | None, device: str, rank: int = 0) -> dict[str, Any]:
-        return semantics.row_major_inputs(
+        input_set = "timing" if step is None else step.input_set
+        row_major_args = semantics.row_major_inputs(
             self.schema_json,
             self.workload_json,
             self.distributions,
-            input_set="timing" if step is None else step.input_set,
+            input_set=input_set,
             device=device,
             rank=rank,
         )
+        if self.recorded is not None:
+            row_major_args.update(self._recorded_inputs(input_set, device))
+        return row_major_args
+
+    def _recorded_inputs(self, input_set: str, device: str) -> dict[str, Any]:
+        import torch
+
+        seed = semantics.derive_seed(self.schema_json["name"], self.axes_text, input_set)
+        tensors = traffic.tensors(self.contract, self.recorded, torch.Generator().manual_seed(seed))
+        return {name: t.to(device) for name, t in tensors.items()}
 
     def assemble_call(self, row_major_args: Mapping[str, Any], device: str | torch.device) -> dict[str, Any]:
         """The api call of ``row_major_args`` on ``device``, its inputs in their stored layout."""

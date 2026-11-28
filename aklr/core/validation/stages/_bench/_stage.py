@@ -17,6 +17,7 @@ from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import WorkloadSpec, axes_text
 from aklr.core.platform.env import RuntimeEnv
 from aklr.core.platform.toolchain import unmet_requirement
+from aklr.core.validation import traffic
 from aklr.core.validation.stages import _measure
 from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
@@ -30,7 +31,7 @@ from aklr.core.validation.stages._bench._execution import (
     ExecutionError,
     Executor,
 )
-from aklr.core.validation.stages._bench._report import BenchReport, WorkloadRecord
+from aklr.core.validation.stages._bench._report import BenchReport, RecordedSample, WorkloadRecord
 from aklr.core.validation.stages._measure import Threshold, Versus
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 from aklr.core.validation.stages.stage import PipelineStage
@@ -59,6 +60,22 @@ def _evaluation_timeout_seconds(requests: Sequence[TrialRequest]) -> float:
     # every rank's outputs, each against its own reference
     seconds = WORKLOAD_TIMEOUT_SECONDS * len(requests) + EVALUATION_SECONDS_PER_OUTPUT_GIB * output_gib
     return seconds * requests[0].n_ranks
+
+
+def _baseline_speedup(
+    rounds: Sequence[_measure.RoundTimes], thresholds: dict[Versus, Threshold]
+) -> float | None:
+    """The graph speedup over the baseline of ``rounds``: its ratio lower bound, as the report's;
+    None without rounds, or with rounds ``compare_performance`` finds unusable."""
+    try:
+        records = _measure.timing_records(rounds, thresholds) if rounds else ()
+    except (ValueError, ArithmeticError):
+        return None
+    return next((t.ratio_lower_bound for t in records if t.mode == "graph" and t.versus == "baseline"), None)
+
+
+def _ratio_text(ratio: float | None) -> str:
+    return "-" if ratio is None else f"{ratio:.2f}"
 
 
 class UnreadableIncumbent(RuntimeError):
@@ -175,14 +192,13 @@ class BenchStage(PipelineStage[BenchReport]):
         workloads = [w for w in schema.workloads if self._timed or w.accuracy != "failed"]
         batches: list[tuple[TrialRequest, ...]] = []
         batch: list[TrialRequest] = []
-        batch_bytes = 0
+        batch_bytes = batch_workloads = 0
+        n_recorded, on_recorded = 0, []
         # even batches: a short remainder would start late among other schemas'
         n_batches = max(1, -(-len(workloads) // MAX_BATCH_WORKLOADS))
         sizes = [len(workloads) // n_batches + (k < len(workloads) % n_batches) for k in range(n_batches)]
         for workload in workloads:
             workload_axes_text = axes_text(workload.axes)
-            point = schema.point_with_contract_id(workload.axes, contract.contract_id)
-            contract.check_point(point)
             incumbent = incumbents.get(workload_axes_text)
             is_kept = (
                 not base_sha
@@ -196,31 +212,54 @@ class BenchStage(PipelineStage[BenchReport]):
                 incumbent = None  # this very kernel: never timed against itself
             if not self._timed:
                 thresholds = {}
-            request = TrialRequest(
-                schema_path=str(path),
-                schema=schema,
-                contract=contract,
-                workload=workload,
-                point=point,
-                axes_text=workload_axes_text,
-                schema_json=schema_json,
-                workload_json=workloads_json[workload_axes_text],
-                distributions=schema.distributions_at(point),
-                thresholds=thresholds,
-                min_speedup=min_speedup,
-                incumbent=incumbent,
-            )
-            n_bytes = request.output_bytes
+            # a request per recorded call at the workload's key (its requests, and the sizes its
+            # server fixed), judged together; none: the workload as drawn
+            inputs = traffic.samples(scope.root, schema, contract, workload.axes)
+            n_recorded += inputs[0].call is not None
+            key = axes_text(traffic.dispatch_key(contract, workload.axes))
+            samples = []
+            for label, axes, call in inputs:
+                point = schema.point_with_contract_id(axes, contract.contract_id)
+                contract.check_point(point)
+                samples.append(
+                    TrialRequest(
+                        schema_path=str(path),
+                        schema=schema,
+                        contract=contract,
+                        workload=workload,
+                        point=point,
+                        axes_text=workload_axes_text + label,
+                        schema_json=schema_json,
+                        workload_json={**workloads_json[workload_axes_text], "axes": axes},
+                        distributions=schema.distributions_at(point),
+                        thresholds=thresholds,
+                        min_speedup=min_speedup,
+                        incumbent=incumbent,
+                        recorded=call,
+                    )
+                )
+                if call:
+                    on_recorded.append(f"  {key}{label}: {traffic.describe(call, workload.axes)}")
+            n_bytes = sum(r.output_bytes for r in samples)
             if batch and (
                 batch_bytes + n_bytes > MAX_BATCH_OUTPUT_BYTES
-                or len(batch) == sizes[min(len(batches), n_batches - 1)]
+                or batch_workloads == sizes[min(len(batches), n_batches - 1)]
             ):
                 batches.append(tuple(batch))
-                batch, batch_bytes = [], 0
-            batch.append(request)
+                batch, batch_bytes, batch_workloads = [], 0, 0
+            batch += samples
             batch_bytes += n_bytes
+            batch_workloads += 1
         if batch:
             batches.append(tuple(batch))
+        if n_recorded:
+            listing = traffic.schemas(scope.root)[schema.name]
+            self.progress.write(
+                f"{schema_path}: {n_recorded}/{len(workloads)} workloads on recorded calls, "
+                f"up to {listing.samples} each ({', '.join(listing.recordings)})"
+            )
+            for line in on_recorded:
+                self.progress.write(line)
         return batches
 
     def _incumbents(
@@ -328,25 +367,44 @@ class BenchStage(PipelineStage[BenchReport]):
         schema_path = scope.relative_path(Path(batch[0].schema_path))
         findings: list[Finding] = []
         records: list[WorkloadRecord] = []
+        # a workload's requests: one, or one per recorded call it is measured on
+        by_workload: dict[str, list[TrialRequest]] = {}
         for request in batch:
+            by_workload.setdefault(axes_text(request.workload.axes), []).append(request)
+        for samples in by_workload.values():
+            request = samples[0]
             found, timings, is_compared = list(batch_findings), (), False
+            timed: dict[str, tuple[_measure.RoundTimes, ...]] = {}  # each sample that ran clean
             if not batch_findings:
-                candidate_result = candidate_results[request.axes_text]
-                # absent: declined by the baseline, the candidate's finding alone
-                reference_result = reference_results.get(request.axes_text)
-                found = list(candidate_result.findings)
-                if reference_result is not None:
-                    is_compared = reference_result.is_compared
-                    found[:0] = reference_result.findings
+                found, compared = [], []
+                for sample in samples:
+                    candidate_result = candidate_results[sample.axes_text]
+                    # absent: declined by the baseline, the candidate's finding alone
+                    reference_result = reference_results.get(sample.axes_text)
+                    if reference_result is None:
+                        found += candidate_result.findings
+                        continue
+                    compared.append(reference_result.is_compared)
+                    found += [*reference_result.findings, *candidate_result.findings]
                     if not candidate_result.findings:
                         if not reference_result.is_complete:
                             detail = "outputs of steps are missing, and no finding says why"
                             found.append(Finding.unlocated(FindingCode.CANDIDATE_CRASH, detail))
-                        timings, gated = _measure.compare_performance(
-                            candidate_result.rounds, request.thresholds
+                        timed[sample.axes_text] = candidate_result.rounds
+                is_compared = len(compared) == len(samples) and all(compared)
+                # timed when every sample ran clean: the workload's speedup is their total time's
+                if len(timed) == len(samples) and len(compared) == len(samples):
+                    rounds = _measure.summed_rounds(list(timed.values()))
+                    timings, gated = _measure.compare_performance(rounds, request.thresholds)
+                    if gated is not None:
+                        found.append(gated)
+                    if len(samples) > 1 and rounds:
+                        each = " ".join(
+                            _ratio_text(_baseline_speedup(r, request.thresholds)) for r in timed.values()
                         )
-                        if gated is not None:
-                            found.append(gated)
+                        whole = _ratio_text(_baseline_speedup(rounds, request.thresholds))
+                        at = axes_text(traffic.dispatch_key(request.contract, request.workload.axes))
+                        self.progress.write(f"{schema_path}: {at}: samples {each} -> {whole}")
             located = {"schema_path": schema_path, "axes": request.workload.axes}
             findings += [f.model_copy(update=located) for f in found]
             records.append(
@@ -357,6 +415,13 @@ class BenchStage(PipelineStage[BenchReport]):
                     is_timed="baseline" in request.thresholds,
                     is_compared=is_compared,
                     timings=timings,
+                    recorded=tuple(
+                        RecordedSample.of(
+                            s.recorded, _baseline_speedup(timed.get(s.axes_text, ()), request.thresholds)
+                        )
+                        for s in samples
+                        if s.recorded is not None
+                    ),
                 )
             )
         return findings, records

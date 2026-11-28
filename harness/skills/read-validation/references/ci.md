@@ -25,7 +25,8 @@ Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test
 - The run's artifacts `validation-report-<job>-<attempt>` for each of the three jobs, and
   `validation-check-sglang-test-<attempt>` and `validation-check-vllm-test-<attempt>` (`aklr/plugins/aiter` built and checked
   in each image, no timing, no `schemas/`): `report.md` (one row per Point: verdict,
-  `graph/baseline`, `graph/incumbent`, then the findings), `report.json`, `schemas/` (the schemas
+  `graph/baseline`, `graph/incumbent`, `inputs`: drawn, or the recorded calls it was measured on and each one's
+  speedup (`traffic/`), then the findings), `report.json`, `schemas/` (the schemas
   with the measured fields) and `baseline/` (what each Point was timed against).
 - Nothing else is kept: the job deletes its GPU workload when it ends.
   Use the artifact. A job cancelled or timed out before its tests ended has no reports, only its

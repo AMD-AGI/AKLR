@@ -36,6 +36,7 @@ __all__ = [
     "Versus",
     "bind_clock",
     "compare_performance",
+    "summed_rounds",
     "gate",
     "is_tracer_fault",
     "ratio_lower_bound",
@@ -223,6 +224,27 @@ def timing_records(
                 )
             )
     return tuple(records)
+
+
+def summed_rounds(samples: Sequence[Sequence[RoundTimes]]) -> tuple[RoundTimes, ...]:
+    """Several inputs' rounds as one input's: at each (mode, round) every input reached, each
+    participant's times summed, so a speedup is the ratio of the inputs' total times."""
+    if len(samples) == 1:
+        return tuple(samples[0])
+    by_round = [{(r.mode, r.round_index): r for r in rounds} for rounds in samples]
+    common = [key for key in by_round[0] if all(key in b for b in by_round)]
+    return tuple(
+        RoundTimes(
+            mode=mode,
+            round_index=index,
+            order=by_round[0][mode, index].order,
+            milliseconds={
+                p: sum(b[mode, index].milliseconds[p] for b in by_round)
+                for p in by_round[0][mode, index].milliseconds
+            },
+        )
+        for mode, index in common
+    )
 
 
 def gate(records: Sequence[TimingRecord]) -> FindingCode | None:
